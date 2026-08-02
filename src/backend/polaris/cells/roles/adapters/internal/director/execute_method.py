@@ -20,9 +20,12 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import (
+    AppendToolCallLifecycleEventCommandV1,
     FailureClassV1,
     FailureEvidenceV1,
     append_failure_evidence_to_metadata,
+    append_tool_call_lifecycle_event,
+    build_claimed_materialization_without_tool_lifecycle_receipt,
     is_failure_class,
     project_tool_lifecycle_event,
     project_tool_lifecycle_failure_status,
@@ -486,48 +489,31 @@ def _empty_write_retry_tool_definition(
     *,
     pin_file_enum: bool = False,
 ) -> dict[str, Any]:
-    if tool_name == "write_file":
-        registered = _registered_tool_definition("write_file")
-        if registered is not None:
-            return _pin_file_schema_to_declared_targets(registered, target_files) if pin_file_enum else registered
-    file_schema: dict[str, Any] = {"type": "string"}
-    if len(target_files) == 1:
-        file_schema["enum"] = [target_files[0]]
-    elif pin_file_enum and target_files:
-        file_schema["enum"] = list(dict.fromkeys(target_files[:32]))
-    if tool_name == "edit_blocks":
-        return {
-            "type": "function",
-            "function": {
-                "name": "edit_blocks",
-                "description": "Edit a precise line range in an existing UTF-8 text file.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "file": file_schema,
-                        "start": {"type": "integer", "minimum": 1},
-                        "end": {"type": "integer", "minimum": 1},
-                        "replace": {"type": "string", "minLength": 1},
-                    },
-                    "required": ["file", "start", "end", "replace"],
-                },
-            },
-        }
-    return {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": "Write a complete UTF-8 text file at the requested target path.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file": file_schema,
-                    "content": {"type": "string", "minLength": 1},
-                },
-                "required": ["file", "content"],
-            },
-        },
-    }
+    """Registry-faithful retry tool; path pin only for write_file (R127 SSOT)."""
+    from polaris.kernelone.tool_execution.forced_tool_surface import (
+        ForcedToolSurfaceError,
+        build_forced_tool_surface,
+        resolve_registry_tool_schema,
+    )
+
+    name = str(tool_name or "").strip() or "write_file"
+    if name == "write_file":
+        surface = build_forced_tool_surface(
+            ("write_file",),
+            pin_write_paths=target_files if pin_file_enum else None,
+        )
+        return surface[0]
+    # Non-write tools: registry only, never invent schemas, never pin paths
+    # (qualification rejects path enums on edit_file/edit_blocks).
+    try:
+        return resolve_registry_tool_schema(name)
+    except ForcedToolSurfaceError:
+        # Last resort: write_file registry surface so retry remains qualifiable.
+        surface = build_forced_tool_surface(
+            ("write_file",),
+            pin_write_paths=target_files if pin_file_enum else None,
+        )
+        return surface[0]
 
 
 _NO_WRITE_MULTI_TARGET_RETRY_TOOL_NAMES = ("write_file", "edit_file")
@@ -536,54 +522,39 @@ _NO_WRITE_MULTI_TARGET_FALLBACK_TOOL_NAMES = frozenset({"write_file", "edit_file
 
 
 def _pin_file_schema_to_declared_targets(definition: dict[str, Any], target_files: list[str]) -> dict[str, Any]:
-    """Pin a file-parameter tool schema to the declared task boundary."""
+    """Pin write_file path properties only (qualification-safe; R127).
+
+    Historical callers pinned edit_file as well, which raised
+    tool_registry_scoped_enum_unauthorized at final-provider qualification.
+    """
+    from polaris.kernelone.tool_execution.forced_tool_surface import (
+        ForcedToolSurfaceError,
+        pin_write_file_paths,
+        tool_definition_name,
+    )
 
     if not target_files:
         return dict(definition)
-    pinned = json.loads(json.dumps(definition, ensure_ascii=False))
-    function_payload = pinned.get("function")
-    if not isinstance(function_payload, dict):
-        return pinned
-    parameters = function_payload.get("parameters")
-    if not isinstance(parameters, dict):
-        return pinned
-    properties = parameters.get("properties")
-    if not isinstance(properties, dict):
-        return pinned
-    enum_values = list(dict.fromkeys(target_files[:32]))
-    for property_name in (
-        "file",
-        "path",
-        "filepath",
-        "filePath",
-        "file_path",
-        "filename",
-        "target",
-        "target_file",
-        "targetFile",
-        "target_path",
-        "targetPath",
-    ):
-        property_schema = properties.get(property_name)
-        if isinstance(property_schema, dict):
-            property_schema["enum"] = enum_values
-    return pinned
+    name = tool_definition_name(definition)
+    if name != "write_file":
+        # Drop unauthorized path enums on non-write tools: return registry clone.
+        return dict(definition)
+    try:
+        return pin_write_file_paths(definition, target_files)
+    except ForcedToolSurfaceError:
+        return dict(definition)
 
 
 def _registered_tool_definition(tool_name: str) -> dict[str, Any] | None:
+    from polaris.kernelone.tool_execution.forced_tool_surface import (
+        ForcedToolSurfaceError,
+        resolve_registry_tool_schema,
+    )
+
     try:
-        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
-    except (ImportError, RuntimeError, ValueError):
+        return resolve_registry_tool_schema(str(tool_name or "").strip())
+    except ForcedToolSurfaceError:
         return None
-    try:
-        schema = ToolSpecRegistry.get_llm_schema(
-            str(tool_name or "").strip(),
-            include_arg_aliases=True,
-            deterministic=True,
-        )
-    except (RuntimeError, TypeError, ValueError):
-        return None
-    return dict(schema) if isinstance(schema, dict) else None
 
 
 def _no_write_materialization_retry_tool_definitions(
@@ -591,31 +562,20 @@ def _no_write_materialization_retry_tool_definitions(
     *,
     strict_write_only: bool,
 ) -> list[dict[str, Any]]:
+    """Empty-write retry tools via Forced Tool Surface SSOT (R127).
+
+    Only write_file may receive path enums. edit_file is registry-faithful
+    without path pinning so final-provider qualification does not fail closed.
+    """
+    from polaris.kernelone.tool_execution.forced_tool_surface import build_forced_tool_surface
+
     if strict_write_only:
-        return [_empty_write_retry_tool_definition("write_file", target_files, pin_file_enum=True)]
+        return build_forced_tool_surface(("write_file",), pin_write_paths=target_files)
 
-    definitions: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for tool_name in _NO_WRITE_MULTI_TARGET_RETRY_TOOL_NAMES:
-        definition = _registered_tool_definition(tool_name)
-        if definition is None:
-            continue
-        function_payload = definition.get("function")
-        canonical_name = ""
-        if isinstance(function_payload, dict):
-            canonical_name = str(function_payload.get("name") or "").strip()
-        if not canonical_name or canonical_name in seen:
-            continue
-        if canonical_name in {"write_file", "edit_file"}:
-            definition = _pin_file_schema_to_declared_targets(definition, target_files)
-        definitions.append(definition)
-        seen.add(canonical_name)
-
-    if not any(
-        isinstance(item.get("function"), dict) and item["function"].get("name") == "write_file" for item in definitions
-    ):
-        definitions.append(_empty_write_retry_tool_definition("write_file", target_files, pin_file_enum=True))
-    return definitions
+    # write_file pinned + edit_file unpinned (registry only)
+    write_surface = build_forced_tool_surface(("write_file",), pin_write_paths=target_files)
+    edit_surface = build_forced_tool_surface(("edit_file",))
+    return [*write_surface, *edit_surface]
 
 
 def _no_write_retry_strict_write_only(target_files: list[str]) -> bool:
@@ -740,6 +700,11 @@ async def _run_no_write_materialization_retry(
         strict_write_only=strict_write_only,
     )
     retry_context = _pin_materialize_context_delivery_mode(dict(context), True)
+    if isinstance(task, dict):
+        retry_context["task"] = dict(task)
+    rebind_dependency_artifact = getattr(adapter, "_rebind_director_dependency_artifact_for_dialogue", None)
+    if callable(rebind_dependency_artifact):
+        rebind_dependency_artifact(retry_context)
     retry_context["_transaction_kernel_forced_tool_definitions"] = _no_write_materialization_retry_tool_definitions(
         target_files,
         strict_write_only=strict_write_only,
@@ -832,6 +797,11 @@ async def _run_empty_write_content_materialization_retry(
         forced_tool_name=forced_tool_name,
     )
     retry_context = _pin_materialize_context_delivery_mode(dict(context), True)
+    if isinstance(task, dict):
+        retry_context["task"] = dict(task)
+    rebind_dependency_artifact = getattr(adapter, "_rebind_director_dependency_artifact_for_dialogue", None)
+    if callable(rebind_dependency_artifact):
+        rebind_dependency_artifact(retry_context)
     retry_context["_transaction_kernel_forced_tool_choice"] = {
         "type": "function",
         "function": {"name": forced_tool_name},
@@ -887,6 +857,85 @@ async def _run_empty_write_content_materialization_retry(
     retry_summary["write_args"] = _diag_write_results_summary(retry_tool_results)
     retry_summary["recovered_write_tool_evidence"] = has_successful_write_tool(retry_tool_results)
     return retry_tool_results, retry_summary
+
+
+def _project_dependency_artifact_tool_results(
+    tool_results: Sequence[Any] | None,
+) -> list[dict[str, Any]]:
+    """Project write tool_results into receipt-bound rows for sibling exports.
+
+    Dependent Director tasks build ``actual_sibling_exports`` from parent
+    ``metadata.adapter_result`` (see dependency_artifact_evidence). Completion
+    used to store only new_files/write_tool_evidence flags, so TASK-2 failed
+    closed with ``missing_required_refs=actual_sibling_exports`` despite TASK-1
+    materializing files (r129 L1-01).
+    """
+
+    projected: list[dict[str, Any]] = []
+    if not isinstance(tool_results, Sequence) or isinstance(tool_results, (str, bytes)):
+        return projected
+    for raw in tool_results:
+        if not isinstance(raw, Mapping):
+            continue
+        status = str(raw.get("status") or "").strip().lower()
+        success = raw.get("success")
+        if success is False or status in {"failed", "error"}:
+            continue
+        nested = raw.get("result")
+        result_payload = dict(nested) if isinstance(nested, Mapping) else {}
+        effect_receipt = raw.get("effect_receipt")
+        if not isinstance(effect_receipt, Mapping):
+            effect_receipt = result_payload.get("effect_receipt")
+        if not isinstance(effect_receipt, Mapping):
+            continue
+        commit = raw.get("effect_receipt_commit")
+        if not isinstance(commit, Mapping):
+            commit = result_payload.get("effect_receipt_commit")
+        file_path = str(
+            result_payload.get("file") or result_payload.get("path") or raw.get("file") or raw.get("path") or ""
+        ).strip()
+        if not file_path:
+            continue
+        row: dict[str, Any] = {
+            "status": "success",
+            "success": True,
+            "tool": str(raw.get("tool") or raw.get("tool_name") or "write_file").strip() or "write_file",
+            "tool_name": str(raw.get("tool_name") or raw.get("tool") or "write_file").strip() or "write_file",
+            "result": {"file": file_path},
+            "effect_receipt": dict(effect_receipt),
+        }
+        if isinstance(commit, Mapping) and commit:
+            row["effect_receipt_commit"] = dict(commit)
+        projected.append(row)
+    return projected
+
+
+def _attach_dependency_artifact_receipt_evidence(
+    adapter_result: dict[str, Any],
+    *,
+    tool_results: Sequence[Any] | None = None,
+    primary_llm_summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Ensure adapter_result carries receipt rows for sibling-export projection."""
+
+    projected = _project_dependency_artifact_tool_results(tool_results)
+    if projected:
+        adapter_result["tool_results"] = projected
+    if isinstance(primary_llm_summary, dict):
+        batch_receipt = primary_llm_summary.get("batch_receipt")
+        if isinstance(batch_receipt, dict) and batch_receipt:
+            adapter_result["batch_receipt"] = dict(batch_receipt)
+        metadata = primary_llm_summary.get("metadata")
+        if isinstance(metadata, dict):
+            nested_batch = metadata.get("batch_receipt")
+            if isinstance(nested_batch, dict) and nested_batch and "batch_receipt" not in adapter_result:
+                adapter_result["batch_receipt"] = dict(nested_batch)
+            nested_tools = metadata.get("tool_results")
+            if isinstance(nested_tools, list) and nested_tools and "tool_results" not in adapter_result:
+                nested_projected = _project_dependency_artifact_tool_results(nested_tools)
+                if nested_projected:
+                    adapter_result["tool_results"] = nested_projected
+    return adapter_result
 
 
 def _finalize_claimed_execution(
@@ -2677,6 +2726,11 @@ def _phase_finalize_materialization(
         completion_metadata["adapter_result"]["semantic_quality_repair"] = semantic_quality_repair_summary
     if semantic_quality_repair_attempts:
         completion_metadata["adapter_result"]["semantic_quality_repair_attempts"] = semantic_quality_repair_attempts
+    _attach_dependency_artifact_receipt_evidence(
+        completion_metadata["adapter_result"],
+        tool_results=tool_results,
+        primary_llm_summary=primary_llm_summary if isinstance(primary_llm_summary, dict) else None,
+    )
     cognitive_receipt = _emit_director_adapter_cognitive_receipt(
         adapter,
         task=task,
@@ -4244,6 +4298,91 @@ def _primary_llm_tool_dispatch_failure(primary_llm_summary: dict[str, Any] | Non
     return _tool_dispatch_dropped_failure_payload()
 
 
+def _seal_claimed_materialization_without_tool_lifecycle(
+    *,
+    workspace: str,
+    run_id: str,
+    task_id: str,
+    turn_id: str = "",
+    reason: str,
+    failure_class: str,
+    primary_llm_summary: Mapping[str, Any] | None = None,
+    completion_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """R137: seal blocked lifecycle when claimed materialization ends with no tools.
+
+    Claimed Director materialization activates a tool-lifecycle requirement. If the
+    attempt never appends a tool_call_lifecycle receipt (closed without tools,
+    no_materialized_changes, fail-closed before dispatch), projection reports
+    TOOL_LIFECYCLE_MISSING even though claim/fail facts exist. Seal one blocked
+    receipt so missing_required_task_keys clears and failure stays attributable.
+    """
+
+    resolved_run_id = str(run_id or "").strip()
+    resolved_task_id = str(task_id or "").strip()
+    if not resolved_run_id or not resolved_task_id:
+        return None
+
+    # Skip when turn/adapter metadata already carries lifecycle receipts.
+    candidates: list[Mapping[str, Any]] = []
+    if isinstance(primary_llm_summary, Mapping):
+        candidates.append(primary_llm_summary)
+        nested = primary_llm_summary.get("metadata")
+        if isinstance(nested, Mapping):
+            candidates.append(nested)
+    if isinstance(completion_metadata, Mapping):
+        candidates.append(completion_metadata)
+        adapter_result = completion_metadata.get("adapter_result")
+        if isinstance(adapter_result, Mapping):
+            candidates.append(adapter_result)
+            nested_primary = adapter_result.get("primary_llm")
+            if isinstance(nested_primary, Mapping):
+                candidates.append(nested_primary)
+                nested_meta = nested_primary.get("metadata")
+                if isinstance(nested_meta, Mapping):
+                    candidates.append(nested_meta)
+    for candidate in candidates:
+        if tool_call_lifecycle_receipts_from_metadata(dict(candidate)):
+            return None
+
+    lifecycle = build_claimed_materialization_without_tool_lifecycle_receipt(
+        run_id=resolved_run_id,
+        task_id=resolved_task_id,
+        turn_id=str(turn_id or "").strip(),
+        role="director",
+        reason=str(reason or "claimed_materialization_without_tool_lifecycle"),
+        failure_class=str(failure_class or FailureClassV1.INCOMPLETE_MATERIALIZATION.value),
+    )
+    if isinstance(completion_metadata, dict):
+        completion_metadata["tool_call_lifecycle_receipt"] = dict(lifecycle)
+        completion_metadata["tool_call_lifecycle"] = dict(lifecycle)
+        adapter_result = completion_metadata.get("adapter_result")
+        if isinstance(adapter_result, dict):
+            adapter_result["tool_call_lifecycle_receipt"] = dict(lifecycle)
+    try:
+        append_tool_call_lifecycle_event(
+            AppendToolCallLifecycleEventCommandV1(
+                workspace=str(workspace or ""),
+                run_id=resolved_run_id,
+                task_id=resolved_task_id,
+                turn_id=str(turn_id or "").strip(),
+                role="director",
+                lifecycle_receipt=lifecycle,
+                stage="tool_batch",
+                project_id=resolved_task_id,
+                ok=False,
+            )
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        logger.debug(
+            "R137: failed to append claimed-without-tools lifecycle task_id=%s run_id=%s",
+            resolved_task_id,
+            resolved_run_id,
+            exc_info=True,
+        )
+    return lifecycle
+
+
 def _materialization_failure_evidence_row(
     *,
     error: str,
@@ -4445,6 +4584,25 @@ def _phase_no_materialized_changes(
             )
         if empty_write_content_retry_summary is not None:
             completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
+        # R137: claimed materialization with no tool lifecycle must seal blocked
+        # evidence before finalize; otherwise Run Ledger projects TOOL_LIFECYCLE_MISSING.
+        if not tool_results and not write_tool_evidence:
+            sealed_lifecycle = _seal_claimed_materialization_without_tool_lifecycle(
+                workspace=str(getattr(adapter, "workspace", "") or ""),
+                run_id=str(run_id or ""),
+                task_id=str(target_task_id or ""),
+                turn_id=str(
+                    (primary_llm_summary or {}).get("turn_id")
+                    or (primary_llm_summary or {}).get("last_turn_id")
+                    or ""
+                ),
+                reason=str(error or "director_no_materialized_changes"),
+                failure_class=str(failure_class or FailureClassV1.INCOMPLETE_MATERIALIZATION.value),
+                primary_llm_summary=primary_llm_summary,
+                completion_metadata=completion_metadata,
+            )
+            if sealed_lifecycle is not None:
+                completion_metadata["adapter_result"]["tool_call_lifecycle_sealed"] = True
         cognitive_receipt = _emit_director_adapter_cognitive_receipt(
             adapter,
             task=task,

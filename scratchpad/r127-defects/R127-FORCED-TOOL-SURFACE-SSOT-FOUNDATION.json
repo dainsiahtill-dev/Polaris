@@ -1,0 +1,49 @@
+{
+  "defect_id": "R127-FORCED-TOOL-SURFACE-SSOT-FOUNDATION",
+  "status": "platform_fixed_pending_rebench",
+  "kind": "foundation_restructure",
+  "why_not_another_micro_patch": {
+    "last_100_commits_pattern": "Heavy WS2 fence/projection/readiness + repair micro-fixes; little convergence on single tool surface",
+    "defect_chain_R120_R126": [
+      "R120 DEO error code frozenset drift",
+      "R121 TS semicolon FP in quality scanner",
+      "R122 DEO thaw Sequence mislabeled hash_drift",
+      "R123 sibling exports wiped on dialogue follow-up",
+      "R124 CE risk_flags schema missing defaults",
+      "R125 quality-repair prompt content false-positive isolation",
+      "R126 quality-repair tool schema mutation vs registry qualification"
+    ],
+    "systemic_root_cause": "Multiple layers invent or mutate LLM tool schemas (quality_gate, execute_method empty-write retry, custom execute_command). Final provider qualification requires exact ToolSpecRegistry match. Intentional repair-path mutations fail-closed BEFORE the model can fix compiler/test gaps → projects never complete true-run pillars (build/test). Taxonomy then masks as control_plane:tool_lifecycle_failed.",
+    "open_source_agent_alignment": "Codex/Claude-style agents keep one immutable tool catalog; repair modes only change messages + tool_choice, never invent parallel schemas."
+  },
+  "architecture": {
+    "ssot_module": "polaris.kernelone.tool_execution.forced_tool_surface",
+    "rules": [
+      "Forced tool schemas always from ToolSpecRegistry.get_llm_schema",
+      "Path enum pin only on write_file file aliases (qualification-authorized)",
+      "edit_file never receives path enums",
+      "Mode guidance only in prompt/SESSION_PATCH",
+      "No invented fallback schemas on production repair paths"
+    ],
+    "migrated_call_sites": [
+      "roles.adapters.internal.director.quality_gate quality-repair tool defs",
+      "roles.adapters.internal.director.execute_method empty-write / no-write retry tool defs"
+    ]
+  },
+  "files": [
+    "src/backend/polaris/kernelone/tool_execution/forced_tool_surface.py",
+    "src/backend/polaris/kernelone/tool_execution/tests/test_forced_tool_surface.py",
+    "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate.py",
+    "src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py",
+    "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+  ],
+  "verification": {
+    "pytest": "9 targeted tests passed (forced_tool_surface + quality_repair + pin delivery + no_write schemas)"
+  },
+  "residual_foundation_risks": [
+    "TOOL_LIFECYCLE_MISSING still mis-attributes some qualification/partial runs",
+    "Other invent sites may remain (retry_tool_definitions selects from existing defs only — OK)",
+    "True-run still depends on model writing tests + clean tsc after repair unblocks"
+  ],
+  "next_action": "Finish/observe isolated L1-01 re-bench with R126+R127; if true-run fails attribute next single generic only"
+}

@@ -3103,6 +3103,10 @@ def test_task4_finalize_reconciles_ambiguous_error_after_durable_ready_append(
     (
         ("append_write_failed", "stream_append_failed"),
         ("unmapped_append_failure", "fact_stream_unknown_failure"),
+        # R149: KernelOne flock deadline must not collapse to opaque unknown.
+        ("lock_acquisition_timeout", "stream_lock_timeout"),
+        ("file_lock_timeout", "stream_lock_timeout"),
+        ("lock_timeout", "stream_lock_timeout"),
     ),
 )
 def test_task4_finalize_preserves_no_durable_append_failure_taxonomy_without_ready_fact(

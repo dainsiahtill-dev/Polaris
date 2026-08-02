@@ -1,0 +1,49 @@
+{
+  "defect_id": "R142-EVENT-LOOP-LIVENESS-CUTOFF-HEARTBEAT-WS",
+  "status": "fixed_platform_unit_validated_live_partial_chain_completed",
+  "summary": "Isolated backend liveness hang: stage-claim flock held across await + sync heartbeat renew self-deadlocked event loop; huge runtime.v2 frame JSON serialization on loop starved HTTP/WS. Platform fixes landed; r142c chain reached terminal (exit=1) instead of pure event_wait_timeout infra fail.",
+  "root_cause": {
+    "primary": "OS flock on workspace lease held across asyncio await while heartbeat renew blocked same loop thread (locks_lock_inode_wait self-deadlock)",
+    "secondary": "send_json ran multi-MB jsonable_encoder+json.dumps(+elide dump) on event loop during director (900KB+ frames)",
+    "cascade": "observer GET 30-48s / WS 1011 / cancel drain / non-ACTIVE lease / quarantine"
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "src/backend/polaris/delivery/ws/endpoints/stream.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py"
+    ],
+    "changes": [
+      "heartbeat renew via asyncio.to_thread; never kill heartbeat on renew/projection errors",
+      "close_authority via asyncio.to_thread",
+      "acquire_cutoff: release stage-claim flock before await resolve_source_cut; re-scan on re-acquire; resolve in to_thread",
+      "send_json: prepare/elide frame off-loop via asyncio.to_thread",
+      "regression test_slow_source_resolve_yields_event_loop_for_other_coroutines"
+    ]
+  },
+  "verification": {
+    "pytest_authority": "136 passed",
+    "ruff": "clean",
+    "rebench": {
+      "label": "r142c-ws-serialize",
+      "factory_run_id": "factory_5f8d11c03011",
+      "work_dir": "/tmp/factory-bench-l1-01-r142c-ws-serialize",
+      "wall_s": 832,
+      "chain_exit": 1,
+      "result": "FAIL_DELIVERY_AND_LATE_GET (not pure infra hang)",
+      "source_files": 11,
+      "prod_lines": 1150,
+      "notes": {
+        "event_wait_timeout_as_primary": false,
+        "real_run_gate": "failed: build_test_lint_ran, entrypoint_smoke (gate evaluated)",
+        "deo_current_policy_evidence_unavailable": 0,
+        "TOOL_RESULT_FAILED": 1,
+        "new_residual": "missing_required_refs=actual_sibling_exports on LLM prepare; missing tests; late GET still slow under director load"
+      }
+    }
+  },
+  "four_pillars": "NOT_MET",
+  "do_not_advance": "L1-02",
+  "next_action": "Address residual: actual_sibling_exports evidence coverage, missing tests delivery path, remaining GET stalls under load; then rebench"
+}

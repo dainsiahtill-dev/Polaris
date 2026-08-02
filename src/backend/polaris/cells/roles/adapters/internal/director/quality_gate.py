@@ -151,6 +151,28 @@ def _summarize_llm_stage_result(result: dict[str, Any], *, stage: str) -> dict[s
     lifecycle_summary = raw_payload.get("tool_lifecycle_summary")
     if isinstance(lifecycle_summary, dict) and lifecycle_summary:
         summary["tool_lifecycle_summary"] = lifecycle_summary
+    # R129: preserve DEO batch receipts / tool_results so dependent-task
+    # actual_sibling_exports can bind parent physical effect receipts.
+    batch_receipt = result.get("batch_receipt")
+    if not isinstance(batch_receipt, dict):
+        batch_receipt = raw_payload.get("batch_receipt")
+    if not isinstance(batch_receipt, dict):
+        batch_receipt = metadata.get("batch_receipt")
+    if not isinstance(batch_receipt, dict):
+        batch_receipt = execution_stats.get("batch_receipt")
+    if isinstance(batch_receipt, dict) and batch_receipt:
+        summary["batch_receipt"] = dict(batch_receipt)
+        if "metadata" not in summary:
+            summary["metadata"] = {}
+        if isinstance(summary["metadata"], dict) and "batch_receipt" not in summary["metadata"]:
+            summary["metadata"]["batch_receipt"] = dict(batch_receipt)
+    tool_results = result.get("tool_results")
+    if not isinstance(tool_results, list):
+        tool_results = raw_payload.get("tool_results")
+    if not isinstance(tool_results, list):
+        tool_results = metadata.get("tool_results")
+    if isinstance(tool_results, list) and tool_results:
+        summary["tool_results"] = [dict(item) for item in tool_results if isinstance(item, dict)][:64]
     return summary
 
 
@@ -221,158 +243,29 @@ def _safe_int(value: Any) -> int:
         return 0
 
 
-def _provider_tool_definition(tool_name: str) -> dict[str, Any] | None:
-    try:
-        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
-    except (ImportError, RuntimeError, ValueError):
-        return None
-    try:
-        schema = ToolSpecRegistry.get_llm_schema(
-            str(tool_name or "").strip(),
-            include_arg_aliases=True,
-            deterministic=True,
-        )
-    except (RuntimeError, TypeError, ValueError):
-        return None
-    return json.loads(json.dumps(schema, ensure_ascii=False)) if isinstance(schema, dict) else None
-
-
-def _fallback_quality_repair_write_file_tool_definition() -> dict[str, Any]:
-    return {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": "Write a complete UTF-8 text file at the requested target path.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file": {"type": "string"},
-                    "content": {"type": "string", "minLength": 1},
-                },
-                "required": ["file", "content"],
-            },
-        },
-    }
-
-
 def _quality_repair_write_file_tool_definition() -> dict[str, Any]:
-    definition = _provider_tool_definition("write_file")
-    if definition is None:
-        return _fallback_quality_repair_write_file_tool_definition()
-    return definition
+    """Registry-faithful write_file schema via Forced Tool Surface SSOT (R127)."""
+    from polaris.kernelone.tool_execution.forced_tool_surface import resolve_registry_tool_schema
 
-
-def _fallback_quality_repair_edit_file_tool_definition() -> dict[str, Any]:
-    return {
-        "type": "function",
-        "function": {
-            "name": "edit_file",
-            "description": (
-                "Replace one exact UTF-8 search string in an existing file. "
-                "Use this for compiler/test repair when preserving the rest of the file."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file": {"type": "string"},
-                    "search": {"type": "string", "minLength": 1},
-                    "replace": {"type": "string"},
-                },
-                "required": ["file", "search", "replace"],
-            },
-        },
-    }
+    return resolve_registry_tool_schema("write_file")
 
 
 def _quality_repair_edit_file_tool_definition() -> dict[str, Any]:
-    definition = _provider_tool_definition("edit_file")
-    if definition is None:
-        return _fallback_quality_repair_edit_file_tool_definition()
-    function_payload = definition.get("function")
-    if not isinstance(function_payload, dict):
-        return _fallback_quality_repair_edit_file_tool_definition()
-    parameters = function_payload.get("parameters")
-    if not isinstance(parameters, dict):
-        return _fallback_quality_repair_edit_file_tool_definition()
-    properties = parameters.get("properties")
-    if not isinstance(properties, dict):
-        return _fallback_quality_repair_edit_file_tool_definition()
-    allowed = {
-        "file",
-        "path",
-        "filepath",
-        "filePath",
-        "file_path",
-        "filename",
-        "target",
-        "target_file",
-        "targetFile",
-        "target_path",
-        "targetPath",
-        "old",
-        "old_text",
-        "oldText",
-        "old_string",
-        "oldString",
-        "search",
-        "search_text",
-        "searchText",
-        "find",
-        "SEARCH",
-        "Search",
-        "new",
-        "new_text",
-        "newText",
-        "new_code",
-        "newCode",
-        "new_string",
-        "newString",
-        "replace",
-        "replace_text",
-        "replaceText",
-        "replacement_text",
-        "replacementText",
-        "REPLACE",
-        "Replace",
-        "regex",
-    }
-    narrowed_properties = {
-        name: schema for name, schema in properties.items() if name in allowed and isinstance(schema, dict)
-    }
-    if not {"file", "search", "replace"} <= set(narrowed_properties):
-        return _fallback_quality_repair_edit_file_tool_definition()
-    narrowed_properties["search"] = {**narrowed_properties["search"], "minLength": 1}
-    function_payload["description"] = (
-        "Replace one exact UTF-8 search string in an existing file. "
-        "Use this for compiler/test repair when preserving the rest of the file."
-    )
-    function_payload["parameters"] = {
-        **parameters,
-        "properties": narrowed_properties,
-        "required": ["file", "search", "replace"],
-    }
-    return definition
+    """Registry-faithful edit_file schema via Forced Tool Surface SSOT (R127).
+
+    Final provider qualification compares forced tools against ToolSpecRegistry.
+    Repair guidance belongs in the prompt/SESSION_PATCH only.
+    """
+    from polaris.kernelone.tool_execution.forced_tool_surface import resolve_registry_tool_schema
+
+    return resolve_registry_tool_schema("edit_file")
 
 
 def _quality_repair_execute_command_tool_definition() -> dict[str, Any]:
-    return {
-        "type": "function",
-        "function": {
-            "name": "execute_command",
-            "description": (
-                "Run a workspace-local verification command after a quality repair. "
-                "Use this for bounded build, test, typecheck, or lint commands."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {"type": "string", "minLength": 1},
-                    "timeout": {"type": "integer", "minimum": 1, "maximum": 120},
-                },
-                "required": ["command"],
-            },
-        },
-    }
+    """Registry-faithful execute_command schema via Forced Tool Surface SSOT (R127)."""
+    from polaris.kernelone.tool_execution.forced_tool_surface import resolve_registry_tool_schema
+
+    return resolve_registry_tool_schema("execute_command")
 
 
 def _director_repair_force_existing_write_enabled() -> bool:
@@ -390,11 +283,10 @@ def _director_repair_force_existing_write_enabled() -> bool:
 
 
 def _quality_repair_existing_target_tool_definitions() -> list[dict[str, Any]]:
-    return [
-        _quality_repair_edit_file_tool_definition(),
-        _quality_repair_write_file_tool_definition(),
-        _quality_repair_execute_command_tool_definition(),
-    ]
+    """Existing-file quality repair forced tools — registry SSOT only (R127)."""
+    from polaris.kernelone.tool_execution.forced_tool_surface import build_forced_tool_surface
+
+    return build_forced_tool_surface(("edit_file", "write_file", "execute_command"))
 
 
 def _format_unresolved_relative_import_error_for_repair_prompt(error: Any) -> str | None:
@@ -2812,6 +2704,9 @@ async def _run_materialization_quality_repair_retry(
         **dict(context or {}),
         "run_id": run_id,
         "task_id": target_task_id,
+        # Keep full task so dependency-artifact rebind can rebuild sibling exports
+        # without relying on a non-serializable trusted token from the first turn.
+        "task": dict(task) if isinstance(task, dict) else task,
         "delivery_mode": "materialize_changes",
         "failed_gate_evidence": failed_gate_evidence,
         "failure_evidence": failed_gate_evidence,
@@ -2835,6 +2730,9 @@ async def _run_materialization_quality_repair_retry(
             context=repair_context,
             workspace=workspace_full,
         )
+    rebind_dependency_artifact = getattr(adapter, "_rebind_director_dependency_artifact_for_dialogue", None)
+    if callable(rebind_dependency_artifact) and isinstance(task, dict):
+        rebind_dependency_artifact(repair_context)
     if task_scope_filter_evidence:
         repair_context["director_quality_repair"]["task_boundary_scope_filter"] = task_scope_filter_evidence
     if task_boundary_discrepancy_evidence:

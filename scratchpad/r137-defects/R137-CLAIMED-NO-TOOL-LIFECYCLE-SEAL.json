@@ -1,0 +1,53 @@
+{
+  "defect_id": "R137-CLAIMED-NO-TOOL-LIFECYCLE-SEAL",
+  "status": "fixed_platform_validated_live",
+  "summary": "Claimed Director materialization that ends with zero tool batches (closed_without_tools / director_no_materialized_changes) left no tool_call_lifecycle receipt, so Run Ledger projected TOOL_LIFECYCLE_MISSING for the claimed task even though claim/fail evidence existed.",
+  "root_cause": {
+    "evidence_run": "r136 factory_53c14335812e",
+    "missing_required_task_keys": [
+      "TASK-3"
+    ],
+    "task_3_fail": "director_no_materialized_changes",
+    "turn_outcome": "closed_without_tools=true; later fail-closed (segmented ledger lock unavailable)",
+    "mechanism": "claim registers tool lifecycle requirement; adapter fail path without tools never sealed a lifecycle receipt; projection treated absence as TOOL_LIFECYCLE_MISSING"
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py",
+      "src/backend/polaris/cells/control_plane/run_ledger/public/__init__.py",
+      "src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py",
+      "src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py"
+    ],
+    "changes": [
+      "build_claimed_materialization_without_tool_lifecycle_receipt helper",
+      "_seal_claimed_materialization_without_tool_lifecycle on no_materialized_changes path",
+      "pytest: sealed receipt clears missing_required_task_keys; failure class != TOOL_LIFECYCLE_MISSING"
+    ]
+  },
+  "verification": {
+    "pytest_tool_lifecycle": "131 passed",
+    "ruff": "clean",
+    "targeted": [
+      "test_claimed_materialization_without_tools_seals_lifecycle_not_missing"
+    ]
+  },
+  "rebench": {
+    "label": "r137-claimed-no-tool-lifecycle",
+    "factory_run_id": "factory_663c6385ef52",
+    "work_dir": "/tmp/factory-bench-l1-01-r137-claimed-no-tool-lifecycle",
+    "wall_s": 442.1,
+    "result": "FAIL (pillars incomplete) but R137 VALIDATED",
+    "source_files": 9,
+    "R137_live_validation": {
+      "prior_r136": "TOOL_LIFECYCLE_MISSING; missing_required_task_keys=['TASK-3']; root_cause=tool_lifecycle_failed",
+      "now": "TOOL_LIFECYCLE_MISSING count=0; requirement_status=satisfied; missing_required_task_keys=[]; failed_control_plane_events=['TOOL_RESULT_FAILED'] for TASK-2 deo_tool_normalization_failed",
+      "root_cause_signature": "control_plane:tool_result_failed (not tool_lifecycle_failed/TOOL_LIFECYCLE_MISSING)"
+    },
+    "residual": {
+      "real_run_gate": "build/test/lint + entrypoint smoke failed",
+      "delivery_depth": "test_files=0",
+      "open_generic_next": "R138 candidates: deo_tool_normalization_failed on TASK-2 write path OR incomplete multi-task delivery after lifecycle attribution fixed"
+    }
+  },
+  "next_action": "Attribute deo_tool_normalization_failed if platform-owned; do not thrash model-only TS first"
+}

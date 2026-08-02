@@ -30,9 +30,31 @@ def normalize_edit_file_args(tool_args: dict[str, Any]) -> dict[str, Any]:
     `replacement` is context-sensitive:
     - line-range mode: replacement/new_text/code/source/body are the new line content.
     - search mode: replacement is the search/replace replacement value.
+
+    R140: models often emit OpenCode/Aider-style ``old_string``/``new_string``
+    pairs; map them onto the canonical search/replace mode before DEO freezes.
     """
 
     normalized = normalize_file_path_args(tool_args)
+    if normalized.get("search") is None:
+        for key in ("old_string", "old_str", "find", "pattern"):
+            value = normalized.get(key)
+            if isinstance(value, str) and value:
+                normalized["search"] = value
+                if key != "search":
+                    normalized.pop(key, None)
+                break
+    if normalized.get("replace") is None:
+        for key in ("new_string", "new_str", "replacement", "to"):
+            value = normalized.get(key)
+            if isinstance(value, str) and value:
+                normalized["replace"] = value
+                if key not in {"replace", "replacement"}:
+                    normalized.pop(key, None)
+                elif key == "replacement":
+                    normalized.pop("replacement", None)
+                break
+
     has_line_range = normalized.get("start_line") is not None or normalized.get("end_line") is not None
     has_search = normalized.get("search") is not None
 

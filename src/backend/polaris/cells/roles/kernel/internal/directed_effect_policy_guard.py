@@ -165,9 +165,12 @@ def _freeze_value(value: object) -> DirectedEffectImmutableValueV1:
 
 
 def _immutable_arguments(arguments: Mapping[str, object]) -> tuple[tuple[str, DirectedEffectImmutableValueV1], ...]:
+    """Freeze tool arguments into sorted immutable DEO key/value pairs."""
+
+    frozen = tuple((str(key), _freeze_value(value)) for key, value in arguments.items())
     return require_directed_effect_immutable_items(
         "normalized_arguments",
-        tuple((str(key), _freeze_value(value)) for key, value in arguments.items()),
+        tuple(sorted(frozen, key=lambda item: item[0])),
     )
 
 
@@ -443,8 +446,29 @@ class DirectedEffectPolicyGuard:
                 error_code=None,
             )
         except (AttributeError, KeyError, TypeError, ValueError) as exc:
-            logger.debug("authoritative directed-effect guard denied malformed evidence: %s", exc)
-            return _denied("deo_authorization_hash_drift")
+            # Prefer precise codes over collapsing every malformed-input failure into
+            # deo_authorization_hash_drift (which hid JobToken/arg/tool-spec faults).
+            message = str(exc)
+            lowered = message.lower()
+            if "jobtoken" in lowered or "job token" in lowered:
+                code = "deo_job_token_invalid"
+            elif (
+                "toolspec snapshot drift" in lowered
+                or "snapshot drift" in lowered
+                or "must be sorted" in lowered
+                or "immutable" in lowered
+                or "normalized arguments" in lowered
+                or isinstance(exc, (KeyError, TypeError, AttributeError))
+            ):
+                code = "deo_tool_normalization_failed"
+            else:
+                code = "deo_authorization_hash_drift"
+            logger.warning(
+                "authoritative directed-effect guard denied malformed evidence code=%s err=%s",
+                code,
+                exc,
+            )
+            return _denied(code)
         return DirectedEffectPolicyGuardResultV1(
             status="authorized",
             error_code=None,

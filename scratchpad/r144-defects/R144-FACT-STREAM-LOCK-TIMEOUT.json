@@ -1,0 +1,49 @@
+{
+  "defect_id": "R144-FACT-STREAM-LOCK-TIMEOUT-CUTOFF-APPEND",
+  "status": "fixed_platform_unit_and_live_validated",
+  "summary": "factory_role_evidence_cutoff_append_failed from 2s advisory lock timeout under concurrent fsync cutoff + heartbeat/settlement. Also blocked asyncio during multi-fragment fsync.",
+  "root_cause": {
+    "evidence_run": "r143 factory_a43f39268d2b",
+    "mechanism": [
+      "SegmentedJsonlEventStore/LockedRegularFileSetV1 default lock_timeout=2.0s",
+      "cutoff multi-fragment durability=fsync on event loop contended with heartbeat/settlement",
+      "lock_acquisition_timeout -> factory_role_evidence_cutoff_append_failed"
+    ]
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/events/fact_stream/public/service.py",
+      "src/backend/polaris/kernelone/events/sourcing/file_store.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py"
+    ],
+    "changes": [
+      "Authority segmented store lock_timeout 15s",
+      "JsonlEventStore stream locks 15s",
+      "Cutoff finalize claim+fragment fsync via asyncio.to_thread (off event loop)"
+    ]
+  },
+  "verification": {
+    "pytest_authority": "136 passed",
+    "ruff": "clean",
+    "rebench": {
+      "label": "r144-fact-stream-lock",
+      "factory_run_id": "factory_b8bf7e923518",
+      "work_dir": "/tmp/factory-bench-l1-01-r144-fact-stream-lock",
+      "wall_s": 633,
+      "chain_exit": 1,
+      "cutoff_append_failed_count": 0,
+      "lock_acquisition_timeout_count": 0,
+      "missing_required_refs_count": 0,
+      "real_run_gate": "ok",
+      "residual": [
+        "late GET timeouts",
+        "missing tests / delivery_depth",
+        "run_ledger_integrity_failed",
+        "director.canonical_task_boundary_missing (incomplete multi-task)"
+      ]
+    }
+  },
+  "four_pillars": "NOT_MET",
+  "do_not_advance": "L1-02",
+  "next_action": "R145: late GET stall under director load and/or incomplete multi-task director completion (tests missing)"
+}

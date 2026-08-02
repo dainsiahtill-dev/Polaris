@@ -465,6 +465,16 @@ def _run_materialization_typescript_runtime_repair(
         collect_unmatched_diagnostic_paths=collect_unmatched_diagnostic_paths,
         task=task,
     )
+    # R160: member-alias / init-property repairs need type declaration files
+    # (e.g. Firefly class with get position()) even when diagnostics only name
+    # the consumer path (web.ts). Bound the scan so we do not pull node_modules.
+    if artifact_quality_errors or artifact_quality_issues:
+        _add_bounded_workspace_materialization_base_files(
+            base_files,
+            workspace_path,
+            allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"),
+            max_files=256,
+        )
     quality_issues = tuple(dict(item) for item in artifact_quality_issues)
     if not base_files or (not artifact_quality_errors and not quality_issues):
         return []
@@ -505,6 +515,18 @@ def _run_materialization_node_manifest(
         )
         if not base_files:
             continue
+        # R161: content-driven smoke may create tests/* that are not yet on disk
+        # (and therefore not in base_files). Policy only allows listed paths —
+        # without this, write_file(tests/verify.test.ts) is path-scope denied.
+        allowed = list(base_files.keys())
+        if "package.json" in base_files or any(path.endswith("package.json") for path in base_files):
+            allowed.extend(
+                (
+                    "tests/verify.test.ts",
+                    "tests/smoke.test.ts",
+                    "tests/unit/smoke.test.ts",
+                )
+            )
         results.extend(
             run_runtime_repair_with_director_tools(
                 adapter,
@@ -514,7 +536,7 @@ def _run_materialization_node_manifest(
                 base_files=base_files,
                 artifact_quality_errors=artifact_quality_errors,
                 artifact_quality_issues=artifact_quality_issues,
-                allowed_paths=tuple(base_files.keys()),
+                allowed_paths=tuple(dict.fromkeys(allowed)),
                 use_editor=True,
                 convergence_verifier=convergence_verifier,
                 execution_attempt=execution_attempt,
@@ -805,6 +827,7 @@ def _materialization_task_candidate_paths(
 
 
 _FACTORY_WORKSPACE_QUALITY_TASK_ID_PREFIX = "factory-quality-gate:"
+_FACTORY_DIRECTOR_MAT_SETTLE_TASK_ID_PREFIX = "factory-director-mat-settle:"
 
 
 def _normalize_materialization_scope_path(path: Any) -> str:
@@ -837,7 +860,10 @@ def _materialization_write_scope_is_workspace_level(
     the write authority on that path.
     """
 
-    if str(task_id or "").startswith(_FACTORY_WORKSPACE_QUALITY_TASK_ID_PREFIX):
+    task_id_token = str(task_id or "")
+    if task_id_token.startswith(_FACTORY_WORKSPACE_QUALITY_TASK_ID_PREFIX):
+        return True
+    if task_id_token.startswith(_FACTORY_DIRECTOR_MAT_SETTLE_TASK_ID_PREFIX):
         return True
     if not isinstance(task, Mapping):
         return False

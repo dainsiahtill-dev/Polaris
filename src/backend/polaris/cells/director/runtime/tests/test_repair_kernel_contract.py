@@ -6053,7 +6053,11 @@ def test_public_runtime_dependency_repair_plans_node_types_dev_dependency() -> N
         PlanDirectorRepairCommandV1(
             source_tool=source_tool,
             base_files={
-                "package.json": ('{"name":"node-ts-app","private":true,"devDependencies":{"typescript":"5.4.5"}}\n')
+                "package.json": ('{"name":"node-ts-app","private":true,"devDependencies":{"typescript":"5.4.5"}}\n'),
+                "tsconfig.json": (
+                    '{\n  "compilerOptions": {\n    "target": "ES2020",\n    "lib": ["ES2020", "DOM"],\n'
+                    '    "strict": true\n  },\n  "include": ["src/**/*.ts"]\n}\n'
+                ),
             },
             artifact_quality_errors=(
                 "src/main.ts(43,5): error TS2580: Cannot find name 'process'. "
@@ -6068,10 +6072,62 @@ def test_public_runtime_dependency_repair_plans_node_types_dev_dependency() -> N
     assert payload["planned"] is True
     assert payload["source_tool"] == source_tool
     assert payload["plan_summary"]["rule_id"] == "generic.runtime_dependency"
-    assert payload["plan_summary"]["operation_count"] == 1
+    assert payload["plan_summary"]["operation_count"] >= 2
     assert payload["composition_summary"]["ok"] is True
-    assert payload["composition_summary"]["changed_paths"] == ["package.json"]
-    assert '"@types/node"' in payload["composition_summary"]["patches"][0]["content_after"]
+    changed = set(payload["composition_summary"]["changed_paths"] or [])
+    assert "package.json" in changed
+    assert "tsconfig.json" in changed
+    pkg_after = ""
+    tsconfig_after = ""
+    for patch in payload["composition_summary"]["patches"] or []:
+        if patch.get("path") == "package.json":
+            pkg_after = str(patch.get("content_after") or "")
+        if patch.get("path") == "tsconfig.json":
+            tsconfig_after = str(patch.get("content_after") or "")
+    assert '"@types/node"' in pkg_after
+    assert '"types"' in tsconfig_after
+    assert "node" in tsconfig_after
+
+
+def test_public_runtime_dependency_repair_tsconfig_types_when_atypes_node_already_declared() -> None:
+    """R178/M10: package already has @types/node but tsconfig never lists types:node."""
+
+    source_tool = "deterministic_runtime_dependency_repair"
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={
+                "package.json": (
+                    '{"name":"glowing-insect-garden","private":true,'
+                    '"devDependencies":{"@types/node":"^22.10.0","typescript":"^5.4.5"}}\n'
+                ),
+                "tsconfig.json": (
+                    '{\n  "compilerOptions": {\n    "target": "ES2020",\n    "module": "ES2022",\n'
+                    '    "lib": ["ES2020", "DOM"],\n    "strict": true,\n    "outDir": "dist",\n'
+                    '    "rootDir": "src"\n  },\n  "include": ["src/**/*.ts"]\n}\n'
+                ),
+                "src/main.ts": "process.stdout.write('ok');\n",
+            },
+            artifact_quality_errors=(
+                "src/main.ts(1,1): error TS2580: Cannot find name 'process'. "
+                "Do you need to install type definitions for node? Try `npm i --save-dev @types/node`.",
+            ),
+            mode="commit",
+        )
+    )
+    payload = planning_result.to_dict()
+    assert payload["ok"] is True
+    assert payload["planned"] is True
+    changed = set(payload["composition_summary"]["changed_paths"] or [])
+    assert "tsconfig.json" in changed
+    # package.json must not be rewritten just to re-declare @types/node
+    assert "package.json" not in changed
+    tsconfig_after = ""
+    for patch in payload["composition_summary"]["patches"] or []:
+        if patch.get("path") == "tsconfig.json":
+            tsconfig_after = str(patch.get("content_after") or "")
+    assert '"types"' in tsconfig_after
+    assert '"node"' in tsconfig_after
 
 
 def test_public_runtime_dependency_repair_covers_and_plans_missing_python_requirements() -> None:
@@ -6997,6 +7053,85 @@ def test_public_html_module_script_rewrites_typescript_source_entrypoint() -> No
     assert "/src/engine/renderer.ts" not in repaired
 
 
+def test_public_html_module_script_rewrites_dot_slash_src_typescript_to_dist() -> None:
+    """L1-01 r154: ./src/web.ts must become ./dist/web.js (tsc rootDir=src), not ./src/web.js."""
+
+    diagnostic = (
+        "Artifact quality scan failed: HTML module script references TypeScript source "
+        "'./src/web.ts' in index.html; static entrypoints must load JavaScript"
+    )
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.HTML_TYPESCRIPT_MODULE_SCRIPT_SOURCE_TOOL,
+            base_files={
+                "index.html": (
+                    '<!doctype html>\n<html lang="en">\n<body>\n'
+                    '<script type="module" src="./src/web.ts"></script>\n'
+                    "</body>\n</html>\n"
+                ),
+                "tsconfig.json": ('{"compilerOptions":{"outDir":"dist","rootDir":"src"},"include":["src/**/*.ts"]}\n'),
+                "src/web.ts": "console.log('web');\n",
+            },
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert 'src="./dist/web.js"' in repaired
+    assert "./src/web.ts" not in repaired
+    assert "./src/web.js" not in repaired
+
+
+def test_public_html_truncated_entrypoint_closes_script_and_html_and_rewrites_ts_script() -> None:
+    """L1-01 r154: truncated index.html + .ts module script must clear both quality errors."""
+
+    truncated = (
+        '<!doctype html>\n<html lang="en">\n'
+        '<script type="module" src="./src/web.ts">\n'
+        '<body>\n<main><canvas id="garden-canvas"></main></body>\n'
+        "<head><title>firefly</title></head>\n"
+    )
+    diagnostics = (
+        "Artifact quality scan failed: syntax error in index.html: truncated/incomplete HTML: "
+        "missing </html> closing tag; 1 unclosed <script> tag(s)",
+        "Artifact quality scan failed: HTML module script references TypeScript source "
+        "'./src/web.ts' in index.html; static entrypoints must load JavaScript",
+    )
+
+    coverage = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(artifact_quality_errors=diagnostics)
+    ).to_dict()
+    assert coverage["covered_diagnostic_count"] == 2
+    assert coverage["uncovered_diagnostic_count"] == 0
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.HTML_TYPESCRIPT_MODULE_SCRIPT_SOURCE_TOOL,
+            base_files={
+                "index.html": truncated,
+                "tsconfig.json": ('{"compilerOptions":{"outDir":"dist","rootDir":"src"},"include":["src/**/*.ts"]}\n'),
+                "src/web.ts": "export {};\n",
+                "dist/web.js": "export {};\n",
+            },
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "html.truncated_entrypoint_closure"
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "</html>" in repaired.lower()
+    assert repaired.lower().count("<script") <= repaired.lower().count("</script>")
+    assert 'src="./dist/web.js"' in repaired
+    assert "./src/web.ts" not in repaired
+
+
 def test_public_typescript_html_container_selector_covers_html5_verifier_contract_mismatch() -> None:
     diagnostic = (
         "Artifact quality scan failed: workspace validation command failed (npm test):\n"
@@ -7031,6 +7166,406 @@ def test_public_typescript_html_container_selector_covers_html5_verifier_contrac
     assert planning["plan_summary"]["rule_id"] == "typescript.html_container_selector"
     content_after = planning["composition_summary"]["patches"][0]["content_after"]
     assert "/id=[\"'][^\"']*(market|stall|sim|app)[^\"']*[\"']/i" in content_after
+
+
+def test_public_typescript_duplicate_function_removes_later_stub() -> None:
+    """L1-01 r157: trailing stub export function after real async export blocks tsc."""
+
+    diagnostic = (
+        "src/verify.ts(10,17): error TS2393: Duplicate function implementation.\n"
+        "src/verify.ts(10,17): error TS2323: Cannot redeclare exported variable 'runVerification'."
+    )
+    source = (
+        "export async function runVerification(): Promise<boolean> {\n"
+        "  return true;\n"
+        "}\n"
+        "\n"
+        "export function runVerification(..._args: unknown[]): any {\n"
+        "  return false;\n"
+        "}\n"
+    )
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,)))
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_DUPLICATE_FUNCTION_SOURCE_TOOL,
+            base_files={"src/verify.ts": source},
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert coverage.to_dict()["covered_diagnostic_count"] >= 1
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.duplicate_function"
+    after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert after.count("function runVerification") == 1
+    assert "export async function runVerification" in after
+    assert "export function runVerification(..._args" not in after
+
+
+def test_public_typescript_member_alias_rewrites_position_glow_and_garden_tick() -> None:
+    """L1-01 r160: Firefly.x/glow and Garden.setMoonPhase/tick vs real model surface."""
+
+    # Line numbers must match source rows (1-based) used by the alias planner.
+    diagnostics = (
+        "src/web.ts(4,10): error TS2339: Property 'setMoonPhase' does not exist on type 'Garden'.",
+        "src/web.ts(5,10): error TS2339: Property 'tick' does not exist on type 'Garden'.",
+        "src/web.ts(6,21): error TS2339: Property 'x' does not exist on type 'Firefly'.",
+        "src/web.ts(7,21): error TS2339: Property 'glow' does not exist on type 'Firefly'.",
+    )
+    base_files = {
+        "src/models/Firefly.ts": (
+            "export class Firefly {\n"
+            "  get position(): { x: number; y: number } { return { x: 1, y: 2 }; }\n"
+            "  currentGlow(): number { return 0.5; }\n"
+            "  tick(dt: number): void { void dt; }\n"
+            "}\n"
+        ),
+        "src/models/index.ts": (
+            "import type { Firefly } from './Firefly.js';\n"
+            "export interface Garden {\n"
+            "  readonly fireflies: ReadonlyArray<Firefly>;\n"
+            "  readonly moon: { tick(dt: number): void };\n"
+            "}\n"
+        ),
+        "src/web.ts": (
+            "import type { Garden } from './models/index.js';\n"  # 1
+            "import type { Firefly } from './models/Firefly.js';\n"  # 2
+            "export function paint(garden: Garden, firefly: Firefly): void {\n"  # 3
+            "  garden.setMoonPhase('full');\n"  # 4
+            "  garden.tick(0.016);\n"  # 5
+            "  const _x = firefly.x;\n"  # 6
+            "  const _g = firefly.glow;\n"  # 7
+            "  void _x; void _g;\n"  # 8
+            "}\n"  # 9
+        ),
+    }
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "setMoonPhase(" not in after
+    assert "__entity.tick" in after
+    assert "firefly.position.x" in after
+    assert "firefly.currentGlow()" in after
+
+
+def test_public_typescript_literal_union_expand_adds_missing_literals() -> None:
+    """L1-01 r160: Type '\"waxing\"' not assignable to MoonPhaseName expands the union."""
+
+    diagnostic = (
+        "src/web.ts(3,10): error TS2322: Type '\"waxing\"' is not assignable to type 'MoonPhaseName'."
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_LITERAL_UNION_EXPAND_SOURCE_TOOL,
+            base_files={
+                "src/models/types.ts": 'export type MoonPhaseName = "new" | "full";\n',
+                "src/web.ts": 'import type { MoonPhaseName } from "./models/types.js";\nconst p: MoonPhaseName = "waxing";\n',
+            },
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert '"waxing"' in after
+    assert "MoonPhaseName" in after
+
+
+def test_public_typescript_init_property_alias_renames_garden_init_keys() -> None:
+    """L1-01 r160: createGarden({ fireflies, flowers, humidity }) → *Count / initialHumidity."""
+
+    diagnostic = (
+        "src/web.ts(1,20): error TS2353: Object literal may only specify known properties, "
+        "and 'fireflies' does not exist in type 'GardenInit'."
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_INIT_PROPERTY_ALIAS_SOURCE_TOOL,
+            base_files={
+                "src/models/index.ts": (
+                    "export interface GardenInit {\n"
+                    "  readonly fireflyCount?: number;\n"
+                    "  readonly flowerCount?: number;\n"
+                    "  readonly initialHumidity?: number;\n"
+                    "}\n"
+                ),
+                "src/web.ts": "const g = createGarden({ fireflies: 6, flowers: 5, humidity: 0.7 });\n",
+            },
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "fireflyCount: 6" in after
+    assert "flowerCount: 5" in after
+    assert "initialHumidity: 0.7" in after
+    assert "fireflies:" not in after
+
+
+def test_public_typescript_import_type_value_conflict_drops_type_flower_keeps_value() -> None:
+    """L1-01 r164: type Flower + Flower value import → TS2300/TS1361; keep value only."""
+
+    diagnostics = (
+        "src/engine/simulation.ts(3,8): error TS2300: Duplicate identifier 'Flower'.",
+        "src/engine/simulation.ts(6,3): error TS2300: Duplicate identifier 'Flower'.",
+        "src/engine/simulation.ts(10,11): error TS1361: 'Flower' cannot be used as a value "
+        "because it was imported using 'import type'.",
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
+            base_files={
+                "src/models/Flower.ts": "export class Flower { constructor(public n: number) {} }\n",
+                "src/engine/simulation.ts": (
+                    "import {\n"  # 1
+                    "  type Firefly,\n"  # 2
+                    "  type Flower,\n"  # 3
+                    "  Humidity,\n"  # 4
+                    "  createFireflySwarm,\n"  # 5
+                    "  Flower,\n"  # 6
+                    "} from '../models';\n"  # 7
+                    "export function seed(): Flower {\n"  # 8
+                    "  const f: Firefly | null = null;\n"  # 9
+                    "  return new Flower(1);\n"  # 10
+                    "}\n"
+                ),
+            },
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.import_type_value_conflict"
+    after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "type Flower" not in after
+    assert "Flower" in after
+    assert "new Flower(1)" in after
+    assert "type Firefly" in after  # unrelated type-only stays
+
+
+def test_public_typescript_import_type_value_conflict_promotes_type_only_import() -> None:
+    """L1-01 r164: pure import type { Flower } used as value → promote to value import."""
+
+    diagnostic = (
+        "src/engine/simulation.ts(2,14): error TS1361: 'Flower' cannot be used as a value "
+        "because it was imported using 'import type'."
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
+            base_files={
+                "src/models/Flower.ts": "export class Flower {}\n",
+                "src/engine/simulation.ts": (
+                    "import type { Flower } from '../models';\n"
+                    "export function make(): Flower { return new Flower(); }\n"
+                ),
+            },
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "import type { Flower }" not in after
+    assert "import { Flower }" in after or "import {Flower}" in after.replace(" ", "")
+    assert "new Flower()" in after
+
+
+def test_public_typescript_arg_type_function_alias_rewrites_humidity_to_hydration() -> None:
+    """L1-01 r161: adjustHumidity(FlowerState) → adjustHydration + import rewrite."""
+
+    diagnostic = (
+        "src/web.ts(4,12): error TS2345: Argument of type 'FlowerState' is not assignable "
+        "to parameter of type 'HumidityState'."
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_ARG_TYPE_FUNCTION_ALIAS_SOURCE_TOOL,
+            base_files={
+                "src/models/Flower.ts": (
+                    "export interface FlowerState { hydration: number; }\n"
+                    "export function adjustHydration(state: FlowerState, delta: number): FlowerState {\n"
+                    "  return { hydration: state.hydration + delta };\n"
+                    "}\n"
+                ),
+                "src/models/Humidity.ts": (
+                    "export interface HumidityState { value: number; }\n"
+                    "export function adjustHumidity(state: HumidityState, delta: number): HumidityState {\n"
+                    "  return { value: state.value + delta };\n"
+                    "}\n"
+                ),
+                "src/models/index.ts": (
+                    "export * from './Flower.js';\n"
+                    "export * from './Humidity.js';\n"
+                ),
+                "src/web.ts": (
+                    "import { adjustHumidity } from './models/index.js';\n"  # 1
+                    "import type { FlowerState } from './models/index.js';\n"  # 2
+                    "export function water(fl: FlowerState): FlowerState {\n"  # 3
+                    "  return adjustHumidity(fl, 0.1);\n"  # 4
+                    "}\n"  # 5
+                ),
+            },
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.arg_type_function_alias"
+    after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "adjustHydration(fl, 0.1)" in after
+    assert "adjustHumidity(fl" not in after
+    # Named import must follow the callee rename (otherwise TS2304).
+    assert "import { adjustHydration } from './models/index.js';" in after
+    assert "import { adjustHumidity }" not in after
+
+
+def test_public_typescript_json_as_source_seeds_vitest_smoke_for_bare_test_script() -> None:
+    """L1-01 r161: package.json scripts.test is bare ``vitest run`` with no tests/."""
+
+    real_package = (
+        "{\n"
+        '  "name": "firefly-garden-simulator",\n'
+        '  "version": "0.1.0",\n'
+        '  "private": true,\n'
+        '  "type": "module",\n'
+        '  "scripts": {\n'
+        '    "build": "tsc -p tsconfig.json",\n'
+        '    "test": "vitest run",\n'
+        '    "start": "node dist/main.js"\n'
+        "  }\n"
+        "}\n"
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_JSON_AS_SOURCE_SOURCE_TOOL,
+            base_files={
+                "package.json": real_package,
+                "src/main.ts": "export function main(): void {}\n",
+            },
+            artifact_quality_errors=(),
+            mode="shadow",
+        )
+    ).to_dict()
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    patches = planning["composition_summary"]["patches"]
+    by_path = {str(patch.get("path") or ""): patch for patch in patches}
+    assert "tests/verify.test.ts" in by_path
+    test_after = str(by_path["tests/verify.test.ts"].get("content_after") or "")
+    assert 'from "vitest"' in test_after
+    assert "package.json" in test_after
+    assert "expect(" in test_after
+
+
+def test_public_typescript_json_as_source_rewrites_package_manifest_and_adds_smoke_test() -> None:
+    """L1-01 r159: package.json body written into src/verify.ts blocks tsc (TS1005).
+
+    Also package.json scripts.test points at tests/*.test.ts with no test files.
+    """
+
+    diagnostic = "src/verify.ts(1,8): error TS1005: ';' expected."
+    package_json_body = (
+        '{"name":"firefly-garden-simulator","version":"1.0.0","private":true,'
+        '"scripts":{"build":"tsc -p tsconfig.json","test":"node --test --import tsx tests/*.test.ts",'
+        '"verify":"node --experimental-strip-types src/verify.ts"},"type":"module"}\n'
+    )
+    real_package = (
+        "{\n"
+        '  "name": "firefly-garden-simulator",\n'
+        '  "version": "0.1.0",\n'
+        '  "private": true,\n'
+        '  "type": "module",\n'
+        '  "scripts": {\n'
+        '    "build": "tsc -p tsconfig.json",\n'
+        '    "start": "node dist/main.js",\n'
+        '    "test": "node --test --import tsx tests/*.test.ts"\n'
+        "  }\n"
+        "}\n"
+    )
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,)))
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_JSON_AS_SOURCE_SOURCE_TOOL,
+            base_files={
+                "src/verify.ts": package_json_body,
+                "package.json": real_package,
+                "src/main.ts": "export function main(): void {}\n",
+            },
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert coverage.to_dict()["covered_diagnostic_count"] >= 1
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.json_as_source"
+    patches = planning["composition_summary"]["patches"]
+    by_path = {str(patch.get("path") or ""): patch for patch in patches}
+    assert "src/verify.ts" in by_path
+    verify_after = str(by_path["src/verify.ts"].get("content_after") or "")
+    assert '"scripts"' not in verify_after
+    assert "export function runVerification" in verify_after
+    assert "tests/verify.test.ts" in by_path
+    test_after = str(by_path["tests/verify.test.ts"].get("content_after") or "")
+    assert "node:test" in test_after
+    assert "package.json" in test_after
+
+
+def test_public_typescript_readonly_assignment_mutates_readonly_array_fields() -> None:
+    """L1-01 r157: TS2542 ReadonlyArray index writes + TS2540 property writes."""
+
+    diagnostics = (
+        "src/engine/simulation.ts(7,5): error TS2542: Index signature in type "
+        "'readonly number[]' only permits reading.",
+        "src/engine/simulation.ts(9,3): error TS2540: Cannot assign to 'humidity' because it is a read-only property.",
+    )
+    source = (
+        "export interface GardenScene {\n"  # 1
+        "  readonly humidity: number;\n"  # 2
+        "  readonly fireflies: ReadonlyArray<number>;\n"  # 3
+        "}\n"  # 4
+        "export function step(scene: GardenScene): GardenScene {\n"  # 5
+        "  for (let i = 0; i < scene.fireflies.length; i++) {\n"  # 6
+        "    scene.fireflies[i] = i;\n"  # 7
+        "  }\n"  # 8
+        "  scene.humidity = 1;\n"  # 9
+        "  return scene;\n"  # 10
+        "}\n"  # 11
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_READONLY_ASSIGNMENT_SOURCE_TOOL,
+            base_files={"src/engine/simulation.ts": source},
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "readonly humidity" not in after
+    assert "ReadonlyArray" not in after
+    assert "fireflies: number[]" in after
+    assert "humidity: number" in after
 
 
 def test_public_typescript_dom_local_shim_cleanup_removes_generated_dom_shims() -> None:

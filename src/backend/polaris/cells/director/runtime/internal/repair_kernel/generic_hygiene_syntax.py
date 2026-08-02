@@ -190,12 +190,20 @@ def build_runtime_dependency_plan(
     diagnostics: Sequence[RepairDiagnostic] = (),
     mode: str = "commit",
 ) -> RepairPlan | None:
-    """Build structured dependency-manifest repairs from explicit diagnostics."""
+    """Build structured dependency-manifest repairs from explicit diagnostics.
+
+    Live L1-01 r178: package.json already listed ``@types/node`` but ``tsc`` still
+    failed TS2580 ``process`` because ``tsconfig.json`` only had ``lib: [ES2020, DOM]``
+    and never pulled Node globals. When Node type diagnostics fire, always ensure
+    both the devDependency and ``compilerOptions.types`` include ``node``.
+    """
 
     normalized_base = _normalize_base_files(base_files)
     content = normalized_base.get("package.json")
     operations: list[RepairOperation] = []
     manifests: list[str] = []
+    required_dev = _parse_required_dev_dependency_packages(diagnostics)
+    needs_node_types = "@types/node" in required_dev
     if content is not None:
         try:
             payload = json.loads(content)
@@ -209,7 +217,7 @@ def build_runtime_dependency_plan(
             ]
             dev_packages = [
                 package
-                for package in _parse_required_dev_dependency_packages(diagnostics)
+                for package in required_dev
                 if package in _KNOWN_DEV_DEPENDENCY_VERSIONS and not _package_declared_in_manifest(payload, package)
             ]
             before_hash = sha256_text(content)
@@ -237,6 +245,14 @@ def build_runtime_dependency_plan(
                 )
             if runtime_packages or dev_packages:
                 manifests.append("package.json")
+
+    if needs_node_types:
+        tsconfig_ops = _typescript_tsconfig_node_types_operations(
+            tsconfig_text=str(normalized_base.get("tsconfig.json") or ""),
+        )
+        if tsconfig_ops:
+            operations.extend(tsconfig_ops)
+            manifests.append("tsconfig.json")
 
     requirements_packages = _parse_python_requirements_packages(diagnostics)
     if requirements_packages:
@@ -277,7 +293,82 @@ def build_runtime_dependency_plan(
         mode=mode,
         risk_level="medium",
         priority=1,
-        metadata={"structured_operation": "dependency_manifest", "manifests": tuple(manifests)},
+        metadata={"structured_operation": "dependency_manifest", "manifests": tuple(dict.fromkeys(manifests))},
+    )
+
+
+def _typescript_tsconfig_node_types_operations(*, tsconfig_text: str) -> tuple[RepairOperation, ...]:
+    """Ensure ``compilerOptions.types`` includes ``node`` for TS2580 process globals.
+
+    When ``types`` is absent TypeScript auto-includes all ``@types/*`` packages that
+    are installed. Bench/real_run may skip install when package-lock exists but
+    ``node_modules/@types/node`` is missing; an explicit ``types: ["node"]`` plus
+    declared ``@types/node`` makes the intent auditable and lets install/repair
+    converge. If ``types`` already lists packages without ``node``, append it.
+    """
+
+    text = str(tsconfig_text or "")
+    if not text.strip():
+        # Seed a minimal Node-capable tsconfig when diagnostics prove Node globals.
+        payload = {
+            "compilerOptions": {
+                "target": "ES2020",
+                "module": "ES2022",
+                "moduleResolution": "node",
+                "lib": ["ES2020"],
+                "types": ["node"],
+                "strict": True,
+                "esModuleInterop": True,
+                "skipLibCheck": True,
+                "outDir": "dist",
+                "rootDir": "src",
+            },
+            "include": ["src/**/*.ts"],
+            "exclude": ["node_modules", "dist"],
+        }
+        content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+        return (
+            RepairOperation(
+                kind="write_file",
+                path="tsconfig.json",
+                content=content,
+                before_hash=sha256_text(""),
+                metadata={
+                    "repair_kind": "typescript_tsconfig_node_types_seed",
+                    "write_file_reason": "ts2580_node_types_missing_tsconfig",
+                },
+            ),
+        )
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return ()
+    if not isinstance(payload, dict):
+        return ()
+    compiler_options_raw = payload.get("compilerOptions")
+    compiler_options = dict(compiler_options_raw) if isinstance(compiler_options_raw, Mapping) else {}
+    types_raw = compiler_options.get("types")
+    if isinstance(types_raw, list):
+        types_list = [str(item) for item in types_raw if str(item or "").strip()]
+        if "node" in types_list:
+            return ()
+        types_list.append("node")
+    else:
+        # Explicit types array so Node globals resolve even when only DOM was in lib.
+        types_list = ["node"]
+    before_hash = sha256_text(text)
+    return (
+        RepairOperation(
+            kind="json_set",
+            path="tsconfig.json",
+            json_path=("compilerOptions", "types"),
+            value=types_list,
+            before_hash=before_hash,
+            metadata={
+                "repair_kind": "typescript_tsconfig_node_types",
+                "types": tuple(types_list),
+            },
+        ),
     )
 
 

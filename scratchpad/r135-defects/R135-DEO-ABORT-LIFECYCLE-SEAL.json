@@ -1,0 +1,41 @@
+{
+  "defect_id": "R135-DEO-ABORT-LIFECYCLE-SEAL",
+  "status": "fixed_platform_validated_live",
+  "summary": "When DEO aborts native write batch preparation (deo_* / directed_effect_*), seal a blocked tool_call_lifecycle receipt before re-raising so claimed materialization never ends as bare TOOL_LIFECYCLE_MISSING.",
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py",
+      "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_tool_batch_executor_metadata.py"
+    ],
+    "changes": [
+      "_is_deo_abort_error + _seal_deo_abort_tool_lifecycle helper",
+      "execute_tool_batch wraps _prepare_directed_effect_dispatch and seals lifecycle on DEO RuntimeError",
+      "deferred repair followup prepare path also seals on DEO abort",
+      "pytest: seal writes blocked TOOL_RESULT_FAILED receipt; is_deo_abort_error matrix"
+    ]
+  },
+  "verification": {
+    "pytest_tool_batch_executor_metadata": "18 passed",
+    "ruff": "clean"
+  },
+  "rebench": {
+    "label": "r135-deo-abort-seal",
+    "factory_run_id": "factory_a6806e572695",
+    "work_dir": "/tmp/factory-bench-l1-01-r135-deo-abort-seal",
+    "wall_s": 464.4,
+    "result": "FAIL (pillars incomplete) but R135 seal VALIDATED",
+    "source_files": 9,
+    "R135_live_validation": {
+      "prior_r134": "TOOL_LIFECYCLE_MISSING event_count=0 for claimed TASK-1",
+      "now": "requirement_status=satisfied; event_count=3; third event dropped/failed TOOL_RESULT_FAILED reason=deo_parent_admission_failed",
+      "root_cause_signature": "control_plane:tool_result_failed (not tool_lifecycle_failed/TOOL_LIFECYCLE_MISSING)"
+    },
+    "residual": {
+      "real_run_gate": "npm run build failed",
+      "delivery_depth": "test_files=0",
+      "engine_dir": false,
+      "open_generic_next": "R136 candidates: deo_parent_admission_failed root cause (why admission fails on multi-write materialize) OR incomplete multi-task after partial TASK-1 success"
+    }
+  },
+  "next_action": "Attribute deo_parent_admission_failed on partial TASK-1; fix generic admission if platform-owned; then rebench"
+}

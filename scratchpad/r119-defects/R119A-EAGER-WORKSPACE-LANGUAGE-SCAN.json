@@ -1,7 +1,7 @@
 {
   "schema_version": "polaris.machine_readable_defect.v1",
   "defect_id": "R119A-EAGER-WORKSPACE-LANGUAGE-SCAN",
-  "status": "IMPLEMENTED_OFFLINE_PENDING_INDEPENDENT_REVIEW",
+  "status": "AUDIT_CLOSED",
   "severity": "P1",
   "source_head": "2d46c996fadd8952caf1e39705119f4aa1048e47",
   "discovery_mode": "static_call_graph_plus_offline_runtime_test",
@@ -68,5 +68,15 @@
     "diff_check": "PASS",
     "post_edit_codegraph": "PASS: workspace discovery is reached only after all stronger supported language signals fail"
   },
-  "next_action": "Complete independent read-only review together with R119."
+  "next_action": "R119 independent review closed. Exactly one fresh isolated single-project factory_bench may run only under pre-bench card authorization; no concurrent multi-project.",
+  "audit_closed_at": "2026-07-31T16:23:04.076714+00:00",
+  "audit_review_path": "/tmp/grok-goal-d57da307a40a/implementer/r119_audit_review.md",
+  "audit_commands": [
+    "pytest src/backend/polaris/cells/roles/adapters/tests/test_director_dependency_artifact_evidence.py -v",
+    "pytest src/backend/polaris/cells/director/tasking/tests/test_language_guidance.py -k evidence -v",
+    "pytest src/backend/polaris/cells/roles/kernel/tests/test_final_request_sampling_audit.py -k sibling -v",
+    "offline probe: build_director_dependency_artifact_snapshot + resolve_director_execution_strategy"
+  ],
+  "audit_result": "pass",
+  "previous_status": "IMPLEMENTED_OFFLINE_PENDING_INDEPENDENT_REVIEW"
 }

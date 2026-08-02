@@ -113,24 +113,77 @@ def normalize_artifact_quality_errors(errors: Sequence[Any]) -> tuple[RepairDiag
     """Convert raw or structured artifact-quality input into repair diagnostics."""
 
     diagnostics: list[RepairDiagnostic] = []
+    # Buffer only a TS primary line + its indented tsc continuations. Unrelated
+    # non-TS rows stay separate so coverage counts remain stable.
+    ts_buffer: list[str] = []
+
+    def flush_ts_buffer() -> None:
+        nonlocal ts_buffer
+        if not ts_buffer:
+            return
+        diagnostics.extend(_normalize_text_error_blob("\n".join(ts_buffer)))
+        ts_buffer = []
+
     for raw in errors or ():
         if isinstance(raw, RepairDiagnostic):
+            flush_ts_buffer()
             diagnostics.append(raw)
             continue
         if isinstance(raw, Mapping):
+            flush_ts_buffer()
             diagnostic = _normalize_structured_error(raw)
             if diagnostic is not None:
                 diagnostics.append(diagnostic)
             continue
-        text = str(raw or "").strip()
-        if not text:
+        text = str(raw or "")
+        if not text.strip():
             continue
-        expanded = _normalize_typescript_errors(text)
-        if expanded:
-            diagnostics.extend(expanded)
+        # Multi-line string already carries primary + continuations.
+        if "\n" in text:
+            flush_ts_buffer()
+            diagnostics.extend(_normalize_text_error_blob(text))
             continue
-        diagnostics.append(_normalize_one_error(text))
+        line = text.rstrip("\n")
+        if ts_buffer and line[:1] in {" ", "\t"}:
+            ts_buffer.append(line)
+            continue
+        if _TS_ERROR_RE.search(line):
+            flush_ts_buffer()
+            ts_buffer.append(line)
+            continue
+        flush_ts_buffer()
+        diagnostics.append(_normalize_one_error(line.strip()))
+    flush_ts_buffer()
     return tuple(diagnostics)
+
+
+def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
+    """Normalize one text blob that may contain multi-line tsc diagnostics."""
+
+    blob = str(text or "")
+    if not blob.strip():
+        return []
+    expanded = _normalize_typescript_errors(blob)
+    if expanded:
+        residuals: list[RepairDiagnostic] = []
+        for line in blob.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if line[:1] in {" ", "\t"}:
+                continue
+            if _TS_ERROR_RE.search(line):
+                continue
+            if "missing the following properties from type" in stripped.lower():
+                continue
+            residual = _normalize_one_error(stripped)
+            if residual.code.startswith("typescript_"):
+                continue
+            residuals.append(residual)
+        return expanded + residuals
+    # Non-TS blob: preserve one diagnostic per non-empty line.
+    per_line = [_normalize_one_error(line.strip()) for line in blob.splitlines() if line.strip()]
+    return per_line if per_line else [_normalize_one_error(blob.strip())]
 
 
 def _normalize_structured_error(raw: Mapping[str, Any]) -> RepairDiagnostic | None:
@@ -227,19 +280,51 @@ def _structured_path(raw: Mapping[str, Any], metadata: Mapping[str, Any]) -> str
     return path.replace("\\", "/") if path else None
 
 
+def _typescript_error_continuation_lines(text: str, match_end: int) -> list[str]:
+    """Capture indented tsc follow-up lines (e.g. missing-properties clauses)."""
+
+    remainder = str(text or "")[match_end:]
+    if not remainder:
+        return []
+    # Skip the newline that ends the primary error line.
+    if remainder.startswith("\r\n"):
+        remainder = remainder[2:]
+    elif remainder.startswith("\n") or remainder.startswith("\r"):
+        remainder = remainder[1:]
+    continuations: list[str] = []
+    for line in remainder.splitlines():
+        if not line:
+            # blank line ends the diagnostic block
+            break
+        if line[0] in {" ", "\t"}:
+            stripped = line.strip()
+            if stripped:
+                continuations.append(stripped)
+            continue
+        break
+    return continuations
+
+
 def _normalize_typescript_errors(text: str) -> list[RepairDiagnostic]:
     diagnostics: list[RepairDiagnostic] = []
     for match in _TS_ERROR_RE.finditer(text):
         code = str(match.group("code") or "typescript_error").lower()
+        primary_message = str(match.group("message") or text).strip()
+        continuations = _typescript_error_continuation_lines(text, match.end())
+        message = primary_message
+        raw = str(match.group(0) or text).strip()
+        if continuations:
+            message = primary_message + "\n" + "\n".join(continuations)
+            raw = raw + "\n" + "\n".join(f"  {item}" for item in continuations)
         diagnostics.append(
             RepairDiagnostic(
                 source="artifact_quality",
                 code=f"typescript_{code}",
-                message=str(match.group("message") or text).strip(),
+                message=message,
                 path=str(match.group("path") or "").strip(),
                 line=_to_int(match.group("line")),
                 column=_to_int(match.group("column")),
-                raw=str(match.group(0) or text).strip(),
+                raw=raw,
             )
         )
     for match in _TS_ROOTDIR_FILE_ERROR_RE.finditer(text):

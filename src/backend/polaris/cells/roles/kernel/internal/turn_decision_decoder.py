@@ -219,6 +219,51 @@ class TurnDecisionDecoder:
             metadata=clarify_metadata,
         )
 
+    def recover_executable_tool_batch_decision(
+        self,
+        response: RawLLMResponse,
+        turn_id: TurnId,
+    ) -> TurnDecision | None:
+        """Rebuild a TOOL_BATCH decision when native tool calls are still executable.
+
+        R134: decision transforms (delivery-mode filter, text-only suppression, or
+        a premature FINAL_ANSWER when content coexists with tool calls) can clear
+        ``tool_batch`` while provider-native write tools remain on the response.
+        Callers must re-decode those tools into an executable batch before process
+        terminal; returning ``None`` means no parseable native tools remain.
+
+        Complexity:
+            O(n) over native tool calls through extraction and batch build.
+        """
+
+        all_tools, decode_failures = self._extract_tool_calls(response)
+        if not all_tools:
+            return None
+        native_tool_call_envelopes = self._native_tool_call_envelopes(response)
+        tool_batch = self._build_tool_batch(all_tools, turn_id)
+        finalize_mode = self._determine_finalize_mode(response, all_tools)
+        batch_metadata: dict[str, Any] = {
+            "tool_count": len(all_tools),
+            "native_tools": len(all_tools),
+            "model": response.model,
+            "source": "native_tool_batch_recovery",
+            "r134_recovered_tool_batch": True,
+        }
+        if native_tool_call_envelopes:
+            batch_metadata["native_tool_call_envelopes"] = native_tool_call_envelopes
+        if decode_failures:
+            batch_metadata["decode_failures"] = decode_failures
+        return TurnDecision(
+            turn_id=turn_id,
+            kind=TurnDecisionKind.TOOL_BATCH,
+            visible_message=response.content,
+            reasoning_summary=response.thinking,
+            tool_batch=tool_batch,
+            finalize_mode=finalize_mode,
+            domain=self.config.domain,
+            metadata=batch_metadata,
+        )
+
     def _extract_tool_calls(self, response: RawLLMResponse) -> tuple[list[ToolInvocation], list[dict[str, str]]]:
         """
         提取工具调用：native-only

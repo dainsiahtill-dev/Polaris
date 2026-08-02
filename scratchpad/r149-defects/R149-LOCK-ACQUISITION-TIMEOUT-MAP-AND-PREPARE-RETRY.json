@@ -1,0 +1,51 @@
+{
+  "defect_id": "R149-LOCK-ACQUISITION-TIMEOUT-MAP-AND-PREPARE-RETRY",
+  "status": "fixed_platform_unit_and_live_validated",
+  "summary": "KernelOne flock deadline raises lock_acquisition_timeout; DEO mapped it to opaque fact_stream_unknown_failure and prepare_batch fail-closed without retry. TASK-2 multi-member writes dropped; director timed out; backend GET starved under lock wait.",
+  "root_cause": {
+    "evidence_run": "r148 factory_8bf98c21c7b8 / director-e8601eb31658 TASK-2",
+    "machine_readable": "lock_acquisition_timeout_unmapped_to_fact_stream_unknown_failure",
+    "root_cause_signature": "control_plane:deo_lock_acquisition_timeout_misclassified_no_retry",
+    "mechanism": [
+      "LockedRegularFileSetV1 raises code=lock_acquisition_timeout on flock deadline",
+      "DEO _READ_FACT_FAILURE_CODES lacked that key → fact_stream_unknown_failure",
+      "lifecycle prepare_batch denied as deo_member_admission_failed:fact_stream_unknown_failure",
+      "tool_batch soft-dropped all TASK-2 writes; no event-loop yield/retry under contention",
+      "backend HTTP GET timed out while event loop blocked on advisory locks"
+    ]
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "src/backend/polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py",
+      "src/backend/polaris/cells/runtime/task_runtime/public/tests/test_directed_effect_inventory.py",
+      "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_tool_batch_executor_metadata.py"
+    ],
+    "change": "Map lock_acquisition_timeout→stream_lock_timeout; retry prepare_batch up to 4 times with exponential asyncio.sleep on transient lock codes (including legacy fact_stream_unknown_failure)."
+  },
+  "verification": {
+    "pytest": "lock taxonomy 5 cases + r149 transient classification passed",
+    "ruff": "clean",
+    "rebench": {
+      "label": "r149-lock-timeout-map-retry",
+      "factory_run_id": "factory_45fe7a94fc8f",
+      "work_dir": "/tmp/factory-bench-l1-01-r149-lock-timeout-map-retry",
+      "wall_s": 1163,
+      "chain_exit": 1,
+      "fact_stream_unknown_failure": 0,
+      "deo_member_admission": 0,
+      "source_ts": 11,
+      "package_json": true,
+      "residual": [
+        "TOOL_RESULT_FAILED partial effects (4 dispatched / 1 effect)",
+        "director process terminated without canonical outcome",
+        "test_files=0",
+        "build/entrypoint",
+        "run_ledger_integrity_failed"
+      ]
+    }
+  },
+  "four_pillars": "NOT_MET",
+  "do_not_advance": "L1-02",
+  "next_action": "R150: partial-effect TOOL_RESULT_FAILED + canonical outcome loss — stay on L1-01"
+}

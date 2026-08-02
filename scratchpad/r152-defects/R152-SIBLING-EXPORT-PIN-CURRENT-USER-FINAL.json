@@ -1,0 +1,58 @@
+{
+  "defect_id": "R152-SIBLING-EXPORT-PIN-CURRENT-USER-FINAL",
+  "status": "fixed_platform_unit_and_live_validated",
+  "summary": "R150 sibling-export re-pin appended a system message after tool-loop history, making final_role=system. ContextOS prompt audit requires current_user_final → context_os_prompt_audit_failed → final_request_context_quality_failed → director task fail-closed (director_materialization_quality_failed) after successful writes.",
+  "root_cause": {
+    "evidence_run": "r151 factory_150def10aa0b TASK-2/TASK-3",
+    "machine_readable": "sibling_export_system_pin_breaks_current_user_final",
+    "root_cause_signature": "control_plane:tool_loop_system_pin_breaks_current_user_final",
+    "mechanism": [
+      "Tool batch succeeds (writes land, DEO receipts commit)",
+      "Follow-up LLM prepare: R150 _ensure_actual_sibling_exports_message_bound appends system pin at end",
+      "audit_context_os_prompt_messages: final_role=system → current_user_final=false → ok=false",
+      "context_quality finding context_os_prompt_audit_failed (empty hits, isolated=true — misled diagnosis)",
+      "qualify_final_provider_request raises final_request_context_quality_failed",
+      "TaskRuntime terminal: director_materialization_quality_failed; chain event_wait_timeout secondary"
+    ],
+    "live_evidence": {
+      "truthlog": "LLM call failed: final_request_context_quality_failed (×4 on TASK-2/3 follow-ups)",
+      "context_os_audit": "ok=false, final_role=system, current_user_final=false, control_plane_isolated=true, empty hits",
+      "task_runtime": "task_2/3 last_error=director_materialization_quality_failed",
+      "materialization": "files present; boundary completed_verified but tasks failed"
+    }
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py",
+      "src/backend/polaris/cells/roles/kernel/internal/llm_caller/context_audit.py",
+      "src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_components.py",
+      "src/backend/polaris/cells/roles/kernel/internal/llm_caller/tests/test_context_audit.py"
+    ],
+    "change": "Insert sibling-export system pin after leading system messages (not append). Finding projects failed_requirements + final_role for diagnosis."
+  },
+  "verification": {
+    "pytest": "r150 pin + r152 current_user_final + context_audit suite passed",
+    "ruff": "clean",
+    "rebench": {
+      "label": "r152-user-final-pin",
+      "factory_run_id": "factory_1144f4dce894",
+      "work_dir": "/tmp/factory-bench-l1-01-r152-user-final-pin",
+      "wall_s": 786,
+      "chain_exit": -1,
+      "final_role_user": 8,
+      "current_user_final_true": 8,
+      "final_request_context_quality_failed": 0,
+      "task_1": "completed",
+      "task_2": "completed",
+      "task_3": "failed:director_no_materialized_changes",
+      "residual": [
+        "TASK-3 no materialized changes / tests missing",
+        "event_wait_timeout",
+        "tool_lifecycle_failed / run_ledger integrity"
+      ]
+    }
+  },
+  "four_pillars": "NOT_MET",
+  "do_not_advance": "L1-02",
+  "next_action": "R153: TASK-3 no_materialized_changes + tool_lifecycle — stay on L1-01"
+}

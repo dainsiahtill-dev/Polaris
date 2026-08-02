@@ -41,6 +41,72 @@ def test_context_os_prompt_audit_rejects_control_plane_content_leak() -> None:
     assert "context_os_snapshot:" in audit["control_plane"]["content_hits"]
 
 
+def test_context_os_prompt_audit_allows_director_quality_repair_protocol_text() -> None:
+    """Quality-repair directives intentionally name delivery_mode / markers.
+
+    L1-01 r124 residual: quality-repair qualification failed with
+    final_request_context_quality_failed because content hits matched
+    delivery_mode / director_quality_repair / blueprint_id in intentional
+    SESSION_PATCH and repair headers — not real control-plane dumps.
+    """
+    repair_user = (
+        "[mode:materialize]\n"
+        '<SESSION_PATCH>{"delivery_mode":"materialize_changes","task_progress":"implementing"}'
+        "</SESSION_PATCH>\n"
+        "Chief Engineer Blueprint evidence:\n"
+        "- blueprint_id: ce_TASK-1_demo\n"
+        "[director_quality_repair:write_only_single_target]\n"
+        "- Target path: tests/verify.test.ts\n"
+        "Return tool calls only."
+    )
+    audit = audit_context_os_prompt_messages(
+        messages=[
+            {"role": "system", "content": "You are Director. Execute materialization repairs."},
+            {"role": "user", "content": repair_user},
+        ],
+        context_sources=("state_first_context_os.project",),
+        metadata={"state_first_mode_active": True},
+        current_user_instruction=repair_user,
+        expected=True,
+    )
+
+    assert audit["ok"] is True
+    assert audit["control_plane"]["content_hits"] == []
+    assert audit["control_plane"]["isolated"] is True
+
+
+def test_context_os_prompt_audit_still_rejects_capability_token_in_system_with_repair() -> None:
+    """Real control-plane dumps still fail even when repair protocol text is present."""
+    repair_user = (
+        "[director_quality_repair:edit_preferred_single_target]\n"
+        "- Target path: src/main.ts\n"
+        "Fix the file."
+    )
+    audit = audit_context_os_prompt_messages(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are Director.\n"
+                    "capability_token: {'token_id': 'job-leaked'}\n"
+                    '<SESSION_PATCH>{"delivery_mode":"materialize_changes"}</SESSION_PATCH>'
+                ),
+            },
+            {"role": "user", "content": repair_user},
+        ],
+        context_sources=("state_first_context_os.project",),
+        metadata={"state_first_mode_active": True},
+        current_user_instruction=repair_user,
+        expected=True,
+    )
+
+    assert audit["ok"] is False
+    assert "capability_token:" in audit["control_plane"]["content_hits"]
+    # Operational protocol text alone is not enough to fail isolation.
+    assert "delivery_mode" not in audit["control_plane"]["content_hits"]
+    assert "director_quality_repair" not in audit["control_plane"]["content_hits"]
+
+
 def test_context_os_prompt_audit_rejects_capability_and_execution_attempt_authority() -> None:
     audit = audit_context_os_prompt_messages(
         messages=[

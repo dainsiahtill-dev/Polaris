@@ -5491,13 +5491,23 @@ class TaskRuntimeService:
             return "run_mismatch"
         if session.external_task_id != identity.external_task_id:
             return "external_task_id_mismatch"
-        expected_lease_expires_at = session.lease_expires_at
+        # R145/R171: lease_expires_at is a renewable same-owner TTL, not a fencing
+        # token. Concurrent heartbeats (director loop, DEO pre-claim, batch prepare)
+        # advance the stored lease while multi-step DEO prepare still holds the
+        # pre-heartbeat identity. Exact equality here left R145 incomplete:
+        # validate_execution_attempt was fixed, but heartbeat/mutate still used this
+        # helper and collapsed live batches to deo_inventory_ready_failed /
+        # deo_execution_attempt_heartbeat_failed (r171b TOOL_RESULT_FAILED drops).
+        # Authority steal remains covered by session/attempt/worker/role/run checks.
+        #
+        # Terminal settlement may still pin a settlement-identity lease snapshot so
+        # a post-close renew cannot impersonate the settled attempt.
         if allow_terminal_settlement_lease and session.status != "active":
             expected_lease_expires_at = str(
-                session.metadata.get("settlement_identity_lease_expires_at") or expected_lease_expires_at
+                session.metadata.get("settlement_identity_lease_expires_at") or session.lease_expires_at or ""
             ).strip()
-        if expected_lease_expires_at != identity.lease_expires_at:
-            return "lease_version_mismatch"
+            if expected_lease_expires_at and expected_lease_expires_at != identity.lease_expires_at:
+                return "lease_version_mismatch"
         return None
 
     def settle_execution_attempt(
@@ -7238,13 +7248,13 @@ class TaskRuntimeService:
                     identity=identity,
                     evidence=evidence,
                 )
-            if session.lease_expires_at != identity.lease_expires_at:
-                return self._execution_attempt_validation_verdict(
-                    valid=False,
-                    code="lease_version_mismatch",
-                    identity=identity,
-                    evidence=evidence,
-                )
+            # R145: lease_expires_at is a renewable same-owner TTL, not a fencing
+            # token. Concurrent heartbeats (director loop, DEO pre-claim, batch
+            # prepare) advance the stored lease while multi-step DEO prepare still
+            # holds the pre-heartbeat identity. Exact equality here caused
+            # deo_inventory_ready_failed after seal+admit left orphan parents and
+            # dropped write batches (r144 TASK-2). Authority steal is already
+            # covered by session/attempt/worker/role/run mismatches above.
             if session.status != "active":
                 return self._execution_attempt_validation_verdict(
                     valid=False,

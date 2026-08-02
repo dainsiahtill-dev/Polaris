@@ -89,6 +89,7 @@ from polaris.cells.roles.adapters.internal.director.quality_gate import (
     _materialization_interface_discrepancy_retry_authorized,
     _materialization_plan_probe_requires_task_boundary_triage,
     _quality_repair_edit_file_tool_definition,
+    _quality_repair_execute_command_tool_definition,
     _quality_repair_write_file_tool_definition,
 )
 from polaris.cells.roles.adapters.internal.director.runtime_repair_tool_adapter import (
@@ -3892,7 +3893,8 @@ async def test_execute_retries_multi_file_no_write_with_mutation_tools_only(tmp_
     write_def = next(item for item in forced_defs if item["function"]["name"] == "write_file")
     edit_def = next(item for item in forced_defs if item["function"]["name"] == "edit_file")
     assert write_def["function"]["parameters"]["properties"]["file"]["enum"] == ["src/app.py", "src/utils.py"]
-    assert edit_def["function"]["parameters"]["properties"]["file"]["enum"] == ["src/app.py", "src/utils.py"]
+    # R127: edit_file must not receive path enums (qualification-safe write_file only).
+    assert "enum" not in edit_def["function"]["parameters"]["properties"]["file"]
     assert seen_contexts[1]["director_no_write_materialization_retry"]["multi_file_declared_targets"] == {
         "required_write_tools": ["edit_file", "write_file"],
         "target_files": ["src/app.py", "src/utils.py"],
@@ -16681,7 +16683,10 @@ def test_no_write_retry_forced_tool_schemas_include_alias_expanded_arguments() -
 
     edit_props = _tool_properties(by_name["edit_file"])
     assert {"file", "path", "target_path", "oldText", "newText", "search", "replace"} <= set(edit_props)
-    assert edit_props["target_path"]["enum"] == ["src/main.ts", "tests/behavior.test.ts"]
+    # R127: path enums are only qualification-safe on write_file. edit_file must
+    # stay registry-faithful without scoped path enums.
+    assert "enum" not in edit_props["target_path"]
+    assert "enum" not in edit_props["file"]
 
 
 def test_strict_write_only_forced_schema_preserves_write_aliases() -> None:
@@ -16698,15 +16703,38 @@ def test_strict_write_only_forced_schema_preserves_write_aliases() -> None:
     assert props["targetFile"]["enum"] == ["src/main.ts"]
 
 
-def test_quality_repair_write_and_edit_schemas_are_alias_expanded_but_edit_is_search_replace_only() -> None:
-    write_props = _tool_properties(_quality_repair_write_file_tool_definition())
-    assert {"file", "path", "targetPath", "body", "newText"} <= set(write_props)
+def test_quality_repair_write_and_edit_schemas_match_tool_spec_registry() -> None:
+    """Quality-repair forced tools must stay registry-faithful.
 
-    edit_props = _tool_properties(_quality_repair_edit_file_tool_definition())
+    R126: mutating edit_file description/params or inventing execute_command
+    schemas caused FinalProviderAttemptQualificationError
+    tool_registry_function_contract_drift and blocked quality-repair turns.
+    """
+    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+    write_def = _quality_repair_write_file_tool_definition()
+    edit_def = _quality_repair_edit_file_tool_definition()
+    execute_def = _quality_repair_execute_command_tool_definition()
+    write_props = _tool_properties(write_def)
+    edit_props = _tool_properties(edit_def)
+    assert {"file", "path", "targetPath", "body", "newText"} <= set(write_props)
     assert {"file", "path", "targetPath", "oldText", "newText", "search", "replace"} <= set(edit_props)
-    assert "start_line" not in edit_props
-    assert "end_line" not in edit_props
-    assert "content" not in edit_props
+    # Full registry surface (line-range + search-replace) must remain available.
+    assert "start_line" in edit_props
+    assert "end_line" in edit_props
+
+    for tool_name, actual in (
+        ("write_file", write_def),
+        ("edit_file", edit_def),
+        ("execute_command", execute_def),
+    ):
+        expected = ToolSpecRegistry.get_llm_schema(
+            tool_name,
+            include_arg_aliases=True,
+            deterministic=True,
+        )
+        assert expected is not None
+        assert actual == expected
 
 
 def test_forced_schema_file_enum_pins_all_common_path_aliases() -> None:

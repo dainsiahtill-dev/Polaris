@@ -614,6 +614,8 @@ class ToolBatchRuntime:
         )
         context = claim.context
         if claim.status != "claimed" or context is None:
+            # Preserve directed_effect_claim_status so batch cleanup can keep a
+            # durable EFFECT_STARTED member for reconciliation instead of abort.
             return ToolResult(
                 call_id=call_id,
                 tool_name=tool_name,
@@ -814,11 +816,13 @@ class ToolBatchRuntime:
                     release_fence = True
                 elif all_dispatched_succeeded:
                     release_fence = True
-                elif (
-                    not all_dispatched_succeeded
-                    and prepared is not None
-                    and self.directed_effect_rollback_activation_by_call_id
-                ):
+                elif not all_dispatched_succeeded and prepared is not None:
+                    # R151: any mid-batch DEO serial failure must terminalize the
+                    # remaining unclaimed inventory. R141 sealed the claimed
+                    # member into RECOVERY_PENDING, but without sibling abort the
+                    # other INTENT_COMMITTED members stayed open forever →
+                    # partial writes, TOOL_RESULT_FAILED, and LEDGER_PROJECTION
+                    # incomplete (process exit without canonical outcome).
                     runtime = self.directed_effect_runtime
                     authority = self.directed_effect_execution_attempt_authority
                     if runtime is None or authority is None:
@@ -829,23 +833,6 @@ class ToolBatchRuntime:
                     lifecycle = DirectedEffectLifecycleService(
                         policy_snapshot_port=runtime.policy_snapshot_port,
                     )
-                    activation_by_rollback = dict(self.directed_effect_rollback_activation_by_call_id)
-                    activated_forward_ids = set(successful_forward_call_ids)
-                    if failed_result.directed_effect_mutation_status == "executed":
-                        activated_forward_ids.add(failed_result.call_id)
-                    ambiguous_forward_ids = (
-                        {failed_result.call_id}
-                        if failed_result.directed_effect_mutation_status in {"failed", "unknown"}
-                        else set()
-                    )
-                    activated_rollbacks = tuple(
-                        rollback_id
-                        for rollback_id, forward_id in self.directed_effect_rollback_activation_by_call_id
-                        if forward_id in activated_forward_ids
-                    )
-                    aborted_ids: list[str] = []
-                    executed_rollback_ids: list[str] = []
-                    preserved_ids: list[str] = []
                     inventory_ids = tuple(member.member.tool_call_id for member in prepared.prepared_members)
                     failed_member_index = dict(prepared.call_id_index)[failed_result.call_id]
                     cleanup_start, initially_preserved_ids = _directed_effect_failure_partition(
@@ -853,10 +840,60 @@ class ToolBatchRuntime:
                         failed_index=failed_member_index,
                         inventory_ids=inventory_ids,
                     )
-                    preserved_ids.extend(initially_preserved_ids)
+                    aborted_ids: list[str] = []
+                    executed_rollback_ids: list[str] = []
+                    preserved_ids: list[str] = list(initially_preserved_ids)
+                    activated_rollbacks: list[str] = []
 
-                    for call_id in inventory_ids[cleanup_start:]:
-                        if call_id in ordered_call_ids:
+                    if self.directed_effect_rollback_activation_by_call_id:
+                        activation_by_rollback = dict(self.directed_effect_rollback_activation_by_call_id)
+                        activated_forward_ids = set(successful_forward_call_ids)
+                        if failed_result.directed_effect_mutation_status == "executed":
+                            activated_forward_ids.add(failed_result.call_id)
+                        ambiguous_forward_ids = (
+                            {failed_result.call_id}
+                            if failed_result.directed_effect_mutation_status in {"failed", "unknown"}
+                            else set()
+                        )
+                        activated_rollbacks = [
+                            rollback_id
+                            for rollback_id, forward_id in self.directed_effect_rollback_activation_by_call_id
+                            if forward_id in activated_forward_ids
+                        ]
+                        for call_id in inventory_ids[cleanup_start:]:
+                            if call_id in ordered_call_ids:
+                                lifecycle.abort_unclaimed_members(
+                                    prepared_batch=prepared,
+                                    execution_attempt_authority=authority,
+                                    tool_call_ids=(call_id,),
+                                    reason="deferred_repair_forward_failed",
+                                )
+                                aborted_ids.append(call_id)
+                                continue
+                            activating_forward = activation_by_rollback.get(call_id)
+                            if activating_forward is None:
+                                raise RuntimeError("directed_effect_rollback_activation_unavailable")
+                            if activating_forward in ambiguous_forward_ids:
+                                preserved_ids.extend(
+                                    item
+                                    for item in inventory_ids[dict(prepared.call_id_index)[call_id] :]
+                                    if item not in preserved_ids
+                                )
+                                break
+                            if activating_forward in activated_forward_ids:
+                                rollback_result = await self._execute_directed_effect(
+                                    self._deferred_repair_invocation(call_id)
+                                )
+                                receipts.append(self._result_to_receipt([rollback_result], turn_id))
+                                if rollback_result.status is not ToolExecutionStatus.SUCCESS:
+                                    preserved_ids.extend(
+                                        item
+                                        for item in inventory_ids[dict(prepared.call_id_index)[call_id] :]
+                                        if item not in preserved_ids
+                                    )
+                                    break
+                                executed_rollback_ids.append(call_id)
+                                continue
                             lifecycle.abort_unclaimed_members(
                                 prepared_batch=prepared,
                                 execution_attempt_authority=authority,
@@ -864,38 +901,20 @@ class ToolBatchRuntime:
                                 reason="deferred_repair_forward_failed",
                             )
                             aborted_ids.append(call_id)
-                            continue
-                        activating_forward = activation_by_rollback.get(call_id)
-                        if activating_forward is None:
-                            raise RuntimeError("directed_effect_rollback_activation_unavailable")
-                        if activating_forward in ambiguous_forward_ids:
-                            preserved_ids.extend(
-                                item
-                                for item in inventory_ids[dict(prepared.call_id_index)[call_id] :]
-                                if item not in preserved_ids
+                    else:
+                        # Plain multi-write inventory (no deferred-repair
+                        # contingencies): abort every remaining unclaimed
+                        # member so parent inventory can settle instead of
+                        # freezing INTENT_COMMITTED orphans.
+                        remaining_unclaimed = inventory_ids[cleanup_start:]
+                        if remaining_unclaimed:
+                            lifecycle.abort_unclaimed_members(
+                                prepared_batch=prepared,
+                                execution_attempt_authority=authority,
+                                tool_call_ids=remaining_unclaimed,
+                                reason="serial_mutation_sibling_aborted_after_failure",
                             )
-                            break
-                        if activating_forward in activated_forward_ids:
-                            rollback_result = await self._execute_directed_effect(
-                                self._deferred_repair_invocation(call_id)
-                            )
-                            receipts.append(self._result_to_receipt([rollback_result], turn_id))
-                            if rollback_result.status is not ToolExecutionStatus.SUCCESS:
-                                preserved_ids.extend(
-                                    item
-                                    for item in inventory_ids[dict(prepared.call_id_index)[call_id] :]
-                                    if item not in preserved_ids
-                                )
-                                break
-                            executed_rollback_ids.append(call_id)
-                            continue
-                        lifecycle.abort_unclaimed_members(
-                            prepared_batch=prepared,
-                            execution_attempt_authority=authority,
-                            tool_call_ids=(call_id,),
-                            reason="deferred_repair_forward_failed",
-                        )
-                        aborted_ids.append(call_id)
+                            aborted_ids.extend(remaining_unclaimed)
                     if receipts:
                         failed_receipt = receipts[failed_receipt_index]
                         raw_results = [dict(row) for row in failed_receipt.raw_results]
@@ -905,6 +924,40 @@ class ToolBatchRuntime:
                             raw_results[0]["directed_effect_aborted_call_ids"] = list(aborted_ids)
                             raw_results[0]["directed_effect_preserved_call_ids"] = list(preserved_ids)
                         receipts[failed_receipt_index] = failed_receipt.model_copy(update={"raw_results": raw_results})
+                    # R156: DEO inventory abort alone left aborted siblings without
+                    # tool_result rows. Run Ledger then projected native_tool_calls=N
+                    # with partial effect receipts and opaque TOOL_RESULT_FAILED
+                    # (reason collapsed to "dispatched"). Emit one ABORTED result
+                    # per aborted call_id so lifecycle accounting is complete and
+                    # the model sees which writes never ran.
+                    if aborted_ids:
+                        member_tool_by_id = {
+                            str(member.member.tool_call_id): str(member.member.normalized_tool_name or "write_file")
+                            for member in prepared.prepared_members
+                        }
+                        failed_call = str(failed_result.call_id if failed_result is not None else "")
+                        for abort_id in aborted_ids:
+                            abort_tool = member_tool_by_id.get(str(abort_id), "write_file")
+                            receipts.append(
+                                self._result_to_receipt(
+                                    [
+                                        ToolResult(
+                                            call_id=str(abort_id),
+                                            tool_name=abort_tool,
+                                            status=ToolExecutionStatus.ABORTED,
+                                            error="serial_mutation_sibling_aborted_after_failure",
+                                            result={
+                                                "error": "serial_mutation_sibling_aborted_after_failure",
+                                                "aborted_after_sibling_failure": True,
+                                                "failed_call_id": failed_call,
+                                            },
+                                            directed_effect_claim_status="not_claimed",
+                                            directed_effect_mutation_status="not_executed",
+                                        )
+                                    ],
+                                    turn_id,
+                                )
+                            )
             finally:
                 # Failure/ambiguity keeps process-local fences for DEO-3
                 # reconciliation. Release only after a complete success path
@@ -1259,7 +1312,20 @@ class ToolBatchRuntime:
         batch_id = BatchId(f"{turn_id or 'batch'}_{call_id}")
 
         success_count = sum(1 for r in results if r.status == ToolExecutionStatus.SUCCESS)
-        failure_count = sum(1 for r in results if r.status in {ToolExecutionStatus.ERROR, ToolExecutionStatus.TIMEOUT})
+        # ABORTED/CANCELLED are terminal non-success outcomes for DEO sibling
+        # cleanup and must count as failures so tool lifecycle cannot report
+        # ok=true with half the inventory silently missing tool_result rows.
+        failure_count = sum(
+            1
+            for r in results
+            if r.status
+            in {
+                ToolExecutionStatus.ERROR,
+                ToolExecutionStatus.TIMEOUT,
+                ToolExecutionStatus.ABORTED,
+                ToolExecutionStatus.CANCELLED,
+            }
+        )
 
         return BatchReceipt(
             batch_id=batch_id,
@@ -1270,9 +1336,12 @@ class ToolBatchRuntime:
                     tool_name=r.tool_name,
                     status=cast("Literal['success', 'error', 'pending', 'timeout', 'aborted']", r.status.value),
                     result=r.result,
+                    error=r.error,
                     execution_time_ms=r.execution_time_ms,
                     effect_receipt=r.effect_receipt,
                     effect_receipt_commit=self._effect_receipt_commit_for_result(r),
+                    directed_effect_mutation_status=r.directed_effect_mutation_status,
+                    directed_effect_claim_status=r.directed_effect_claim_status,
                 )
                 for r in results
             ],

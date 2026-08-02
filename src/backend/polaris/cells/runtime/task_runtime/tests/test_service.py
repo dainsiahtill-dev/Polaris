@@ -10663,19 +10663,23 @@ def test_execution_attempt_validation_is_typed_fail_closed_and_read_only(tmp_pat
             ),
             "external_task_id_mismatch",
         ),
-        (
-            "lease_version",
-            ValidateTaskRuntimeExecutionAttemptQueryV1(
-                workspace=str(workspace),
-                identity=replace(identity, lease_expires_at="2000-01-01T00:00:00+00:00"),
-            ),
-            "lease_version_mismatch",
-        ),
     )
     for field_name, query, expected_code in mismatches:
         verdict = service.validate_execution_attempt(query)
         assert verdict.valid is False, field_name
         assert verdict.code == expected_code
+
+    # R145: same-owner renewable lease is not a fencing token for read-only
+    # validate. Stale lease_expires_at still validates while the session is
+    # active and not expired (concurrent heartbeat during DEO prepare).
+    stale_lease = service.validate_execution_attempt(
+        ValidateTaskRuntimeExecutionAttemptQueryV1(
+            workspace=str(workspace),
+            identity=replace(identity, lease_expires_at="2000-01-01T00:00:00+00:00"),
+        )
+    )
+    assert stale_lease.valid is True
+    assert stale_lease.code == "valid"
 
     session_payload = json.loads(session_path.read_text(encoding="utf-8"))
     session_payload["lease_expires_at"] = "2000-01-01T00:00:00+00:00"

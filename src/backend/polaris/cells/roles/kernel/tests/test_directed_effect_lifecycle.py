@@ -84,6 +84,7 @@ from polaris.cells.runtime.task_runtime.public import (
     enroll_directed_effect_parent_registry_stream,
     finalize_directed_effect_inventory_admission,
     get_directed_effect_operation,
+    heartbeat_task_runtime_execution_attempt,
     seal_directed_effect_inventory,
 )
 from polaris.kernelone.fs.runtime import KernelFileSystem
@@ -385,12 +386,14 @@ class _RecordingPolicyPort:
         raise_on_bind: bool = False,
         forge_case: str | None = None,
         foreign_candidate: DirectedEffectLifecycleCandidateV1 | None = None,
+        fail_current_policy_capture: bool = False,
     ) -> None:
         self._events = events
         self._fail = fail
         self._raise_on_bind = raise_on_bind
         self._forge_case = forge_case
         self._foreign_candidate = foreign_candidate
+        self._fail_current_policy_capture = fail_current_policy_capture
 
     async def capture_baseline_snapshot(
         self,
@@ -409,6 +412,12 @@ class _RecordingPolicyPort:
         request: DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
     ) -> DirectorEffectCurrentPolicyEvidenceCaptureResultV1:
         self._events.append(("capture_current_policy", request))
+        if self._fail_current_policy_capture:
+            return DirectorEffectCurrentPolicyEvidenceCaptureResultV1(
+                status="denied",
+                evidence=None,
+                error_code="deo_current_policy_evidence_unavailable",
+            )
         public_policy = project_director_effect_public_policy_evidence(request.baseline_authorization_binding)
         restrictions = dict(request.current_job_token_restriction_evidence)
         operation_hash = hashlib.sha256(
@@ -854,6 +863,227 @@ def test_lifecycle_admits_second_turn_after_first_batch_receipts_close(tmp_path:
     assert second.prepared_batch.prepared_members[0].member.tool_call_id == "call-second"
 
 
+def test_r155_prepare_batch_idempotent_replay_after_ready_does_not_drop(tmp_path: Path) -> None:
+    """L1-01 r155: prepare_batch retry after seal/ready must not deo_inventory_seal_failed.
+
+    Live residual: TASK-2 write_file batch for index.html + engine was dropped with
+    deo_inventory_seal_failed:inventory_seal_idempotent_replay even though seal
+    returned a success code. Lifecycle must accept seal idempotent_replay when
+    inventory is already ready for the same members and still return status=ready.
+    """
+
+    attempt = _setup_attempt(str(tmp_path / "workspace-r155"))
+    runtime = _RecordingRuntime(events=[])
+    service = _service(runtime)
+    candidates = (
+        _candidate(
+            attempt,
+            ordinal=0,
+            tool_call_id="call-a",
+            target_path="src/index.html",
+            turn_id="turn-r155",
+            batch_id="batch-r155",
+        ),
+        _candidate(
+            attempt,
+            ordinal=1,
+            tool_call_id="call-b",
+            target_path="src/web.ts",
+            turn_id="turn-r155",
+            batch_id="batch-r155",
+        ),
+    )
+
+    first = service.prepare_batch(
+        execution_attempt=attempt,
+        execution_attempt_authority=_authority(attempt),
+        turn_id="turn-r155",
+        batch_id="batch-r155",
+        candidates=candidates,
+    )
+    assert first.status == "ready", first
+    assert first.prepared_batch is not None
+    assert first.error_code is None
+
+    # Same turn/batch prepare again — models prepare_batch retry after seal/ready
+    # progressed (lock retry / double dispatch). Must not drop the whole batch.
+    second = service.prepare_batch(
+        execution_attempt=attempt,
+        execution_attempt_authority=_authority(attempt),
+        turn_id="turn-r155",
+        batch_id="batch-r155",
+        candidates=candidates,
+    )
+    assert second.status == "ready", (
+        f"expected ready on seal/ready idempotent prepare retry, got {second.status} "
+        f"error={second.error_code} evidence={second.upstream_evidence}"
+    )
+    assert second.prepared_batch is not None
+    assert second.error_code is None
+    assert len(second.prepared_batch.prepared_members) == 2
+    assert {m.member.tool_call_id for m in second.prepared_batch.prepared_members} == {
+        "call-a",
+        "call-b",
+    }
+
+
+def test_r171_second_multi_member_batch_survives_same_owner_lease_renew(tmp_path: Path) -> None:
+    """L1-01 r171b: second multi-write batch must not DEO-drop after lease renew.
+
+    Live residual: first director write wave committed (11 effects), second wave
+    (index.html / engine / web) dropped with
+    deo_inventory_ready_failed:guarded_receipt_mismatch / TOOL_RESULT_FAILED while
+    concurrent same-owner heartbeats advanced lease_expires_at. R145 fixed
+    validate-only lease equality; heartbeat/mutate still fenced on exact lease and
+    lifecycle compared full execution_attempt including lease after finalize
+    renew. This test closes that gap on the real prepare_batch path.
+    """
+
+    attempt = _setup_attempt(str(tmp_path / "workspace-r171"))
+    runtime = _RecordingRuntime(events=[])
+    service = _service(runtime)
+    authority = create_task_runtime_execution_attempt_authority(attempt)
+
+    def _close(prepared: Any, identity: TaskRuntimeExecutionAttemptIdentityV1) -> None:
+        seq = prepared.latest_operation_stream_head + 1
+        for member_prep in prepared.prepared_members:
+            member = member_prep.member
+            claimed = claim_directed_effect(
+                ClaimDirectedEffectCommandV1(
+                    workspace=identity.workspace,
+                    task_id=identity.task_id,
+                    execution_attempt=identity,
+                    parent_binding=prepared.parent_binding,
+                    tool_call_id=member.tool_call_id,
+                    effect_id=member.effect_id,
+                    expected_version=1,
+                    expected_seq=seq,
+                    actor="roles.kernel.test",
+                    intended_effect_fingerprint=member.intended_effect_fingerprint,
+                    policy_verdict_hash=member.policy_verdict_hash,
+                    expected_receipt_binding_hash=member.expected_receipt_binding_hash,
+                )
+            )
+            assert claimed.code == "effect_claimed", claimed
+            assert claimed.snapshot is not None
+            seq = claimed.snapshot.source_head_seq + 1
+            committed = commit_directed_effect_receipt(
+                CommitDirectedEffectReceiptCommandV1(
+                    workspace=identity.workspace,
+                    task_id=identity.task_id,
+                    execution_attempt=identity,
+                    parent_binding=prepared.parent_binding,
+                    tool_call_id=member.tool_call_id,
+                    effect_id=member.effect_id,
+                    expected_version=2,
+                    expected_seq=seq,
+                    actor="roles.kernel.test",
+                    intended_effect_fingerprint=member.intended_effect_fingerprint,
+                    policy_verdict_hash=member.policy_verdict_hash,
+                    expected_receipt_binding_hash=member.expected_receipt_binding_hash,
+                    receipt_ref=f"receipt://{member.tool_call_id}",
+                    receipt_hash="b" * 64,
+                    receipt_binding_hash=member.expected_receipt_binding_hash,
+                    receipt_outcome="succeeded",
+                )
+            )
+            assert committed.code == "receipt_committed", committed
+            assert committed.snapshot is not None
+            seq = committed.snapshot.source_head_seq + 1
+
+    first_candidates = tuple(
+        _candidate(
+            attempt,
+            ordinal=index,
+            tool_call_id=f"call-first-{index}",
+            target_path=f"src/models/m{index}.ts",
+            turn_id="turn-1",
+            batch_id="batch-1",
+        )
+        for index in range(3)
+    )
+    first = service.prepare_batch(
+        execution_attempt=attempt,
+        execution_attempt_authority=authority,
+        turn_id="turn-1",
+        batch_id="batch-1",
+        candidates=first_candidates,
+    )
+    assert first.status == "ready", first
+    assert first.prepared_batch is not None
+    first_identity = first.prepared_batch.execution_attempt
+    _close(first.prepared_batch, first_identity)
+
+    # Same-owner director-loop heartbeat advances lease while second prepare is
+    # about to start (and again during multi-member admit via finalize path).
+    renewed = heartbeat_task_runtime_execution_attempt(
+        HeartbeatTaskRuntimeExecutionAttemptCommandV1(
+            workspace=first_identity.workspace,
+            identity=first_identity,
+            lease_ttl_seconds=120,
+            context_summary="director_loop_same_owner_renew",
+            lock_timeout_seconds=5.0,
+        )
+    )
+    assert renewed.success is True
+    assert renewed.renewed_identity is not None
+    assert renewed.renewed_identity.lease_expires_at != first_identity.lease_expires_at
+
+    second_identity = renewed.renewed_identity
+    second_authority = create_task_runtime_execution_attempt_authority(second_identity)
+    second_candidates = tuple(
+        _candidate(
+            second_identity,
+            ordinal=index,
+            tool_call_id=f"call-second-{index}",
+            target_path=path,
+            turn_id="turn-2",
+            batch_id="batch-2",
+        )
+        for index, path in enumerate(
+            (
+                "index.html",
+                "src/engine/simulation.ts",
+                "src/engine/renderer.ts",
+                "src/web.ts",
+            )
+        )
+    )
+    # Concurrent renew during second prepare (mid multi-member admit window).
+    mid = heartbeat_task_runtime_execution_attempt(
+        HeartbeatTaskRuntimeExecutionAttemptCommandV1(
+            workspace=second_identity.workspace,
+            identity=second_identity,
+            lease_ttl_seconds=180,
+            context_summary="director_loop_mid_prepare_renew",
+            lock_timeout_seconds=5.0,
+        )
+    )
+    assert mid.success is True
+
+    second = service.prepare_batch(
+        execution_attempt=second_identity,
+        execution_attempt_authority=second_authority,
+        turn_id="turn-2",
+        batch_id="batch-2",
+        candidates=second_candidates,
+    )
+    assert second.status == "ready", (
+        f"expected second multi-member batch ready after lease renew, got "
+        f"{second.status} error={second.error_code} evidence={second.upstream_evidence}"
+    )
+    assert second.prepared_batch is not None
+    assert second.error_code is None
+    assert second.prepared_batch.parent_binding.parent_sequence == 2
+    assert len(second.prepared_batch.prepared_members) == 4
+    assert {member.member.tool_call_id for member in second.prepared_batch.prepared_members} == {
+        "call-second-0",
+        "call-second-1",
+        "call-second-2",
+        "call-second-3",
+    }
+
+
 @pytest.mark.parametrize(
     "failure_stage",
     (
@@ -1099,7 +1329,8 @@ async def test_claim_heartbeat_denial_precedes_taskruntime_claim(tmp_path: Path)
         command: HeartbeatTaskRuntimeExecutionAttemptCommandV1,
     ) -> TaskRuntimeExecutionAttemptHeartbeatVerdictV1:
         heartbeat_commands.append(command)
-        if len(heartbeat_commands) > 1:
+        # R145: prepare_batch heartbeats at start and again before inventory finalize.
+        if command.context_summary.startswith("directed_effect_pre_claim:"):
             raise RuntimeError("pre-claim heartbeat unavailable")
         return TaskRuntimeExecutionAttemptHeartbeatVerdictV1(
             success=True,
@@ -1131,6 +1362,7 @@ async def test_claim_heartbeat_denial_precedes_taskruntime_claim(tmp_path: Path)
     assert result.error_code == "deo_execution_attempt_heartbeat_failed"
     assert [command.context_summary for command in heartbeat_commands] == [
         "directed_effect_batch_prepare",
+        "directed_effect_inventory_finalize",
         "directed_effect_pre_claim:call-0",
     ]
     assert all(name != "claim_operation" for name, _command in runtime.events)
@@ -1189,6 +1421,134 @@ async def test_claim_execution_context_captures_current_policy_before_registrati
     )
     assert replay.status == "denied"
     assert replay.error_code == "deo_claim_failed"
+
+
+async def test_post_claim_policy_capture_failure_seals_recovery_pending(
+    tmp_path: Path,
+) -> None:
+    """R141: durable EFFECT_STARTED must not stay orphaned when current policy capture fails."""
+
+    workspace = tmp_path / "claim-policy-capture-fail"
+    attempt = _setup_attempt(str(workspace))
+    runtime = _RecordingRuntime(events=[])
+    authority = _authority(attempt)
+    service = DirectedEffectLifecycleService(
+        policy_snapshot_port=_RecordingPolicyPort(
+            runtime.events,
+            fail_current_policy_capture=True,
+        ),
+        task_runtime_ports=runtime.ports(),
+    )
+    prepared = service.prepare_batch(
+        execution_attempt=attempt,
+        execution_attempt_authority=authority,
+        turn_id="turn-1",
+        batch_id="batch-1",
+        candidates=(_candidate(attempt, ordinal=0),),
+    ).prepared_batch
+    assert prepared is not None
+
+    denied = await service.claim_execution_context(
+        prepared_batch=prepared,
+        execution_attempt_authority=authority,
+        tool_call_id="call-0",
+        current_job_token_restriction_evidence=_job_restriction_evidence(),
+    )
+    assert denied.status == "denied"
+    assert denied.error_code == "deo_current_policy_evidence_unavailable"
+    assert denied.operation_claim_status == "claimed"
+
+    member = prepared.prepared_members[0].member
+    current = get_directed_effect_operation(
+        GetDirectedEffectOperationQueryV1(
+            workspace=attempt.workspace,
+            task_id=attempt.task_id,
+            execution_attempt=attempt,
+            parent_binding=prepared.parent_binding,
+            tool_call_id=member.tool_call_id,
+            effect_id=member.effect_id,
+        )
+    )
+    assert current.ok is True
+    assert current.state == "RECOVERY_PENDING"
+
+
+async def test_claim_exact_replay_rehydrates_grant_after_durable_effect_started(
+    tmp_path: Path,
+) -> None:
+    """R139: durable EFFECT_STARTED must rehydrate a claim grant on exact replay.
+
+    Ambiguous append confirmation historically returned idempotent_replay without
+    a grant, so lifecycle denied deo_claim_failed while the operation stream
+    already held EFFECT_STARTED (orphan multi-write batch failure).
+    """
+
+    workspace = tmp_path / "claim-exact-replay-grant"
+    attempt = _setup_attempt(str(workspace))
+    authority = _authority(attempt)
+    # Real TaskRuntime ports (default) so claim transitions are durable.
+    service = DirectedEffectLifecycleService(
+        policy_snapshot_port=_RecordingPolicyPort([]),
+    )
+    prepared = service.prepare_batch(
+        execution_attempt=attempt,
+        execution_attempt_authority=authority,
+        turn_id="turn-1",
+        batch_id="batch-1",
+        candidates=(_candidate(attempt, ordinal=0),),
+    ).prepared_batch
+    assert prepared is not None
+    member = prepared.prepared_members[0].member
+    from polaris.cells.runtime.task_runtime.public import (
+        ClaimDirectedEffectCommandV1,
+        GetDirectedEffectOperationQueryV1,
+        claim_directed_effect,
+        get_directed_effect_operation,
+    )
+
+    heartbeat = refresh_directed_effect_attempt(
+        authority=authority,
+        expected_execution_attempt=prepared.execution_attempt,
+        context_summary="r139-claim-exact-replay",
+    )
+    assert heartbeat.status == "fresh" and heartbeat.execution_attempt is not None
+    current = get_directed_effect_operation(
+        GetDirectedEffectOperationQueryV1(
+            workspace=heartbeat.execution_attempt.workspace,
+            task_id=heartbeat.execution_attempt.task_id,
+            execution_attempt=heartbeat.execution_attempt,
+            parent_binding=prepared.parent_binding,
+            tool_call_id=member.tool_call_id,
+            effect_id=member.effect_id,
+        )
+    )
+    assert current.ok and current.snapshot is not None
+    command = ClaimDirectedEffectCommandV1(
+        workspace=heartbeat.execution_attempt.workspace,
+        task_id=heartbeat.execution_attempt.task_id,
+        execution_attempt=heartbeat.execution_attempt,
+        parent_binding=prepared.parent_binding,
+        tool_call_id=member.tool_call_id,
+        effect_id=member.effect_id,
+        expected_version=prepared.prepared_members[0].admitted_operation_version,
+        expected_seq=current.snapshot.source_head_seq + 1,
+        actor="roles.kernel",
+        intended_effect_fingerprint=member.intended_effect_fingerprint,
+        policy_verdict_hash=member.policy_verdict_hash,
+        expected_receipt_binding_hash=member.expected_receipt_binding_hash,
+    )
+    first = claim_directed_effect(command)
+    assert first.ok is True
+    assert first.code == "effect_claimed"
+    assert first.state == "EFFECT_STARTED"
+    assert first.claim_grant is not None
+    second = claim_directed_effect(command)
+    assert second.ok is True
+    assert second.code == "effect_claimed"
+    assert second.state == "EFFECT_STARTED"
+    assert second.claim_grant is not None
+    assert second.claim_grant.grant_hash == first.claim_grant.grant_hash
+    assert second.claim_grant.claim_event_seq == first.claim_grant.claim_event_seq
 
 
 async def test_second_claim_uses_current_operation_stream_head_after_first_receipt(

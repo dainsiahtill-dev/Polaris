@@ -1,0 +1,11 @@
+{
+  "defect_id": "R124-CE-STRUCTURED-OUTPUT-MISSING-RISK-FLAGS",
+  "title": "CE structured output fails when LLM omits empty risk_flags array",
+  "status": "platform_fixed_pending_rebench",
+  "root_cause": "strict JSON schema requires risk_flags; no default coercion; SCHEMA-REPAIR re-LLM fails same way",
+  "fix": "structured_output_transport coerces missing/null required array/object containers before Draft202012 validation",
+  "tests": [
+    "test_missing_required_empty_arrays_are_coerced_before_schema_validation",
+    "test_null_required_array_is_coerced_to_empty_list"
+  ]
+}

@@ -1057,25 +1057,28 @@ def restrict_tool_definitions_to_edit(tool_definitions: list[dict[str, Any]]) ->
     ]
 
 
+# Final-provider qualification allows scoped path enums only on write_file
+# (file + aliases). Pinning edit_file/edit_blocks raises
+# tool_registry_scoped_enum_unauthorized and blocks repair turns (r130 L1-01).
+_SCOPED_PATH_ENUM_AUTHORIZED_TOOLS = frozenset({"write_file"})
+
+
 def pin_write_tool_file_param_to_targets(
     tool_definitions: list[dict[str, Any]],
     declared_targets: tuple[str, ...],
 ) -> list[dict[str, Any]]:
-    """Pin write tools' ``file`` parameter to the declared step targets (enum).
+    """Pin write_file ``file`` (+ aliases) to declared step targets (enum).
 
-    三层裂变步契约是单文件的；把 target_file 钉进写工具 schema 后, 严格 guided
-    decoding 下「写错文件」不可生成, 宽松 provider 下也是最强的 schema 信号 —
-    比 EXEC_TARGET_MISSING 事后反弹 (~30min/市场圈, live I3-r9 S1 假阳性) 便宜
-    三个数量级。``path``/``filepath``/``file_path`` 别名是 registry 展开出的
-    真实可选属性且 normalizer 会在 canonical 缺席时把别名映入 ``file``
-    (对抗复核实锤的逃逸口), 故一并钉住。Caveat: edit_blocks 的 SEARCH/REPLACE
-    ``blocks`` 字符串内嵌的 ``:filepath`` 钉不住, 由步靶证据门与 QA verify
-    兜底。Definitions are copied, never mutated in place.
+    Only ``write_file`` is qualification-safe for scoped path enums. edit_file /
+    edit_blocks / append_to_file stay registry-faithful without path enums so
+    final provider qualification does not fail closed. Prompt/step contracts
+    still steer those tools; wrong-file escapes are gated by task boundary
+    evidence. Definitions are copied, never mutated in place.
     """
     if not declared_targets:
         return tool_definitions
     file_property_names_by_tool = {
-        tool_name: _file_param_property_names_for_tool(tool_name) for tool_name in _FILE_PARAM_WRITE_TOOLS
+        tool_name: _file_param_property_names_for_tool(tool_name) for tool_name in _SCOPED_PATH_ENUM_AUTHORIZED_TOOLS
     }
     pinned: list[dict[str, Any]] = []
     for definition in tool_definitions:
@@ -1088,7 +1091,7 @@ def pin_write_tool_file_param_to_targets(
             if isinstance(function_payload, dict)
             else str(definition.get("name") or "").strip()
         )
-        if name not in _FILE_PARAM_WRITE_TOOLS or not isinstance(function_payload, dict):
+        if name not in _SCOPED_PATH_ENUM_AUTHORIZED_TOOLS or not isinstance(function_payload, dict):
             pinned.append(definition)
             continue
         parameters = function_payload.get("parameters")

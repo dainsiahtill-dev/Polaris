@@ -1,0 +1,43 @@
+{
+  "defect_id": "R143-SIBLING-EXPORTS-MESSAGE-SHRINK",
+  "status": "fixed_platform_unit_and_live_validated",
+  "summary": "TASK-2 missing_required_refs=actual_sibling_exports: _ensure_current_user_message_final substring-shrunk rich director messages, stripping sibling-export bodies required for final-request message binding.",
+  "root_cause": {
+    "evidence_run": "r142c factory_5f8d11c03011",
+    "mechanism": [
+      "execution_strategy requires actual_sibling_exports for dependent tasks",
+      "parent receipts present; offline snapshot builds (11 modules)",
+      "coverage requires message-bound sibling bodies",
+      "_ensure_current_user_message_final used instruction-in-content then set content=instruction"
+    ]
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py",
+      "src/backend/polaris/cells/roles/kernel/internal/llm_caller/context_audit.py",
+      "src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_components.py"
+    ]
+  },
+  "verification": {
+    "pytest": "sibling shrink + final_request_sampling: 54+ related passed (pre-existing stream engine test failure unrelated)",
+    "ruff": "clean",
+    "rebench": {
+      "label": "r143-sibling-exports",
+      "factory_run_id": "factory_a43f39268d2b",
+      "work_dir": "/tmp/factory-bench-l1-01-r143-sibling-exports",
+      "wall_s": 467,
+      "chain_exit": 1,
+      "actual_sibling_exports_missing_count": 0,
+      "missing_required_refs_count": 0,
+      "residual": [
+        "factory_role_evidence_cutoff_append_failed (fact-stream lock under load)",
+        "late GET timeouts",
+        "missing tests / real_run build_test_lint+entrypoint_smoke",
+        "run_ledger_integrity_failed"
+      ]
+    }
+  },
+  "four_pillars": "NOT_MET",
+  "do_not_advance": "L1-02",
+  "next_action": "R144: factory_role_evidence_cutoff_append_failed / fact-stream lock contention under director load"
+}

@@ -2553,6 +2553,215 @@ def test_llm_caller_keeps_current_user_instruction_as_final_message() -> None:
     assert normalized[1]["role"] == "system"
 
 
+def test_llm_caller_does_not_shrink_director_message_with_sibling_exports() -> None:
+    """R143: short context.message must not strip actual_sibling_exports bodies.
+
+    Live r142c TASK-2 failed with missing_required_refs=actual_sibling_exports
+    after substring match replaced the full director turn with a short token.
+    """
+
+    rich_director_turn = (
+        "任务: 实现 发光昆虫花园模拟器 模拟流程\n"
+        "已提交父任务的真实依赖产物 / Committed parent-task dependency artifacts:\n"
+        "polaris.actual_sibling_exports.evidence.v2 snapshot_sha256=" + ("ab" * 32) + "\n"
+        "--- parent_task_id=1 receipt_id=director-physical-effect-abc path=src/models/Firefly.ts "
+        "sha256=" + ("cd" * 32) + " ---\n"
+        "export class Firefly {}\n"
+        "禁止输出 TODO/FIXME/NotImplemented 等占位实现。\n"
+    )
+    short_instruction = "实现 发光昆虫花园模拟器 模拟流程"
+    assert short_instruction in rich_director_turn
+
+    messages = [
+        {"role": "system", "content": "Director role contract."},
+        {"role": "user", "content": rich_director_turn},
+        {"role": "system", "content": "Late projected context."},
+    ]
+    normalized = _ensure_current_user_message_final(messages, short_instruction)
+
+    assert normalized[-1]["role"] == "user"
+    assert normalized[-1]["content"] == rich_director_turn
+    assert "polaris.actual_sibling_exports.evidence.v2 snapshot_sha256=" in normalized[-1]["content"]
+    assert "export class Firefly {}" in normalized[-1]["content"]
+
+
+def test_r150_re_pins_actual_sibling_exports_after_tool_loop_history() -> None:
+    """R150: multi-turn tool history must not drop sibling-export message binding.
+
+    Live r149 TASK-2: first LLM call had has_actual_sibling_exports=true; after
+    write tools, follow-up coverage failed closed with
+    missing_required_refs=actual_sibling_exports while structured payload still
+    lived in context_override.
+    """
+    import hashlib
+    import json
+
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+        _actual_sibling_exports_message_bound,
+        _looks_like_actual_sibling_exports,
+    )
+    from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import (
+        _ensure_actual_sibling_exports_message_bound,
+    )
+
+    body = "export class Firefly { glow(): number { return 1; } }\n"
+    body_bytes = body.encode("utf-8")
+    module = {
+        "parent_task_id": "1",
+        "parent_runtime_task_id": "1",
+        "parent_external_task_id": "TASK-1",
+        "source_fact_ref": "task_runtime.observable_task:1",
+        "source_fact_hash": "a" * 64,
+        "effect_receipt_id": "director-physical-effect-abc",
+        "effect_receipt_hash": "b" * 64,
+        "effect_receipt_binding_hash": "c" * 64,
+        "physical_result_hash": "d" * 64,
+        "target_state_hash": "e" * 64,
+        "path": "src/models/Firefly.ts",
+        "sha256": hashlib.sha256(body_bytes).hexdigest(),
+        "byte_count": len(body_bytes),
+        "body": body,
+        "guarded_snapshot": {
+            "device": 1,
+            "inode": 2,
+            "mtime_ns": 3,
+            "ctime_ns": 4,
+            "root_device": 5,
+            "root_inode": 6,
+        },
+    }
+    payload: dict[str, object] = {
+        "schema_version": "polaris.actual_sibling_exports.evidence.v2",
+        "source": "roles.adapters.director.task_runtime_dependency_artifact_snapshot",
+        "dependency_task_ids": ["1"],
+        "covered_parent_task_ids": ["1"],
+        "modules": [module],
+        "module_count": 1,
+        "total_byte_count": len(body_bytes),
+    }
+    payload["snapshot_sha256"] = hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    assert _looks_like_actual_sibling_exports(payload, messages=None)
+
+    # Tool-loop history without the original rich user turn (bodies dropped).
+    tool_loop_messages = [
+        {"role": "system", "content": "Director role contract."},
+        {"role": "user", "content": "实现 发光昆虫花园模拟器 模拟流程"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "function": {"name": "write_file"}}]},
+        {"role": "tool", "content": '{"ok": true, "path": "src/engine/simulation.ts"}'},
+    ]
+    assert not _actual_sibling_exports_message_bound(payload, tool_loop_messages)
+
+    rebound = _ensure_actual_sibling_exports_message_bound(
+        tool_loop_messages,
+        {"actual_sibling_exports": payload},
+    )
+    assert _actual_sibling_exports_message_bound(payload, rebound)
+    # R152: pin among leading system messages; trailing role must stay the
+    # tool/user turn so ContextOS current_user_final stays true.
+    assert rebound[0]["role"] == "system"
+    assert rebound[1]["role"] == "system"
+    assert f"snapshot_sha256={payload['snapshot_sha256']}" in rebound[1]["content"]
+    assert body in rebound[1]["content"]
+    assert rebound[-1]["role"] == "tool"
+    assert [m["role"] for m in rebound] == [
+        "system",
+        "system",
+        "user",
+        "assistant",
+        "tool",
+    ]
+    # Already-bound messages must not grow another pin.
+    again = _ensure_actual_sibling_exports_message_bound(rebound, {"actual_sibling_exports": payload})
+    assert again == rebound
+
+
+@pytest.mark.module_final_request_context
+def test_r152_sibling_export_pin_preserves_current_user_final_role() -> None:
+    """R152: re-pin must not make final_role=system after tool-loop history.
+
+    Live r151: after successful writes, follow-up qualify failed with
+    final_request_context_quality_failed because context_os_prompt_audit had
+    current_user_final=false (final_role=system from trailing R150 pin).
+    """
+    import hashlib
+    import json
+
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+        _actual_sibling_exports_message_bound,
+    )
+    from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import (
+        _ensure_actual_sibling_exports_message_bound,
+    )
+    from polaris.kernelone.audit.context_os_prompt import audit_context_os_prompt_messages
+
+    body = "export class Flower {}\n"
+    body_bytes = body.encode("utf-8")
+    module = {
+        "parent_task_id": "1",
+        "parent_runtime_task_id": "1",
+        "parent_external_task_id": "TASK-1",
+        "source_fact_ref": "task_runtime.observable_task:1",
+        "source_fact_hash": "a" * 64,
+        "effect_receipt_id": "director-physical-effect-abc",
+        "effect_receipt_hash": "b" * 64,
+        "effect_receipt_binding_hash": "c" * 64,
+        "physical_result_hash": "d" * 64,
+        "target_state_hash": "e" * 64,
+        "path": "src/models/Flower.ts",
+        "sha256": hashlib.sha256(body_bytes).hexdigest(),
+        "byte_count": len(body_bytes),
+        "body": body,
+        "guarded_snapshot": {
+            "device": 1,
+            "inode": 2,
+            "mtime_ns": 3,
+            "ctime_ns": 4,
+            "root_device": 5,
+            "root_inode": 6,
+        },
+    }
+    payload: dict[str, object] = {
+        "schema_version": "polaris.actual_sibling_exports.evidence.v2",
+        "source": "roles.adapters.director.task_runtime_dependency_artifact_snapshot",
+        "dependency_task_ids": ["1"],
+        "covered_parent_task_ids": ["1"],
+        "modules": [module],
+        "module_count": 1,
+        "total_byte_count": len(body_bytes),
+    }
+    payload["snapshot_sha256"] = hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    user_instruction = "实现 发光昆虫花园模拟器 模拟流程与 Web 入口"
+    history = [
+        {"role": "system", "content": "Director role contract."},
+        {"role": "user", "content": user_instruction},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "function": {"name": "write_file"}}]},
+        {"role": "tool", "content": '{"ok": true}'},
+        {"role": "user", "content": user_instruction},
+    ]
+    rebound = _ensure_actual_sibling_exports_message_bound(
+        history,
+        {"actual_sibling_exports": payload},
+    )
+    assert _actual_sibling_exports_message_bound(payload, rebound)
+    assert rebound[-1]["role"] == "user"
+    assert rebound[-1]["content"] == user_instruction
+    audit = audit_context_os_prompt_messages(
+        messages=rebound,
+        expected=True,
+        current_user_instruction=user_instruction,
+        context_sources=["state_first_context_os"],
+        metadata={"state_first_mode_active": True},
+    )
+    assert audit["ok"] is True
+    assert audit["final_role"] == "user"
+    assert audit["requirements"]["current_user_final"] is True
+    assert audit["control_plane"]["isolated"] is True
+
+
 def test_llm_caller_restores_missing_current_user_instruction_at_tail() -> None:
     messages = [{"role": "system", "content": "Projected context only."}]
 

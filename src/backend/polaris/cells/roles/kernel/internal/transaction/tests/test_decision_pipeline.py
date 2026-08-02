@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from polaris.cells.control_plane.run_ledger.public import (
     native_tool_call_facts_from_sources,
     project_native_tool_call_facts_to_metadata,
@@ -13,6 +14,15 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
 from polaris.cells.roles.kernel.internal.transaction.decision_pipeline import (
     _suppressed_tool_batch_tool_refs,
     build_tool_dispatch_dropped_anomaly,
+    ensure_native_write_tool_batch_or_fail,
+)
+from polaris.cells.roles.kernel.internal.turn_decision_decoder import TurnDecisionDecoder
+from polaris.cells.roles.kernel.public.turn_contracts import (
+    FinalizeMode,
+    RawLLMResponse,
+    TurnDecision,
+    TurnDecisionKind,
+    TurnId,
 )
 
 
@@ -167,6 +177,138 @@ def test_build_tool_dispatch_dropped_anomaly_derives_lifecycle_from_envelopes() 
             },
         ],
     }
+
+
+def test_ensure_native_write_tool_batch_recovers_executable_batch_from_raw_calls() -> None:
+    """R134: FINAL_ANSWER with parseable native write tools recovers TOOL_BATCH."""
+    import json
+
+    response = RawLLMResponse(
+        content="I'll write the engine files now.",
+        model="gpt-test",
+        native_tool_calls=[
+            {
+                "id": "call-write-1",
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "arguments": json.dumps(
+                        {"file": "src/engine/simulation.ts", "content": "export const x = 1\n"},
+                        ensure_ascii=False,
+                    ),
+                },
+            },
+            {
+                "id": "call-write-2",
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "arguments": json.dumps(
+                        {"file": "src/engine/renderer.ts", "content": "export const y = 2\n"},
+                        ensure_ascii=False,
+                    ),
+                },
+            },
+        ],
+    )
+    decision = TurnDecision(
+        turn_id=TurnId("turn-r134"),
+        kind=TurnDecisionKind.FINAL_ANSWER,
+        visible_message=str(response.content or ""),
+        reasoning_summary=None,
+        tool_batch=None,
+        finalize_mode=FinalizeMode.NONE,
+        domain="code",
+        metadata={
+            "source": "direct_answer",
+            "native_tool_call_envelopes": [
+                {"envelope_id": "e1", "tool_name": "write_file"},
+                {"envelope_id": "e2", "tool_name": "write_file"},
+            ],
+        },
+    )
+    decoder = TurnDecisionDecoder()
+    probe = decoder.recover_executable_tool_batch_decision(response, TurnId("turn-r134"))
+    assert probe is not None, "recover_executable_tool_batch_decision returned None"
+    assert probe["kind"] == TurnDecisionKind.TOOL_BATCH
+    assert probe.get("tool_batch") is not None
+    recovered = ensure_native_write_tool_batch_or_fail(
+        decision=decision,
+        llm_response=response,
+        decoder=decoder,
+        turn_id="turn-r134",
+        decision_metadata={"run_id": "director-r134", "task_id": "TASK-2", "role": "director"},
+    )
+    assert recovered["kind"] == TurnDecisionKind.TOOL_BATCH
+    assert recovered["tool_batch"] is not None
+    invocations = recovered["tool_batch"]["invocations"]
+    assert len(invocations) == 2
+    assert {item["tool_name"] for item in invocations} == {"write_file"}
+    assert recovered["metadata"]["r134_recovered_tool_batch"] is True
+
+
+def test_ensure_native_write_tool_batch_fail_closed_when_write_envelopes_unparseable() -> None:
+    """R134: native write envelopes without parseable args fail-closed before terminal."""
+    response = RawLLMResponse(content="plan only", model="gpt-test", native_tool_calls=[])
+    decision = TurnDecision(
+        turn_id=TurnId("turn-r134-drop"),
+        kind=TurnDecisionKind.FINAL_ANSWER,
+        visible_message="plan only",
+        reasoning_summary=None,
+        tool_batch=None,
+        finalize_mode=FinalizeMode.NONE,
+        domain="code",
+        metadata={
+            "native_tool_call_envelopes": [
+                {"envelope_id": "e-write", "tool_name": "write_file"},
+            ],
+        },
+    )
+    with pytest.raises(RuntimeError, match="tool_dispatch_dropped"):
+        ensure_native_write_tool_batch_or_fail(
+            decision=decision,
+            llm_response=response,
+            decoder=TurnDecisionDecoder(),
+            turn_id="turn-r134-drop",
+            decision_metadata={
+                "run_id": "director-r134",
+                "task_id": "TASK-2",
+                "role": "director",
+                "native_tool_call_envelopes": [
+                    {"envelope_id": "e-write", "tool_name": "write_file"},
+                ],
+            },
+        )
+
+
+def test_ensure_native_write_tool_batch_passthrough_when_batch_already_present() -> None:
+    import json
+
+    response = RawLLMResponse(
+        content="",
+        model="gpt-test",
+        native_tool_calls=[
+            {
+                "id": "call-1",
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "arguments": json.dumps({"file": "a.ts", "content": "x"}, ensure_ascii=False),
+                },
+            }
+        ],
+    )
+    decoder = TurnDecisionDecoder()
+    existing = decoder.recover_executable_tool_batch_decision(response, TurnId("turn-existing"))
+    assert existing is not None
+    out = ensure_native_write_tool_batch_or_fail(
+        decision=existing,
+        llm_response=response,
+        decoder=decoder,
+        turn_id="turn-existing",
+        decision_metadata={},
+    )
+    assert out is existing or out["kind"] == TurnDecisionKind.TOOL_BATCH
 
 
 def test_build_tool_dispatch_dropped_anomaly_builds_envelopes_from_raw_response() -> None:

@@ -1,0 +1,48 @@
+{
+  "defect_id": "R150-SIBLING-EXPORTS-TOOL-LOOP-MESSAGE-BIND",
+  "status": "fixed_platform_unit_and_live_validated",
+  "summary": "After TASK-2 tool batch, multi-turn follow-up LLM request lost message-bound actual_sibling_exports bodies while structured context may remain. Final-request coverage fail-closed (missing_required_refs=actual_sibling_exports) killed director without canonical outcome; partial writes left incomplete materialization.",
+  "root_cause": {
+    "evidence_run": "r149 factory_45fe7a94fc8f / director-f67db3454686 TASK-2",
+    "machine_readable": "actual_sibling_exports_message_unbound_on_tool_loop_continuation",
+    "root_cause_signature": "control_plane:actual_sibling_exports_unbound_after_tool_loop",
+    "mechanism": [
+      "First LLM call: has_actual_sibling_exports=true (message-bound)",
+      "Tool batch: 4 write_file (1 effect, 2 files landed, index.html missing)",
+      "Follow-up prepare: structured snapshot still required, message bodies stripped from prebuilt history",
+      "_looks_like_actual_sibling_exports requires message binding → coverage false",
+      "FinalRequestEvidenceCoverageError aborts director → LEDGER_PROJECTION_INCOMPLETE / no canonical outcome"
+    ]
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py",
+      "src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_components.py"
+    ],
+    "change": "Before final-request assembly, if context_override has valid actual_sibling_exports v2 but messages lack marker/module bodies, re-pin a system message with the exact coverage-bound text."
+  },
+  "verification": {
+    "pytest": "test_r150_re_pins_actual_sibling_exports_after_tool_loop_history + sibling sampling audits passed",
+    "ruff": "clean",
+    "rebench": {
+      "label": "r150-sibling-export-tool-loop-bind",
+      "factory_run_id": "factory_11cb853d76e2",
+      "work_dir": "/tmp/factory-bench-l1-01-r150-sibling-export-tool-loop-bind",
+      "wall_s": 834,
+      "chain_exit": 1,
+      "actual_sibling_exports_error_count": 0,
+      "FinalRequestEvidenceCoverageError": 0,
+      "entrypoint_smoke": true,
+      "residual": [
+        "partial tool batch without effects",
+        "director process terminated without canonical outcome",
+        "test_files=0",
+        "tsc FireflySnapshot.stage",
+        "run_ledger_integrity_failed"
+      ]
+    }
+  },
+  "four_pillars": "NOT_MET",
+  "do_not_advance": "L1-02",
+  "next_action": "R151: incomplete multi-task + process terminated without canonical outcome — stay on L1-01"
+}

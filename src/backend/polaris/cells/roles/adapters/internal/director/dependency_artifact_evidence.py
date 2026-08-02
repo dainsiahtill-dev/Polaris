@@ -237,14 +237,10 @@ def _validated_receipt_by_path(
             "physical_result_hash": physical_result_hash,
             "target_state_hash": target_state_hash,
         }
-        existing = receipts.get(path)
-        if existing is not None and existing != receipt:
-            raise _fail(
-                "dependency_artifact_receipt_conflict",
-                "multiple committed receipts disagree for one parent artifact",
-                parent_task_id=parent_task_id,
-                path=path,
-            )
+        # Last successful write wins. Materialization + quality-repair commonly
+        # rewrites the same path (e.g. package.json) with distinct receipts.
+        # Fail-closed conflict here blocked child-task actual_sibling_exports
+        # rebind even when the parent completed with durable files (r131 L1-01).
         receipts[path] = receipt
 
     missing_paths = [path for path in normalized_paths if path not in receipts]

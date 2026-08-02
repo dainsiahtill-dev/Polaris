@@ -1,0 +1,12 @@
+{
+  "defect_id": "R141-POST-CLAIM-POLICY-CAPTURE-RECOVERY",
+  "status": "fixed_platform_unit_validated_live_partial",
+  "summary": "Post-claim policy capture denial left EFFECT_STARTED orphaned; semantic target match + RECOVERY_PENDING seal.",
+  "pytest": "118 passed",
+  "rebench": {
+    "work_dir": "/tmp/factory-bench-l1-01-r141-policy-capture-recovery",
+    "factory_run_id": "factory_4229d37314b9",
+    "note": "event_wait_timeout; deo_current_policy_evidence_unavailable=0 on partial run"
+  },
+  "next": "clean rebench or infra hang root-cause"
+}

@@ -1,0 +1,57 @@
+{
+  "defect_id": "R136-PARENT-RESIDUAL-BATCH-ROLLOVER",
+  "status": "fixed_platform_validated_live",
+  "summary": "deo_parent_admission_failed after partial deferred-repair physical failure: open parent left RECOVERY_PENDING + INTENT_COMMITTED residuals that V3 batch_rollover could not close, permanently blocking subsequent director write batches on the same execution attempt.",
+  "root_cause": {
+    "evidence_run": "r135 factory_a6806e572695",
+    "failed_turn": "director-82207f7e3a8c--TASK-1--attempt-txi_18e09aae3a1a86381b0ca86b-0",
+    "parent_seq_stuck": 4,
+    "operation_stream": "deo_operation_v1_c0558358ff7c6b1c7b7304fc64d2b77657c9be68010325b4",
+    "states": [
+      "RECOVERY_PENDING (physical non-success after fence)",
+      "INTENT_COMMITTED (unclaimed sibling)"
+    ],
+    "mechanism": "admit_parent_batch tries _close_parent_for_batch_rollover with outcome=completed; classification rejects RECOVERY_PENDING; V3 close forbids dead_letter_count>0; abort only from INTENT_COMMITTED and was never applied to residuals."
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "src/backend/polaris/cells/runtime/task_runtime/public/tests/test_directed_effect_operation.py"
+    ],
+    "changes": [
+      "_terminalize_open_parent_residuals_for_batch_rollover: INTENT_COMMITTED->abort, RECOVERY_PENDING->dead_letter under held attempt lock",
+      "batch rollover prepare uses for_batch_rollover=True allowing DEAD_LETTER terminals",
+      "V3 batch_rollover close inventory equation: receipt_count + dead_letter_count + aborted_count",
+      "pytest: rolls over recovery_pending + unclaimed siblings; still blocks EFFECT_STARTED"
+    ]
+  },
+  "verification": {
+    "pytest_related": "27 passed (parent_batch/recovery/dead_letter filters)",
+    "ruff": "clean",
+    "targeted": [
+      "test_parent_batch_admission_rolls_over_recovery_pending_and_unclaimed_siblings",
+      "test_parent_batch_admission_blocks_unresolved_previous_effect",
+      "test_parent_batch_admission_rolls_over_receipt_complete_parent"
+    ]
+  },
+  "rebench": {
+    "label": "r136-parent-residual-rollover",
+    "factory_run_id": "factory_53c14335812e",
+    "work_dir": "/tmp/factory-bench-l1-01-r136-parent-residual-rollover",
+    "wall_s": 950.7,
+    "result": "FAIL (pillars incomplete) but R136 admission VALIDATED",
+    "source_files": 11,
+    "R136_live_validation": {
+      "prior_r135": "deo_parent_admission_failed count=84 in audit; types.ts write dropped",
+      "now": "deo_parent_admission_failed count=0; multi-batch parent_seq1 closed batch_rollover rc=11 then parent_seq2 admitted; types.ts + engine present",
+      "parent_registry": "TASK-1: admit/close/admit/settlement; TASK-2 also admitted"
+    },
+    "residual": {
+      "real_run_gate": "npm run build TS errors (model types incompleteness)",
+      "delivery_depth": "test_files=0",
+      "run_ledger": "TOOL_LIFECYCLE_MISSING still on projection (not deo_parent_admission)",
+      "open_generic_next": "R137 candidates: TOOL_LIFECYCLE_MISSING residual attribution OR package test entrypoint / depth after admission unblocked"
+    }
+  },
+  "next_action": "Attribute remaining TOOL_LIFECYCLE_MISSING after admission unblocked; do not thrash model-only TS first unless gates require it"
+}

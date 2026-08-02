@@ -30,6 +30,7 @@ from typing import Any, cast
 from polaris.cells.control_plane.run_ledger.public import (
     build_tool_dispatch_dropped_anomaly_from_sources,
     native_tool_call_facts_from_sources,
+    native_tool_call_names_from_facts,
     project_native_tool_call_facts_to_metadata,
     tool_dispatch_dropped_error_message,
     tool_dispatch_dropped_guard_applies,
@@ -57,6 +58,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnId,
 )
 from polaris.cells.roles.kernel.public.turn_events import TurnEvent, TurnPhaseEvent
+from polaris.kernelone.tools.tool_kinds import is_write_tool_name
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +128,134 @@ def _suppressed_tool_batch_tool_refs(decision: Mapping[str, Any]) -> list[dict[s
             continue
         suppressed_tool_calls.append(tool_ref)
     return suppressed_tool_calls
+
+
+def _decision_has_executable_tool_batch(decision: Any) -> bool:
+    """Return True when the decision carries at least one tool invocation."""
+
+    if decision is None:
+        return False
+    tool_batch = decision.get("tool_batch") if isinstance(decision, Mapping) else getattr(decision, "tool_batch", None)
+    if tool_batch is None:
+        return False
+    if isinstance(tool_batch, Mapping):
+        invocations = tool_batch.get("invocations")
+        serial_writes = tool_batch.get("serial_writes")
+    else:
+        invocations = getattr(tool_batch, "invocations", None)
+        serial_writes = getattr(tool_batch, "serial_writes", None)
+    for candidate in (invocations, serial_writes):
+        if candidate is None:
+            continue
+        try:
+            if len(list(candidate)) > 0:
+                return True
+        except TypeError:
+            continue
+    return False
+
+
+def _native_facts_include_write_tools(
+    native_tool_call_facts: Mapping[str, Any] | None,
+    *,
+    metadata: Mapping[str, Any] | None = None,
+) -> bool:
+    """Return True when native facts/envelopes name at least one write tool."""
+
+    from polaris.cells.control_plane.run_ledger.public import native_tool_call_envelope_refs_from_metadata
+
+    names = native_tool_call_names_from_facts(native_tool_call_facts)
+    if any(is_write_tool_name(name) for name in names):
+        return True
+    if metadata is not None:
+        for envelope in native_tool_call_envelope_refs_from_metadata(metadata):
+            if is_write_tool_name(str(envelope.get("tool_name") or "")):
+                return True
+    return False
+
+
+def ensure_native_write_tool_batch_or_fail(
+    *,
+    decision: TurnDecision,
+    llm_response: RawLLMResponse,
+    decoder: TurnDecisionDecoder,
+    turn_id: str,
+    decision_metadata: Mapping[str, Any],
+    streaming: bool = False,
+) -> TurnDecision:
+    """Recover an executable TOOL_BATCH for native writes, else fail-closed.
+
+    R134 boundary:
+        Call after any transform that can clear ``tool_batch`` (delivery-mode
+        filter, text-only suppression, premature FINAL_ANSWER). Provider-native
+        write tools must either become an executable batch or raise
+        ``tool_dispatch_dropped`` before process terminal so Run Ledger never
+        sees claimed materialization without dispatch evidence.
+
+    Complexity:
+        O(n) over native tool calls for recovery decode; O(1) for the guard.
+    """
+
+    if _decision_has_executable_tool_batch(decision):
+        return decision
+
+    recovered = decoder.recover_executable_tool_batch_decision(llm_response, TurnId(turn_id))
+    if recovered is not None and _decision_has_executable_tool_batch(recovered):
+        recovered_metadata = dict(recovered.get("metadata") or {})
+        recovered_metadata.update(
+            {
+                key: value
+                for key, value in dict(decision_metadata).items()
+                if key not in recovered_metadata or key in {"run_id", "task_id", "role", "provider_response_hash"}
+            }
+        )
+        recovered_metadata["r134_recovered_tool_batch"] = True
+        project_native_tool_call_facts_to_metadata(
+            recovered_metadata,
+            native_tool_call_facts_from_sources(
+                recovered_metadata,
+                native_tool_calls_from_response(llm_response),
+            ),
+        )
+        logger.warning(
+            "r134_native_write_tool_batch_recovered: turn_id=%s tool_count=%s",
+            turn_id,
+            recovered_metadata.get("tool_count"),
+        )
+        return _with_decision_metadata(recovered, recovered_metadata)
+
+    merged_metadata = dict(decision_metadata)
+    decision_meta = decision.get("metadata") if isinstance(decision, Mapping) else None
+    if isinstance(decision_meta, Mapping):
+        merged_metadata = {**merged_metadata, **dict(decision_meta)}
+    native_tool_call_facts = native_tool_call_facts_from_sources(
+        merged_metadata,
+        native_tool_calls_from_response(llm_response),
+    )
+    has_native = (
+        int(native_tool_call_facts.get("native_tool_calls_count") or 0) > 0
+        or bool(native_tool_call_names_from_facts(native_tool_call_facts))
+    )
+    has_write = _native_facts_include_write_tools(native_tool_call_facts, metadata=merged_metadata)
+    # R134: undischarged native write tools must never reach process terminal.
+    # Any remaining native tools without a batch also fail-closed (definitions
+    # treated present so empty tool-surface cannot silently swallow provider calls).
+    if has_write or (
+        has_native
+        and tool_dispatch_dropped_guard_applies(
+            native_tool_call_facts=native_tool_call_facts,
+            tool_definitions_present=True,
+            decoded_tool_batch_present=False,
+        )
+    ):
+        anomaly = build_tool_dispatch_dropped_anomaly(
+            response=llm_response,
+            metadata=merged_metadata,
+            turn_id=turn_id,
+            streaming=streaming,
+        )
+        raise RuntimeError(tool_dispatch_dropped_error_message(anomaly))
+    return decision
 
 
 async def run_decision_pipeline(
@@ -207,6 +337,16 @@ async def run_decision_pipeline(
     allowed_tool_names_for_turn = extract_allowed_tool_names_from_definitions(tool_definitions)
     if decision.get("kind") == TurnDecisionKind.TOOL_BATCH and not allowed_tool_names_for_turn:
         suppressed_tool_calls = _suppressed_tool_batch_tool_refs(decision)
+        write_suppressed = any(is_write_tool_name(str(item.get("tool_name") or "")) for item in suppressed_tool_calls)
+        if write_suppressed:
+            # R134: never silently convert write tool batches into final answers.
+            anomaly = build_tool_dispatch_dropped_anomaly(
+                response=llm_response,
+                metadata=decision_metadata,
+                turn_id=turn_id,
+            )
+            ledger.anomaly_flags.append(anomaly)
+            raise RuntimeError(tool_dispatch_dropped_error_message(anomaly))
         logger.warning(
             "text-only-tool-batch-suppressed: turn_id=%s no tool definitions were exposed; "
             "treating decoded tool call text as final answer",
@@ -234,6 +374,26 @@ async def run_decision_pipeline(
                 "suppressed_tool_calls": suppressed_tool_calls,
             },
         )
+
+    # R134: recover or fail-closed after transforms that may have cleared tool_batch.
+    try:
+        decision = ensure_native_write_tool_batch_or_fail(
+            decision=decision,
+            llm_response=llm_response,
+            decoder=decoder,
+            turn_id=turn_id,
+            decision_metadata=decision_metadata,
+            streaming=False,
+        )
+    except RuntimeError as exc:
+        if "tool_dispatch_dropped" in str(exc):
+            anomaly = build_tool_dispatch_dropped_anomaly(
+                response=llm_response,
+                metadata=decision_metadata,
+                turn_id=turn_id,
+            )
+            ledger.anomaly_flags.append(anomaly)
+        raise
 
     ledger.record_decision(decision)
     guard_assert_single_decision(

@@ -1795,27 +1795,35 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
             cmd["phase"] = "build_test_lint"
             cmd["script"] = "build"
             commands.append(cmd)
-            build_command_ok = bool(cmd.get("ok"))
-            package_script_failed = not build_command_ok
-            if build_command_ok:
+            npm_build_ok = bool(cmd.get("ok"))
+            # True-run pillar: at least ONE of build/test/lint must succeed.
+            # Do not let a failing test script erase a green build — that also
+            # falsely blocked entrypoint_smoke when start depends on build output
+            # (r126 L1-01: tsc passed, npm start worked, but test dir missing).
+            build_command_ok = npm_build_ok
+            package_script_failed = not npm_build_ok
+            if npm_build_ok:
                 build_detail = "npm run build passed"
-                ran_quality = False
+                quality_parts: list[str] = ["build"]
                 for script_name in ("test", "lint", "check"):
-                    if script_name in scripts:
-                        cmd = _run_command(["npm", "run", script_name], workspace, timeout_s=max(10, int(timeout_s)))
-                        cmd["phase"] = "build_test_lint"
-                        cmd["script"] = script_name
-                        commands.append(cmd)
-                        ran_quality = True
-                        if not cmd.get("ok"):
-                            build_command_ok = False
-                            package_script_failed = True
-                            build_detail = f"npm run {script_name} failed"
-                            break
-                        build_detail = f"npm run build and npm run {script_name} passed"
-                        break
-                if not ran_quality and build_command_ok:
-                    build_detail = "npm run build passed"
+                    if script_name not in scripts:
+                        continue
+                    quality_cmd = _run_command(
+                        ["npm", "run", script_name], workspace, timeout_s=max(10, int(timeout_s))
+                    )
+                    quality_cmd["phase"] = "build_test_lint"
+                    quality_cmd["script"] = script_name
+                    commands.append(quality_cmd)
+                    if quality_cmd.get("ok"):
+                        quality_parts.append(script_name)
+                        build_detail = "npm run " + " and npm run ".join(quality_parts) + " passed"
+                    else:
+                        # Keep build_command_ok True (build already green). Record residual.
+                        build_detail = (
+                            f"npm run build passed; npm run {script_name} failed "
+                            f"(build_test_lint pillar still satisfied by build)"
+                        )
+                    break
             else:
                 stderr = str(cmd.get("stderr_tail") or "")
                 build_detail = "npm run build failed" + (f": {stderr}" if stderr else "")
@@ -1897,11 +1905,25 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
         entrypoint = _smoke_static_web(workspace, html_entry, timeout_s=timeout_s)
     elif package and shutil.which("npm") and "start" in scripts:
         start_needs_build = _script_depends_on_build_output(scripts, "start")
-        build_was_attempted = any(cmd.get("script") == "build" for cmd in commands)
-        if start_needs_build and (not build_was_attempted or not build_command_ok):
+        # Entrypoint depends on the *build script* outcome only — never on test/lint.
+        # Coupling entrypoint to aggregate build_test_lint hid true CLI/Web success
+        # when only tests were missing (r126: npm start rc=0 while gate said smoke fail).
+        build_script_succeeded = any(
+            str(cmd.get("script") or "") == "build" and bool(cmd.get("ok")) for cmd in commands
+        )
+        build_was_attempted = any(str(cmd.get("script") or "") == "build" for cmd in commands)
+        if start_needs_build and not build_script_succeeded:
             fail_detail = "build did not succeed"
-            if build_was_attempted and build_detail:
-                fail_detail = build_detail
+            if build_was_attempted:
+                build_fail_cmds = [
+                    cmd for cmd in commands if str(cmd.get("script") or "") == "build" and not bool(cmd.get("ok"))
+                ]
+                if build_fail_cmds:
+                    fail_detail = str(
+                        build_fail_cmds[-1].get("stderr_tail")
+                        or build_fail_cmds[-1].get("detail")
+                        or "npm run build failed"
+                    )
             entrypoint = {
                 "kind": "npm_start",
                 "entrypoint": "npm run start",

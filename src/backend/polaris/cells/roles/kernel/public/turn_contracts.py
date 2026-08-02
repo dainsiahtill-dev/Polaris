@@ -485,15 +485,26 @@ class TurnDecision(_FrozenMappingModel):
 
 # ============ 执行结果 ============
 class ToolExecutionResult(_FrozenMappingModel):
-    """单个工具执行结果。"""
+    """单个工具执行结果。
+
+    DEO soft-deny / claim-failure rows (R140/R148) surface transport diagnostics
+    on the canonical result row so BatchReceipt.model_validate can accept the
+    same shape ToolBatchRuntime already emits into raw_results. Without these
+    optional fields, extra="forbid" rejects ``error`` /
+    ``directed_effect_claim_status`` and TransactionKernel aborts after partial
+    successful writes (r147 residual: package.json gap + multi-task abort).
+    """
 
     call_id: ToolCallId
     tool_name: str
     status: Literal["success", "error", "pending", "timeout", "aborted"]
     result: Any = None
+    error: str | None = None
     execution_time_ms: int = 0
     effect_receipt: dict[str, Any] | None = None
     effect_receipt_commit: dict[str, Any] | None = None
+    directed_effect_mutation_status: str | None = None
+    directed_effect_claim_status: Literal["not_claimed", "claimed", "unknown"] | None = None
 
 
 class BatchReceipt(_FrozenMappingModel):

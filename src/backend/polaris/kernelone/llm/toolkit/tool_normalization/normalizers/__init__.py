@@ -39,6 +39,7 @@ from ._shared import (
     WriteContentNormalization,
     looks_like_patch_like_write_content,
     normalize_patch_like_write_content,
+    recover_write_body_string,
 )
 
 if TYPE_CHECKING:

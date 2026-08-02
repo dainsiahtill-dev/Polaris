@@ -207,6 +207,139 @@ def test_canonical_authority_rejects_partial_task_runtime_convergence() -> None:
     assert authority.missing_task_boundary_ids == ("TASK-2",)
 
 
+def test_r181_failed_runtime_superseded_by_completed_verified_boundary() -> None:
+    """Failed TASK-3 must not force task_runtime_not_converged when boundary is green.
+
+    Mirrors r181: rows 1/2/4/5 completed, row 3 failed, but delivery already
+    completed_verified on disk after settle/sibling materialization.
+    """
+
+    projection = _canonical_projection()
+    task_runtime = projection["task_runtime_projection"]
+    task_runtime["row_count"] = 2
+    task_runtime["rows"] = [
+        {
+            "task_id": "1",
+            "status": "completed",
+            "execution_state": "completed",
+            "fact_event_seq": 1,
+            "source": "task_runtime.execution_fact",
+            "status_source": "task_runtime.execution_fact",
+        },
+        {
+            "task_id": "3",
+            "status": "failed",
+            "execution_state": "failed",
+            "fact_event_seq": 7,
+            "source": "task_runtime.execution_fact",
+            "status_source": "task_runtime.execution_fact",
+        },
+    ]
+    projection["task_boundary"] = {
+        "ok": True,
+        "verdict_count": 2,
+        "latest_by_task": {
+            "1": {
+                "task_id": "1",
+                "status": "completed_verified",
+                "ok": True,
+                "failure_class": "PASSED",
+                "responsible_layer": "execution_control_plane",
+            },
+            "3": {
+                "task_id": "3",
+                "status": "completed_verified",
+                "ok": True,
+                "failure_class": "PASSED",
+                "responsible_layer": "execution_control_plane",
+            },
+        },
+        "failed": [],
+    }
+
+    authority = evaluate_canonical_factory_authority(
+        projection,
+        sequence_barrier_satisfied=True,
+    )
+
+    assert authority.task_runtime_converged is True
+    assert authority.incomplete_runtime_task_ids == ()
+    assert authority.director_stage_authorized is True
+    assert authority.reason_code in {
+        "canonical_projection_authorized",
+        "qa_verdict_missing",
+        "canonical_sequence_barrier_unsatisfied",
+    }
+    # Director stage only needs boundary+runtime; QA is quality stage.
+    assert authority.director_stage_authorized is True
+
+
+def test_r181_failed_runtime_without_boundary_still_incomplete() -> None:
+    """Pending/failed without completed_verified boundary stays fail-closed."""
+
+    projection = _canonical_projection()
+    task_runtime = projection["task_runtime_projection"]
+    task_runtime["rows"] = [
+        {
+            "task_id": "3",
+            "status": "failed",
+            "execution_state": "failed",
+            "fact_event_seq": 1,
+            "source": "task_runtime.execution_fact",
+            "status_source": "task_runtime.execution_fact",
+        }
+    ]
+    task_runtime["row_count"] = 1
+    projection["task_boundary"] = {"ok": False, "verdict_count": 0, "latest_by_task": {}, "failed": []}
+
+    authority = evaluate_canonical_factory_authority(
+        projection,
+        sequence_barrier_satisfied=True,
+    )
+
+    assert authority.director_stage_authorized is False
+    assert "3" in authority.incomplete_runtime_task_ids or "3" in authority.incomplete_task_ids
+
+
+def test_r181_pending_runtime_superseded_by_completed_verified_after_timeout() -> None:
+    """Timeout-abandoned pending rows converge when boundary is completed_verified."""
+
+    projection = _canonical_projection()
+    task_runtime = projection["task_runtime_projection"]
+    task_runtime["row_count"] = 2
+    task_runtime["rows"] = [
+        {
+            "task_id": "1",
+            "status": "completed",
+            "execution_state": "completed",
+            "fact_event_seq": 1,
+            "source": "task_runtime.execution_fact",
+            "status_source": "task_runtime.execution_fact",
+        },
+        {
+            "task_id": "2",
+            "status": "pending",
+            "execution_state": "in_progress",
+            "fact_event_seq": 4,
+            "source": "task_runtime.execution_fact",
+            "status_source": "task_runtime.execution_fact",
+        },
+    ]
+    projection["task_boundary"] = {
+        "ok": True,
+        "verdict_count": 2,
+        "latest_by_task": {
+            "1": {"task_id": "1", "status": "completed_verified", "ok": True},
+            "2": {"task_id": "2", "status": "completed_verified", "ok": True},
+        },
+        "failed": [],
+    }
+    authority = evaluate_canonical_factory_authority(projection, sequence_barrier_satisfied=True)
+    assert authority.task_runtime_converged is True
+    assert authority.incomplete_runtime_task_ids == ()
+    assert authority.director_stage_authorized is True
+
+
 def test_canonical_projection_filters_task_rows_to_current_run(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

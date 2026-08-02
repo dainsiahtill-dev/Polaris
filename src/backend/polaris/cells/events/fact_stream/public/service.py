@@ -57,6 +57,13 @@ from .contracts import (
     SegmentedFactQueryResultV1,
 )
 
+# Authority-stream appends use fsync durability while factory director heartbeats
+# and settlement concurrently query/append other streams under the same lock
+# realm.  The kernelone default 2.0s acquisition budget is too short under that
+# contention and surfaces as factory_role_evidence_cutoff_append_failed /
+# query_fact_events lock timeouts (R143 L1-01 TASK-2).
+_SEGMENTED_AUTHORITY_LOCK_TIMEOUT_SECONDS = 15.0
+
 _SEGMENTED_AUTHORITY_PREFIXES = (
     "roles.kernel.provider_attempts.factory.",
     "roles.kernel.provider_attempts.session.",
@@ -400,13 +407,23 @@ def query_fact_stream_head(query: QueryFactStreamHeadV1) -> FactStreamHeadV1:
     )
 
 
+def _segmented_authority_store(workspace: str, *, logical_stream: str) -> SegmentedJsonlEventStore:
+    """Build a segmented store with an authority-grade lock acquisition budget."""
+
+    return SegmentedJsonlEventStore(
+        workspace,
+        logical_stream=logical_stream,
+        lock_timeout_seconds=_SEGMENTED_AUTHORITY_LOCK_TIMEOUT_SECONDS,
+    )
+
+
 def ensure_segmented_fact_ledger(
     command: EnsureSegmentedFactLedgerCommandV1,
 ) -> SegmentedFactLedgerReadyV1:
     """Enroll one dynamic logical lock under existing workspace authority."""
 
     _require_segmented_authority_stream(command.logical_stream)
-    store = SegmentedJsonlEventStore(command.workspace, logical_stream=command.logical_stream)
+    store = _segmented_authority_store(command.workspace, logical_stream=command.logical_stream)
     identity = store.storage_identity
     try:
         LockedRegularFileSetV1.enroll_stream_lock_keys(
@@ -435,7 +452,7 @@ def append_segmented_fact_event(
     """Append one strict fsync fact through the segmented authority API."""
 
     _require_segmented_authority_stream(command.logical_stream)
-    store = SegmentedJsonlEventStore(command.workspace, logical_stream=command.logical_stream)
+    store = _segmented_authority_store(command.workspace, logical_stream=command.logical_stream)
     try:
         event = store.append(
             event_type=command.event_type,
@@ -464,7 +481,7 @@ def query_segmented_fact_ledger_head(
     query: QuerySegmentedFactLedgerHeadV1,
 ) -> SegmentedFactLedgerHeadV1:
     _require_segmented_authority_stream(query.logical_stream)
-    store = SegmentedJsonlEventStore(query.workspace, logical_stream=query.logical_stream)
+    store = _segmented_authority_store(query.workspace, logical_stream=query.logical_stream)
     try:
         head = store.head(strict_integrity=query.strict_integrity)
     except (LockedRegularFileError, SegmentedEventStoreError, ValueError) as exc:
@@ -476,7 +493,7 @@ def query_segmented_fact_events(
     query: QuerySegmentedFactEventsV1,
 ) -> SegmentedFactQueryResultV1:
     _require_segmented_authority_stream(query.logical_stream)
-    store = SegmentedJsonlEventStore(query.workspace, logical_stream=query.logical_stream)
+    store = _segmented_authority_store(query.workspace, logical_stream=query.logical_stream)
     try:
         result = store.query(
             limit=query.limit,

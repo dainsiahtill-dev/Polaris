@@ -1,0 +1,22 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "DEFECT-R121-TS-RETURN-OBJECT-SEMICOLON-FALSE-POSITIVE-20260801",
+  "status": "fixed",
+  "severity": "P0",
+  "category": "director_materialization_quality",
+  "phenomenon": "L1-01 TASK-1 materialization quality failed with 'TypeScript return object contains semicolon-terminated property in src/models/Firefly.ts' despite valid tsc-clean class code.",
+  "root_cause": "Regex return\\s*\\{(?P<body>.*?)^\\s*\\}; skipped single-line return {..}; and spanned into later method parameter object types (tick: Tick;), false-positive semicolon property scan.",
+  "fix": {
+    "files": [
+      "src/backend/polaris/kernelone/quality/artifact_quality.py",
+      "src/backend/polaris/tests/unit/kernelone/quality/test_artifact_quality.py"
+    ],
+    "change": "Replace regex body extraction with brace-balanced return-object iterator; regression test for Firefly-style class getter+tick params."
+  },
+  "verification": {
+    "pytest": "test_artifact_quality unit 123 passed",
+    "ruff": "pass",
+    "repro_Firefly": "no semicolon error"
+  },
+  "updated_at": "2026-07-31T17:22:37.253901+00:00"
+}

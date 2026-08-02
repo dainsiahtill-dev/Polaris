@@ -712,6 +712,183 @@ async def test_deferred_repair_failure_preserves_only_activated_rollbacks(
 
 
 @pytest.mark.asyncio
+@pytest.mark.module_tool_batch_deo
+async def test_r151_plain_serial_write_failure_aborts_remaining_unclaimed_siblings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R151: mid-batch write_serial failure must abort remaining INTENT_COMMITTED members.
+
+    Live r150 TASK-2: 4 write_file admitted, first claimed then recovery_pending after
+    physical write, remaining 3 never claimed/aborted → LEDGER_PROJECTION_INCOMPLETE.
+    Plain multi-write inventories (no deferred-repair rollbacks) previously fell through
+    without sibling abort.
+    """
+
+    attempt = _attempt(run_id="r151-sibling-abort")
+    members = tuple(_member(index) for index in range(4))
+    inventory = _inventory(attempt, members)
+    prepared_members = tuple(
+        _prepared_member(member, stream_head=index + 2, execution_attempt=attempt)
+        for index, member in enumerate(members)
+    )
+    prepared = _prepared_batch(
+        execution_attempt=attempt,
+        inventory=inventory,
+        prepared_members=prepared_members,
+        call_id_index=tuple((member.tool_call_id, index) for index, member in enumerate(members)),
+    )
+    call_ids = tuple(member.tool_call_id for member in members)
+    aborted: list[tuple[tuple[str, ...], str]] = []
+    claimed: list[str] = []
+
+    class _Lifecycle:
+        def __init__(self, *, policy_snapshot_port: object) -> None:
+            assert policy_snapshot_port is policy_port
+
+        async def claim_execution_context(self, **kwargs: object) -> DirectedEffectContextClaimResultV1:
+            call_id = str(kwargs["tool_call_id"])
+            claimed.append(call_id)
+            member = next(item for item in members if item.tool_call_id == call_id)
+            bound = prepared_members[dict(prepared.call_id_index)[call_id]].policy_binding.bound_snapshot
+            assert bound is not None
+            grant = _claim_grant(attempt, prepared.parent_binding, member)
+            return DirectedEffectContextClaimResultV1(
+                status="claimed",
+                context=DirectedEffectExecutionContextV1(
+                    context_id=f"context-{call_id}",
+                    batch_id=prepared.parent_binding.correlation.batch_id,
+                    creator_pid=os.getpid(),
+                    tool_call_id=call_id,
+                    normalized_tool_name=member.normalized_tool_name,
+                    arguments_hash=bound.authorization_binding.authorization_evidence.arguments_hash,
+                    authorization_evidence=bound.authorization_binding.authorization_evidence,
+                    claim_grant=grant,
+                    bound_snapshot=bound,
+                    current_policy_evidence=_current_policy_evidence(prepared, member, grant),
+                    current_job_token_restriction_evidence=(),
+                ),
+                error_code=None,
+                operation_claim_status="claimed",
+            )
+
+        def abort_unclaimed_members(self, **kwargs: object) -> tuple[object, ...]:
+            aborted.append((kwargs["tool_call_ids"], str(kwargs["reason"])))  # type: ignore[arg-type]
+            return (object(),)
+
+    monkeypatch.setattr(tool_batch_runtime_module, "DirectedEffectLifecycleService", _Lifecycle)
+
+    class _FenceAdmin:
+        def register(self, context: DirectedEffectExecutionContextV1) -> DirectedEffectFenceRegistrationResultV1:
+            return DirectedEffectFenceRegistrationResultV1(
+                ok=True,
+                status="registered",
+                context_id=context.context_id,
+                error_code=None,
+            )
+
+        def release_batch(
+            self,
+            batch_id: str,
+            _execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        ) -> DirectedEffectFenceReleaseResultV1:
+            return DirectedEffectFenceReleaseResultV1(
+                ok=True,
+                status="released",
+                batch_id=batch_id,
+                released_count=0,
+                error_code=None,
+            )
+
+    class _MutationPort:
+        async def execute_mutation(
+            self,
+            effect_context: DirectedEffectExecutionContextV1,
+            _normalized_tool_name: str,
+            _normalized_arguments: DirectedEffectImmutableItemsV1,
+            repair_effect_binding: object | None = None,
+        ) -> DirectedEffectMutationPortResultV1:
+            del repair_effect_binding
+            # First write: physical-ish failure after claim (recovery path).
+            if effect_context.tool_call_id == call_ids[0]:
+                return DirectedEffectMutationPortResultV1(
+                    ok=False,
+                    status="failed",
+                    tool_result=DirectedEffectToolResultV1(
+                        payload=(
+                            (
+                                "effect_recovery",
+                                DirectedEffectImmutableMapV1(
+                                    items=(
+                                        ("state", "RECOVERY_PENDING"),
+                                        ("code", "recovery_pending"),
+                                    )
+                                ),
+                            ),
+                        )
+                    ),
+                    error_code="deo_physical_execution_failed",
+                )
+            raise AssertionError(f"sibling {effect_context.tool_call_id} must not mutate after serial stop")
+
+    policy_port = _NoEffectPolicyPort()
+    runtime = ToolBatchRuntime(
+        executor=AsyncMock(),
+        directed_effect_runtime=DirectedEffectRuntimeDependenciesV1(
+            policy_snapshot_port=policy_port,
+            fence_admin_port=_FenceAdmin(),
+            mutation_port=_MutationPort(),
+        ),
+        directed_effect_required=True,
+        directed_effect_execution_attempt=attempt,
+        directed_effect_execution_attempt_authority=TaskRuntimeExecutionAttemptAuthorityV1(attempt),
+        prepared_directed_effect_batch=prepared,
+        directed_effect_restrictions_by_call_id=tuple((member.tool_call_id, ()) for member in members),
+        directed_effect_dispatch_call_ids=call_ids,
+        directed_effect_abort_call_ids=(),
+    )
+    writes = [
+        ToolInvocation(
+            call_id=ToolCallId(call_id),
+            tool_name="write_file",
+            arguments={"path": f"src/{index}.ts", "content": "x"},
+        )
+        for index, call_id in enumerate(call_ids)
+    ]
+
+    receipts = await runtime.execute_batch(
+        ToolBatch(
+            batch_id=BatchId(prepared.parent_binding.correlation.batch_id),
+            invocations=writes,
+            serial_writes=writes,
+        ),
+        TurnId("turn-r151-sibling-abort"),
+    )
+
+    assert claimed == [call_ids[0]]
+    assert aborted == [
+        (
+            (call_ids[1], call_ids[2], call_ids[3]),
+            "serial_mutation_sibling_aborted_after_failure",
+        )
+    ]
+    # R156: failed write + one ABORTED tool_result per aborted sibling.
+    assert len(receipts) == 1 + 3
+    assert receipts[0]["failure_count"] == 1
+    raw = receipts[0].raw_results[0]
+    assert raw["directed_effect_aborted_call_ids"] == [call_ids[1], call_ids[2], call_ids[3]]
+    assert raw["directed_effect_preserved_call_ids"] == [call_ids[0]]
+    assert raw["directed_effect_activated_rollback_call_ids"] == []
+    assert raw["directed_effect_executed_rollback_call_ids"] == []
+    aborted_receipts = receipts[1:]
+    assert [row.results[0].call_id for row in aborted_receipts] == list(call_ids[1:])
+    assert all(row.results[0].status == "aborted" for row in aborted_receipts)
+    assert all(row.failure_count == 1 for row in aborted_receipts)
+    assert all(
+        "serial_mutation_sibling_aborted_after_failure" in str(row.results[0].error or "") for row in aborted_receipts
+    )
+
+
+@pytest.mark.asyncio
 async def test_deferred_failure_terminalizes_real_task_runtime_and_executes_claimed_rollback(
     tmp_path: Path,
 ) -> None:
@@ -1448,6 +1625,93 @@ class TestMixedBatch:
         assert receipt.raw_results[0]["effect_receipt_commit"] == effect_receipt_commit
         assert receipt.effect_receipts == [effect_receipt]
 
+    def test_batch_receipt_projects_deo_soft_deny_fields_on_canonical_results(self, runtime) -> None:
+        """R148: DEO claim denial must round-trip through BatchReceipt.model_validate.
+
+        r147 residual: soft-denied write rows carried ``error`` +
+        ``directed_effect_claim_status`` only in ToolResult/raw_results while
+        outcome_commit re-validated BatchReceipt with extra=forbid, crashing
+        TransactionKernel after partial successful writes and aborting multi-task
+        delivery (missing package.json scaffolding).
+        """
+        from polaris.cells.roles.kernel.public.turn_contracts import BatchReceipt
+
+        denied = tool_batch_runtime_module.ToolResult(
+            call_id="call-package-json",
+            tool_name="write_file",
+            status=tool_batch_runtime_module.ToolExecutionStatus.ERROR,
+            result={
+                "ok": False,
+                "error": "deo_director_policy_denied",
+                "error_type": "deo_member_soft_denied",
+            },
+            error="deo_director_policy_denied",
+            directed_effect_claim_status="not_claimed",
+        )
+        succeeded = tool_batch_runtime_module.ToolResult(
+            call_id="call-tsconfig",
+            tool_name="write_file",
+            status=tool_batch_runtime_module.ToolExecutionStatus.SUCCESS,
+            result={"ok": True, "path": "tsconfig.json"},
+            effect_receipt={
+                "schema_version": "roles.adapters.director_physical_effect_receipt.v2",
+                "path": "tsconfig.json",
+            },
+            directed_effect_claim_status="claimed",
+            directed_effect_mutation_status="executed",
+        )
+
+        receipt = runtime._result_to_receipt([succeeded, denied], TurnId("turn-deo-soft-deny"))
+
+        assert receipt.success_count == 1
+        assert receipt.failure_count == 1
+        assert receipt.results[0].status == "success"
+        assert receipt.results[0].directed_effect_claim_status == "claimed"
+        assert receipt.results[1].status == "error"
+        assert receipt.results[1].error == "deo_director_policy_denied"
+        assert receipt.results[1].directed_effect_claim_status == "not_claimed"
+        assert receipt.raw_results[1]["error"] == "deo_director_policy_denied"
+
+        # Soft-deny row shape used by tool_batch_executor dropped_member_rows must
+        # also survive the outcome_commit BatchReceipt.model_validate path.
+        soft_deny_receipt = {
+            "batch_id": "turn-deo-soft-deny_batch",
+            "turn_id": "turn-deo-soft-deny",
+            "results": [
+                {
+                    "call_id": "call-package-json",
+                    "tool_name": "write_file",
+                    "status": "error",
+                    "result": {
+                        "ok": False,
+                        "error": "deo_director_policy_denied",
+                        "error_type": "deo_member_soft_denied",
+                    },
+                    "error": "deo_director_policy_denied",
+                    "effect_receipt": None,
+                    "directed_effect_claim_status": "not_claimed",
+                }
+            ],
+            "raw_results": [
+                {
+                    "call_id": "call-package-json",
+                    "tool_name": "write_file",
+                    "status": "error",
+                    "error": "deo_director_policy_denied",
+                    "directed_effect_claim_status": "not_claimed",
+                }
+            ],
+            "effect_receipts": [],
+            "success_count": 0,
+            "failure_count": 1,
+            "pending_async_count": 0,
+            "has_pending_async": False,
+        }
+        validated = BatchReceipt.model_validate(soft_deny_receipt)
+        assert validated.results[0].error == "deo_director_policy_denied"
+        assert validated.results[0].directed_effect_claim_status == "not_claimed"
+        assert validated.failure_count == 1
+
     @pytest.mark.asyncio
     async def test_write_without_effect_receipt_fails_closed(self, runtime) -> None:
         """成功写工具缺少 effect_receipt 时必须失败闭合。"""
@@ -1479,9 +1743,9 @@ class TestMixedBatch:
         assert receipts[0]["results"][0]["status"] == "error"
         assert receipts[0]["results"][0]["effect_receipt"] is None
         assert receipts[0]["results"][0]["result"]["failure_class"] == FailureClassV1.MISSING_EFFECT_RECEIPT.value
-        assert receipts[0]["raw_results"][0]["error"] == (
-            "Write tool succeeded without effect_receipt; tool lifecycle receipt is incomplete."
-        )
+        missing_receipt_error = "Write tool succeeded without effect_receipt; tool lifecycle receipt is incomplete."
+        assert receipts[0]["results"][0]["error"] == missing_receipt_error
+        assert receipts[0]["raw_results"][0]["error"] == missing_receipt_error
 
     @pytest.mark.asyncio
     async def test_ok_false_result_maps_to_error_status(self, runtime) -> None:

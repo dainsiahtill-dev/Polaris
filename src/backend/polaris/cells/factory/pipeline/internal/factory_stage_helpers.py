@@ -115,6 +115,44 @@ class CanonicalFactoryAuthority:
         )
 
 
+def _alternate_task_id_token(task_id: str) -> str:
+    """Map ``TASK-3`` ↔ ``3`` for boundary/runtime id alignment."""
+
+    token = str(task_id or "").strip()
+    if not token:
+        return ""
+    upper = token.upper()
+    if upper.startswith("TASK-") and upper[5:].isdigit():
+        return upper[5:]
+    if token.isdigit():
+        return f"TASK-{token}"
+    return ""
+
+
+def _runtime_row_delivery_complete(
+    row: Mapping[str, Any],
+    boundary_verdict: Mapping[str, Any] | None,
+) -> bool:
+    """Whether a TaskRuntime row is delivery-complete for stage authority.
+
+    R181/M06: non-completed execution facts (failed/timeout-abandoned pending
+    or in_progress) must not keep ``task_runtime_not_converged`` when the
+    latest task-boundary verdict is already ``completed_verified`` after
+    settle or sibling delivery completed the workspace surface.
+
+    Only a positive completed_verified boundary supersedes; missing/failed
+    boundary remains incomplete (fail-closed).
+    """
+
+    state = str(row.get("execution_state") or row.get("status") or "").strip().lower()
+    if state == "completed":
+        return True
+    if isinstance(boundary_verdict, Mapping) and bool(boundary_verdict.get("ok")):
+        if str(boundary_verdict.get("status") or "").strip().lower() == "completed_verified":
+            return True
+    return False
+
+
 def evaluate_canonical_factory_authority(
     projection: Mapping[str, Any] | None,
     *,
@@ -164,17 +202,6 @@ def evaluate_canonical_factory_authority(
         and runtime_readiness_map.get("ready") is True
         and runtime_rows_authoritative
     )
-    incomplete_runtime_task_ids = tuple(
-        sorted(
-            task_id
-            for task_id, row in normalized_runtime_rows.items()
-            if str(row.get("execution_state") or row.get("status") or "").strip().lower() != "completed"
-        )
-    )
-    task_runtime_converged = (
-        task_runtime_projection_authoritative and bool(normalized_runtime_rows) and not incomplete_runtime_task_ids
-    )
-
     task_boundary = payload.get("task_boundary")
     task_boundary_map = task_boundary if isinstance(task_boundary, Mapping) else {}
     latest_by_task = task_boundary_map.get("latest_by_task")
@@ -184,8 +211,34 @@ def evaluate_canonical_factory_authority(
         for task_id, verdict in latest_by_task_map.items()
         if str(task_id).strip() and isinstance(verdict, Mapping)
     }
+    # Normalize TASK-N ↔ N keys so boundary/runtime ids match (r181 multi-task).
+    verdict_by_runtime_id: dict[str, Mapping[str, Any]] = {}
+    for task_id, verdict in normalized_verdicts.items():
+        verdict_by_runtime_id[task_id] = verdict
+        alt = _alternate_task_id_token(task_id)
+        if alt and alt not in verdict_by_runtime_id:
+            verdict_by_runtime_id[alt] = verdict
+
+    incomplete_runtime_task_ids = tuple(
+        sorted(
+            task_id
+            for task_id, row in normalized_runtime_rows.items()
+            if not _runtime_row_delivery_complete(
+                row,
+                verdict_by_runtime_id.get(task_id) or verdict_by_runtime_id.get(_alternate_task_id_token(task_id) or ""),
+            )
+        )
+    )
+    task_runtime_converged = (
+        task_runtime_projection_authoritative and bool(normalized_runtime_rows) and not incomplete_runtime_task_ids
+    )
     missing_task_boundary_ids = tuple(
-        sorted(task_id for task_id in normalized_runtime_rows if task_id not in normalized_verdicts)
+        sorted(
+            task_id
+            for task_id in normalized_runtime_rows
+            if task_id not in verdict_by_runtime_id
+            and (_alternate_task_id_token(task_id) or "") not in verdict_by_runtime_id
+        )
     )
     failed_task_boundary_ids = tuple(
         sorted(
@@ -200,10 +253,14 @@ def evaluate_canonical_factory_authority(
     incomplete_task_ids = tuple(
         sorted(set(incomplete_runtime_task_ids) | set(missing_task_boundary_ids) | set(failed_task_boundary_ids))
     )
+    # Delivery-complete when every runtime row is covered by completed_verified
+    # (or completed runtime) — not only when verdict map size equals row count
+    # under mismatched TASK-N/N keys.
     task_boundary_completed_verified = (
         task_boundary_present
         and not failed_task_boundary_ids
-        and len(normalized_verdicts) == len(normalized_runtime_rows)
+        and not missing_task_boundary_ids
+        and task_runtime_converged
     )
     failed_verdict = next(
         (normalized_verdicts[task_id] for task_id in failed_task_boundary_ids if task_id in normalized_verdicts),

@@ -1,0 +1,53 @@
+{
+  "defect_id": "R148-BATCH-RECEIPT-DEO-SOFT-DENY-SCHEMA",
+  "status": "fixed_platform_unit_and_live_validated",
+  "summary": "BatchReceipt/ToolExecutionResult forbade DEO soft-deny fields (error, directed_effect_claim_status). After partial successful writes + one deo_director_policy_denied row, outcome_commit model_validate crashed TransactionKernel, write_tool_evidence=false, multi-task aborted, package.json scaffolding never completed.",
+  "root_cause": {
+    "evidence_run": "r147 factory_cd73c5eb7455 / director-efecb059d939",
+    "machine_readable": "batch_receipt_extra_forbid_rejects_deo_soft_deny_fields",
+    "root_cause_signature": "control_plane:batch_receipt_schema_rejects_deo_soft_deny",
+    "mechanism": [
+      "R140 tool_batch_executor soft-deny rows put error + directed_effect_claim_status on results[]",
+      "ToolResult.to_dict already carried those fields; ToolExecutionResult (extra=forbid) did not",
+      "BatchReceipt.model_validate(raw_receipt) in outcome_commit raised Extra inputs are not permitted on results.N.error / directed_effect_claim_status",
+      "TransactionKernel execution failed → director_missing_write_receipt despite 10 files on disk (workspace_diff_without_write_tool)",
+      "TASK-1 failed; TASK-2/3 blocked_by_failed_dependency → incomplete multi-task; package.json never landed; real_run_gate scaffolding+build+entrypoint failed"
+    ],
+    "primary_error": "TransactionKernel execution failed: 2 validation errors for BatchReceipt results.10.error / results.10.directed_effect_claim_status Extra inputs are not permitted (deo_director_policy_denied / not_claimed)",
+    "dispatch_error_code": "director.canonical_task_boundary_missing"
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/kernel/public/turn_contracts.py",
+      "src/backend/polaris/cells/roles/kernel/internal/tool_batch_runtime.py",
+      "src/backend/polaris/cells/roles/kernel/tests/test_tool_batch_runtime.py"
+    ],
+    "change": "ToolExecutionResult gains optional error, directed_effect_claim_status, directed_effect_mutation_status; _result_to_receipt projects them onto canonical results so BatchReceipt.model_validate accepts DEO soft-deny rows."
+  },
+  "verification": {
+    "pytest": "test_batch_receipt_projects_deo_soft_deny_fields_on_canonical_results + related receipt tests + test_turn_outcome_commit (13) passed",
+    "ruff": "clean",
+    "rebench": {
+      "label": "r148-batch-receipt-deo-schema",
+      "factory_run_id": "factory_8bf98c21c7b8",
+      "work_dir": "/tmp/factory-bench-l1-01-r148-batch-receipt-deo-schema",
+      "wall_s": 652,
+      "chain_exit": 1,
+      "scaffolding_present": "ok",
+      "package_scripts": "ok",
+      "package_json_on_disk": true,
+      "effect_receipt_count": 11,
+      "residual": [
+        "deo_member_admission_failed:fact_stream_unknown_failure",
+        "director_dispatch timeout",
+        "backend GET timeouts",
+        "test_files=0",
+        "real_run build/entrypoint",
+        "run_ledger_integrity_failed"
+      ]
+    }
+  },
+  "four_pillars": "NOT_MET",
+  "do_not_advance": "L1-02",
+  "next_action": "R149: fact_stream_unknown_failure / director timeout / incomplete multi-task — stay on L1-01"
+}

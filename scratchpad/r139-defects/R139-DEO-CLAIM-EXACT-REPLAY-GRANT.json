@@ -1,0 +1,16 @@
+{
+  "defect_id": "R139-DEO-CLAIM-EXACT-REPLAY-GRANT",
+  "status": "fixed_platform_validated_live",
+  "summary": "Durable EFFECT_STARTED without grant-bearing effect_claimed caused deo_claim_failed orphan on multi-write batches.",
+  "fix_files": [
+    "src/backend/polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+    "src/backend/polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py",
+    "src/backend/polaris/cells/roles/kernel/tests/test_directed_effect_lifecycle.py"
+  ],
+  "rebench": {
+    "work_dir": "/tmp/factory-bench-l1-01-r139-claim-exact-replay",
+    "factory_run_id": "factory_83be9e89d336",
+    "deo_claim_failed_count": 0
+  },
+  "next": "R140 deo_path_scope_denied + incomplete engine/index/tests materialization"
+}

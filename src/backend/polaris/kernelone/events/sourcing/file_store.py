@@ -558,13 +558,19 @@ class JsonlEventStore:
         return events
 
     def _locked_streams(self, *logical_paths: str) -> LockedRegularFileSetV1:
-        """Return the central lock namespace shared by legacy and guarded writes."""
+        """Return the central lock namespace shared by legacy and guarded writes.
+
+        Default 2s acquisition is too short when factory director cutoff fsync
+        appends contend with task-runtime heartbeat/settlement queries under the
+        same lock realm (R143/R144 advisory lock timeouts).
+        """
 
         try:
             return LockedRegularFileSetV1.acquire(
                 runtime_root=self._storage_identity.runtime_root,
                 storage_identity_token=self._storage_identity.token,
                 logical_paths=logical_paths,
+                timeout_seconds=15.0,
             )
         except LockedRegularFileError as exc:
             raise EventSourcingError(

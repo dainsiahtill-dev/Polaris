@@ -1,7 +1,7 @@
 {
   "schema_version": "polaris.machine_readable_defect.v1",
   "defect_id": "R119-DEPENDENT-ARTIFACT-CONTEXT-CLOSURE",
-  "status": "IMPLEMENTED_OFFLINE_PENDING_INDEPENDENT_REVIEW",
+  "status": "AUDIT_CLOSED",
   "severity": "P0",
   "project_id": "L1-05",
   "bench_run_id": "d103df7a7d40",
@@ -110,5 +110,15 @@
   ],
   "bench_authorization_consumed": true,
   "next_bench_authorized": false,
-  "next_action": "Complete independent read-only review and update the pre-bench verification card before deciding whether exactly one fresh isolated bench is authorized."
+  "next_action": "R119 independent review closed. Exactly one fresh isolated single-project factory_bench may run only under pre-bench card authorization; no concurrent multi-project.",
+  "audit_closed_at": "2026-07-31T16:23:04.076714+00:00",
+  "audit_review_path": "/tmp/grok-goal-d57da307a40a/implementer/r119_audit_review.md",
+  "audit_commands": [
+    "pytest src/backend/polaris/cells/roles/adapters/tests/test_director_dependency_artifact_evidence.py -v",
+    "pytest src/backend/polaris/cells/director/tasking/tests/test_language_guidance.py -k evidence -v",
+    "pytest src/backend/polaris/cells/roles/kernel/tests/test_final_request_sampling_audit.py -k sibling -v",
+    "offline probe: build_director_dependency_artifact_snapshot + resolve_director_execution_strategy"
+  ],
+  "audit_result": "pass",
+  "previous_status": "IMPLEMENTED_OFFLINE_PENDING_INDEPENDENT_REVIEW"
 }

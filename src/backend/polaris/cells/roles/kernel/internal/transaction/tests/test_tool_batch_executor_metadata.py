@@ -15,12 +15,16 @@ from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     batch_write_failure_error_types,
     batch_write_failures_require_llm_replan,
 )
-from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
+from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import (
     _append_tool_batch_receipts_to_run_ledger,
     _batch_has_authoritative_success,
+    _deo_prepare_upstream_code,
     _effect_receipts_from_batch_receipts,
+    _is_deo_abort_error,
+    _is_transient_deo_prepare_lock_failure,
     _resolve_tool_batch_execution_identity,
+    _seal_deo_abort_tool_lifecycle,
 )
 from polaris.cells.roles.kernel.internal.transaction.tool_call_audit_refs import tool_invocation_audit_ref
 from polaris.cells.roles.kernel.public.turn_contracts import ToolExecutionMode
@@ -238,6 +242,61 @@ def test_tool_batch_execution_identity_falls_back_to_transaction_authority() -> 
     )
 
 
+def test_is_deo_abort_error_recognizes_policy_codes() -> None:
+    assert _is_deo_abort_error("deo_director_policy_denied") is True
+    assert _is_deo_abort_error("directed_effect_policy_guard_failed") is True
+    assert _is_deo_abort_error("deo_authorization_hash_drift") is True
+    assert _is_deo_abort_error("tool_dispatch_dropped: provider emitted 1 tool call(s)") is False
+    assert _is_deo_abort_error("") is False
+
+
+def test_seal_deo_abort_tool_lifecycle_writes_blocked_receipt(tmp_path) -> None:
+    """R135: DEO abort must seal tool_call_lifecycle so ledger is not TOOL_LIFECYCLE_MISSING."""
+    _bootstrap_test_fact_stream(tmp_path)
+    ledger = TurnLedger(turn_id="turn-deo-abort")
+    lifecycle = _seal_deo_abort_tool_lifecycle(
+        workspace=str(tmp_path),
+        run_id="director-run-deo",
+        task_id="TASK-1",
+        turn_id="turn-deo-abort",
+        role_id="director",
+        invocations=[
+            {
+                "tool_name": "write_file",
+                "call_id": "call_write_1",
+                "arguments": {"file": "src/main.ts", "content": "export {}\n"},
+            }
+        ],
+        metadata={"provider_response_hash": "abc123", "run_id": "director-run-deo", "task_id": "TASK-1"},
+        ledger=ledger,
+        error_code="deo_director_policy_denied",
+    )
+
+    assert lifecycle["ok"] is False
+    assert lifecycle["dispatch_status"] == "blocked"
+    assert lifecycle["failure_class"] == "TOOL_RESULT_FAILED"
+    assert lifecycle["reason"] == "deo_director_policy_denied"
+    assert lifecycle["deo_abort"] is True
+    assert any(flag.get("type") == "DEO_ABORT" for flag in ledger.anomaly_flags)
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(
+            workspace=str(tmp_path),
+            run_id="director-run-deo",
+        )
+    ).projection
+
+    assert projection["tool_lifecycle"]["event_count"] >= 1
+    assert projection["tool_lifecycle"]["ok"] is False
+    # Must not classify as bare missing once sealed.
+    events = projection["tool_lifecycle"].get("events") or []
+    assert events
+    latest = events[-1]
+    assert latest.get("ok") is False or latest.get("failed") is True
+    status = str(latest.get("status") or latest.get("dispatch_status") or "")
+    assert status in {"blocked", "dropped", "failed"} or latest.get("failed") is True
+
+
 def test_failed_tool_batch_lifecycle_is_durable_without_effect_receipt(tmp_path) -> None:
     _bootstrap_test_fact_stream(tmp_path)
     _append_tool_batch_receipts_to_run_ledger(
@@ -376,3 +435,60 @@ def test_tool_invocation_audit_ref_accepts_provider_native_call_shape() -> None:
         "call_id": "call-native",
         "target_file": "src/generated.py",
     }
+
+
+class _FakePrepareDenial:
+    def __init__(self, *, status: str, error_code: str, upstream: str) -> None:
+        self.status = status
+        self.prepared_batch = None if status != "ready" else object()
+        self.error_code = error_code
+        self.upstream_evidence = (
+            ("stage", "member_admission"),
+            ("upstream_code", upstream),
+        )
+
+
+def test_r149_transient_deo_prepare_lock_failure_classifies_lock_codes() -> None:
+    """R149: flock contention upstream codes must be retryable for prepare_batch."""
+
+    assert _is_transient_deo_prepare_lock_failure(
+        _FakePrepareDenial(
+            status="denied",
+            error_code="deo_member_admission_failed",
+            upstream="fact_stream_unknown_failure",
+        )
+    )
+    assert _is_transient_deo_prepare_lock_failure(
+        _FakePrepareDenial(
+            status="denied",
+            error_code="deo_member_admission_failed",
+            upstream="stream_lock_timeout",
+        )
+    )
+    assert _is_transient_deo_prepare_lock_failure(
+        _FakePrepareDenial(
+            status="denied",
+            error_code="deo_member_admission_failed",
+            upstream="lock_acquisition_timeout",
+        )
+    )
+    assert not _is_transient_deo_prepare_lock_failure(
+        _FakePrepareDenial(
+            status="denied",
+            error_code="deo_member_admission_failed",
+            upstream="inventory_member_not_found",
+        )
+    )
+    ready = _FakePrepareDenial(status="ready", error_code="", upstream="")
+    ready.prepared_batch = object()
+    assert not _is_transient_deo_prepare_lock_failure(ready)
+    assert (
+        _deo_prepare_upstream_code(
+            _FakePrepareDenial(
+                status="denied",
+                error_code="deo_member_admission_failed",
+                upstream="stream_lock_timeout",
+            )
+        )
+        == "stream_lock_timeout"
+    )

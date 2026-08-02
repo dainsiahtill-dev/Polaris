@@ -930,5 +930,63 @@ def test_write_file_additional_content_synonyms_map_to_content(synonym: str) -> 
     assert normalized.get("content") == "x = 1\n", f"{synonym!r} did not map content: {normalized}"
 
 
+def test_write_file_recovers_text_continuation_map_content() -> None:
+    """R138: $text + token continuation siblings must rejoin into one string body."""
+
+    from polaris.kernelone.llm.toolkit.tool_normalization.normalizers._shared import (
+        recover_write_body_string,
+    )
+
+    structured = {
+        "$text": (
+            "if (!(node instanceof HTMLCanvasElement)) {\n"
+            "    console.warn('[glow-garden] #garden is not a "
+        ),
+        "canvas": (
+            " element; falling back to detached renderer.');\n"
+            "    return null;\n"
+            "}\n"
+        ),
+    }
+    recovered = recover_write_body_string(structured)
+    assert recovered is not None
+    assert "is not a canvas element" in recovered
+    assert recovered.endswith("return null;\n}\n")
+
+    normalized = normalize_tool_arguments(
+        "write_file",
+        {"file": "src/web.ts", "content": structured},
+    )
+    assert isinstance(normalized.get("content"), str)
+    assert "is not a canvas element" in str(normalized["content"])
+
+
+def test_write_file_recovers_htmlish_nested_text_map_content() -> None:
+    """R138: nested HTML-ish $text maps must flatten rather than fail DEO."""
+
+    structured = {
+        "$text": "<!doctype html>\n<html lang=\"en\">\n",
+        "head": {
+            "$text": "\n    <meta charset=\"utf-8\" />\n",
+            "title": {"$text": "Garden"},
+        },
+        "body": {
+            "$text": "\n    ",
+            "main": {"$text": "hello"},
+        },
+        "noscript": "JS required",
+    }
+    normalized = normalize_tool_arguments(
+        "write_file",
+        {"path": "index.html", "content": structured},
+    )
+    body = normalized.get("content")
+    assert isinstance(body, str)
+    assert body.startswith("<!doctype html>")
+    assert "<head>" in body and "</head>" in body
+    assert "<title>Garden</title>" in body
+    assert "<noscript>JS required</noscript>" in body
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

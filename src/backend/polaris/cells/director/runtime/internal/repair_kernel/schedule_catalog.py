@@ -300,6 +300,8 @@ _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
     "deterministic_typescript_entrypoint_repair",
     "deterministic_typescript_enum_member_separator_repair",
     "deterministic_typescript_escaped_newline_repair",
+    # R165: barrel re-export star collisions (TS2308) must repair in materialization.
+    "deterministic_typescript_export_ambiguity_repair",
     "deterministic_typescript_hyphenated_identifier_repair",
     "deterministic_typescript_member_alias_repair",
     "deterministic_typescript_missing_closing_brace_repair",
@@ -308,6 +310,21 @@ _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
     "deterministic_typescript_nullable_canvas_context_repair",
     "deterministic_typescript_number_to_string_argument_repair",
     "deterministic_typescript_readonly_assignment_repair",
+    "deterministic_typescript_duplicate_function_repair",
+    "deterministic_typescript_json_as_source_repair",
+    "deterministic_typescript_truncated_eof_repair",
+    "deterministic_typescript_implicit_return_type_repair",
+    "deterministic_typescript_object_assign_assertion_repair",
+    "deterministic_typescript_readonly_array_mutation_repair",
+    "deterministic_typescript_param_object_property_repair",
+    "deterministic_typescript_object_literal_missing_props_repair",
+    "deterministic_typescript_identifier_suggestion_repair",
+    "deterministic_typescript_argument_shape_adapter_repair",
+    "deterministic_typescript_unused_local_repair",
+    "deterministic_typescript_branded_literal_cast_repair",
+    "deterministic_typescript_literal_union_expand_repair",
+    "deterministic_typescript_init_property_alias_repair",
+    "deterministic_typescript_arg_type_function_alias_repair",
     "deterministic_typescript_reexport_repair",
     "deterministic_typescript_reexported_type_binding_repair",
     "deterministic_typescript_relative_import_case_repair",
@@ -322,6 +339,9 @@ _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
     "deterministic_typescript_unused_import_repair",
     "deterministic_typescript_vitest_globals_repair",
     "deterministic_typescript_zod_type_class_collision_repair",
+    # R178/M10: TS2580 process/@types/node must run with compiler diagnostics, not
+    # only later on node_manifest after package.json already declares the package.
+    "deterministic_runtime_dependency_repair",
     "deterministic_javascript_typescript_annotation_repair",
     "deterministic_javascript_missing_export_repair",
     "deterministic_javascript_esm_commonjs_entrypoint_repair",
@@ -357,6 +377,9 @@ _MATERIALIZATION_NODE_MANIFEST_RUNTIME_SOURCE_TOOLS = (
     "deterministic_node_test_script_contract_repair",
     "deterministic_npm_script_contract_repair",
     "deterministic_runtime_dependency_repair",
+    # R160: content-driven smoke test + JSON-as-TS must run whenever package.json
+    # exists, not only when tsc already emitted TS1005 coverage matches.
+    "deterministic_typescript_json_as_source_repair",
 )
 _MATERIALIZATION_TARGET_RUNTIME_SOURCE_TOOLS = (
     "deterministic_javascript_test_missing_target_repair",

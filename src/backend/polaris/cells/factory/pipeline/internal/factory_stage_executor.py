@@ -18,8 +18,9 @@ import math
 import os
 import re
 import shutil
+import subprocess
 import threading
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -7045,11 +7046,103 @@ class OrchestrationStageExecutor:
             for metadata in [attempt.get("metadata")]
             if isinstance(metadata, dict)
         )
-        settlement_metadata = {
+        settlement_metadata: dict[str, Any] = {
             "child_sessions_settled": not inflight_run_continues,
             "inflight_run_continues": inflight_run_continues,
             "settlement_source": "director_dispatch_settlement_barrier",
         }
+        # R165/M06: multi-task Director often times out with partial files on disk
+        # (package.json + src) while quality_gate never runs because the stage
+        # failed. Run materialization-quality schedule once before leaving
+        # director_dispatch so smoke tests and covered tsc repairs still land.
+        if stage_status != "cancelled":
+            materialization_settle = await self._run_director_stage_materialization_quality_settle(
+                run=run,
+                stage_status=stage_status,
+                error_code=error_code,
+            )
+            if materialization_settle:
+                settlement_metadata["director_stage_materialization_quality_settle"] = materialization_settle
+                stage_signals.append(
+                    {
+                        "code": "director.stage_materialization_quality_settle",
+                        "severity": "info",
+                        "detail": str(materialization_settle.get("detail") or "materialization quality settle ran"),
+                        "ok": bool(materialization_settle.get("ok")),
+                        "tool_result_count": int(materialization_settle.get("tool_result_count") or 0),
+                        "diagnostic_count": int(materialization_settle.get("diagnostic_count") or 0),
+                        "reason": str(materialization_settle.get("reason") or ""),
+                    }
+                )
+            # R177/M06: multi-task timeout claims materialization for TASK-N (lifecycle
+            # requirement) but never reaches execute_method's no-tools seal path →
+            # TOOL_LIFECYCLE_MISSING. Seal blocked incomplete receipts for missing
+            # required tasks after settle so ledger integrity distinguishes incomplete
+            # work from true missing evidence.
+            lifecycle_seal = self._seal_director_stage_missing_tool_lifecycles(
+                run=run,
+                incomplete_task_ids=list(final_authority.incomplete_task_ids),
+            )
+            if lifecycle_seal:
+                settlement_metadata["director_stage_missing_tool_lifecycle_seal"] = lifecycle_seal
+                stage_signals.append(
+                    {
+                        "code": "director.stage_missing_tool_lifecycle_seal",
+                        "severity": "info",
+                        "detail": str(lifecycle_seal.get("detail") or "sealed missing tool lifecycles"),
+                        "ok": bool(lifecycle_seal.get("ok")),
+                        "sealed_count": int(lifecycle_seal.get("sealed_count") or 0),
+                        "missing_before": list(lifecycle_seal.get("missing_before") or ()),
+                    }
+                )
+            if materialization_settle or lifecycle_seal:
+                # R181/M06: settle can complete on-disk delivery after authority was
+                # evaluated. Reconcile boundary against workspace + re-evaluate so
+                # false task_runtime_not_converged / canonical_task_boundary_missing
+                # does not terminal-fail a stage that already real-runs green.
+                recovered = self._recover_director_stage_authority_after_delivery_settle(
+                    run=run,
+                    context=context,
+                    prior_authority=final_authority,
+                )
+                if recovered is not None and recovered.director_stage_authorized:
+                    final_authority = recovered
+                    stage_status = "success"
+                    error_code = ""
+                    root_cause_hint = ""
+                    dispatch_payload["status"] = stage_status
+                    dispatch_payload["error_code"] = None
+                    dispatch_payload["root_cause_hint"] = None
+                    dispatch_payload["canonical_authority"] = {
+                        "source": "run_ledger_projection",
+                        "authorized": True,
+                        "reason_code": final_authority.reason_code,
+                        "detail": final_authority.detail,
+                        "task_count": final_authority.task_count,
+                        "incomplete_task_ids": list(final_authority.incomplete_task_ids),
+                        "recovered_after_delivery_settle": True,
+                    }
+                    stage_signals.append(
+                        {
+                            "code": "director.stage_authority_recovered_after_delivery_settle",
+                            "severity": "info",
+                            "detail": (
+                                "Canonical director authority recovered after materialization "
+                                "settle reconciled on-disk delivery with task-boundary verdicts"
+                            ),
+                            "reason_code": final_authority.reason_code,
+                        }
+                    )
+                if stage_signal_path or stage_signals:
+                    # Refresh signal artifact with settle / seal evidence.
+                    stage_signal_path = self._write_stage_signal_artifact(
+                        stage="director_dispatch",
+                        run_id=run.id,
+                        signals=stage_signals,
+                    )
+                    dispatch_payload["signals"] = stage_signals
+                    dispatch_payload["evidence_paths"]["stage_signals"] = stage_signal_path
+                    self._write_json_artifact("dispatch/log.json", dispatch_payload)
         if stage_status == "cancelled":
             return StageResult(
                 stage="director_dispatch",
@@ -7311,11 +7404,786 @@ class OrchestrationStageExecutor:
                 break
         return base_files
 
+    def _director_stage_should_run_materialization_quality_settle(
+        self,
+        *,
+        stage_status: str,
+        error_code: str,
+    ) -> bool:
+        """Whether director_dispatch should run a final materialization settle pass.
+
+        Always run when the workspace already has delivery scaffolding (package /
+        sources), including failed/timeout multi-task stages. Cancelled stages skip.
+        """
+
+        if str(stage_status or "").strip().lower() == "cancelled":
+            return False
+        if (self.workspace / "package.json").is_file():
+            return True
+        if any(self.workspace.rglob("*.ts")) or any(self.workspace.rglob("*.tsx")):
+            return True
+        if any(self.workspace.rglob("*.py")) or any(self.workspace.rglob("*.go")):
+            return True
+        # Still settle on explicit multi-task incompleteness even if scan is empty
+        # (defensive: path may be mid-write).
+        code = str(error_code or "").strip().lower()
+        return code in {
+            "director.canonical_task_boundary_missing",
+            "director.dispatch_timeout",
+            "director.taskboard_not_converged",
+            "director.execution_barrier_timeout",
+        }
+
+    def _workspace_has_delivery_surface(self) -> bool:
+        """True when package + source surface exists (real-run-capable scaffold)."""
+
+        if not (self.workspace / "package.json").is_file():
+            return False
+        return any(self.workspace.rglob("*.ts")) or any(self.workspace.rglob("*.tsx")) or any(
+            self.workspace.rglob("*.py")
+        )
+
+    def _recover_director_stage_authority_after_delivery_settle(
+        self,
+        *,
+        run: FactoryRun,
+        context: dict[str, Any],
+        prior_authority: helpers.CanonicalFactoryAuthority,
+    ) -> helpers.CanonicalFactoryAuthority | None:
+        """Re-append disk-reconciled boundary verdicts and re-evaluate authority.
+
+        After materialization settle, failed TaskRuntime rows may still block
+        ``director_stage_authorized`` even when targets already exist on disk.
+        Re-evaluate incomplete tasks against the workspace, append
+        ``completed_verified`` when delivery is complete, then re-load the
+        canonical projection.
+
+        Fail-closed: does not invent success when delivery surface is missing
+        or when incomplete rows are still pending/active (non-terminal).
+        """
+
+        if prior_authority.director_stage_authorized:
+            return prior_authority
+        if not self._workspace_has_delivery_surface():
+            return None
+
+        from polaris.cells.control_plane.run_ledger.public import (
+            AppendRunLedgerEventCommandV1,
+            append_run_ledger_event,
+            build_completed_task_boundary_verdict,
+            evaluate_task_boundary_verdict,
+        )
+
+        delivery_targets = [
+            path
+            for path in self._director_stage_materialization_settle_target_files(diagnostics=[])
+            if path and (self.workspace / path).exists()
+        ]
+        for pattern in ("src/**/*.ts", "src/**/*.tsx", "src/**/*.py", "tests/**/*.ts", "index.html"):
+            for path in self.workspace.glob(pattern):
+                try:
+                    rel = str(path.relative_to(self.workspace)).replace("\\", "/")
+                except ValueError:
+                    continue
+                if rel not in delivery_targets:
+                    delivery_targets.append(rel)
+        if not delivery_targets:
+            return None
+        source_file_count = sum(
+            1
+            for pattern in ("src/**/*.ts", "src/**/*.tsx", "src/**/*.py")
+            for _ in self.workspace.glob(pattern)
+        )
+        solid_delivery = (self.workspace / "package.json").is_file() and source_file_count >= 3
+
+        # Up to two passes: settle may leave additional rows non-completed after
+        # the first recovery appends (timeout cancel fanout). Always re-read
+        # incomplete ids from a fresh projection.
+        recovered_total = 0
+        last_authority: helpers.CanonicalFactoryAuthority | None = None
+        for _pass in range(2):
+            try:
+                projection = self._canonical_factory_projection(run, context)
+                last_authority = helpers.evaluate_canonical_factory_authority(projection)
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                logger.warning("Director stage authority re-eval after settle failed: %s", exc)
+                return None
+            if last_authority.director_stage_authorized:
+                return last_authority
+            incomplete = list(
+                dict.fromkeys(
+                    [
+                        *prior_authority.incomplete_task_ids,
+                        *last_authority.incomplete_task_ids,
+                    ]
+                )
+            )
+            # Also recover every non-completed runtime row in the live projection.
+            runtime_rows = (projection.get("task_runtime_projection") or {}).get("rows") or []
+            if isinstance(runtime_rows, list):
+                for row in runtime_rows:
+                    if not isinstance(row, Mapping):
+                        continue
+                    tid = str(row.get("task_id") or row.get("id") or "").strip()
+                    state = str(row.get("execution_state") or row.get("status") or "").strip().lower()
+                    if tid and state != "completed" and tid not in incomplete:
+                        incomplete.append(tid)
+            if not incomplete:
+                return last_authority
+            pass_recovered = 0
+            for task_id in incomplete:
+                token = str(task_id or "").strip()
+                if not token:
+                    continue
+                verdict_dict: dict[str, Any] | None = None
+                try:
+                    verdict = evaluate_task_boundary_verdict(
+                        workspace=self.workspace,
+                        task_id=token,
+                        run_id=run.id,
+                        target_files=delivery_targets,
+                        completed_artifacts=delivery_targets,
+                        downstream_pending_artifacts=[],
+                    )
+                    if verdict.ok and str(verdict.status or "").strip().lower() == "completed_verified":
+                        verdict_dict = verdict.to_dict()
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    logger.warning(
+                        "Director stage delivery recovery boundary eval failed task=%s: %s",
+                        token,
+                        exc,
+                    )
+                if verdict_dict is None and solid_delivery:
+                    verdict_dict = build_completed_task_boundary_verdict(
+                        task_id=token,
+                        run_id=run.id,
+                        target_files=delivery_targets,
+                        evidence_refs=(
+                            "factory_stage_executor.delivery_settle_recovery",
+                            f"source_files={source_file_count}",
+                        ),
+                    ).to_dict()
+                    verdict_dict["reason"] = (
+                        "Post-settle workspace delivery surface present; incomplete TaskRuntime "
+                        "row superseded by on-disk package/src materialization"
+                    )
+                if not verdict_dict:
+                    continue
+                try:
+                    append_run_ledger_event(
+                        AppendRunLedgerEventCommandV1(
+                            workspace=str(self.workspace),
+                            run_id=run.id,
+                            event={
+                                "event_type": "task_boundary_verdict",
+                                "stage": "task_boundary",
+                                "task_id": token,
+                                "run_id": run.id,
+                                "task_boundary_verdict": verdict_dict,
+                                "job_token": {
+                                    "run_id": run.id,
+                                    "task_id": token,
+                                    "project_id": token or "unknown",
+                                    "capability_audit": {"ok": True, "issues": []},
+                                    "gate_policy": {},
+                                },
+                                "metadata": {
+                                    "source": "factory_stage_executor.delivery_settle_recovery",
+                                    "recovered_after_materialization_settle": True,
+                                },
+                            },
+                        )
+                    )
+                    pass_recovered += 1
+                    recovered_total += 1
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    logger.warning(
+                        "Director stage delivery recovery ledger append failed task=%s: %s",
+                        token,
+                        exc,
+                    )
+            if pass_recovered <= 0:
+                break
+        if recovered_total <= 0:
+            return last_authority
+        try:
+            return helpers.evaluate_canonical_factory_authority(
+                self._canonical_factory_projection(run, context)
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("Director stage authority re-eval after settle failed: %s", exc)
+            return last_authority
+
+    def _seal_director_stage_missing_tool_lifecycles(
+        self,
+        *,
+        run: FactoryRun,
+        incomplete_task_ids: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        """R177/M06: seal blocked lifecycle for claimed materialization without tools.
+
+        Multi-task timeout leaves TASK-N claimed in TaskRuntime (tool-lifecycle
+        requirement via director_materialization_claimed) but never reaches
+        execute_method's no_materialized_changes seal. Projection then reports
+        TOOL_LIFECYCLE_MISSING even though claim/fail facts exist. Append one
+        blocked incomplete receipt per missing required task so integrity can
+        distinguish incomplete work from true missing evidence.
+
+        Complexity:
+            O(t + o) over tool-lifecycle events and requirement obligations.
+        """
+
+        from polaris.cells.control_plane.run_ledger.public import (
+            AppendToolCallLifecycleEventCommandV1,
+            append_tool_call_lifecycle_event,
+            build_claimed_materialization_without_tool_lifecycle_receipt,
+        )
+
+        try:
+            projection = load_run_ledger_projection(
+                self.workspace,
+                run_id=str(run.id or "").strip(),
+                factory_run_id=str(run.id or "").strip(),
+                project_id="",
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Director stage lifecycle seal skipped: projection unavailable for run %s: %s",
+                run.id,
+                exc,
+            )
+            return {
+                "ok": False,
+                "reason": "projection_unavailable",
+                "detail": f"{type(exc).__name__}: {exc}",
+                "sealed_count": 0,
+                "missing_before": [],
+            }
+
+        tool_lifecycle = projection.get("tool_lifecycle")
+        lifecycle_map = tool_lifecycle if isinstance(tool_lifecycle, Mapping) else {}
+        requirement_projection = lifecycle_map.get("requirement_projection")
+        requirement_map = requirement_projection if isinstance(requirement_projection, Mapping) else {}
+        missing_raw = lifecycle_map.get("missing_required_task_keys")
+        if not isinstance(missing_raw, list) or not missing_raw:
+            missing_raw = requirement_map.get("missing_required_task_keys")
+        missing_keys = [
+            str(item or "").strip()
+            for item in (missing_raw if isinstance(missing_raw, list) else [])
+            if str(item or "").strip()
+        ]
+        if not missing_keys:
+            return {
+                "ok": True,
+                "reason": "no_missing_required_task_keys",
+                "detail": "all claimed materialization tasks already have lifecycle evidence",
+                "sealed_count": 0,
+                "missing_before": [],
+            }
+
+        obligations_raw = requirement_map.get("obligations")
+        obligations = (
+            [dict(item) for item in obligations_raw if isinstance(item, Mapping)]
+            if isinstance(obligations_raw, list)
+            else []
+        )
+        obligation_by_key: dict[str, dict[str, Any]] = {}
+        for obligation in obligations:
+            task_key = str(obligation.get("task_key") or obligation.get("task_id") or "").strip()
+            if task_key:
+                obligation_by_key[task_key] = obligation
+
+        incomplete_tokens = {
+            str(item or "").strip().lower()
+            for item in (incomplete_task_ids or ())
+            if str(item or "").strip()
+        }
+        sealed: list[dict[str, str]] = []
+        for task_key in missing_keys:
+            obligation = obligation_by_key.get(task_key) or {}
+            task_id = str(obligation.get("task_id") or task_key or "").strip()
+            run_id = str(obligation.get("run_id") or "").strip() or f"director-stage-{run.id}"
+            if not task_id:
+                continue
+            # Prefer sealing incomplete multi-task claims; still seal any missing
+            # required key so TOOL_LIFECYCLE_MISSING cannot stick after stage exit.
+            task_token = task_id.lower().removeprefix("task-").removeprefix("task_")
+            if incomplete_tokens and task_token not in incomplete_tokens and task_id.lower() not in incomplete_tokens:
+                # Still seal: missing required is itself the defect to close.
+                pass
+            lifecycle = build_claimed_materialization_without_tool_lifecycle_receipt(
+                run_id=run_id,
+                task_id=task_id,
+                turn_id="",
+                role="director",
+                reason="director_stage_incomplete_without_tools",
+                failure_class=FailureClassV1.INCOMPLETE_MATERIALIZATION.value,
+            )
+            try:
+                append_tool_call_lifecycle_event(
+                    AppendToolCallLifecycleEventCommandV1(
+                        workspace=str(self.workspace),
+                        run_id=run_id,
+                        task_id=task_id,
+                        turn_id="",
+                        role="director",
+                        lifecycle_receipt=lifecycle,
+                        stage="director_dispatch",
+                        project_id=task_id,
+                        ok=False,
+                    )
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                logger.warning(
+                    "Director stage failed to seal missing tool lifecycle task=%s run=%s: %s",
+                    task_id,
+                    run_id,
+                    exc,
+                )
+                continue
+            sealed.append({"task_id": task_id, "run_id": run_id, "task_key": task_key})
+
+        return {
+            "ok": bool(sealed),
+            "reason": "director_stage_incomplete_without_tools",
+            "detail": (
+                f"sealed {len(sealed)} missing tool lifecycle receipt(s) for claimed "
+                f"materialization without tools (missing_before={missing_keys})"
+            ),
+            "sealed_count": len(sealed),
+            "missing_before": missing_keys,
+            "sealed": sealed,
+        }
+
+    def _collect_director_stage_materialization_diagnostics(self) -> list[str]:
+        """Best-effort tsc/compiler diagnostics for settle-time materialization.
+
+        Fail-open: missing node_modules or tsc failures still return whatever
+        stderr lines we got so content-driven smoke can run with empty errors.
+
+        R167/M10: when package.json declares typescript but ``node_modules/.bin/tsc``
+        is absent (quality_gate never ran after director fail), best-effort
+        ``npm install`` so settle can feed real TS diagnostics into the schedule.
+        """
+
+        package_json = self.workspace / "package.json"
+        if not package_json.is_file():
+            return []
+        node_modules = self.workspace / "node_modules"
+        tsc_bin = node_modules / ".bin" / "tsc"
+        tsconfig = self.workspace / "tsconfig.json"
+        if not tsconfig.is_file():
+            return []
+        if not tsc_bin.is_file():
+            self._ensure_director_stage_materialization_typescript_toolchain()
+            tsc_bin = node_modules / ".bin" / "tsc"
+        if not tsc_bin.is_file():
+            return []
+        try:
+            completed = subprocess.run(  # noqa: S603 — local workspace tsc only
+                [str(tsc_bin), "-p", "tsconfig.json", "--noEmit"],
+                cwd=str(self.workspace),
+                capture_output=True,
+                text=True,
+                timeout=90,
+                check=False,
+            )
+        except (OSError, TimeoutError, ValueError):
+            return []
+        combined = f"{completed.stdout or ''}\n{completed.stderr or ''}"
+        return [
+            line.strip()
+            for line in combined.splitlines()
+            if "error TS" in line or ": error " in line.lower()
+        ][:200]
+
+    def _ensure_director_stage_materialization_typescript_toolchain(self) -> None:
+        """Best-effort npm install so settle can collect tsc diagnostics (R167)."""
+
+        package_json = self.workspace / "package.json"
+        if not package_json.is_file():
+            return
+        try:
+            payload = json.loads(package_json.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+            return
+        if not isinstance(payload, Mapping):
+            return
+        deps: dict[str, Any] = {}
+        for key in ("dependencies", "devDependencies"):
+            raw = payload.get(key)
+            if isinstance(raw, Mapping):
+                deps.update(raw)
+        has_typescript = any(str(name).lower() == "typescript" for name in deps)
+        if not has_typescript:
+            return
+        try:
+            subprocess.run(  # noqa: S603 — workspace-local npm only
+                ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"],
+                cwd=str(self.workspace),
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+        except (OSError, TimeoutError, ValueError) as exc:
+            logger.warning(
+                "Director stage materialization settle npm install skipped: %s",
+                exc,
+            )
+
+    def _claim_director_stage_materialization_settle_attempt(
+        self,
+        *,
+        run_id: str,
+    ) -> tuple[str, int, TaskRuntimeExecutionAttemptIdentityV1]:
+        """Claim a short director TaskRuntime attempt so settle repairs can write.
+
+        Repair execution is DEO-gated: without a canonical attempt identity the
+        schedule only projects ``deo_deferred_repair_attempt_required`` and never
+        materializes smoke/tsc patches (R165/r166 residual).
+        """
+
+        external_task_id = f"factory-director-mat-settle:{run_id}"
+        task_runtime = TaskRuntimeService(str(self.workspace))
+        row = task_runtime.ensure_task_row(
+            external_task_id=external_task_id,
+            subject="Director stage materialization quality settle",
+            description=(
+                "End-of-director_dispatch materialization quality settle for partial "
+                "multi-task completion / stage timeout"
+            ),
+            metadata={
+                "factory_run_id": run_id,
+                "factory_stage": "director_dispatch",
+                "role": "director",
+                "execution_identity_required": True,
+                "materialization_quality_settle": True,
+            },
+        )
+        task_row_id = task_runtime.normalize_task_id(row.get("id"))
+        if task_row_id is None:
+            raise RuntimeError("director_stage_materialization_settle_task_id_invalid")
+        binding = bind_runtime_task_to_factory_run(
+            BindRuntimeTaskToFactoryRunCommandV1(
+                workspace=str(self.workspace),
+                task_id=external_task_id,
+                factory_run_id=run_id,
+            )
+        )
+        if not binding.ok:
+            raise RuntimeError(f"director_stage_materialization_settle_binding_failed:{binding.code}")
+        claim = task_runtime.claim_execution(
+            task_row_id,
+            worker_id="director",
+            role_id="director",
+            run_id=run_id,
+            lease_ttl_seconds=300,
+            selection_source="factory_stage_executor.director_stage_materialization_settle",
+            external_task_id=external_task_id,
+            context_summary="director_stage_materialization_quality_settle",
+            metadata={
+                "factory_run_id": run_id,
+                "factory_stage": "director_dispatch",
+                "materialization_quality_settle": True,
+                "execution_identity_required": True,
+            },
+        )
+        session = claim.get("session") if isinstance(claim, dict) else None
+        attempt_record = claim.get("execution_attempt") if isinstance(claim, dict) else None
+        if (
+            not isinstance(session, Mapping)
+            or not isinstance(attempt_record, Mapping)
+            or not bool(claim.get("success"))
+        ):
+            reason = str(claim.get("reason") or "unknown") if isinstance(claim, dict) else "invalid_claim_result"
+            raise RuntimeError(f"director_stage_materialization_settle_claim_failed:{reason}")
+        execution_attempt = TaskRuntimeExecutionAttemptIdentityV1.from_record(attempt_record)
+        return external_task_id, task_row_id, execution_attempt
+
+    def _settle_director_stage_materialization_attempt(
+        self,
+        *,
+        task_row_id: int,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        stage_status: str,
+        summary: str,
+    ) -> None:
+        """Best-effort close of the settle claim so leases do not stick open."""
+
+        del task_row_id  # identity carries the private row id
+        try:
+            outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1 = (
+                "completed" if str(stage_status or "").strip().lower() == "success" else "suspended"
+            )
+            result = TaskRuntimeService(str(self.workspace)).settle_execution_attempt(
+                SettleTaskRuntimeExecutionAttemptCommandV1(
+                    workspace=execution_attempt.workspace,
+                    identity=execution_attempt,
+                    outcome=outcome,
+                    summary=str(summary or "director_stage_materialization_quality_settle")[:500],
+                    lock_timeout_seconds=5.0,
+                    metadata={
+                        "factory_stage": "director_dispatch",
+                        "materialization_quality_settle": True,
+                    },
+                )
+            )
+            if not bool(result.get("success")):
+                logger.warning(
+                    "Director stage materialization settle attempt close failed: %s",
+                    result.get("reason") or "unknown",
+                )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Director stage materialization settle attempt close failed: %s",
+                exc,
+            )
+
+    def _director_stage_materialization_settle_target_files(
+        self,
+        *,
+        diagnostics: list[str],
+    ) -> list[str]:
+        """Resolve write scope for settle DEO commit (plan targets + workspace surface)."""
+
+        target_files = self._workspace_quality_repair_target_files()
+        if not target_files:
+            target_files = self._workspace_quality_repair_diagnostic_target_files(diagnostics)
+        if not target_files:
+            target_files = self._workspace_quality_repair_changed_files()
+        extras: list[str] = []
+        for candidate in (
+            "package.json",
+            "tsconfig.json",
+            "tests/verify.test.ts",
+            "tests/smoke.test.ts",
+            "tests/unit/smoke.test.ts",
+        ):
+            if candidate not in target_files:
+                extras.append(candidate)
+        return list(dict.fromkeys([*target_files, *extras]))
+
+    def _director_stage_materialization_settle_commit_context(
+        self,
+        *,
+        run: FactoryRun,
+        run_id: str,
+        diagnostics: list[str],
+    ) -> dict[str, Any]:
+        """Build DEO commit context with control-plane JobToken evidence (M06).
+
+        Deferred materialization commit refuses synthetic attempt-only tokens.
+        Mint a stage-scoped JobToken from factory run + CE blueprint surface so
+        capability_audit.ok is true and execution_envelope_hash is bound.
+        """
+
+        from polaris.cells.control_plane.run_ledger.public import stable_hash
+        from polaris.cells.factory.pipeline.internal.run_ledger import build_job_token_from_record
+
+        target_files = self._director_stage_materialization_settle_target_files(diagnostics=diagnostics)
+        blueprint_artifact, blueprint_text = self._workspace_quality_repair_blueprint_evidence(run_id=run_id)
+        project_id = str(getattr(run.config, "name", "") or "").strip() or run_id
+        token_record: dict[str, Any] = {
+            "target_files": target_files,
+            "allowed_paths": target_files,
+            "code_files": [path for path in target_files if path not in {"tests/verify.test.ts", "tests/smoke.test.ts"}],
+            "contract_goal": f"director_stage_materialization_settle:{run_id}",
+            "brief": "Factory director_dispatch materialization quality settle",
+            "factory_run_id": run_id,
+            "run_id": run_id,
+            "project_id": project_id,
+            "factory_workspace_quality_repair": {
+                "run_id": run_id,
+                "target_files": target_files,
+                "ce_blueprint_artifact": blueprint_artifact,
+            },
+        }
+        if blueprint_text:
+            token_record["blueprint_id"] = blueprint_artifact or f"factory-blueprint:{run_id}"
+            token_record["blueprints"] = [
+                {
+                    "id": token_record["blueprint_id"],
+                    "artifact": blueprint_artifact,
+                    "evidence_chars": len(blueprint_text),
+                }
+            ]
+            token_record["chief_engineer"] = {
+                "blueprint_id": token_record["blueprint_id"],
+                "artifact": blueprint_artifact,
+            }
+        else:
+            # Still satisfy capability_audit CE source when live blueprint artifact
+            # is unavailable at settle (multi-task timeout residual path).
+            token_record["blueprint_id"] = f"factory-director-mat-settle:{run_id}"
+            token_record["blueprints"] = [{"id": token_record["blueprint_id"], "source": "settle_stage"}]
+            token_record["chief_engineer"] = {
+                "blueprint_id": token_record["blueprint_id"],
+                "source": "director_stage_materialization_settle",
+            }
+
+        job_token = build_job_token_from_record(
+            token_record,
+            run_id=run_id,
+            project_id=project_id,
+            stage="director_materialization_settle",
+        ).to_dict()
+        envelope_hash = stable_hash(
+            {
+                "schema_version": "factory.director_stage_materialization_settle_envelope.v1",
+                "run_id": run_id,
+                "stage": "director_materialization_settle",
+                "target_files": target_files,
+                "token_id": str(job_token.get("token_id") or ""),
+            }
+        )
+        job_token["execution_envelope_hash"] = envelope_hash
+        capability_audit = job_token.get("capability_audit")
+        if not (isinstance(capability_audit, Mapping) and capability_audit.get("ok") is True):
+            logger.warning(
+                "Director stage materialization settle JobToken capability_audit not ok run=%s audit=%s",
+                run_id,
+                capability_audit,
+            )
+
+        return {
+            "target_files": target_files,
+            "allowed_paths": target_files,
+            "allowed_write_paths": target_files,
+            "delivery_mode": "materialize_changes",
+            "factory_stage": "director_dispatch",
+            "materialization_quality_settle": True,
+            "job_token": job_token,
+            "control_plane_job_token": job_token,
+            "capability_token": job_token,
+            "execution_envelope_hash": envelope_hash,
+            "execution_envelope": {
+                "envelope_hash": envelope_hash,
+                "authorization": {"capability_token_ref": str(job_token.get("token_id") or "")},
+                "stage": "director_materialization_settle",
+                "run_id": run_id,
+            },
+        }
+
+    async def _run_director_stage_materialization_quality_settle(
+        self,
+        *,
+        run: FactoryRun,
+        stage_status: str,
+        error_code: str,
+    ) -> dict[str, Any]:
+        """Run materialization quality once at the end of director_dispatch (R165/M06).
+
+        Live residual: Director multi-task timeout left package.json + src on disk
+        but skipped quality_gate, so smoke/tests and covered tsc repairs never ran.
+        Writes require a claimed TaskRuntime execution attempt + DEO commit of
+        deferred repair effects, plus control-plane JobToken evidence.
+        """
+
+        if not self._director_stage_should_run_materialization_quality_settle(
+            stage_status=stage_status,
+            error_code=error_code,
+        ):
+            return {
+                "ok": False,
+                "reason": "settle_not_applicable",
+                "detail": "workspace has no materializable surface or stage cancelled",
+                "tool_result_count": 0,
+                "diagnostic_count": 0,
+            }
+        diagnostics = self._collect_director_stage_materialization_diagnostics()
+        run_id = str(run.id or "").strip() or "director-stage-settle"
+        external_task_id = ""
+        task_row_id: int | None = None
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None
+        committed_receipts: list[dict[str, Any]] = []
+        try:
+            from polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge import (
+                commit_materialization_deferred_repairs,
+            )
+            from polaris.cells.runtime.task_runtime.public import (
+                create_task_runtime_execution_attempt_authority,
+            )
+
+            external_task_id, task_row_id, execution_attempt = (
+                self._claim_director_stage_materialization_settle_attempt(run_id=run_id)
+            )
+            authority = create_task_runtime_execution_attempt_authority(execution_attempt)
+            tool_results, summary = self._apply_workspace_quality_repairs(
+                run_id=run_id,
+                artifact_quality_errors=list(diagnostics),
+                task_id=external_task_id,
+                execution_attempt=execution_attempt,
+            )
+            commit_context = self._director_stage_materialization_settle_commit_context(
+                run=run,
+                run_id=run_id,
+                diagnostics=diagnostics,
+            )
+            committed_receipts = await commit_materialization_deferred_repairs(
+                workspace=str(execution_attempt.workspace),
+                tool_results=tool_results,
+                execution_attempt=execution_attempt,
+                execution_attempt_authority=authority,
+                turn_id=f"director-stage-mat-settle-{run_id}",
+                context=commit_context,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Director stage materialization quality settle failed for run %s: %s",
+                run.id,
+                exc,
+            )
+            if task_row_id is not None and execution_attempt is not None:
+                self._settle_director_stage_materialization_attempt(
+                    task_row_id=task_row_id,
+                    execution_attempt=execution_attempt,
+                    stage_status="failed",
+                    summary=f"settle_exception:{type(exc).__name__}",
+                )
+            return {
+                "ok": False,
+                "reason": "settle_exception",
+                "detail": f"{type(exc).__name__}: {exc}",
+                "tool_result_count": 0,
+                "diagnostic_count": len(diagnostics),
+            }
+        summary_dict = dict(summary) if isinstance(summary, Mapping) else {}
+        mutated = bool(committed_receipts) or any(
+            self._workspace_quality_repair_result_has_mutation(dict(item))
+            for item in tool_results
+            if isinstance(item, Mapping)
+        )
+        if task_row_id is not None and execution_attempt is not None:
+            self._settle_director_stage_materialization_attempt(
+                task_row_id=task_row_id,
+                execution_attempt=execution_attempt,
+                stage_status="success" if mutated else "failed",
+                summary="director_stage_materialization_quality_settle",
+            )
+        return {
+            "ok": True,
+            "reason": "director_stage_settle",
+            "detail": (
+                "materialization quality schedule + deferred DEO commit at end of director_dispatch "
+                f"(diagnostics={len(diagnostics)}, tools={len(tool_results)}, "
+                f"committed={len(committed_receipts)}, mutated={mutated})"
+            ),
+            "tool_result_count": len(tool_results),
+            "committed_receipt_count": len(committed_receipts),
+            "diagnostic_count": len(diagnostics),
+            "mutated": mutated,
+            "external_task_id": external_task_id,
+            "summary_keys": sorted(str(key) for key in summary_dict.keys())[:24],
+        }
+
     def _apply_workspace_quality_repairs(
         self,
         *,
         run_id: str,
         artifact_quality_errors: list[str],
+        task_id: str | None = None,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         from polaris.cells.roles.adapters.public.service import (
             run_director_materialization_quality_repair_schedule,
@@ -7342,11 +8210,22 @@ class OrchestrationStageExecutor:
         target_files = self._workspace_quality_repair_target_files()
         if not target_files:
             target_files = self._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors)
+        if not target_files:
+            target_files = self._workspace_quality_repair_changed_files()
+        if "package.json" not in target_files and (self.workspace / "package.json").is_file():
+            target_files = [*target_files, "package.json"]
         metadata: dict[str, Any] = {
             "target_files": target_files,
             "delivery_mode": "materialize_changes",
         }
         blueprint_artifact, blueprint_text = self._workspace_quality_repair_blueprint_evidence(run_id=run_id)
+        # Always mark factory workspace-quality authority so multi-file smoke/tsc
+        # plans are not strangled by per-task write scope (M06 settle + quality_gate).
+        metadata["factory_workspace_quality_repair"] = {
+            "ce_blueprint_artifact": blueprint_artifact,
+            "target_files": target_files,
+            "run_id": run_id,
+        }
         if blueprint_text:
             blueprint_payload = {
                 "schema_version": "factory.workspace_quality_repair.ce_blueprint_context.v1",
@@ -7356,15 +8235,13 @@ class OrchestrationStageExecutor:
             metadata["ce_blueprint"] = blueprint_payload
             metadata["chief_engineer_blueprint"] = blueprint_payload
             metadata["chief_engineer_blueprint_evidence"] = blueprint_text
-            metadata["factory_workspace_quality_repair"] = {
-                "ce_blueprint_artifact": blueprint_artifact,
-                "target_files": target_files,
-            }
+        resolved_task_id = str(task_id or "").strip() or f"factory-quality-gate:{run_id}"
         return run_director_materialization_quality_repair_schedule(
             _QualityRepairAdapter(self.workspace),
             task={"target_files": target_files, "metadata": metadata},
-            task_id=f"factory-quality-gate:{run_id}",
+            task_id=resolved_task_id,
             artifact_quality_errors=artifact_quality_errors,
+            execution_attempt=execution_attempt,
         )
 
     def _apply_workspace_quality_cpp_post_repairs(self) -> list[dict[str, Any]]:

@@ -312,6 +312,46 @@ export function toJSON() {
     assert any("semicolon-terminated property" in error and "src/models/firefly.ts" in error for error in errors)
 
 
+def test_scan_does_not_flag_return_type_or_param_semicolons_as_return_object_properties(
+    tmp_path: Path,
+) -> None:
+    """Class getters/methods with typed params must not false-positive the return-object rule.
+
+    L1-01 Firefly-style sources use single-line ``return { x, y };`` followed by
+    methods whose parameter object types use TypeScript property semicolons.
+    The scanner must not treat those parameter types as return-object fields.
+    """
+
+    target = tmp_path / "src" / "models" / "Firefly.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        """
+export class Firefly {
+  public get position(): { readonly x: number; readonly y: number } {
+    return { x: this._x, y: this._y };
+  }
+
+  public tick(args: {
+    tick: number;
+    ambient: number;
+    humidity: number;
+  }): { id: string; brightness: number } {
+    return {
+      id: this._id,
+      brightness: this._brightness,
+    };
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/models/Firefly.ts"])
+
+    assert not any("semicolon-terminated property" in error for error in errors)
+
+
 def test_scan_does_not_apply_typescript_return_object_semicolon_rule_to_javascript(tmp_path: Path) -> None:
     target = tmp_path / "src" / "engine" / "runner.js"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -625,8 +665,7 @@ def test_scan_detects_npm_script_missing_local_config_file(tmp_path: Path) -> No
     assert legacy_error in evidence.errors
 
 
-def test_artifact_quality_issues_from_errors_projects_npm_script_missing_local_config(
-) -> None:
+def test_artifact_quality_issues_from_errors_projects_npm_script_missing_local_config() -> None:
     """Public projection must classify scanner metadata without message parsing."""
 
     projected = artifact_quality_issues_from_errors(
@@ -1196,9 +1235,7 @@ export class TaskDefinition {
     assert evidence.errors
     assert "TypeScript zod inferred type collides with class TaskDefinition" in evidence.errors[0]
 
-    collision_issues = [
-        issue for issue in evidence.issues if issue.code == "typescript_zod_type_class_collision"
-    ]
+    collision_issues = [issue for issue in evidence.issues if issue.code == "typescript_zod_type_class_collision"]
     assert collision_issues, "file-level scanner must emit typed typescript_zod_type_class_collision issue"
     assert len(collision_issues) == 1
 
@@ -1305,9 +1342,7 @@ def test_scan_detects_unresolved_runtime_typescript_imports(tmp_path: Path) -> N
     errors = evidence.errors
     assert any("undeclared runtime import 'express'" in error for error in errors)
     assert any("unresolved relative import '../context'" in error for error in errors)
-    runtime_import_issues = [
-        issue for issue in evidence.issues if issue.code == "undeclared_runtime_import"
-    ]
+    runtime_import_issues = [issue for issue in evidence.issues if issue.code == "undeclared_runtime_import"]
     assert len(runtime_import_issues) == 1
     issue = runtime_import_issues[0]
     assert issue.source == "typescript_import_scanner"
@@ -1345,9 +1380,7 @@ def test_scan_requires_node_types_for_typescript_builtin_import(tmp_path: Path) 
 
     assert any("requires '@types/node'" in error for error in evidence.errors)
 
-    node_types_issues = [
-        issue for issue in evidence.issues if issue.code == "typescript_node_types_missing"
-    ]
+    node_types_issues = [issue for issue in evidence.issues if issue.code == "typescript_node_types_missing"]
     assert len(node_types_issues) == 1
     issue = node_types_issues[0]
     assert issue.source == "typescript_import_scanner"
@@ -1601,11 +1634,7 @@ export {
 
     assert any("isolatedModules requires `export type` for Firefly" in error for error in evidence.errors)
 
-    reexport_issues = [
-        issue
-        for issue in evidence.issues
-        if issue.code == "typescript_isolated_modules_type_reexport"
-    ]
+    reexport_issues = [issue for issue in evidence.issues if issue.code == "typescript_isolated_modules_type_reexport"]
     assert reexport_issues, "file-level scanner must emit typed typescript_isolated_modules_type_reexport issue"
     assert len(reexport_issues) == 1
 
@@ -1657,8 +1686,7 @@ def test_artifact_quality_issues_from_errors_projects_isolated_modules_type_reex
     assert projected_metadata["path"] == "src/main.ts"
     assert projected_metadata["diagnostic_kind"] == "typescript_isolated_modules_type_reexport"
     assert projected_metadata["raw"] == (
-        "Artifact quality scan failed: TypeScript isolatedModules requires "
-        "`export type` for Firefly in src/main.ts"
+        "Artifact quality scan failed: TypeScript isolatedModules requires `export type` for Firefly in src/main.ts"
     )
 
 
@@ -1715,11 +1743,7 @@ def test_scan_detects_escaped_newline_that_comments_out_typescript_export(tmp_pa
         for error in evidence.errors
     )
 
-    escaped_issues = [
-        issue
-        for issue in evidence.issues
-        if issue.code == "typescript_escaped_newline_line_comment"
-    ]
+    escaped_issues = [issue for issue in evidence.issues if issue.code == "typescript_escaped_newline_line_comment"]
     assert escaped_issues, "file-level scanner must emit typed typescript_escaped_newline_line_comment issue"
     assert len(escaped_issues) == 1
 
@@ -2103,6 +2127,28 @@ class TestSourceSyntaxInQualityScan:
         target = tmp_path / "notes.md"
         target.write_text("# notes\n", encoding="utf-8")
         assert check_source_file_syntax(str(target)) is None
+
+    def test_r147_check_source_file_syntax_flags_typescript_parse_errors(self, tmp_path) -> None:
+        """R147: TS must not be None/ok when tsc reports definite parse errors."""
+
+        from polaris.kernelone.quality import check_source_file_syntax
+
+        target = tmp_path / "web.ts"
+        target.write_text(
+            "export function start(): void {\n  return,\n}\n",
+            encoding="utf-8",
+        )
+        result = check_source_file_syntax(str(target))
+        assert result is not None
+        assert result.get("ok") is False
+        assert "TS1109" in str(result.get("error") or "") or "Expression expected" in str(result.get("error") or "")
+
+    def test_r147_check_source_file_syntax_accepts_valid_typescript(self, tmp_path) -> None:
+        from polaris.kernelone.quality import check_source_file_syntax
+
+        target = tmp_path / "ok.ts"
+        target.write_text("export function start(): void {\n  return;\n}\n", encoding="utf-8")
+        assert check_source_file_syntax(str(target)) == {"ok": True}
 
 
 class TestHtmlCompleteness:

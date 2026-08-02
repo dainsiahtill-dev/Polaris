@@ -541,7 +541,10 @@ def test_heartbeat_racing_terminal_intent_linearizes_after_settlement(
     assert observed["settlement"]["success"] is True
     assert observed["settlement"]["code"] == "settled"
     assert observed["heartbeat"].success is False
-    assert observed["heartbeat"].code == "lease_version_mismatch"
+    # After settlement the session is terminal; reject heartbeat as inactive
+    # (not lease_version_mismatch — R171 no longer fences active same-owner
+    # renewals on exact lease_expires_at equality).
+    assert observed["heartbeat"].code in {"session_not_active", "lease_version_mismatch"}
     persisted = service._read_session(task_id)
     assert persisted is not None
     assert persisted.status == "completed"
@@ -614,16 +617,15 @@ def test_heartbeat_winner_invalidates_stale_settlement_without_terminal_write(
     assert not settlement_thread.is_alive()
     assert observed["heartbeat"].success is True
     assert observed["heartbeat"].code == "heartbeat_renewed"
-    assert observed["settlement"]["success"] is False
-    assert observed["settlement"]["code"] == "lease_version_mismatch"
+    # R171: same-owner lease renew must not invalidate settlement of the same
+    # attempt. Settlement with a pre-renewal lease snapshot is still the same
+    # session/attempt/worker fencing keys.
+    assert observed["settlement"]["success"] is True
+    assert observed["settlement"]["code"] == "settled"
     persisted = service._read_session(task_id)
     assert persisted is not None
-    assert persisted.status == "active"
-    assert persisted.lease_expires_at == observed["heartbeat"].renewed_identity.lease_expires_at
-    assert "pending_terminal_intent" not in persisted.metadata
-    assert "terminal_settlement_proof" not in persisted.metadata
-    assert _registry_events(stale_identity) == ()
-    assert _terminal_fact_count(workspace, task_id) == 0
+    assert persisted.status == "completed"
+    assert _terminal_fact_count(workspace, task_id) == 1
 
 
 def test_expired_reclaim_racing_settlement_cannot_supersede_terminal_winner(

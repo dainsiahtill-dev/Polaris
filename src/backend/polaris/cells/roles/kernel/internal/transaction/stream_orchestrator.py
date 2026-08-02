@@ -1223,6 +1223,34 @@ class StreamOrchestrator:
         # 流式 Director 仍会真实写入 workspace（fail-open）。
         decision = apply_delivery_mode_filter(decision, ledger)
 
+        # R134: recover executable TOOL_BATCH from native write tools, else fail-closed
+        # before FINAL_ANSWER / process terminal (mirrors non-stream decision_pipeline).
+        # Local import avoids circular import with turn_decision_decoder via decision_pipeline.
+        if llm_response is not None:
+            from polaris.cells.roles.kernel.internal.transaction.decision_pipeline import (
+                ensure_native_write_tool_batch_or_fail,
+            )
+
+            try:
+                decision = ensure_native_write_tool_batch_or_fail(
+                    decision=decision,
+                    llm_response=llm_response,
+                    decoder=self.decoder,
+                    turn_id=turn_id,
+                    decision_metadata=decision_metadata,
+                    streaming=True,
+                )
+            except RuntimeError as exc:
+                if "tool_dispatch_dropped" in str(exc):
+                    anomaly = build_tool_dispatch_dropped_anomaly(
+                        response=llm_response,
+                        metadata=decision_metadata,
+                        turn_id=turn_id,
+                        streaming=True,
+                    )
+                    ledger.anomaly_flags.append(anomaly)
+                raise
+
         ledger.record_decision(decision)
         self.emit_event(
             TurnPhaseEvent.create(

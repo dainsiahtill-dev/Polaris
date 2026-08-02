@@ -126,13 +126,79 @@ def test_result_tool_payload_is_validated_against_caller_schema() -> None:
                 "tool_calls": [
                     {
                         "tool": STRUCTURED_OUTPUT_TOOL_NAME,
-                        "args": {"construction_plan": {}},
+                        "args": {
+                            "construction_plan": "not-an-object",
+                            "scope_for_apply": [],
+                            "risk_flags": [],
+                        },
                         "call_id": "call-invalid-result",
                     }
                 ],
             },
             plan,
         )
+
+
+def test_missing_required_empty_arrays_are_coerced_before_schema_validation() -> None:
+    """CE portfolio often omits risk_flags=[]; do not fail SCHEMA-REPAIR loops on that alone.
+
+    L1-01 r123: both primary CE and SCHEMA-REPAIR failed with
+    structured_output_payload_schema_mismatch:$:'risk_flags' is a required property
+    while construction_plan was present.
+    """
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _contract().to_context_projection()}
+    )
+    assert plan is not None
+
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "args": {"construction_plan": {"task_plans": {}}},
+                    "call_id": "call-missing-empty-arrays",
+                }
+            ],
+        },
+        plan,
+    )
+
+    payload = json.loads(normalized["content"])
+    assert payload["construction_plan"] == {"task_plans": {}}
+    assert payload["scope_for_apply"] == []
+    assert payload["risk_flags"] == []
+    assert normalized["tool_calls"] == []
+
+
+def test_null_required_array_is_coerced_to_empty_list() -> None:
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _contract().to_context_projection()}
+    )
+    assert plan is not None
+
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "args": {
+                        "construction_plan": {"task_plans": {}},
+                        "scope_for_apply": None,
+                        "risk_flags": None,
+                    },
+                    "call_id": "call-null-arrays",
+                }
+            ],
+        },
+        plan,
+    )
+
+    payload = json.loads(normalized["content"])
+    assert payload["scope_for_apply"] == []
+    assert payload["risk_flags"] == []
 
 
 def test_stream_result_tool_is_buffered_and_normalized_before_transaction_decoder() -> None:

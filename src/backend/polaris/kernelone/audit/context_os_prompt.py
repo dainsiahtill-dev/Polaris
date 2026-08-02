@@ -133,11 +133,30 @@ CONTROL_PLANE_PROMPT_KEYS = frozenset(
 # leakage.
 CONTROL_PLANE_PROMPT_PROJECTION_KEYS = CONTROL_PLANE_PROMPT_KEYS - {"task_id"}
 
+# Director operational protocol that must appear as intentional prompt text
+# (SESSION_PATCH delivery_mode, [director_quality_repair:…], CE blueprint labels).
+# These remain forbidden as message *metadata* keys via CONTROL_PLANE_PROMPT_KEYS.
+# Scanning them as content leaks blocked L1-01 quality-repair qualification with
+# final_request_context_quality_failed (context_os_prompt_audit_failed) even when
+# no real control-plane authority was serialized into the prompt.
+_PROMPT_SAFE_OPERATIONAL_CONTENT_KEYS = frozenset(
+    {
+        "blueprint_hash",
+        "blueprint_id",
+        "blueprint_path",
+        "chief_engineer_blueprint_id",
+        "delivery_mode",
+        "director_quality_repair",
+    }
+)
+
 # A generic word such as ``metadata`` is not proof that runtime authority was
 # serialized into prompt content. It remains forbidden as an actual message
 # metadata key and as a nested structured projection key. Only the weaker
 # natural-language signature scan excludes it.
-CONTROL_PLANE_PROMPT_CONTENT_KEYS = CONTROL_PLANE_PROMPT_PROJECTION_KEYS - {"metadata"}
+CONTROL_PLANE_PROMPT_CONTENT_KEYS = (
+    CONTROL_PLANE_PROMPT_PROJECTION_KEYS - {"metadata"} - _PROMPT_SAFE_OPERATIONAL_CONTENT_KEYS
+)
 _CONTROL_CONTENT_TOKENS = tuple(
     sorted(
         {

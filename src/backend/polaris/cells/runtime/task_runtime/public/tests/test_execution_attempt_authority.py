@@ -611,7 +611,6 @@ def test_open_authority_validates_active_attempt_without_persisted_side_effects(
     (
         ({"session_id": "fabricated"}, "session_mismatch"),
         ({"worker_id": "other-worker"}, "worker_mismatch"),
-        ({"lease_expires_at": "2026-01-01T00:00:00+00:00"}, "lease_version_mismatch"),
     ),
 )
 def test_open_authority_rejects_fabricated_mismatched_and_stale_identities(
@@ -622,10 +621,8 @@ def test_open_authority_rejects_fabricated_mismatched_and_stale_identities(
     _service, identity = _claimed_attempt(tmp_path)
     if "session_id" in identity_change:
         changed_identity = replace(identity, session_id=identity_change["session_id"])
-    elif "worker_id" in identity_change:
-        changed_identity = replace(identity, worker_id=identity_change["worker_id"])
     else:
-        changed_identity = replace(identity, lease_expires_at=identity_change["lease_expires_at"])
+        changed_identity = replace(identity, worker_id=identity_change["worker_id"])
     verdict = open_task_runtime_execution_attempt_authority(
         OpenTaskRuntimeExecutionAttemptAuthorityCommandV1(
             workspace=identity.workspace,
@@ -636,6 +633,27 @@ def test_open_authority_rejects_fabricated_mismatched_and_stale_identities(
     assert verdict.success is False
     assert verdict.code == expected_code
     assert verdict.authority is None
+
+
+def test_open_authority_accepts_same_owner_stale_lease_snapshot(tmp_path: Path) -> None:
+    """R171: renewable lease_expires_at is not an open-authority fence.
+
+    Concurrent same-owner heartbeats advance the stored lease while callers may
+    still hold a pre-renewal snapshot. Open must not fail closed on lease-only
+    drift (session/attempt/worker/role/run remain the fencing keys).
+    """
+
+    _service, identity = _claimed_attempt(tmp_path)
+    stale = replace(identity, lease_expires_at="2026-01-01T00:00:00+00:00")
+    verdict = open_task_runtime_execution_attempt_authority(
+        OpenTaskRuntimeExecutionAttemptAuthorityCommandV1(
+            workspace=identity.workspace,
+            identity=stale,
+        ),
+    )
+    assert verdict.success is True
+    assert verdict.code == "valid"
+    assert verdict.authority is not None
 
 
 def test_open_authority_rejects_terminal_and_expired_attempts(tmp_path: Path) -> None:

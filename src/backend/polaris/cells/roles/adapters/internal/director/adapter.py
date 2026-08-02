@@ -10,6 +10,7 @@ import hashlib
 import logging
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
 
@@ -1427,6 +1428,11 @@ class DirectorAdapter(BaseRoleAdapter):
         )
 
         context_payload = dict(context) if isinstance(context, dict) else {}
+        # Quality-repair / no-write / empty-write retries often arrive without the
+        # non-serializable TrustedDirectorDependencyArtifactSnapshotV2 token. Projecting
+        # None then wipes actual_sibling_exports and final-request coverage fails closed
+        # with missing_required_refs=actual_sibling_exports (L1-01 r122 TASK-2 follow-up).
+        self._rebind_director_dependency_artifact_for_dialogue(context_payload)
         trusted_dependency_snapshot = context_payload.pop(
             DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY,
             None,
@@ -2157,6 +2163,63 @@ class DirectorAdapter(BaseRoleAdapter):
     # -------------------------------------------------------------------------
     # Director Message Building
     # -------------------------------------------------------------------------
+
+    def _resolve_child_task_for_dependency_artifact(
+        self,
+        context: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        """Resolve the child task mapping used to rebuild dependency artifact evidence."""
+
+        for key in ("task", "task_payload", "pm_task", "director_task"):
+            raw = context.get(key)
+            if isinstance(raw, dict) and raw:
+                return dict(raw)
+        metadata = _copy_mapping_payload(context.get("metadata")) or {}
+        for key in ("task", "task_payload"):
+            raw = metadata.get(key)
+            if isinstance(raw, dict) and raw:
+                return dict(raw)
+        task_id = str(
+            context.get("task_id")
+            or context.get("target_task_id")
+            or metadata.get("task_id")
+            or metadata.get("pm_task_id")
+            or metadata.get("external_task_id")
+            or metadata.get("source_task_id")
+            or ""
+        ).strip()
+        if not task_id:
+            return None
+        row = self._get_task(task_id)
+        if isinstance(row, dict) and row:
+            return dict(row)
+        # Numeric / TASK-N aliases
+        for candidate in (task_id, task_id.removeprefix("TASK-").removeprefix("task-")):
+            if not candidate:
+                continue
+            row = self._get_task(candidate)
+            if isinstance(row, dict) and row:
+                return dict(row)
+        return None
+
+    def _rebind_director_dependency_artifact_for_dialogue(
+        self,
+        context: dict[str, Any],
+    ) -> TrustedDirectorDependencyArtifactSnapshotV2 | None:
+        """Rebuild trusted sibling-export evidence before every Director dialogue turn.
+
+        Follow-up stages (quality repair, no-write retry) may retain dependency
+        requirements from execution strategy while losing the trusted snapshot token.
+        Rebinding restores both the token and projected ``actual_sibling_exports``.
+        """
+
+        existing = context.get(DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY)
+        if type(existing) is TrustedDirectorDependencyArtifactSnapshotV2:
+            return existing
+        task = self._resolve_child_task_for_dependency_artifact(context)
+        if task is None:
+            return None
+        return self._prepare_director_dependency_artifact_snapshot(task=task, context=context)
 
     def _prepare_director_dependency_artifact_snapshot(
         self,

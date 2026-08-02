@@ -133,6 +133,17 @@ _STRING_LITERAL_GUARDED_PATTERNS = frozenset(
     }
 )
 
+# "placeholder" in documentation/comments is descriptive prose (e.g. JSDoc
+# "Browser-only entry point placeholder"), not unfinished code. Real unfinished
+# markers live in executable spans (``const x = placeholder``, ``return placeholder``).
+# (live factory-bench L1-01 r153b: src/web.ts failed materialization semantic quality
+# solely because of a JSDoc word, while the file had real isNode guards + export.)
+_COMMENT_GUARDED_PATTERNS = frozenset(
+    {
+        r"(?<![.:'\"-])\bplaceholder\b(?!\s*[=:])(?![-'\"])",
+    }
+)
+
 
 def _match_is_inside_string_literal(line: str, rel_start: int, rel_end: int) -> bool:
     """Best-effort: is the [rel_start, rel_end) span on ``line`` inside a quote?
@@ -164,15 +175,38 @@ def _match_is_inside_string_literal(line: str, rel_start: int, rel_end: int) -> 
     return False
 
 
+def _match_is_inside_line_comment(line: str, rel_start: int) -> bool:
+    """Return True when the match sits on a comment-only span of ``line``.
+
+    Covers full-line comments (``//``, ``#``, ``/*``, block continuation ``*``,
+    ``<!--``) and end-of-line comments introduced by ``//`` or ``#`` before the
+    match. Conservative: does not try to parse multi-line block-comment ranges
+    that lack a leading ``*`` on continuation lines.
+    """
+
+    stripped = line.lstrip()
+    if stripped.startswith(("//", "#", "/*", "*", "<!--")):
+        return True
+    for marker in ("//", "#"):
+        idx = line.find(marker)
+        if 0 <= idx < rel_start and not _match_is_inside_string_literal(line, idx, idx + len(marker)):
+            return True
+    return False
+
+
 def low_quality_pattern_match(pattern: re.Pattern[str], content: str) -> bool:
     """Return whether ``pattern`` flags genuine low-quality content in ``content``.
 
     For the string-literal-guarded markers (NotImplemented / stub) a hit that
     sits inside a quoted string literal is treated as the token being *named*
     (anti-placeholder test/lint), not a real unfinished-code marker, and is
+    skipped. For comment-guarded markers (placeholder prose), a hit that sits
+    only in a comment is descriptive documentation, not unfinished code, and is
     skipped. All other patterns keep their original bare-search semantics.
     """
-    if pattern.pattern not in _STRING_LITERAL_GUARDED_PATTERNS:
+    needs_string_guard = pattern.pattern in _STRING_LITERAL_GUARDED_PATTERNS
+    needs_comment_guard = pattern.pattern in _COMMENT_GUARDED_PATTERNS
+    if not needs_string_guard and not needs_comment_guard:
         return bool(pattern.search(content))
     for match in pattern.finditer(content):
         line_start = content.rfind("\n", 0, match.start()) + 1
@@ -180,7 +214,11 @@ def low_quality_pattern_match(pattern: re.Pattern[str], content: str) -> bool:
         if line_end < 0:
             line_end = len(content)
         line = content[line_start:line_end]
-        if _match_is_inside_string_literal(line, match.start() - line_start, match.end() - line_start):
+        rel_start = match.start() - line_start
+        rel_end = match.end() - line_start
+        if needs_string_guard and _match_is_inside_string_literal(line, rel_start, rel_end):
+            continue
+        if needs_comment_guard and _match_is_inside_line_comment(line, rel_start):
             continue
         return True
     return False

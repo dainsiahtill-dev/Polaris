@@ -35,6 +35,82 @@ from polaris.cells.runtime.task_runtime.public import (
 logger = logging.getLogger(__name__)
 
 
+def _is_deferred_success_tool_result(item: Mapping[str, Any]) -> bool:
+    """Return True when one adapter tool_result carries a deferred repair payload."""
+
+    if item.get("success") is False:
+        return False
+    result = item.get("result")
+    if not isinstance(result, Mapping):
+        return False
+    deferred = result.get("deferred_request")
+    status = str(result.get("status") or "").strip()
+    return deferred is not None or status in {
+        "deferred_repair_effects_pending",
+        "deferred_command_effect_pending",
+    }
+
+
+def _forward_target_paths_from_tool_result(item: Mapping[str, Any]) -> frozenset[str]:
+    """Extract forward write paths used for multi-request conflict partitioning."""
+
+    result = item.get("result")
+    if not isinstance(result, Mapping):
+        return frozenset()
+    deferred = result.get("deferred_request")
+    paths: set[str] = set()
+    plan = getattr(deferred, "plan", None) if deferred is not None else None
+    effects = getattr(plan, "effects", None) if plan is not None else None
+    if isinstance(effects, (list, tuple)):
+        for effect in effects:
+            if str(getattr(effect, "contingency_kind", "") or "").strip() != "forward":
+                continue
+            path = str(getattr(effect, "target_path", "") or "").replace("\\", "/").strip().strip("/")
+            if path:
+                paths.add(path)
+    if paths:
+        return frozenset(paths)
+    # Fallback: allowed_paths on the deferred request / result payload.
+    for raw in getattr(deferred, "allowed_paths", None) or result.get("allowed_paths") or ():
+        path = str(raw or "").replace("\\", "/").strip().strip("/")
+        if path:
+            paths.add(path)
+    return frozenset(paths)
+
+
+def _partition_non_conflicting_deferred_tool_results(
+    tool_results: Sequence[Mapping[str, Any]],
+) -> list[list[Mapping[str, Any]]]:
+    """Greedy first-fit waves so concurrent deferred repairs never share targets.
+
+    R174/M06: director multi-task timeout settle often plans several deferred
+    repairs together (tsc fixes on ``src/main.ts`` + ``json_as_source`` smoke on
+    ``tests/verify.test.ts``). ``synthesize_batch`` fail-closes the *entire*
+    multi-request set with ``deo_deferred_repair_target_conflict`` when any two
+    share a forward path — including non-conflicting smoke-test creates.
+    Partitioning preserves DEO's one-path-one-owner invariant per wave while
+    still landing non-overlapping repairs (smoke tests + independent sources).
+    """
+
+    waves: list[list[Mapping[str, Any]]] = []
+    occupied: list[set[str]] = []
+    for item in tool_results:
+        if not isinstance(item, Mapping) or not _is_deferred_success_tool_result(item):
+            continue
+        paths = set(_forward_target_paths_from_tool_result(item))
+        placed = False
+        for index, used in enumerate(occupied):
+            if paths.isdisjoint(used):
+                waves[index].append(item)
+                used.update(paths)
+                placed = True
+                break
+        if not placed:
+            waves.append([item])
+            occupied.append(set(paths))
+    return waves
+
+
 def _receipts_from_deferred_tool_results(
     tool_results: Sequence[Mapping[str, Any]],
 ) -> list[MutableMapping[str, Any]]:
@@ -42,19 +118,10 @@ def _receipts_from_deferred_tool_results(
 
     receipts: list[MutableMapping[str, Any]] = []
     for item in tool_results:
-        if not isinstance(item, Mapping):
+        if not isinstance(item, Mapping) or not _is_deferred_success_tool_result(item):
             continue
         result = item.get("result")
         if not isinstance(result, Mapping):
-            continue
-        deferred = result.get("deferred_request")
-        status = str(result.get("status") or "").strip()
-        if deferred is None and status not in {
-            "deferred_repair_effects_pending",
-            "deferred_command_effect_pending",
-        }:
-            continue
-        if item.get("success") is False:
             continue
         receipts.append(
             {
@@ -206,8 +273,8 @@ async def commit_deferred_director_repair_tool_results(
     if execution_attempt.workspace != workspace_token:
         raise ValueError("workspace must match execution_attempt.workspace")
 
-    receipts = _receipts_from_deferred_tool_results(tool_results)
-    if not receipts:
+    waves = _partition_non_conflicting_deferred_tool_results(tool_results)
+    if not waves:
         return []
 
     scope = _capability_scope_from_tool_results(tool_results, capability_scope)
@@ -259,21 +326,41 @@ async def commit_deferred_director_repair_tool_results(
         directed_effect_execution_attempt_authority=execution_attempt_authority,
     )
     ledger = TurnLedger(turn_id=turn)
-    followup_receipts = await executor._execute_deferred_repair_followup(
-        receipts_as_dicts=[dict(item) for item in receipts],
-        primary_batch_id=batch_id,
-        workspace=workspace_token,
-        turn_id=turn,
-        ledger=ledger,
-        cancel_token=CancelToken(),
-    )
+    followup_receipts: list[dict[str, Any]] = []
+    for wave_index, wave in enumerate(waves):
+        wave_receipts = _receipts_from_deferred_tool_results(wave)
+        if not wave_receipts:
+            continue
+        wave_batch_id = batch_id if len(waves) == 1 else f"{batch_id}:wave{wave_index}"
+        try:
+            wave_followup = await executor._execute_deferred_repair_followup(
+                receipts_as_dicts=[dict(item) for item in wave_receipts],
+                primary_batch_id=wave_batch_id,
+                workspace=workspace_token,
+                turn_id=turn,
+                ledger=ledger,
+                cancel_token=CancelToken(),
+            )
+        except RuntimeError as exc:
+            # Defensive: if a wave still collides (or fence rejects), do not discard
+            # earlier successful waves. Later waves may still land smoke tests.
+            logger.warning(
+                "Deferred director repair wave failed: workspace=%s wave=%s/%s error=%s",
+                workspace_token,
+                wave_index + 1,
+                len(waves),
+                exc,
+            )
+            continue
+        followup_receipts.extend(dict(item) for item in wave_followup)
     logger.info(
-        "Committed deferred director repairs via DEO followup: workspace=%s turn=%s receipts=%s",
+        "Committed deferred director repairs via DEO followup: workspace=%s turn=%s waves=%s receipts=%s",
         workspace_token,
         turn,
+        len(waves),
         len(followup_receipts),
     )
-    return [dict(item) for item in followup_receipts]
+    return followup_receipts
 
 
 __all__ = ["commit_deferred_director_repair_tool_results"]

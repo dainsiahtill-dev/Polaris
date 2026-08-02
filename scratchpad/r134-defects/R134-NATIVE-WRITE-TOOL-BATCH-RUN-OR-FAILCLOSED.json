@@ -1,0 +1,37 @@
+{
+  "defect_id": "R134-NATIVE-WRITE-TOOL-BATCH-RUN-OR-FAILCLOSED",
+  "status": "fixed_platform_unit_ok_rebench_residual_deo",
+  "summary": "After native write tool envelopes, recover executable TOOL_BATCH or fail-closed with tool_dispatch_dropped before process terminal.",
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/kernel/internal/turn_decision_decoder.py",
+      "src/backend/polaris/cells/roles/kernel/internal/transaction/decision_pipeline.py",
+      "src/backend/polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py",
+      "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_decision_pipeline.py"
+    ],
+    "changes": [
+      "TurnDecisionDecoder.recover_executable_tool_batch_decision rebuilds TOOL_BATCH from parseable native tools",
+      "ensure_native_write_tool_batch_or_fail: recover then fail-closed for undischarged native writes",
+      "decision_pipeline: after delivery filter / text-only suppress of write tools, R134 ensure; write-batch suppress no longer becomes FINAL_ANSWER",
+      "stream_orchestrator: same ensure after delivery filter (local import to avoid circular import)"
+    ]
+  },
+  "verification": {
+    "pytest_decision_pipeline": "12 passed",
+    "pytest_related_k": "17 passed (decision_pipeline + decoder + turn_completion slices)",
+    "ruff": "clean on touched files"
+  },
+  "rebench": {
+    "label": "r134-native-batch-run",
+    "work_dir": "/tmp/factory-bench-l1-01-r134-native-batch-run",
+    "wall_s": 129.3,
+    "result": "FAIL",
+    "source_files": 0,
+    "root_cause_signature": "control_plane:tool_lifecycle_failed",
+    "live_truthlog": "ErrorEvent RuntimeError deo_director_policy_denied at DECISION_DECODED for TASK-1 after 1 native write_file envelope",
+    "task_results": "TASK-1 director_no_materialized_changes; TASK-2/3 blocked_by_failed_dependency",
+    "ledger": "TOOL_LIFECYCLE_MISSING for required TASK-1 (event_count=0)",
+    "interpretation": "R134 unit path OK. Live residual is DEO policy denial on first Director write batch without lifecycle seal — next generic candidate R135 (DEO deny must still emit tool_call_lifecycle / not leave claimed materialization without evidence). Not a model-only issue: tools reached control plane then DEO denied."
+  },
+  "next_action": "R135: seal lifecycle (or durable effect denial receipt) when deo_director_policy_denied aborts a native write batch; then one L1-01 rebench"
+}

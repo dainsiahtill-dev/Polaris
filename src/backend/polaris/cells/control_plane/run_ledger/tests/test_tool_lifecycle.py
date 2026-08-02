@@ -16,6 +16,7 @@ from polaris.cells.control_plane.run_ledger.public.projection import (
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     ToolLifecycleRequirementV1,
     batch_receipt_has_dispatch_evidence,
+    build_claimed_materialization_without_tool_lifecycle_receipt,
     build_missing_dispatch_lifecycle_receipt,
     build_native_tool_call_envelope_payloads,
     build_native_tool_call_envelopes,
@@ -300,6 +301,56 @@ def test_tool_lifecycle_projects_matching_nested_commit_when_direct_receipt_copy
     assert receipt["failure_class"] == ""
     assert receipt["effect_receipt_count"] == 1
     assert receipt["effect_receipt_refs"][0]["task_runtime_event_id"] == "fact-deo3-receipt"
+
+
+def test_r156_lifecycle_failure_reason_not_bare_dispatched_status() -> None:
+    """R156: failure_count>0 must not leave failure_evidence.reason as \"dispatched\"."""
+
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id="director-r156",
+        task_id="TASK-3",
+        turn_id="turn-r156",
+        role="director",
+        native_tool_calls_count=2,
+        decoded_tool_calls_count=2,
+        dispatched_tool_calls_count=2,
+        dispatch_status="dispatched",
+        receipts=[
+            {
+                "batch_id": "batch-fail",
+                "failure_count": 1,
+                "results": [
+                    {
+                        "call_id": "call-fail",
+                        "tool_name": "write_file",
+                        "status": "error",
+                        "error": "serial_mutation_sibling_aborted_after_failure",
+                    }
+                ],
+            },
+            {
+                "batch_id": "batch-aborted",
+                "failure_count": 1,
+                "results": [
+                    {
+                        "call_id": "call-aborted",
+                        "tool_name": "write_file",
+                        "status": "aborted",
+                        "error": "serial_mutation_sibling_aborted_after_failure",
+                    }
+                ],
+            },
+        ],
+    ).to_dict()
+
+    assert receipt["ok"] is False
+    assert receipt["failure_class"] == FailureClassV1.TOOL_RESULT_FAILED.value
+    assert receipt["dispatch_status"] == "dispatched"
+    assert receipt["reason"] == "serial_mutation_sibling_aborted_after_failure"
+    assert receipt["reason"] != "dispatched"
+    evidence = failure_evidence_from_lifecycle_receipt(receipt)
+    assert evidence["failure_class"] == FailureClassV1.TOOL_RESULT_FAILED.value
+    assert evidence["reason"] == "serial_mutation_sibling_aborted_after_failure"
 
 
 def test_tool_lifecycle_rejects_nested_commit_for_different_direct_receipt() -> None:
@@ -1697,6 +1748,106 @@ def test_build_missing_dispatch_lifecycle_receipt_projects_required_write_tool()
     assert receipt["reason"] == "required_write_tool_without_dispatch_evidence"
 
 
+def test_claimed_materialization_without_tools_seals_lifecycle_not_missing() -> None:
+    """R137: claimed materialization with zero tools must not project TOOL_LIFECYCLE_MISSING."""
+
+    sealed = build_claimed_materialization_without_tool_lifecycle_receipt(
+        run_id="director-task3",
+        task_id="TASK-3",
+        turn_id="director-task3--TASK-3--attempt-txi_1-0",
+        reason="director_no_materialized_changes",
+        failure_class=FailureClassV1.INCOMPLETE_MATERIALIZATION.value,
+    )
+    assert sealed["dispatch_status"] == "blocked"
+    assert sealed["ok"] is False
+    assert sealed["failure_class"] == FailureClassV1.INCOMPLETE_MATERIALIZATION.value
+    assert sealed["reason"] == "director_no_materialized_changes"
+    assert sealed["native_tool_calls_count"] == 0
+    assert sealed["dispatched_tool_calls_count"] == 0
+    assert sealed["task_id"] == "TASK-3"
+
+    success_task1 = build_tool_call_lifecycle_receipt(
+        run_id="director-task1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[
+            {
+                "batch_id": "b1",
+                "results": [
+                    {
+                        "tool_name": "read_file",
+                        "status": "success",
+                        "call_id": "c1",
+                    }
+                ],
+            }
+        ],
+        dispatch_status="dispatched",
+    )
+    success_task2 = build_tool_call_lifecycle_receipt(
+        run_id="director-task2",
+        task_id="TASK-2",
+        turn_id="turn-2",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[
+            {
+                "batch_id": "b2",
+                "results": [
+                    {
+                        "tool_name": "read_file",
+                        "status": "success",
+                        "call_id": "c2",
+                    }
+                ],
+            }
+        ],
+        dispatch_status="dispatched",
+    )
+    events = [
+        project_tool_lifecycle_event(success_task1.to_dict()),
+        project_tool_lifecycle_event(success_task2.to_dict()),
+        project_tool_lifecycle_event(sealed),
+    ]
+    requirement = ToolLifecycleRequirementV1(
+        task_id="TASK-3",
+        run_id="director-task3",
+        reason="director_materialization_claimed",
+    )
+    # Three claimed tasks; only TASK-3 previously missing.
+    requirement_projection = {
+        "schema_version": "polaris.tool_lifecycle_requirement.v1",
+        "required": True,
+        "required_task_keys": ["TASK-1", "TASK-2", "TASK-3"],
+        "obligations": [
+            requirement.to_dict(),
+            {"task_key": "TASK-1", "task_id": "TASK-1", "run_id": "director-task1"},
+            {"task_key": "TASK-2", "task_id": "TASK-2", "run_id": "director-task2"},
+        ],
+    }
+    summary = summarize_tool_lifecycle_events(
+        events,
+        requirement=True,
+        requirement_projection=requirement_projection,
+    )
+    assert summary["missing_required_task_keys"] == []
+    assert summary["requirement_status"] != "missing_required"
+    assert "TASK-3" in summary["latest_by_task"]
+    # Terminal incomplete seal satisfies integrity (not missing / not open gap).
+    assert summary["ok"] is True
+    assert summary["unresolved_count"] == 0
+    failure_status = project_tool_lifecycle_failure_status(summary)
+    assert failure_status["failed"] is True
+    assert failure_status["failure_class"] != FailureClassV1.TOOL_LIFECYCLE_MISSING.value
+    assert failure_status["failure_class"] == FailureClassV1.INCOMPLETE_MATERIALIZATION.value
+
+
 def test_build_missing_dispatch_lifecycle_receipt_prefers_native_envelope_metadata() -> None:
     envelope = {
         "schema_version": "native_tool_call_envelope.v1",
@@ -1723,6 +1874,67 @@ def test_build_missing_dispatch_lifecycle_receipt_prefers_native_envelope_metada
             "envelope_id": "native_tool_call:provider:0:call-1:hash",
         },
     ]
+
+
+def test_build_missing_dispatch_lifecycle_receipt_seals_native_write_without_required_list() -> None:
+    """R133: native write envelopes seal dropped lifecycle even if required_tools is empty."""
+    envelopes = [
+        {
+            "schema_version": "native_tool_call_envelope.v1",
+            "envelope_id": "native_tool_call:anthropic:0:call_a:hash_a",
+            "tool_name": "write_file",
+        },
+        {
+            "schema_version": "native_tool_call_envelope.v1",
+            "envelope_id": "native_tool_call:anthropic:1:call_b:hash_b",
+            "tool_name": "write_file",
+        },
+        {
+            "schema_version": "native_tool_call_envelope.v1",
+            "envelope_id": "native_tool_call:anthropic:2:call_c:hash_c",
+            "tool_name": "read_file",
+        },
+    ]
+    receipt = build_missing_dispatch_lifecycle_receipt(
+        required_write_tools=[],
+        metadata_candidates=(
+            {
+                "native_tool_calls_count": 3,
+                "native_tool_call_envelopes": envelopes,
+            },
+        ),
+        tool_results=[],
+        batch_receipt=None,
+    )
+
+    assert receipt is not None
+    assert receipt["dispatch_status"] == "dropped"
+    assert receipt["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert receipt["ok"] is False
+    assert receipt["reason"] == "native_tool_calls_without_dispatch"
+    assert receipt["native_tool_calls_count"] == 3
+    assert receipt["dispatched_tool_calls_count"] == 0
+    assert any(item.get("tool_name") == "write_file" for item in receipt.get("dropped_tool_calls") or [])
+
+
+def test_build_missing_dispatch_lifecycle_receipt_ignores_read_only_native_without_required() -> None:
+    receipt = build_missing_dispatch_lifecycle_receipt(
+        required_write_tools=[],
+        metadata_candidates=(
+            {
+                "native_tool_call_envelopes": [
+                    {
+                        "schema_version": "native_tool_call_envelope.v1",
+                        "envelope_id": "native_tool_call:anthropic:0:call_r:hash_r",
+                        "tool_name": "read_file",
+                    }
+                ],
+            },
+        ),
+        tool_results=[],
+        batch_receipt=None,
+    )
+    assert receipt is None
 
 
 def test_build_missing_dispatch_lifecycle_receipt_skips_existing_dispatch_evidence() -> None:

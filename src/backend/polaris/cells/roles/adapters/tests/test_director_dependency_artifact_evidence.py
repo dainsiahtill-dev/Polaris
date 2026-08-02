@@ -117,6 +117,103 @@ def test_snapshot_is_bound_to_parent_task_effect_receipt_and_exact_body(tmp_path
     assert body in rendered
 
 
+def test_completion_adapter_result_tool_results_feed_sibling_snapshot(tmp_path: Path) -> None:
+    """R129: completed parent adapter_result must carry receipt-bound tool_results.
+
+    Live L1-01 TASK-2 failed with missing_required_refs=actual_sibling_exports
+    because completion metadata only stored new_files/write_tool_evidence.
+    """
+    from polaris.cells.roles.adapters.internal.director.execute_method import (
+        _attach_dependency_artifact_receipt_evidence,
+        _project_dependency_artifact_tool_results,
+    )
+
+    path = "src/models/Firefly.ts"
+    source = tmp_path / path
+    source.parent.mkdir(parents=True)
+    body = "export class Firefly {}\n"
+    source.write_text(body, encoding="utf-8")
+
+    raw_tool_results = [
+        {
+            "tool_name": "write_file",
+            "success": True,
+            "status": "success",
+            "result": {"file": path, "content": body},
+            "effect_receipt": _effect_receipt(path, suffix="9")["effect_receipt"],
+            "effect_receipt_commit": _effect_receipt(path, suffix="9")["effect_receipt_commit"],
+        }
+    ]
+    projected = _project_dependency_artifact_tool_results(raw_tool_results)
+    assert len(projected) == 1
+    assert projected[0]["result"]["file"] == path
+    assert "content" not in projected[0]["result"]
+
+    adapter_result: dict[str, Any] = {
+        "new_files": [path],
+        "modified_files": [],
+        "write_tool_evidence": True,
+    }
+    _attach_dependency_artifact_receipt_evidence(adapter_result, tool_results=raw_tool_results)
+    assert adapter_result["tool_results"][0]["effect_receipt"]["authoritative"] is True
+
+    parent = {
+        "id": 1,
+        "status": "completed",
+        "metadata": {
+            "external_task_id": "TASK-1",
+            "adapter_result": adapter_result,
+        },
+    }
+    snapshot = build_director_dependency_artifact_snapshot(
+        workspace=str(tmp_path),
+        child_task=_child_task([1]),
+        get_task=_resolver({"1": parent}),
+    )
+    assert type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2
+    assert snapshot.payload()["modules"][0]["body"] == body
+
+
+def test_multiple_receipts_for_same_path_use_last_successful_write(tmp_path: Path) -> None:
+    """R132: materialize then quality-repair rewrite must not fail sibling projection.
+
+    Live r131 failed build_director_dependency_artifact_snapshot with
+    dependency_artifact_receipt_conflict on package.json when TASK-1 wrote
+    the same path twice with distinct effect receipts.
+    """
+    path = "package.json"
+    source = tmp_path / path
+    source.write_text('{"name":"final"}\n', encoding="utf-8")
+
+    first = _effect_receipt(path, suffix="1")
+    second = _effect_receipt(path, suffix="2")
+    parent = {
+        "id": 1,
+        "status": "completed",
+        "metadata": {
+            "external_task_id": "TASK-1",
+            "adapter_result": {
+                "new_files": [path],
+                "modified_files": [],
+                "write_tool_evidence": True,
+                "tool_results": [first, second],
+            },
+        },
+    }
+    snapshot = build_director_dependency_artifact_snapshot(
+        workspace=str(tmp_path),
+        child_task=_child_task([1]),
+        get_task=_resolver({"1": parent}),
+    )
+    assert type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2
+    module = snapshot.payload()["modules"][0]
+    assert module["path"] == path
+    # Last receipt (suffix 2) is authoritative for dependency consumers.
+    assert module["effect_receipt_id"] == second["effect_receipt"]["receipt_id"]
+    assert module["effect_receipt_hash"] == second["effect_receipt"]["receipt_hash"]
+    assert module["body"] == '{"name":"final"}\n'
+
+
 def test_snapshot_reads_only_receipt_listed_parent_files(tmp_path: Path) -> None:
     parent = tmp_path / "src" / "parent.py"
     parent.parent.mkdir()
@@ -186,6 +283,56 @@ def test_projection_rejects_caller_preset_and_uses_only_trusted_snapshot(tmp_pat
     project_director_dependency_artifact_snapshot(context, None)
     assert "actual_sibling_exports" not in context
     assert "actual_sibling_exports" not in context["metadata"]
+
+
+def test_projecting_none_wipes_sibling_exports_and_rebind_restores_them(tmp_path: Path) -> None:
+    """L1-01 r122: quality-repair dialogue projected None and cleared sibling exports.
+
+    Rebind must rebuild the trusted token from the child task + parent receipts so
+    final-request coverage keeps actual_sibling_exports present.
+    """
+    from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
+    from polaris.cells.roles.adapters.internal.director.dependency_artifact_evidence import (
+        DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY,
+    )
+
+    source = tmp_path / "src" / "models" / "types.ts"
+    source.parent.mkdir(parents=True)
+    source.write_text("export type GardenState = { tick: number };\n", encoding="utf-8")
+    parent = _parent_row(paths=("src/models/types.ts",))
+    child = _child_task([1])
+    adapter = DirectorAdapter(str(tmp_path))
+    adapter._get_task = lambda task_id: (
+        parent
+        if str(task_id) in {"1", "TASK-1"}
+        # type: ignore[method-assign]
+        else (child if str(task_id) in {"2", "TASK-2"} else None)
+    )
+
+    context: dict[str, Any] = {
+        "task": child,
+        "task_id": "2",
+        "actual_sibling_exports": {"schema_version": "forged-stale"},
+        "metadata": {"actual_sibling_exports": {"schema_version": "forged-stale"}},
+    }
+    # Simulate dialogue path without trusted token: project None wipes payload.
+    project_director_dependency_artifact_snapshot(context, None)
+    assert "actual_sibling_exports" not in context
+
+    rebound = adapter._rebind_director_dependency_artifact_for_dialogue(context)
+
+    assert type(rebound) is TrustedDirectorDependencyArtifactSnapshotV2
+    assert type(context.get(DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY)) is (
+        TrustedDirectorDependencyArtifactSnapshotV2
+    )
+    payload = context["actual_sibling_exports"]
+    assert payload["schema_version"] == "polaris.actual_sibling_exports.evidence.v2"
+    assert payload["module_count"] == 1
+    assert payload["modules"][0]["path"] == "src/models/types.ts"
+    assert "GardenState" in payload["modules"][0]["body"]
+    # Second rebind is a no-op when trusted token already present.
+    again = adapter._rebind_director_dependency_artifact_for_dialogue(context)
+    assert again is rebound
 
 
 @pytest.mark.parametrize(

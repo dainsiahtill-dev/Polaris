@@ -3325,10 +3325,28 @@ def run_factory_chain(
             if isinstance(raw_last_observed, dict):
                 last_observed_status = raw_last_observed
         if terminal_status is None or event_wait_error:
+            # R153: wait_run_until_terminal only returns _event_wait_error after the
+            # wall-clock budget is exhausted (reconnect-until-deadline). Cancel then is
+            # correct; the reason string must distinguish true timeout from connection
+            # exhaustion so residual taxonomy is not mislabeled as a generic 5400s timeout
+            # when the underlying observation path failed earlier and reconnected until
+            # the deadline.
+            wait_kind = str(event_wait_error.get("kind") or "").strip() or "timeout"
+            wait_message = str(event_wait_error.get("message") or "").strip()
+            if wait_kind == "runtime_v2_connection_failed":
+                cancel_reason = f"factory-bench event wait runtime.v2 connection failed after {timeout_s}s" + (
+                    f": {wait_message}" if wait_message else ""
+                )
+            elif wait_kind and wait_kind != "timeout":
+                cancel_reason = f"factory-bench event wait {wait_kind} after {timeout_s}s" + (
+                    f": {wait_message}" if wait_message else ""
+                )
+            else:
+                cancel_reason = f"factory-bench event wait timeout after {timeout_s}s"
             cancel_response = cancel_factory_run(
                 backend_url,
                 run_id,
-                reason=f"factory-bench event wait timeout after {timeout_s}s",
+                reason=cancel_reason,
                 token=backend_token,
                 workspace=str(workspace),
                 return_errors=True,

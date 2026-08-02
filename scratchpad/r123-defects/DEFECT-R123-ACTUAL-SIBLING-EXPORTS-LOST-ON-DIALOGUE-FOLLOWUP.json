@@ -1,0 +1,13 @@
+{
+  "defect_id": "R123-ACTUAL-SIBLING-EXPORTS-LOST-ON-DIALOGUE-FOLLOWUP",
+  "title": "Dependent-task follow-up loses actual_sibling_exports when trusted token missing",
+  "status": "platform_fixed_pending_rebench",
+  "root_cause": "project_director_dependency_artifact_snapshot(None) wipes payload when TrustedDirectorDependencyArtifactSnapshotV2 token absent on quality-repair/retry dialogue",
+  "fix": "rebind before every Director _invoke_role_runtime_session; quality_gate and materialization retries pass task and rebind",
+  "tests": ["test_projecting_none_wipes_sibling_exports_and_rebind_restores_them"],
+  "r122_evidence": {
+    "factory_run_id": "factory_88e55a3cd808",
+    "error": "missing_required_refs=actual_sibling_exports",
+    "state_at_error": "DECISION_REQUESTED"
+  }
+}

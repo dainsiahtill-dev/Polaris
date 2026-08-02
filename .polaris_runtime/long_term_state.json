@@ -53,7 +53,23 @@
     "L1-03: deterministic Python package/module shadow bridge now repairs ImportError from package __init__.py when a sibling module defines the requested symbol.",
     "L1-03: Python package/module shadow bridge now registers dynamic sibling modules in sys.modules before exec_module so dataclass/class exports work.",
     "L1-03: deterministic Python package child-module re-export bridge now repairs package/__init__.py when symbols live in direct child modules such as package/core.py.",
-    "L1-04 r5: fixed Go PM contract file-as-directory target pollution (src/models/pet.go/index.ts) and tightened Factory quality handoff for blocked residue with missing declared targets."
+    "L1-04 r5: fixed Go PM contract file-as-directory target pollution (src/models/pet.go/index.ts) and tightened Factory quality handoff for blocked residue with missing declared targets.",
+    "R120: DirectedEffectErrorCode _ERROR_CODES frozenset now includes deo_current_policy_evidence_unavailable; contract test asserts frozenset==TypeAlias.",
+    "R121: TypeScript return-object semicolon quality scan uses brace balancing; no longer false-positive on class methods with typed params after single-line return objects.",
+    "R122: DEO policy snapshot _thaw now discriminates Map vs Sequence items; non-string write_file/edit_file content fails closed as deo_tool_normalization_failed (not deo_authorization_hash_drift). evaluate_authoritative maps JobToken/tool-spec/arg malformations to precise codes. L1-01 r122: hash_drift=0; TASK-2 first turn materializes engine.",
+    "R123: Director dialogue rebinds TrustedDirectorDependencyArtifactSnapshotV2 before project; quality-repair/no-write/empty-write retries attach task so actual_sibling_exports is not wiped when trusted token absent (fixes missing_required_refs=actual_sibling_exports).",
+    "R124: structured_output_transport coerces missing/null required array/object containers (e.g. CE risk_flags=[]) before Draft202012 validation so CE portfolio and SCHEMA-REPAIR no longer fail-closed on empty-array omission.",
+    "R126: quality-repair forced edit_file/execute_command use pure ToolSpecRegistry schemas (no description/param mutation) so final provider qualification no longer raises tool_registry_function_contract_drift.",
+    "R127: Forced Tool Surface SSOT (kernelone.tool_execution.forced_tool_surface) — quality-repair and empty-write retry tool schemas always from ToolSpecRegistry; path enum pin only on write_file; edit_file never invents/mutates schemas.",
+    "R127: Forced Tool Surface SSOT — quality-repair/empty-write tools only from ToolSpecRegistry; path pin write_file only.",
+    "R128: real_run_gate — build pass keeps build_test_lint pillar; entrypoint depends on build script not test; r126 measurement lie fixed.",
+    "R129: Director completion adapter_result persists receipt-bound tool_results (and LLM summary keeps batch_receipt) so dependent-task actual_sibling_exports can build.",
+    "R131: pin_write_tool_file_param_to_targets only pins write_file path enums (not edit_file/edit_blocks).",
+    "R132: dependency_artifact_evidence._validated_receipt_by_path last-write-wins for multi successful DEO receipts on same path (package.json materialize+repair); child actual_sibling_exports rebind no longer dies on dependency_artifact_receipt_conflict. Live L1-01 r132: TASK-2 missing_required_refs=[] and actual_sibling_exports=true.",
+    "R132 rebench residual (open R133): TASK-2 claimed, MiniMax returned 4 native write_file tool_calls, zero tool_call_lifecycle ledger rows → TOOL_LIFECYCLE_MISSING + LEDGER_PROJECTION_INCOMPLETE; foundation multi-task tool-commit seal required before L1-02 advance.",
+    "R133: build_missing_dispatch_lifecycle_receipt seals TOOL_DISPATCH_DROPPED when native write_file envelopes exist even if final-request required_tools is empty (r132 TASK-2 had 4 write_file envelopes, zero lifecycle).",
+    "R134: ensure_native_write_tool_batch_or_fail recovers TOOL_BATCH from parseable native write tools after delivery filter / premature FINAL_ANSWER; otherwise fail-closed tool_dispatch_dropped before process terminal (stream+non-stream).",
+    "R135: DEO abort (deo_* / directed_effect_*) during tool-batch prepare seals blocked tool_call_lifecycle (TOOL_RESULT_FAILED) before re-raise; live r135 L1-01: event_count=3, reason=deo_parent_admission_failed, requirement_status=satisfied (no longer TOOL_LIFECYCLE_MISSING)."
   ],
   "completed_projects": [
     {
@@ -106,8 +122,8 @@
       "project": "L1-03"
     }
   ],
-  "current_position": "L1-04 r6 platform fix verified locally; rerun L1-04 r7 before any L1-05 progression.",
-  "current_project": "L1-04",
+  "current_position": "L1-01 r124 after R124: CE past risk_flags (mismatch_count=0); Director ran, 11 sources, env=True, build=False, entry=True; residual: no tests + build_test_lint + ledger integrity. Stay on L1-01.",
+  "current_project": "L1-01",
   "evidence_paths": {
     "defect_manifest": ".polaris_runtime/defect_manifest.json",
     "director_resume_reset_tests": "src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py and src/backend/polaris/tests/unit/delivery/http/routers/test_factory_v2.py",
@@ -128,7 +144,14 @@
     "main_agent_historical_opencode_request": ".polaris/opencode-audit-requests/codex-l1-01-anthropic-compat-minimax-m3-repair-targets-202606231955/L1-01/request.json",
     "single_binding_handoff_test": "src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py::TestDirectorDispatchLoop::test_single_binding_materialization_quality_handoff_stops_before_no_claim_retry",
     "typescript_missing_export_enum_alias_test": "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py::test_deterministic_typescript_missing_export_repair_does_not_alias_constructed_symbol_to_enum",
-    "typescript_missing_export_local_alias_test": "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py::test_deterministic_typescript_missing_export_repair_does_not_alias_local_declarations"
+    "typescript_missing_export_local_alias_test": "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py::test_deterministic_typescript_missing_export_repair_does_not_alias_local_declarations",
+    "latest_l1_01_r122_audit": "/tmp/factory-bench-l1-01-r122-deo-thaw/factory_audits.json",
+    "r122_defect": "scratchpad/r122-defects/DEFECT-R122-DEO-THAW-SEQUENCE-MISLABELED-HASH-DRIFT.json",
+    "goal_scratch": "/tmp/grok-goal-cca6bcf58a43/implementer",
+    "r123_defect": "scratchpad/r123-defects/DEFECT-R123-ACTUAL-SIBLING-EXPORTS-LOST-ON-DIALOGUE-FOLLOWUP.json",
+    "latest_l1_01_r123_audit": "/tmp/factory-bench-l1-01-r123-sibling-rebind/factory_audits.json",
+    "r124_defect": "scratchpad/r124-defects/DEFECT-R124-CE-STRUCTURED-OUTPUT-MISSING-RISK-FLAGS.json",
+    "latest_l1_01_r124_audit": "/tmp/factory-bench-l1-01-r124-risk-flags/factory_audits.json"
   },
   "latest_llm_binding_update": {
     "backend_restart": {
@@ -177,52 +200,61 @@
     "updated_at": "2026-06-23T19:28:40+08:00"
   },
   "latest_real_bench": {
-    "audit_path": "/home/dains/Temp/factory-bench-l1-03-minimax-m3-codex-20260624/factory_audits.json",
-    "factory_run_id": "factory_236342bb422f",
-    "failed_gates": [],
-    "physical_errors": [
-      "none"
-    ],
-    "positive_progress": [
-      "MiniMax-M3 Director/QA routed through AnthropicCompat and returned HTTP 200.",
-      "Bench PASS: chain_clean, integration_qa_passed, real_run_gate, run_ledger_projection, and llm_route_audit all passed.",
-      "Workspace validation PASS: pip install requirements, compileall, unittest discover, and python main.py all exit_code=0.",
-      "Independent post-bench verification PASS: compileall, 22 unittest cases, and CLI entrypoint succeeded."
-    ],
-    "project": "L1-03",
-    "qa_passed": true,
-    "qa_ran": true,
-    "result": "PASS",
-    "root_cause_signature": "closed:L1-03 real-run evidence passed after Python package child-module re-export bridge hardening"
+    "project_id": "L1-01",
+    "bench_label": "r131-enum-write-only",
+    "factory_run_id": "factory_a28ca2bdb294",
+    "wall_clock_s": 473.1,
+    "code_on_disk": true,
+    "source_file_count": 9,
+    "env_ok": true,
+    "build_or_test_or_lint_ok": false,
+    "entrypoint_ok": false,
+    "real_run_gate_ok": false,
+    "qa_ran": false,
+    "root_cause_signature": "control_plane:tool_lifecycle_failed",
+    "true_run_pillars": {
+      "code_on_disk": true,
+      "env_prepared": true,
+      "build_test_lint": false,
+      "entrypoint": false
+    },
+    "physical_build_errors": "TS2339/TS2554 cross-module type mismatches in src/web.ts",
+    "task_attempts": "TASK-1 completed; TASK-2 failed missing_required_refs=actual_sibling_exports",
+    "R131_validation": "no tool_registry_scoped_enum_unauthorized in director journals",
+    "R129_validation": "TASK-1 adapter_result includes tool_results with effect_receipt (director.result.json)",
+    "open_generic": "TASK-2 still cannot rebind actual_sibling_exports at dialogue time (get_task/TaskRuntime row vs director.result disconnect)",
+    "open_non_generic": "model/TS type errors on generated code; zero test files",
+    "completed_verified": false,
+    "prior_r130_real_run_gate_ok": true
   },
   "latest_failed_bench": {
-    "project": "L1-04",
+    "project": "L1-01",
+    "bench_label": "r131-enum-write-only",
     "result": "FAIL",
-    "factory_run_id": "factory_efb0c71cf6f5",
-    "audit_path": "/home/dains/Temp/factory-bench-l1-04-minimax-m3-codex-20260624-r6/factory_audits.json",
-    "qa_ran": false,
-    "qa_passed": false,
-    "failed_gates": [
-      "go_compile",
-      "real_run_gate",
-      "qa_verdict_artifact_present",
-      "chain_clean",
-      "integration_qa_passed"
+    "factory_run_id": "factory_a28ca2bdb294",
+    "wall_clock_s": 473.1,
+    "closed": [
+      "R125",
+      "R126",
+      "R127",
+      "R128",
+      "R129",
+      "R131"
     ],
-    "physical_errors": [
-      "go test ./... failed: package ascii-pet/src/cmd is not in std",
-      "index.html/style.css/app.js leaked into Go CLI contract context",
-      "tests/test_ascii.py leaked into Go CLI contract context"
+    "open": [
+      "R132 sibling rebind get_task disconnect",
+      "zero tests",
+      "model TS errors"
     ],
-    "root_cause_signature": "go_contract_web_python_scaffold_pollution_before_director_materialization_and_repair"
+    "updated_at": "2026-07-31T19:52:41.212920+00:00"
   },
-  "next_deterministic_cut_in": "Rerun L1-04 after Go contract web/python scaffold pollution fix; if go test still fails on module import mismatch, add Go import/module consistency deterministic repair in Polaris only.",
+  "next_deterministic_cut_in": "R132: ensure TaskRuntime get_task returns settled parent metadata.adapter_result (with tool_results/receipts) so TASK-2 actual_sibling_exports rebind succeeds; one isolated re-bench.",
   "next_deterministic_entrypoint": {
     "action": "rerun_l1_04_after_backend_restart",
     "backend_command": "PATH=/home/dains/Documents/polaris/.polaris_runtime/toolchains/go/bin:$PATH PYTHONPATH=src/backend POLARIS_AUTH_TOKEN=polaris-local-dev POLARIS_INTERNAL_BENCH_ENABLED=1 python -m polaris.delivery.server --host 127.0.0.1 --port 49977",
     "bench_command_template": "PATH=/home/dains/Documents/polaris/.polaris_runtime/toolchains/go/bin:$PATH NO_PROXY=127.0.0.1,localhost FACTORY_BENCH_BACKEND_URL=http://127.0.0.1:49977 FACTORY_BENCH_BACKEND_TOKEN=polaris-local-dev PYTHONPATH=src/backend python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L1-04 --work-dir /home/dains/Temp/factory-bench-l1-04-minimax-m3-codex-20260624-r6 --timeout 1200 --real-run-timeout 180 --max-failed 1 --director-workflow-execution-mode serial --director-dispatch-driver task-market"
   },
-  "objective": "Factory Bench L1-L12 generated projects must truly run with code on disk, environment/dependency readiness, at least one real build/test/lint gate, at least one real CLI/Web/API entry execution, evidence-backed failure attribution, and repeated batches with no new general root causes.",
+  "objective": "Factory Bench L1-L12 generated projects must truly run with code on disk, env ready, real build/test/lint gate, real CLI/Web/API entry, attributable failures, N batches no new generic root causes. All roles bound to advanced LLMs — failures are platform issues.",
   "open_risks": [
     "L1-04 cloud provider anonymous probe false-negative has a platform fix, but must be proven by a restarted backend and a clean L1-04 r5 rerun.",
     "superpowers is not available in the current tool/PATH discovery; CodeGraph was used as required and the missing capability is recorded as environment evidence.",
@@ -242,7 +274,7 @@
     "L1-04 still requires physical r7 bench proof after contract pollution fix; possible next generic root cause is Go module/import consistency."
   ],
   "schema_version": 1,
-  "updated_at": "2026-06-24T05:49:01.744351+00:00",
+  "updated_at": "2026-07-31T22:06:00.234787+00:00",
   "verification_summary": {
     "format": [
       "python -m ruff format on touched bench files -> unchanged",
@@ -292,5 +324,83 @@
       "rtk python -m ruff check src/backend/polaris/cells/roles/kernel/internal/transaction/contract_guards.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -> PASS",
       "rtk python -m ruff check src/backend/polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py src/backend/polaris/tests/test_orchestration_command_service.py -> PASS"
     ]
+  },
+  "open_blockers": [
+    "Post-fix verification pending: one fresh isolated L1-01 (then sequential L1-02..).",
+    "L1-04 residual depth gaps if re-run: test_files=0, feature_keyword_structure (secondary once DEO claim path no longer crashes).",
+    "invalid_workspace_fencing_token dead_letter observed mid CE/Director handoff — monitor if it blocks settlement again."
+  ],
+  "quant_snapshot": {
+    "as_of": "2026-07-31T19:52:41.212920+00:00",
+    "project": "L1-01",
+    "wall_clock_s": 473.1,
+    "best_real_run_gate": "r130 real_run_gate_ok=true (build+test_script+start)",
+    "current_real_run_gate_ok": false,
+    "runnable_rate_estimate": 0.5,
+    "open_generic_blockers": 1,
+    "n_batch_no_new_root_cause": 0,
+    "closed_platform_this_loop": [
+      "R125",
+      "R126",
+      "R127",
+      "R128",
+      "R129",
+      "R131"
+    ]
+  },
+  "foundation_restructure": {
+    "R127": "forced_tool_surface SSOT",
+    "R128": "real_run_gate build/test/entrypoint decoupling",
+    "systemic_class_closed": [
+      "invented tool schemas vs qualification",
+      "test failure falsely failing entrypoint pillar"
+    ],
+    "updated_at": "2026-07-31T19:13:00.206808+00:00"
+  },
+  "quant": {
+    "last_bench": {
+      "label": "r135-deo-abort-seal",
+      "project": "L1-01",
+      "factory_run_id": "factory_a6806e572695",
+      "wall_s": 464.4,
+      "source_files": 9,
+      "real_run_gate_ok": false,
+      "R135_validated": true,
+      "lifecycle_signature": "TOOL_RESULT_FAILED:deo_parent_admission_failed",
+      "open_generic": "deo_parent_admission_failed + incomplete multi-task (no tests)",
+      "n_batch_no_new_root_cause": false
+    },
+    "last_platform_fix": {
+      "id": "R133",
+      "status": "unit_passed_pending_rebench",
+      "tests": "6 missing_dispatch + 9 turn_completion lifecycle"
+    }
+  },
+  "last_defect": "R138-WRITE-CONTENT-STRUCTURED-RECOVERY",
+  "last_defect_status": "fixed_platform_validated_live",
+  "last_bench_label": "r138-write-content-recovery",
+  "last_factory_run_id": "factory_6a47cb1143ac",
+  "n_batch_no_new_root_cause": false,
+  "goal_l1_l12_true_run": {
+    "updated_at": "2026-08-01T04:58:27.003519+00:00",
+    "four_pillars": "NOT_MET",
+    "current_project": "L1-01",
+    "do_not_advance": "L1-02",
+    "closed_defects": [
+      "R151",
+      "R152",
+      "R153",
+      "R154"
+    ],
+    "primary_module": "M10_materialization_semantic_quality",
+    "module_gate_M10": "PASS",
+    "cascade": "PASS_9",
+    "active_rebench": "/tmp/factory-bench-l1-01-r154-placeholder-comment",
+    "r153b": {
+      "factory_run_id": "factory_1c57200c2029",
+      "m01_held": true,
+      "task1": "director_materialization_semantic_quality_failed"
+    },
+    "n_batch": "NOT_MET"
   }
 }

@@ -180,10 +180,104 @@ _SOURCE_NARRATION_LEAK_RE = re.compile(
 )
 _NPM_SCRIPT_SHELL_SUBSTITUTION_RE = re.compile(r"`|\$\(")
 _NPM_SCRIPT_TSC_RE = re.compile(r"(?:^|[&|;\s])(?:npx\s+)?tsc(?:\s|$)", re.IGNORECASE)
-_TS_RETURN_OBJECT_BLOCK_RE = re.compile(r"return\s*\{(?P<body>.*?)^\s*\};", re.DOTALL | re.MULTILINE)
+_TS_RETURN_OBJECT_OPEN_RE = re.compile(r"return\s*\{")
 _TS_OBJECT_PROPERTY_SEMICOLON_RE = re.compile(
     r"(?m)^\s*(?:[A-Za-z_$][\w$]*\s*|(?:\[[^\]]+\]|[A-Za-z_$][\w$]*|['\"][^'\"]+['\"])\s*:\s*[^;{}]+);\s*$"
 )
+
+
+def _iter_typescript_return_object_bodies(text: str) -> list[str]:
+    """Yield object-literal bodies of ``return { ... }`` with brace balancing.
+
+    The historical regex used a non-greedy match ending at a line whose only
+    content is ``};``. That pattern skips single-line returns such as
+    ``return { x: this._x, y: this._y };`` and then consumes the next multi-line
+    return, swallowing intervening method parameter types (``tick: Tick;``) and
+    false-positive semicolon property findings. Brace balancing keeps each
+    return object self-contained.
+    """
+
+    bodies: list[str] = []
+    for match in _TS_RETURN_OBJECT_OPEN_RE.finditer(text):
+        start = match.end()
+        depth = 1
+        index = start
+        length = len(text)
+        in_single = False
+        in_double = False
+        in_template = False
+        in_line_comment = False
+        in_block_comment = False
+        while index < length and depth > 0:
+            char = text[index]
+            nxt = text[index + 1] if index + 1 < length else ""
+            if in_line_comment:
+                if char in "\r\n":
+                    in_line_comment = False
+                index += 1
+                continue
+            if in_block_comment:
+                if char == "*" and nxt == "/":
+                    in_block_comment = False
+                    index += 2
+                    continue
+                index += 1
+                continue
+            if in_single:
+                if char == "\\":
+                    index += 2
+                    continue
+                if char == "'":
+                    in_single = False
+                index += 1
+                continue
+            if in_double:
+                if char == "\\":
+                    index += 2
+                    continue
+                if char == '"':
+                    in_double = False
+                index += 1
+                continue
+            if in_template:
+                if char == "\\":
+                    index += 2
+                    continue
+                if char == "`":
+                    in_template = False
+                index += 1
+                continue
+            if char == "/" and nxt == "/":
+                in_line_comment = True
+                index += 2
+                continue
+            if char == "/" and nxt == "*":
+                in_block_comment = True
+                index += 2
+                continue
+            if char == "'":
+                in_single = True
+                index += 1
+                continue
+            if char == '"':
+                in_double = True
+                index += 1
+                continue
+            if char == "`":
+                in_template = True
+                index += 1
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    bodies.append(text[start:index])
+                    break
+            index += 1
+    return bodies
+
+
 _TS_LINE_COMMENT_ESCAPED_NEWLINE_CODE_RE = re.compile(
     r"//[^\r\n]*\\n\s*(?:export|import|const|let|var|class|function|interface|type|enum)\b",
     re.IGNORECASE,
@@ -422,6 +516,20 @@ def check_source_file_syntax(absolute_path: str) -> dict[str, Any] | None:
             return {"ok": True}
         if suffix in (".html", ".htm"):
             return _check_html_completeness(absolute_path)
+        # R147: TypeScript was previously omitted, so post-write diagnostics and
+        # materialization quality never saw TS1109/TS1005 failures (live r146
+        # src/web.ts ``return,`` shipped with syntax_check=None). Delegate to
+        # syntax_gate (tsc --noEmit) for definite parse-class diagnostics only.
+        if suffix in (".ts", ".tsx"):
+            from polaris.kernelone.quality.syntax_gate import check_file_syntax
+
+            gate = check_file_syntax(absolute_path)
+            if not gate.checked:
+                return None
+            if gate.ok:
+                return {"ok": True}
+            detail = str(gate.error or "TypeScript syntax error").strip()
+            return {"ok": False, "error": detail[:400]}
     except (OSError, UnicodeDecodeError, subprocess.TimeoutExpired) as exc:
         return {"ok": False, "error": f"syntax check could not run: {exc}"}
     except ValueError as exc:  # json.JSONDecodeError
@@ -2027,8 +2135,8 @@ def _scan_typescript_syntax_red_flag_evidence(
                 ),
             ),
         )
-    for match in _TS_RETURN_OBJECT_BLOCK_RE.finditer(text):
-        if _TS_OBJECT_PROPERTY_SEMICOLON_RE.search(match.group("body")):
+    for body in _iter_typescript_return_object_bodies(text):
+        if _TS_OBJECT_PROPERTY_SEMICOLON_RE.search(body):
             error = (
                 "Artifact quality scan failed: TypeScript return object contains "
                 f"semicolon-terminated property in {relative_path}"

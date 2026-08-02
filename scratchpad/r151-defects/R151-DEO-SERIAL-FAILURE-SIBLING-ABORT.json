@@ -1,0 +1,65 @@
+{
+  "defect_id": "R151-DEO-SERIAL-FAILURE-SIBLING-ABORT",
+  "status": "fixed_platform_unit_and_live_validated",
+  "summary": "DEO write_serial mid-batch failure (claim + recovery_pending after physical write) stopped the loop without aborting remaining INTENT_COMMITTED inventory members. Orphaned admits + TOOL_RESULT_FAILED → process terminated without canonical outcome (LEDGER_PROJECTION_INCOMPLETE). Plain multi-write batches had no sibling abort path (only deferred-repair rollback path did).",
+  "root_cause": {
+    "evidence_run": "r150 factory_11cb853d76e2 / director-66f92a72ff71 TASK-2",
+    "machine_readable": "deo_serial_mutation_failure_leaves_unclaimed_siblings_open",
+    "root_cause_signature": "control_plane:deo_serial_failure_without_sibling_abort",
+    "mechanism": [
+      "TASK-2: 4 write_file admitted (INTENT_COMMITTED) on shared DEO operation stream",
+      "Member 0: claim → EFFECT_STARTED → physical write (simulation.ts) → receipt commit failed → RECOVERY_PENDING",
+      "tool_batch_runtime serial loop broke after first failure",
+      "No directed_effect_rollback_activation_by_call_id → cleanup elif skipped entirely",
+      "Members 1-3 left INTENT_COMMITTED forever (never claimed, never aborted)",
+      "tool_dispatch_failed: only failed tool results → RuntimeError → process exit without canonical outcome",
+      "Factory: director.canonical_task_boundary_missing / LEDGER_PROJECTION_INCOMPLETE / incomplete tasks 1-4"
+    ],
+    "live_evidence": {
+      "deo_stream": "deo_operation_v1_3578bbc7...: 4 intent_committed, 1 effect_started, 1 recovery_pending, 0 receipt_committed",
+      "recovery_reason": "physical receipt could not be committed to TaskRuntime",
+      "truthlog_error": "tool_dispatch_failed: decoded tool batch produced only failed tool results; decoded_tool_calls=4; error_types=unknown",
+      "lifecycle": "decoded=4, dispatched=2, effect_receipt_count=0, failure_class=TOOL_RESULT_FAILED",
+      "dispatch": "attempt2 status=failed message=Run process terminated without a committed canonical outcome failure_class=LEDGER_PROJECTION_INCOMPLETE"
+    }
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/kernel/internal/tool_batch_runtime.py",
+      "src/backend/polaris/cells/roles/kernel/tests/test_tool_batch_runtime.py"
+    ],
+    "change": "On any DEO serial mutation failure, always run failure partition + abort remaining unclaimed inventory. Deferred-repair rollback path unchanged. Plain multi-write uses reason=serial_mutation_sibling_aborted_after_failure and annotates aborted/preserved call ids on the failed receipt. Claimed failed member still preserved for RECOVERY_PENDING reconciliation (release_fence stays false)."
+  },
+  "verification": {
+    "pytest": "test_r151_plain_serial_write_failure_aborts_remaining_unclaimed_siblings + deferred repair suite passed",
+    "ruff": "clean",
+    "rebench": {
+      "label": "r151-deo-serial-sibling-abort",
+      "factory_run_id": "factory_150def10aa0b",
+      "work_dir": "/tmp/factory-bench-l1-01-r151-deo-serial-sibling-abort",
+      "wall_s": 1512,
+      "chain_exit": -1,
+      "recovery_pending": 0,
+      "receipt_committed": 19,
+      "intent_committed": 20,
+      "task_boundaries_completed_verified": ["TASK-1", "TASK-2", "TASK-3"],
+      "test_files": 1,
+      "source_files": 13,
+      "implementation_depth": true,
+      "residual": [
+        "event_wait_timeout / backend GET timeouts / FactoryStagePersistenceError",
+        "ts_syntax tests/verify.test.ts TS1002",
+        "run_ledger_integrity_failed",
+        "goal_audit tool_result_failed on TASK-3 3/4 effects batch"
+      ]
+    }
+  },
+  "four_pillars": "NOT_MET",
+  "do_not_advance": "L1-02",
+  "residual_risks": [
+    "Chain terminal path blocked by backend overload / event wait timeout — not sibling-abort class",
+    "Product LLM syntax error in generated tests still fails ts_syntax check",
+    "run_ledger integrity under timeout remains open"
+  ],
+  "next_action": "R152: event_wait_timeout + ledger integrity + product residual triage — stay on L1-01"
+}

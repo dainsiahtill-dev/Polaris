@@ -534,7 +534,13 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         ]
         self.assertEqual(len(control_calls), 1, "event wait timeout should cancel the backend run")
         self.assertEqual(control_calls[0].get("action"), "cancel")
-        self.assertIn("event wait timeout", str(control_calls[0].get("reason") or ""))
+        cancel_reason = str(control_calls[0].get("reason") or "")
+        # R153: cancel reason distinguishes connection-failed exhaustion from pure timeout.
+        self.assertIn("event wait", cancel_reason)
+        self.assertTrue(
+            ("timeout" in cancel_reason) or ("connection failed" in cancel_reason),
+            msg=f"unexpected cancel reason: {cancel_reason!r}",
+        )
         # No audit-bundle GET should have been attempted when event waiting times out
         audit_calls = [
             p for method, p, _ in _MockFactoryRunsBackend.received if method == "GET" and p.endswith("/audit-bundle")

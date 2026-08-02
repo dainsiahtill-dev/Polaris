@@ -1,0 +1,49 @@
+{
+  "defect_id": "R146-DIRECTOR-BLOCK-COMMENT-GLOB-BYPASS",
+  "status": "fixed_platform_unit_and_live_validated",
+  "summary": "real_run_gate/ts_syntax failed because Director DEO write_file path bypassed JS/TS block-comment glob sanitization that AgentAccel already applied; LLM JSDoc with src/**/*.ts terminated comments early (TS1109).",
+  "root_cause": {
+    "evidence_run": "r145 factory_8399c289a740",
+    "machine_readable": "director_write_path_skipped_block_comment_glob_sanitize -> unparseable_ts -> real_run_gate:build_test_lint_ran failed",
+    "mechanism": [
+      "AgentAccelToolExecutor filesystem handler calls sanitize_js_ts_block_comment_glob_closures before disk write",
+      "Director DEO physical path uses execution_tools._tool_write_file -> write_file_with_broadcast without that sanitizer",
+      "Model wrote JSDoc containing src/**/*.ts; */ closed the block comment early",
+      "tsc reported TS1109 cascade; npm run build failed; Playwright still passed (browser not typechecking)"
+    ],
+    "not_primary": "late GET timeouts remain observability load residual, not the real_run_gate failure signature"
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/kernelone/llm/toolkit/executor/handlers/filesystem_guards.py",
+      "src/backend/polaris/kernelone/llm/toolkit/executor/handlers/filesystem.py",
+      "src/backend/polaris/cells/roles/adapters/internal/director/execution_tools.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_execution_tools.py"
+    ],
+    "changes": [
+      "Hoist block-comment glob sanitizer to filesystem_guards (shared SSOT)",
+      "Director _tool_write_file applies sanitize_js_ts_block_comment_glob_closures before policy/disk",
+      "Regression: director write_file sanitizes JSDoc globs"
+    ]
+  },
+  "verification": {
+    "pytest": "4 passed (director + agentaccel sanitizer suite)",
+    "ruff": "clean",
+    "rebench": {
+      "label": "r146-block-comment-glob",
+      "factory_run_id": "factory_983ee9a17fa7",
+      "work_dir": "/tmp/factory-bench-l1-01-r146-block-comment-glob",
+      "wall_s": 730,
+      "chain_exit": 1,
+      "residual": [
+        "web.ts return, object-literal comma TS1109",
+        "missing tests",
+        "real_run_gate build_test_lint",
+        "late GET / run_ledger_integrity"
+      ]
+    }
+  },
+  "four_pillars": "NOT_MET",
+  "do_not_advance": "L1-02",
+  "next_action": "R147: residual object-literal comma repair coverage / missing tests / late GET — stay on L1-01"
+}

@@ -33,6 +33,8 @@ from polaris.kernelone.llm.toolkit.executor.handlers.filesystem_guards import (
     _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO,
     _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES,
     _destructive_shrink_error,
+    attach_post_write_syntax_check,
+    sanitize_js_ts_write_hygiene,
 )
 from polaris.kernelone.llm.toolkit.tool_normalization import (
     normalize_patch_like_write_content,
@@ -309,6 +311,8 @@ class DirectorToolExecutor:
         "write_file",
         "read_file",
         "edit_file",
+        "edit_blocks",
+        "search_replace",
         "delete_file",
         "run_command",
         "execute_command",
@@ -414,8 +418,15 @@ class DirectorToolExecutor:
             )
         elif tool_name == "read_file":
             return self._tool_read_file(args, workspace_path)
-        elif tool_name == "edit_file":
+        elif tool_name in {"edit_file", "search_replace"}:
             return self._tool_edit_file(
+                args,
+                workspace_path,
+                task_id=task_id,
+                repair_effect=repair_effect,
+            )
+        elif tool_name == "edit_blocks":
+            return self._tool_edit_blocks(
                 args,
                 workspace_path,
                 task_id=task_id,
@@ -533,6 +544,9 @@ class DirectorToolExecutor:
             if normalized.error:
                 return {"ok": False, "error": normalized.error}
             text = str(normalized.content or "")
+            # R146/R147: DEO Director writes must apply shared JS/TS write hygiene
+            # (block-comment globs + control-flow statement commas) before disk.
+            text, write_hygiene_flags = sanitize_js_ts_write_hygiene(rel_path, text)
             json_config_result = _validate_or_repair_json_config_content(rel_path=rel_path, content=text)
             if not json_config_result.get("ok"):
                 return json_config_result
@@ -618,9 +632,15 @@ class DirectorToolExecutor:
             }
             if normalized.normalized_patch_like:
                 result["normalized_patch_like_write"] = True
+            if write_hygiene_flags.get("block_comment_glob_sanitized"):
+                result["block_comment_glob_sanitized"] = True
+            if write_hygiene_flags.get("control_flow_comma_sanitized"):
+                result["control_flow_comma_sanitized"] = True
             if json_config_result.get("repaired"):
                 result["json_config_repaired"] = True
-            return result
+            # R147: surface TypeScript parse diagnostics in tool results so the
+            # model/repair ladder can fix residual issues next turn.
+            return attach_post_write_syntax_check(result, str(target))
         except (OSError, RuntimeError, TypeError, UnicodeError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -642,6 +662,160 @@ class DirectorToolExecutor:
             content = target.read_text(encoding="utf-8")
             return {"ok": True, "file": file_path, "content": content}
         except (OSError, UnicodeError) as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def _tool_edit_blocks(
+        self,
+        args: dict[str, Any],
+        workspace: Path,
+        *,
+        task_id: str = "",
+        repair_effect: DirectorRepairEffectV1 | None = None,
+    ) -> dict[str, Any]:
+        """Apply SEARCH/REPLACE edit_blocks through Director policy + write path (R179)."""
+
+        from polaris.kernelone.editing.editblock_engine import apply_edit_blocks, parse_edit_blocks
+
+        raw_file_path = (
+            args.get("file")
+            or args.get("path")
+            or args.get("filepath")
+            or args.get("file_path")
+            or args.get("filePath")
+            or args.get("target_file")
+            or args.get("target_path")
+        )
+        file_path = str(raw_file_path or "").strip()
+        if not file_path:
+            return {"ok": False, "error": "Missing file path"}
+        if "\n" in file_path or "\r" in file_path:
+            return {"ok": False, "error": f"Invalid file path contains newline: {file_path!r}"}
+
+        raw_blocks = (
+            args.get("blocks")
+            if args.get("blocks") is not None
+            else args.get("content")
+            if args.get("content") is not None
+            else args.get("edits")
+            if args.get("edits") is not None
+            else args.get("diff")
+            if args.get("diff") is not None
+            else ""
+        )
+        if isinstance(raw_blocks, (list, tuple)):
+            blocks_text = "\n".join(str(item or "") for item in raw_blocks)
+        else:
+            blocks_text = str(raw_blocks or "")
+        if not blocks_text.strip():
+            return {"ok": False, "error": "edit_blocks requires non-empty blocks"}
+
+        try:
+            target = (workspace / file_path).resolve()
+            if workspace not in target.parents and target != workspace:
+                return {"ok": False, "error": f"Unsafe file path outside workspace: {file_path}"}
+            guarded_snapshot = (
+                _guarded_repair_snapshot(workspace=workspace, effect=repair_effect)
+                if repair_effect is not None
+                else None
+            )
+            if repair_effect is not None and guarded_snapshot is None:
+                return {"ok": False, "error": "deo_target_state_drift"}
+            if repair_effect is None and not target.exists():
+                return {"ok": False, "error": f"File not found: {file_path}"}
+            if not target.is_file():
+                return {"ok": False, "error": f"Path is not a file: {file_path}"}
+
+            content = (
+                guarded_snapshot.content.decode("utf-8")
+                if guarded_snapshot is not None
+                else target.read_text(encoding="utf-8")
+            )
+            rel_path = target.relative_to(workspace).as_posix()
+            blocks = parse_edit_blocks(blocks_text, default_filepath=rel_path)
+            if not blocks:
+                return {"ok": False, "error": "edit_blocks: no valid SEARCH/REPLACE blocks parsed"}
+            scoped = []
+            for block in blocks:
+                block_path = str(block.filepath or "").replace("\\", "/").strip().lstrip("./")
+                if not block_path or block_path == rel_path:
+                    scoped.append(block)
+            if not scoped:
+                return {"ok": False, "error": f"edit_blocks: no blocks target {rel_path}"}
+            applied = apply_edit_blocks({rel_path: content}, scoped, fuzzy=True)
+            new_content = str(applied.get(rel_path, content))
+            if new_content == content:
+                return {"ok": False, "error": "edit_blocks: no content change after apply"}
+
+            json_config_result = _validate_or_repair_json_config_content(rel_path=rel_path, content=new_content)
+            if not json_config_result.get("ok"):
+                return json_config_result
+            final_content = str(
+                json_config_result.get("content") if json_config_result.get("content") is not None else new_content
+            )
+            policy_result = self._validate_director_policy_for_write(
+                workspace=workspace,
+                rel_path=rel_path,
+                old_content=content,
+                new_content=final_content,
+                operation="edit_file",
+                tool_kwargs=args,
+            )
+            if not policy_result.get("ok"):
+                return policy_result
+
+            if repair_effect is not None:
+                if (
+                    not repair_effect.exists_after
+                    or guarded_snapshot is None
+                    or sha256(final_content.encode("utf-8")).hexdigest() != repair_effect.expected_after_hash
+                ):
+                    return {
+                        "ok": False,
+                        "error": "deo_target_state_drift",
+                        "error_type": "directed_effect_cas_denied",
+                    }
+                guarded_compare_and_replace_regular_file(
+                    workspace,
+                    guarded_snapshot,
+                    final_content.encode("utf-8"),
+                    max_bytes=_MAX_GUARDED_REPAIR_BYTES,
+                )
+                write_result = {
+                    "ok": True,
+                    "broadcast_ok": broadcast_file_written(
+                        file_path=rel_path,
+                        operation="modify",
+                        content_size=len(final_content.encode("utf-8")),
+                        task_id=task_id,
+                        patch="",
+                        message_bus=self._message_bus,
+                        worker_id=self._worker_id,
+                        event_log_workspace=str(workspace),
+                    ),
+                }
+            else:
+                write_result = write_file_with_broadcast(
+                    workspace=str(workspace),
+                    file_path=rel_path,
+                    content=final_content,
+                    message_bus=self._message_bus,
+                    worker_id=self._worker_id,
+                    task_id=task_id,
+                )
+            if not bool(write_result.get("ok")):
+                return {
+                    "ok": False,
+                    "error": str(write_result.get("error") or "edit_blocks failed"),
+                    "file": rel_path,
+                }
+            return {
+                "ok": True,
+                "file": rel_path,
+                "blocks_applied": len(scoped),
+                "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                "director_policy": policy_result.get("director_policy"),
+            }
+        except (OSError, RuntimeError, TypeError, UnicodeError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
 
     def _tool_edit_file(

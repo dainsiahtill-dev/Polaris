@@ -1,0 +1,66 @@
+{
+  "defect_id": "R145-DEO-LEASE-VERSION-INVENTORY-READY",
+  "status": "fixed_platform_unit_and_live_validated",
+  "summary": "TASK-2 write batches dropped with deo_inventory_ready_failed after seal+admit because read-only execution-attempt validate required exact lease_expires_at equality; same-owner concurrent heartbeats advanced the stored lease mid multi-second DEO prepare.",
+  "root_cause": {
+    "evidence_run": "r144 factory_b8bf7e923518",
+    "machine_readable": "deo_inventory_ready_failed <- validate_execution_attempt lease_version_mismatch (exact lease_expires_at)",
+    "mechanism": [
+      "Director prepare_batch heartbeats once (directed_effect_batch_prepare) and freezes TaskRuntimeExecutionAttemptIdentityV1 including lease_expires_at",
+      "Multi-member seal/admit takes seconds (r144 TASK-2: 4 writes, ~7s admit span)",
+      "Director loop concurrent heartbeat renews session.lease_expires_at for same owner",
+      "finalize_inventory/_guarded_attempt_failure -> validate_attempt required session.lease_expires_at == identity.lease_expires_at",
+      "Failure collapses to deo_inventory_ready_failed; parent left sealed without ready; writes dispatched=0",
+      "Offline repro: frozen TASK-2 streams finalize successfully when validate_attempt is bypassed; fail with lease_version_mismatch when lease does not match"
+    ],
+    "timeline_r144_task2": {
+      "batch_prepare_heartbeat": "2026-08-01T00:39:56.665Z",
+      "parent_admitted": "2026-08-01T00:39:56.966Z",
+      "inventory_sealed": "2026-08-01T00:39:57.869Z",
+      "ops_intent_1_to_4": "00:39:58.975 .. 00:40:04.426",
+      "lifecycle_receipt_deo_inventory_ready_failed": "2026-08-01T00:40:15.760Z",
+      "parent_stream_missing_inventory_ready": true,
+      "operation_stream_intent_only": 4
+    }
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/runtime/task_runtime/internal/service.py",
+      "src/backend/polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py",
+      "src/backend/polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py",
+      "src/backend/polaris/cells/runtime/task_runtime/tests/test_service.py",
+      "src/backend/polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_concurrency.py",
+      "src/backend/polaris/cells/roles/kernel/tests/test_directed_effect_lifecycle.py"
+    ],
+    "changes": [
+      "validate_execution_attempt: stop treating lease_expires_at exact equality as fencing; same-owner renew is covered by session/attempt/worker/role/run checks + active + not-expired",
+      "prepare_batch: re-heartbeat before finalize_inventory (directed_effect_inventory_finalize)",
+      "tool_batch_executor: surface upstream_code in RuntimeError for deo_* prepare denials",
+      "regression test: inventory finalize after same-owner lease renew with 4 admits"
+    ]
+  },
+  "verification": {
+    "pytest_targeted": "54 passed (lifecycle full + r145 regression)",
+    "ruff": "clean",
+    "preexisting_unrelated": "test_task5_real_process_exact_claim_race_has_one_grant_single_winner fails with and without R145 (both effect_claimed); not introduced by this fix",
+    "rebench": {
+      "label": "r145-deo-lease",
+      "factory_run_id": "factory_8399c289a740",
+      "work_dir": "/tmp/factory-bench-l1-01-r145-deo-lease",
+      "wall_s": 838,
+      "chain_exit": 1,
+      "deo_inventory_ready_failed_count": 0,
+      "deo_parent_streams_full_lifecycle": 3,
+      "run_ledger_missing": 0,
+      "real_run_gate": "failed build_test_lint_ran",
+      "residual": [
+        "ts_syntax src/verify.ts TS1109",
+        "real_run_gate build_test_lint",
+        "late GET timeouts"
+      ]
+    }
+  },
+  "four_pillars": "NOT_MET",
+  "do_not_advance": "L1-02",
+  "next_action": "R146: attribute real_run_gate/ts_syntax residual or late GET stall — do not advance L1-02"
+}

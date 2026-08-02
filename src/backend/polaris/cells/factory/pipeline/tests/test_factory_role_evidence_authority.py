@@ -2967,6 +2967,42 @@ async def test_same_freeze_concurrency_appends_once(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_slow_source_resolve_yields_event_loop_for_other_coroutines(tmp_path: Path) -> None:
+    """R142: sync resolve_source_cut must not starve the asyncio event loop.
+
+    Before the fix, acquire_cutoff ran resolve_source_cut inline on the owner
+    loop while holding stage claim, so concurrent HTTP/WS and heartbeats could
+    not progress (R141 factory GET 35s + websocket keepalive 1011).
+    """
+
+    import time
+
+    barrier = threading.Event()
+
+    def slow_resolve() -> None:
+        barrier.set()
+        time.sleep(0.25)
+
+    resolver = _Resolver(after_resolve=slow_resolve)
+    port, _, _, _ = _authority(tmp_path=tmp_path, resolver=resolver)
+    progressed = asyncio.Event()
+
+    async def peer() -> None:
+        await asyncio.sleep(0)
+        # Must complete while resolve is still sleeping in a worker thread.
+        assert barrier.wait(timeout=2.0)
+        progressed.set()
+
+    acquire_task = asyncio.create_task(port.acquire_cutoff(_authorized_request(port)))
+    peer_task = asyncio.create_task(peer())
+    await asyncio.wait_for(progressed.wait(), timeout=2.0)
+    ack = await asyncio.wait_for(acquire_task, timeout=5.0)
+    await asyncio.wait_for(peer_task, timeout=1.0)
+    assert ack.factory_run_id
+    assert resolver.calls == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("metadata", "status", "error"),
     [

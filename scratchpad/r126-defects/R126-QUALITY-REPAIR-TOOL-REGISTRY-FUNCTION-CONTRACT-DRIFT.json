@@ -1,0 +1,51 @@
+{
+  "defect_id": "R126-QUALITY-REPAIR-TOOL-REGISTRY-FUNCTION-CONTRACT-DRIFT",
+  "status": "fixed_platform_pending_rebench",
+  "discovered_from": {
+    "project": "L1-01",
+    "bench_label": "r125-quality-audit",
+    "factory_run_id": "factory_f9b0263cc615",
+    "task": "TASK-1 quality-repair follow-up",
+    "error": "tool_registry_function_contract_drift",
+    "error_type": "FinalProviderAttemptQualificationError",
+    "context_snapshot_ref": "eccd31801bf1506a3c96c43e",
+    "model": "MiniMax-M3",
+    "cascade": [
+      "R125 unblocked ContextOS content scan (no final_request_context_quality_failed)",
+      "quality-repair forced tools mutated edit_file description/params and invent execute_command schema",
+      "final provider qualification required exact ToolSpecRegistry match → fail-closed",
+      "Director dispatch failed director.canonical_task_boundary_missing",
+      "build residual TS6133 unused locals; test_files=0; real_run_gate build_test_lint failed"
+    ]
+  },
+  "root_cause": {
+    "category": "Director tool execution / final-request qualification",
+    "primary": "quality_gate._quality_repair_edit_file_tool_definition rewrote function.description and narrowed parameters; _quality_repair_execute_command_tool_definition invented a non-registry schema. B3.5 final provider qualification compares forced tools to ToolSpecRegistry and raises tool_registry_function_contract_drift, blocking quality-repair LLM turns needed for compiler/test fixes.",
+    "attribution": "Polaris roles.adapters.internal.director.quality_gate (generic platform)"
+  },
+  "r125_validation": {
+    "content_hits_quality_block": false,
+    "final_request_context_quality_failed_count": 0,
+    "true_run_pillars": {
+      "code_on_disk": true,
+      "env_prepared": true,
+      "build_test_lint": false,
+      "entrypoint": true
+    },
+    "build_fail_tail": "TS6133 unused locals only (FlowerInstance TS2305 gone)",
+    "test_files": 0,
+    "wall_clock_s": 794.1
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+    ],
+    "change": "Quality-repair forced edit_file/execute_command definitions are pure ToolSpecRegistry schemas; repair guidance stays in prompt/SESSION_PATCH only."
+  },
+  "verification": {
+    "pytest": "test_quality_repair_write_and_edit_schemas_match_tool_spec_registry + pin delivery test passed",
+    "offline_repro": "_validate_tool_registry_contract(OK); edit/write/execute match registry"
+  },
+  "next_action": "isolated L1-01 re-bench r126"
+}

@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from typing import Any, Callable
 
 import websockets
+from websockets.exceptions import WebSocketException
 
 DEFAULT_TIMEOUT_S = 10.0
 DEFAULT_MAX_RETRIES = 2
@@ -23,7 +24,21 @@ TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled", "canceled"}
 HTTP_TERMINAL_POLL_INTERVAL_S = 5.0
 # complete_run/settle can hold the backend run-lock for tens of seconds; short GETs time out
 # (R63 logged 13× "backend GET failed: timed out") even though durable run.json is already terminal.
-HTTP_TERMINAL_POLL_TIMEOUT_S = 30.0
+# R163: Director multi-task load blocked the event loop for >30s stretches; terminal polls and
+# audit-bundle GETs need a longer per-attempt budget plus transport retries.
+HTTP_TERMINAL_POLL_TIMEOUT_S = 60.0
+HTTP_OBSERVATION_MAX_RETRIES = 3
+HTTP_OBSERVATION_RETRY_BACKOFF_BASE_S = 1.0
+HTTP_OBSERVATION_RETRY_BACKOFF_CAP_S = 8.0
+# R153: long Director multi-task stages can block the backend event loop long enough that the
+# default websockets ping_timeout (~20s) raises 1011 keepalive ping timeout. Observation
+# failure must not become an execution kill: reconnect until the wall-clock deadline, and
+# tolerate slower pings under load.
+EVENT_WAIT_WS_PING_INTERVAL_S = 20.0
+EVENT_WAIT_WS_PING_TIMEOUT_S = 120.0
+EVENT_WAIT_WS_CLOSE_TIMEOUT_S = 5.0
+EVENT_WAIT_RECONNECT_BACKOFF_BASE_S = 1.0
+EVENT_WAIT_RECONNECT_BACKOFF_CAP_S = 15.0
 
 
 def _retry_after_seconds(exc: urllib.error.HTTPError) -> float | None:
@@ -260,10 +275,21 @@ def _http_get_json(
     token: str = "",
     max_retries: int = DEFAULT_MAX_RETRIES,
 ) -> dict[str, Any] | None:
+    """GET JSON with retries for rate-limit and transport/timeouts under load.
+
+    R163 residual: under long Director stages the isolated backend event loop
+    can stall longer than a single GET timeout. Returning None on the first
+    ``timed out`` made observation look dead while the run was still healthy.
+    Retries stay within the caller's wall budget (caller chooses timeout_s and
+    max_retries); only the final failed attempt logs a hard failure.
+    """
+
     headers = {"Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     attempts = max(1, max_retries + 1)
+    raw = ""
+    last_exc: BaseException | None = None
     for attempt in range(attempts):
         try:
             req = urllib.request.Request(url, headers=headers)
@@ -271,6 +297,7 @@ def _http_get_json(
                 raw = resp.read().decode("utf-8") or "{}"
             break
         except urllib.error.HTTPError as exc:
+            last_exc = exc
             delay = _retry_after_seconds(exc)
             if delay is not None and attempt < attempts - 1:
                 print(
@@ -280,12 +307,42 @@ def _http_get_json(
                 )
                 time.sleep(delay)
                 continue
+            # Non-429 HTTP errors are not retried (auth/not-found are fail-closed).
+            if attempt < attempts - 1 and int(getattr(exc, "code", 0) or 0) >= 500:
+                delay = min(
+                    HTTP_OBSERVATION_RETRY_BACKOFF_CAP_S,
+                    HTTP_OBSERVATION_RETRY_BACKOFF_BASE_S * (2**attempt),
+                )
+                print(
+                    f"[factory-bench] backend GET HTTP {exc.code}: {url}; "
+                    f"retrying in {delay:.1f}s (attempt {attempt + 1}/{attempts})",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                time.sleep(delay)
+                continue
             print(f"[factory-bench] backend GET failed: {url}: {exc}", file=sys.stderr, flush=True)
             return None
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            last_exc = exc
+            if attempt < attempts - 1:
+                delay = min(
+                    HTTP_OBSERVATION_RETRY_BACKOFF_CAP_S,
+                    HTTP_OBSERVATION_RETRY_BACKOFF_BASE_S * (2**attempt),
+                )
+                print(
+                    f"[factory-bench] backend GET transport error: {url}: {exc}; "
+                    f"retrying in {delay:.1f}s (attempt {attempt + 1}/{attempts})",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                time.sleep(delay)
+                continue
             print(f"[factory-bench] backend GET failed: {url}: {exc}", file=sys.stderr, flush=True)
             return None
     else:
+        if last_exc is not None:
+            print(f"[factory-bench] backend GET failed: {url}: {last_exc}", file=sys.stderr, flush=True)
         return None
     try:
         return json.loads(raw)
@@ -308,9 +365,11 @@ def get_run_status(
     workspace: str = "",
     *,
     timeout_s: float = DEFAULT_TIMEOUT_S,
+    max_retries: int | None = None,
 ) -> dict[str, Any] | None:
     url = _append_query_params(f"{backend_url}/v2/factory/runs/{run_id}", {"workspace": workspace})
-    return _http_get_json(url, token=token, timeout_s=timeout_s)
+    retries = DEFAULT_MAX_RETRIES if max_retries is None else max(0, int(max_retries))
+    return _http_get_json(url, token=token, timeout_s=timeout_s, max_retries=retries)
 
 
 def cancel_factory_run(
@@ -335,9 +394,23 @@ def get_audit_bundle(
     run_id: str,
     token: str = "",
     workspace: str = "",
+    *,
+    timeout_s: float = HTTP_TERMINAL_POLL_TIMEOUT_S,
+    max_retries: int = HTTP_OBSERVATION_MAX_RETRIES,
 ) -> dict[str, Any] | None:
+    """Fetch audit-bundle with long timeout + transport retries (R163).
+
+    Post-terminal audit collection must not fail-closed on a single short GET
+    while the backend is still draining Director settle work.
+    """
+
     url = _append_query_params(f"{backend_url}/v2/factory/runs/{run_id}/audit-bundle", {"workspace": workspace})
-    return _http_get_json(url, token=token)
+    return _http_get_json(
+        url,
+        token=token,
+        timeout_s=timeout_s,
+        max_retries=max_retries,
+    )
 
 
 def get_run_artifacts(
@@ -419,12 +492,34 @@ def _http_terminal_status_snapshot(
     workspace: str = "",
     latest_status: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Best-effort snapshot used when runtime.v2 terminal events are missed.
+    """Best-effort terminal snapshot when runtime.v2 events are missed."""
 
-    Preference order:
-    1. HTTP GET /v2/factory/runs/{id} with an extended timeout (backend may be
-       busy inside complete_run/settle).
-    2. Durable run.json under the workspace runtime factory store.
+    terminal, _progress = _http_observation_status_snapshot(
+        backend_url,
+        run_id,
+        token=token,
+        workspace=workspace,
+        latest_status=latest_status,
+    )
+    return terminal
+
+
+def _http_observation_status_snapshot(
+    backend_url: str,
+    run_id: str,
+    *,
+    token: str = "",
+    workspace: str = "",
+    latest_status: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """One HTTP (or durable) observation poll under Director load.
+
+    Returns ``(terminal_or_none, progress_or_none)``. Preference:
+    1. HTTP GET with extended timeout + transport retries.
+    2. Durable run.json terminal (when HTTP is blocked during settle).
+
+    R163: non-terminal HTTP answers still return as progress so the bench
+    chain log advances phase instead of looking frozen during load storms.
     """
 
     snapshot = get_run_status(
@@ -433,18 +528,42 @@ def _http_terminal_status_snapshot(
         token=token,
         workspace=workspace,
         timeout_s=HTTP_TERMINAL_POLL_TIMEOUT_S,
+        max_retries=HTTP_OBSERVATION_MAX_RETRIES,
     )
     if isinstance(snapshot, Mapping):
-        merged: dict[str, Any] = {**dict(latest_status or {}), **dict(snapshot), "run_id": run_id}
+        merged: dict[str, Any] = _merge_observation_progress(
+            latest_status or {},
+            run_id=run_id,
+            snapshot=snapshot,
+        )
         terminal = _coerce_terminal_run_status(merged, run_id=run_id)
         if terminal is not None:
             terminal["_terminal_source"] = "http_status_poll"
-            return terminal
-    return _durable_run_status_snapshot(
+            return terminal, merged
+        return None, merged
+    durable = _durable_run_status_snapshot(
         run_id,
         workspace=workspace,
         latest_status=latest_status,
     )
+    return durable, None
+
+
+def _merge_observation_progress(
+    latest_status: Mapping[str, Any],
+    *,
+    run_id: str,
+    snapshot: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Merge a non-terminal HTTP/durable snapshot into the observation cursor."""
+
+    if not isinstance(snapshot, Mapping):
+        return dict(latest_status)
+    merged = {**dict(latest_status), **dict(snapshot), "run_id": run_id}
+    # Never let an empty status clobber a known running/terminal cursor.
+    if not str(merged.get("status") or "").strip():
+        merged["status"] = str(latest_status.get("status") or "running")
+    return merged
 
 
 def wait_run_until_terminal(
@@ -506,7 +625,18 @@ async def _wait_run_until_terminal_async(
     initial_status: Mapping[str, Any] | None = None,
     return_diagnostics: bool = False,
 ) -> dict[str, Any] | None:
-    deadline = asyncio.get_running_loop().time() + max(0.0, timeout_s)
+    """Wait for a factory run terminal status via runtime.v2, with HTTP poll fallback.
+
+    R153 invariant: observation-path failures (WS keepalive ping timeout, half-close,
+    transient disconnect) must reconnect until the wall-clock deadline. Only after the
+    deadline is exhausted may this return a non-terminal diagnostic that causes the
+    bench runner to cancel the backend run. Cancelling a healthy multi-task Director
+    stage on a single keepalive drop produces ``factory_physical_attempt_authority_closed``
+    and false ``tool_lifecycle_failed`` residuals.
+    """
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max(0.0, timeout_s)
     latest_status: dict[str, Any] = {"run_id": run_id, **dict(initial_status or {})}
     latest_status.setdefault("status", "running")
     if on_status is not None:
@@ -531,118 +661,168 @@ async def _wait_run_until_terminal_async(
         return http_terminal
 
     ws_url = _runtime_ws_url(backend_url, token=token, workspace=workspace)
-    try:
-        async with websockets.connect(ws_url, ping_interval=30) as ws:
-            await _subscribe_factory_events(ws, run_id=run_id, workspace=workspace)
-            while True:
-                remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    # Final HTTP chance before declaring event-wait timeout.
-                    http_terminal = await asyncio.to_thread(
-                        _http_terminal_status_snapshot,
-                        backend_url,
-                        run_id,
-                        token=token,
-                        workspace=workspace,
-                        latest_status=latest_status,
-                    )
-                    if http_terminal is not None:
-                        if on_status is not None:
-                            on_status(http_terminal)
-                        return http_terminal
-                    print(f"[factory-bench] event wait timeout: {run_id}", file=sys.stderr, flush=True)
-                    if return_diagnostics:
-                        return _event_wait_diagnostic_status(
-                            run_id,
-                            latest_status,
-                            kind="timeout",
-                            message=f"runtime.v2 did not deliver terminal event within {timeout_s}s",
-                            backend_url=backend_url,
-                            workspace=workspace,
-                        )
-                    return None
-                recv_timeout = min(HTTP_TERMINAL_POLL_INTERVAL_S, remaining)
-                try:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=recv_timeout)
-                except asyncio.TimeoutError:
-                    http_terminal = await asyncio.to_thread(
-                        _http_terminal_status_snapshot,
-                        backend_url,
-                        run_id,
-                        token=token,
-                        workspace=workspace,
-                        latest_status=latest_status,
-                    )
-                    if http_terminal is not None:
-                        if on_status is not None:
-                            on_status(http_terminal)
-                        return http_terminal
-                    continue
-                try:
-                    message = json.loads(str(raw))
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(message, Mapping):
-                    continue
-                event_payload = _factory_event_payload(message, run_id)
-                if event_payload is None:
-                    continue
-                cursor, payload = event_payload
-                await _ack_runtime_cursor(ws, cursor)
-                latest_status = _status_from_factory_event(run_id, payload, latest_status)
+    last_connection_error = ""
+    reconnect_attempt = 0
+
+    async def _poll_http_terminal() -> dict[str, Any] | None:
+        nonlocal latest_status
+        terminal, progress = await asyncio.to_thread(
+            _http_observation_status_snapshot,
+            backend_url,
+            run_id,
+            token=token,
+            workspace=workspace,
+            latest_status=latest_status,
+        )
+        if terminal is not None:
+            latest_status = terminal
+            if on_status is not None:
+                on_status(terminal)
+            return terminal
+        if isinstance(progress, Mapping):
+            updated = _merge_observation_progress(latest_status, run_id=run_id, snapshot=progress)
+            if updated != latest_status:
+                latest_status = updated
                 if on_status is not None:
                     on_status(latest_status)
-                terminal = _coerce_terminal_run_status(latest_status, run_id=run_id)
-                if terminal is not None:
-                    return terminal
-    except asyncio.TimeoutError:
-        http_terminal = await asyncio.to_thread(
-            _http_terminal_status_snapshot,
-            backend_url,
-            run_id,
-            token=token,
-            workspace=workspace,
-            latest_status=latest_status,
-        )
-        if http_terminal is not None:
-            if on_status is not None:
-                on_status(http_terminal)
-            return http_terminal
+        return None
+
+    def _timeout_diagnostic(*, kind: str, message: str) -> dict[str, Any] | None:
         print(f"[factory-bench] event wait timeout: {run_id}", file=sys.stderr, flush=True)
-        if return_diagnostics:
-            return _event_wait_diagnostic_status(
-                run_id,
-                latest_status,
+        if not return_diagnostics:
+            return None
+        return _event_wait_diagnostic_status(
+            run_id,
+            latest_status,
+            kind=kind,
+            message=message,
+            backend_url=backend_url,
+            workspace=workspace,
+        )
+
+    while True:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            http_terminal = await _poll_http_terminal()
+            if http_terminal is not None:
+                return http_terminal
+            if last_connection_error:
+                return _timeout_diagnostic(
+                    kind="runtime_v2_connection_failed",
+                    message=(f"runtime.v2 connection failed until deadline ({timeout_s}s): {last_connection_error}"),
+                )
+            return _timeout_diagnostic(
                 kind="timeout",
                 message=f"runtime.v2 did not deliver terminal event within {timeout_s}s",
-                backend_url=backend_url,
-                workspace=workspace,
             )
-        return None
-    except (OSError, ValueError, RuntimeError, websockets.exceptions.WebSocketException) as exc:
-        http_terminal = await asyncio.to_thread(
-            _http_terminal_status_snapshot,
-            backend_url,
-            run_id,
-            token=token,
-            workspace=workspace,
-            latest_status=latest_status,
+
+        try:
+            async with websockets.connect(
+                ws_url,
+                ping_interval=EVENT_WAIT_WS_PING_INTERVAL_S,
+                ping_timeout=EVENT_WAIT_WS_PING_TIMEOUT_S,
+                close_timeout=EVENT_WAIT_WS_CLOSE_TIMEOUT_S,
+            ) as ws:
+                # Successful open resets reconnect backoff so intermittent drops
+                # do not permanently stretch the sleep schedule.
+                reconnect_attempt = 0
+                last_connection_error = ""
+                await _subscribe_factory_events(ws, run_id=run_id, workspace=workspace)
+                while True:
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        http_terminal = await _poll_http_terminal()
+                        if http_terminal is not None:
+                            return http_terminal
+                        return _timeout_diagnostic(
+                            kind="timeout",
+                            message=f"runtime.v2 did not deliver terminal event within {timeout_s}s",
+                        )
+                    recv_timeout = min(HTTP_TERMINAL_POLL_INTERVAL_S, remaining)
+                    try:
+                        raw = await asyncio.wait_for(ws.recv(), timeout=recv_timeout)
+                    except asyncio.TimeoutError:
+                        http_terminal = await _poll_http_terminal()
+                        if http_terminal is not None:
+                            return http_terminal
+                        continue
+                    try:
+                        message = json.loads(str(raw))
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(message, Mapping):
+                        continue
+                    event_payload = _factory_event_payload(message, run_id)
+                    if event_payload is None:
+                        continue
+                    cursor, payload = event_payload
+                    await _ack_runtime_cursor(ws, cursor)
+                    latest_status = _status_from_factory_event(run_id, payload, latest_status)
+                    if on_status is not None:
+                        on_status(latest_status)
+                    terminal = _coerce_terminal_run_status(latest_status, run_id=run_id)
+                    if terminal is not None:
+                        return terminal
+        except asyncio.TimeoutError:
+            http_terminal = await _poll_http_terminal()
+            if http_terminal is not None:
+                return http_terminal
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return _timeout_diagnostic(
+                    kind="timeout",
+                    message=f"runtime.v2 did not deliver terminal event within {timeout_s}s",
+                )
+            # Treat unexpected outer TimeoutError like a soft disconnect and reconnect.
+            last_connection_error = "asyncio.TimeoutError during runtime.v2 event wait"
+            print(
+                f"[factory-bench] runtime.v2 event wait timed out mid-stream: {run_id}; "
+                f"reconnecting ({remaining:.1f}s budget left)",
+                file=sys.stderr,
+                flush=True,
+            )
+        except (OSError, ValueError, RuntimeError, WebSocketException) as exc:
+            last_connection_error = str(exc)
+            http_terminal = await _poll_http_terminal()
+            if http_terminal is not None:
+                return http_terminal
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                print(
+                    f"[factory-bench] runtime.v2 event wait failed: {run_id}: {exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return _timeout_diagnostic(
+                    kind="runtime_v2_connection_failed",
+                    message=str(exc),
+                )
+            reconnect_attempt += 1
+            backoff = min(
+                EVENT_WAIT_RECONNECT_BACKOFF_CAP_S,
+                EVENT_WAIT_RECONNECT_BACKOFF_BASE_S * (2 ** min(reconnect_attempt - 1, 4)),
+            )
+            sleep_s = min(backoff, remaining)
+            print(
+                f"[factory-bench] runtime.v2 event wait disconnected: {run_id}: {exc}; "
+                f"reconnect attempt {reconnect_attempt} in {sleep_s:.1f}s "
+                f"({remaining:.1f}s budget left)",
+                file=sys.stderr,
+                flush=True,
+            )
+            await asyncio.sleep(sleep_s)
+            continue
+
+        # Soft disconnect path (TimeoutError branch) also back off before reconnect.
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            continue
+        reconnect_attempt += 1
+        backoff = min(
+            EVENT_WAIT_RECONNECT_BACKOFF_CAP_S,
+            EVENT_WAIT_RECONNECT_BACKOFF_BASE_S * (2 ** min(reconnect_attempt - 1, 4)),
         )
-        if http_terminal is not None:
-            if on_status is not None:
-                on_status(http_terminal)
-            return http_terminal
-        print(f"[factory-bench] runtime.v2 event wait failed: {run_id}: {exc}", file=sys.stderr, flush=True)
-        if return_diagnostics:
-            return _event_wait_diagnostic_status(
-                run_id,
-                latest_status,
-                kind="runtime_v2_connection_failed",
-                message=str(exc),
-                backend_url=backend_url,
-                workspace=workspace,
-            )
-        return None
+        await asyncio.sleep(min(backoff, remaining))
 
 
 def _event_wait_diagnostic_status(

@@ -205,3 +205,109 @@ def test_search_code_remains_bound_to_authorized_executor(tmp_path) -> None:
 
     assert result["ok"] is True
     assert "sentinel_value" in result["results"]
+
+
+def test_r146_director_write_file_sanitizes_jsdoc_glob_before_disk(tmp_path) -> None:
+    """R146: Director DEO write path must apply block-comment glob hygiene.
+
+    AgentAccel already sanitized src/**/*.ts inside JSDoc; Director execution_tools
+    historically bypassed that path, shipping unparseable TypeScript that failed
+    real_run_gate npm run build (r145 L1-01 verify.ts TS1109).
+    """
+
+    executor = _create_director_tool_executor(str(tmp_path))
+    content = """/**
+ * Verifies source_target_coverage: src/**/*.ts is covered.
+ */
+
+export function main(): string {
+  return "flight";
+}
+"""
+
+    result = executor.execute_tool(
+        "write_file",
+        {
+            "path": "src/verify.ts",
+            "content": content,
+            "target_files": ["src/verify.ts"],
+        },
+    )
+
+    assert result["ok"] is True, result
+    assert result.get("block_comment_glob_sanitized") is True
+    written = (tmp_path / "src" / "verify.ts").read_text(encoding="utf-8")
+    assert "src/** /*.ts" in written
+    assert "src/**/*.ts" not in written
+
+
+def test_r147_director_write_file_sanitizes_control_flow_comma_and_reports_ts_syntax(
+    tmp_path,
+) -> None:
+    """R147: Director writes must rewrite ``return,`` and surface TS syntax checks.
+
+    Live r146 shipped src/web.ts with ``return,`` (TS1109) because:
+    1) Director write hygiene did not normalize control-flow commas
+    2) check_source_file_syntax ignored TypeScript entirely
+    """
+
+    executor = _create_director_tool_executor(str(tmp_path))
+    content = """export function makeLoop(): { start(): void } {
+  let handle: number | null = null;
+  return {
+    start(): void {
+      if (handle !== null) {
+        return,
+      }
+      handle = 1;
+    },
+  };
+}
+"""
+
+    result = executor.execute_tool(
+        "write_file",
+        {
+            "path": "src/web.ts",
+            "content": content,
+            "target_files": ["src/web.ts"],
+        },
+    )
+
+    assert result["ok"] is True, result
+    assert result.get("control_flow_comma_sanitized") is True
+    written = (tmp_path / "src" / "web.ts").read_text(encoding="utf-8")
+    assert "return;" in written
+    assert "return," not in written
+    # After hygiene the file should parse as syntax-ok under tsc gate.
+    assert result.get("syntax_check") == "passed"
+
+
+def test_r179_edit_blocks_is_available_and_applies_search_replace(tmp_path) -> None:
+    """R179/M03: Director physical surface must execute preferred edit_blocks tool."""
+
+    (tmp_path / "src").mkdir()
+    target = tmp_path / "src" / "a.py"
+    target.write_text("def hello():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("# ok\n", encoding="utf-8")
+    executor = _create_director_tool_executor(str(tmp_path))
+    assert "edit_blocks" in executor.available_tools
+
+    blocks = (
+        "<<<<<<< SEARCH\n"
+        "def hello():\n    return 1\n"
+        "=======\n"
+        "def hello():\n    return 2\n"
+        ">>>>>>> REPLACE\n"
+    )
+    result = executor.execute_tool(
+        "edit_blocks",
+        {
+            "file": "src/a.py",
+            "blocks": blocks,
+            "target_files": ["src/a.py"],
+            "allowed_scope": ["src/a.py"],
+        },
+    )
+    assert result.get("ok") is True, result
+    assert "return 2" in target.read_text(encoding="utf-8")

@@ -1617,7 +1617,12 @@ class FactoryRunService:
                 # exit path, including failed results, wrapper exceptions, and
                 # cancellation.  Claim settlement/release remains a separate
                 # durable lifecycle decision below.
-                cutoff_port.close_authority()
+                # close_authority may block on a threading.Condition while
+                # in-flight acquisitions drain.  Never run that wait on the
+                # asyncio event loop thread — it freezes HTTP/WS/heartbeat and
+                # is the R141 isolated-backend keepalive root cause when a
+                # cutoff acquisition and stage teardown overlap.
+                await asyncio.to_thread(cutoff_port.close_authority)
         except Exception as exc:
             # Fail-closed for provider/network errors (e.g. aiohttp.ClientResponseError
             # on HTTP 403 quota). A narrow typed list previously let those escape
@@ -1767,13 +1772,33 @@ class FactoryRunService:
             # Store/Event lock failure previously terminated this sole
             # coroutine, silently stopped lease renewal, and let a live
             # Director stage expire its workspace authority.
-            self._admission.renew(run_id, fencing_token=fencing_token)
+            #
+            # Renew off the event loop: admission uses a process-wide file
+            # lock that can be held by role-evidence cutoff.  A sync renew on
+            # the asyncio thread starves HTTP/WS keepalive (R141 GET 35s +
+            # websocket 1011).  Never let renew/projection exceptions kill
+            # this coroutine — only CancelledError ends the heartbeat.
+            try:
+                await asyncio.to_thread(
+                    self._admission.renew,
+                    run_id,
+                    fencing_token=fencing_token,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as renew_exc:  # noqa: BLE001 — heartbeat must survive transient renew failures
+                logger.warning(
+                    "Factory stage heartbeat lease renew failed for run %s stage %s: %s",
+                    run_id,
+                    stage,
+                    renew_exc,
+                )
+                continue
             try:
                 await self._emit_stage_heartbeat(run_id, stage)
-            except (
-                OSError,
-                asyncio.TimeoutError,
-            ) as projection_exc:
+            except asyncio.CancelledError:
+                raise
+            except Exception as projection_exc:  # noqa: BLE001 — projection is non-authoritative
                 logger.warning(
                     "Factory stage heartbeat projection failed after durable lease renewal for run %s stage %s: %s",
                     run_id,

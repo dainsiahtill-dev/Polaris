@@ -21,6 +21,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from polaris.cells.roles.adapters.internal.director.helpers import (
+    _LOW_QUALITY_PATTERNS,
     _seq_parse_bool,
     _seq_resolve_bool,
     _seq_resolve_int,
@@ -33,6 +34,7 @@ from polaris.cells.roles.adapters.internal.director.helpers import (
     is_project_code_file,
     is_timeout_failure,
     looks_like_protocol_patch_response,
+    low_quality_pattern_match,
     preview_content_for_error,
     summarize_tools_for_debug,
     taskboard_snapshot_brief,
@@ -549,3 +551,41 @@ class TestTaskboardSnapshotBrief:
         assert "taskboard" in result.lower() or "unavailable" in result.lower()
         # Empty dict is still a dict, so implementation processes it with all-zero counts
         assert "total=0" in result
+
+# ---------------------------------------------------------------------------
+# R154: comment-only "placeholder" must not fail materialization quality
+# ---------------------------------------------------------------------------
+
+
+def _placeholder_pattern():
+    for pattern in _LOW_QUALITY_PATTERNS:
+        if "placeholder" in pattern.pattern:
+            return pattern
+    raise AssertionError("placeholder pattern missing from _LOW_QUALITY_PATTERNS")
+
+
+class TestR154PlaceholderCommentGuard:
+    """Sealed materialization quality: JSDoc/comment prose is not unfinished code."""
+
+    def test_jsdoc_placeholder_word_is_not_low_quality(self) -> None:
+        content = (
+            "/**\n"
+            " * Browser-only entry point placeholder.\n"
+            " */\n"
+            "export const webEntryMarker: true = true;\n"
+        )
+        assert low_quality_pattern_match(_placeholder_pattern(), content) is False
+
+    def test_line_comment_placeholder_is_not_low_quality(self) -> None:
+        content = "// this is a placeholder for the real renderer\nexport function run() {}\n"
+        assert low_quality_pattern_match(_placeholder_pattern(), content) is False
+
+    def test_executable_placeholder_identifier_still_flags(self) -> None:
+        content = "export const value = placeholder;\n"
+        assert low_quality_pattern_match(_placeholder_pattern(), content) is True
+
+    def test_html_attribute_placeholder_still_allowed_by_main_pattern(self) -> None:
+        # Attribute form is excluded by the pattern lookaround itself.
+        content = '<textarea placeholder="type here"></textarea>\n'
+        assert low_quality_pattern_match(_placeholder_pattern(), content) is False
+

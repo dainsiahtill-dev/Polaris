@@ -1,0 +1,53 @@
+{
+  "defect_id": "R138-WRITE-CONTENT-STRUCTURED-RECOVERY",
+  "status": "fixed_platform_validated_live",
+  "summary": "deo_tool_normalization_failed on TASK-2 write batches when models emitted write_file content as $text maps / token-continuation siblings (not plain strings). DEO froze fail-closed and dropped the entire multi-write batch including valid string-bodied siblings.",
+  "root_cause": {
+    "evidence_run": "r137 factory_663c6385ef52",
+    "failed_turn": "director-7b1e125e62e3--TASK-2--attempt-txi_20e6a2e81e8d966d0c6fa434-0",
+    "batch": [
+      "src/engine/renderer.ts content:str (ok)",
+      "src/engine/simulation.ts content:str (ok)",
+      "src/web.ts content:dict{$text,canvas} (continuation split after 'is not a ')",
+      "index.html content:dict{$text,head,body,noscript} (HTML-ish nested map)"
+    ],
+    "mechanism": "normalize_file_path_args did not recover structured content; DEO _validate_write_policy / freeze required string content; whole-batch authoritative prepare raised deo_tool_normalization_failed"
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/kernelone/llm/toolkit/tool_normalization/normalizers/_shared.py",
+      "src/backend/polaris/kernelone/llm/toolkit/tool_normalization/normalizers/_file_path.py",
+      "src/backend/polaris/kernelone/llm/toolkit/tool_normalization/normalizers/__init__.py",
+      "src/backend/polaris/kernelone/llm/toolkit/tests/test_tools_normalization.py"
+    ],
+    "changes": [
+      "recover_write_body_string: rejoin $text + continuation tokens; flatten HTML-ish nested maps",
+      "normalize_file_path_args recovers non-string content before DEO",
+      "pytest: continuation map + HTML nested map recover to strings"
+    ]
+  },
+  "verification": {
+    "pytest_tools_normalization": "150 passed",
+    "ruff": "clean",
+    "replay_r137_args": "all 4 TASK-2 write bodies freeze as string after normalize"
+  },
+  "rebench": {
+    "label": "r138-write-content-recovery",
+    "factory_run_id": "factory_6a47cb1143ac",
+    "work_dir": "/tmp/factory-bench-l1-01-r138-write-content-recovery",
+    "wall_s": 657.8,
+    "result": "FAIL (pillars incomplete) but R138 VALIDATED",
+    "source_files": 11,
+    "R138_live_validation": {
+      "prior_r137": "deo_tool_normalization_failed dense; TASK-2 writes dropped; engine missing",
+      "now": "deo_tool_normalization_failed count=0; src/engine/renderer.ts+simulation.ts present; TASK-2 lifecycle dispatched with effect_receipt_count=3"
+    },
+    "residual": {
+      "real_run_gate": "build_test_lint_ran, entrypoint_smoke",
+      "delivery_depth": "test_files=0 (tests/verify.test.ts missing)",
+      "run_ledger": "tool_result_failed residual on some TASK-2 effects (not normalization)",
+      "open_generic_next": "R139: attribute remaining TOOL_RESULT_FAILED on multi-task write receipts OR incomplete test delivery after content recovery"
+    }
+  },
+  "next_action": "Attribute residual TOOL_RESULT_FAILED after content recovery; do not thrash model-only TS first"
+}

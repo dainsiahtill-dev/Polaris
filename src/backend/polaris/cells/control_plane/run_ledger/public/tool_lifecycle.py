@@ -365,6 +365,33 @@ def _successful_write_results_without_effect_receipts(receipts: list[dict[str, A
     return missing
 
 
+def _first_tool_result_failure_reason(receipts: list[dict[str, Any]]) -> str:
+    """Return the first concrete non-success tool result error/abort reason.
+
+    Used when lifecycle failure_class is set but the caller left ``reason`` empty
+    so failure_evidence does not collapse to the bare dispatch_status string
+    (live L1-01 r156: reason=\"dispatched\").
+    """
+
+    for item in _result_items(receipts):
+        status = _clean_string(item.get("status")).lower()
+        if status in {"", "success", "pending", "ok"}:
+            continue
+        for key in ("error", "reason", "message"):
+            candidate = _clean_string(item.get(key))
+            if candidate:
+                return candidate
+        nested = item.get("result")
+        if isinstance(nested, Mapping):
+            for key in ("error", "error_type", "reason", "message", "code"):
+                candidate = _clean_string(nested.get(key))
+                if candidate:
+                    return candidate
+        if status in {"error", "timeout", "aborted", "cancelled", "failed"}:
+            return status
+    return ""
+
+
 def _batch_receipt_refs(receipts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     refs: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -519,6 +546,13 @@ def build_tool_call_lifecycle_receipt(
         failure = failure or FailureClassV1.TOOL_RESULT_FAILED.value
 
     ok = status == "dispatched" and failure_count == 0 and not failure
+    # R156: when failure_count>0 but reason is empty, failure_evidence collapsed
+    # to reason="dispatched" (dispatch_status). Prefer the first concrete tool
+    # error/abort reason from batch results; do not rewrite dropped-dispatch
+    # reasons that intentionally leave reason empty.
+    resolved_reason = _clean_string(reason)
+    if failure_count > 0 and not resolved_reason:
+        resolved_reason = _first_tool_result_failure_reason(receipt_rows) or failure
     return ToolCallLifecycleReceiptV1(
         run_id=_clean_string(run_id),
         task_id=_clean_string(task_id),
@@ -538,7 +572,7 @@ def build_tool_call_lifecycle_receipt(
         batch_receipt_refs=tuple(batch_refs),
         effect_receipt_refs=tuple(effect_refs),
         dropped_tool_calls=tuple(dropped),
-        reason=_clean_string(reason),
+        reason=resolved_reason,
         compatibility_mode=_clean_string(compatibility_mode) or "native_tools",
         text_fallback_requested=bool(text_fallback_requested),
         parser_attempted=bool(parser_attempted),
@@ -746,23 +780,18 @@ def build_missing_dispatch_lifecycle_receipt(
         native envelope extraction, dropped-call shape, and lifecycle receipt
         projection so stream and non-stream completion paths cannot drift.
 
+        R133: provider-native write tool envelopes without batch/effect evidence
+        must seal a dropped lifecycle even when the final-request
+        ``required_tools`` list is empty. Claimed materialization turns can
+        emit write tools under optional tool_choice; silent absence of
+        lifecycle evidence previously projected as TOOL_LIFECYCLE_MISSING.
+
     Complexity:
         O(t + m + e + r) over required tools, metadata candidates, native
         envelopes, and batch receipt rows.
     """
 
     if tool_results or batch_receipt_has_dispatch_evidence(batch_receipt):
-        return None
-
-    tools: list[str] = []
-    seen_tools: set[str] = set()
-    for tool_name in required_write_tools:
-        normalized = _clean_string(tool_name)
-        if not normalized or not is_write_tool_name(normalized) or normalized in seen_tools:
-            continue
-        seen_tools.add(normalized)
-        tools.append(normalized)
-    if not tools:
         return None
 
     native_envelopes: list[dict[str, Any]] = []
@@ -780,6 +809,33 @@ def build_missing_dispatch_lifecycle_receipt(
         if envelopes:
             native_envelopes = [dict(item) for item in envelopes]
             break
+
+    tools: list[str] = []
+    seen_tools: set[str] = set()
+    for tool_name in required_write_tools:
+        normalized = _clean_string(tool_name)
+        if not normalized or not is_write_tool_name(normalized) or normalized in seen_tools:
+            continue
+        seen_tools.add(normalized)
+        tools.append(normalized)
+
+    derived_from_native_write_envelopes = False
+    if not tools:
+        for envelope in native_envelopes:
+            if not isinstance(envelope, Mapping):
+                continue
+            normalized = _clean_string(envelope.get("tool_name"))
+            if not normalized or not is_write_tool_name(normalized) or normalized in seen_tools:
+                continue
+            seen_tools.add(normalized)
+            tools.append(normalized)
+            derived_from_native_write_envelopes = True
+    if not tools:
+        return None
+
+    resolved_reason = reason
+    if derived_from_native_write_envelopes and reason == "required_write_tool_without_dispatch_evidence":
+        resolved_reason = "native_tool_calls_without_dispatch"
 
     dropped_tool_calls = (
         [] if native_envelopes else [{"tool_name": tool_name, "reason": "tool_dispatch_dropped"} for tool_name in tools]
@@ -799,8 +855,52 @@ def build_missing_dispatch_lifecycle_receipt(
             if text_fallback_not_dispatched
             else FailureClassV1.TOOL_DISPATCH_DROPPED.value
         ),
-        reason=("required_tool_text_fallback_not_dispatched" if text_fallback_not_dispatched else reason),
+        reason=("required_tool_text_fallback_not_dispatched" if text_fallback_not_dispatched else resolved_reason),
         **fallback_fields,
+    ).to_dict()
+
+
+def build_claimed_materialization_without_tool_lifecycle_receipt(
+    *,
+    run_id: str,
+    task_id: str,
+    turn_id: str = "",
+    role: str = "director",
+    reason: str = "claimed_materialization_without_tool_lifecycle",
+    failure_class: str = "",
+) -> dict[str, Any]:
+    """Seal blocked lifecycle for a claimed materialization that never produced tools.
+
+    Boundary:
+        Claimed Director materialization registers a tool-lifecycle requirement.
+        When the attempt ends with zero tool batches (``closed_without_tools``,
+        ``director_no_materialized_changes``, mid-turn fail-closed before dispatch),
+        Run Ledger must still receive one authoritative receipt. Silent absence
+        projects as ``TOOL_LIFECYCLE_MISSING`` even though the claim/fail evidence
+        exists — that misattributes incomplete materialization as a missing seal.
+
+        R137: seal a blocked receipt with ``INCOMPLETE_MATERIALIZATION`` /
+        ``NO_MATERIALIZED_EFFECT`` so ``missing_required_task_keys`` clears while
+        unresolved failure remains attributable.
+
+    Complexity:
+        O(1) receipt construction.
+    """
+
+    resolved_reason = _clean_string(reason) or "claimed_materialization_without_tool_lifecycle"
+    resolved_failure = normalize_failure_class(failure_class or FailureClassV1.INCOMPLETE_MATERIALIZATION.value)
+    return build_tool_call_lifecycle_receipt(
+        run_id=_clean_string(run_id),
+        task_id=_clean_string(task_id),
+        turn_id=_clean_string(turn_id),
+        role=_clean_string(role) or "director",
+        native_tool_calls_count=0,
+        decoded_tool_calls_count=0,
+        dispatched_tool_calls_count=0,
+        receipts=[],
+        dispatch_status="blocked",
+        failure_class=resolved_failure,
+        reason=resolved_reason,
     ).to_dict()
 
 
@@ -1698,9 +1798,52 @@ def _lifecycle_task_identity(value: Mapping[str, Any]) -> tuple[str, str, str, s
     )
 
 
-def _lifecycle_event_is_unresolved(event: Mapping[str, Any]) -> bool:
-    """Return whether a canonical lifecycle row remains unresolved."""
+def _is_terminal_incomplete_materialization_seal(event: Mapping[str, Any]) -> bool:
+    """Return True for R137 blocked seals that close a claimed-without-tools gap.
 
+    These receipts satisfy the lifecycle *requirement* (evidence is present) so
+    they must not project as ``TOOL_LIFECYCLE_MISSING``. They remain attributable
+    via :func:`project_tool_lifecycle_failure_status` / latest_by_task rows.
+    """
+
+    receipt = _mapping(event.get("receipt")) if isinstance(event.get("receipt"), Mapping) else {}
+    dispatch_status = _normalize_dispatch_status(
+        event.get("dispatch_status") or receipt.get("dispatch_status")
+    )
+    if dispatch_status != "blocked":
+        return False
+    failure_class = normalize_failure_class(
+        event.get("failure_class") or receipt.get("failure_class")
+    )
+    if failure_class not in {
+        FailureClassV1.INCOMPLETE_MATERIALIZATION.value,
+        FailureClassV1.NO_MATERIALIZED_EFFECT.value,
+    }:
+        return False
+    reason = _clean_string(event.get("reason") or receipt.get("reason")).lower()
+    return any(
+        token in reason
+        for token in (
+            "claimed_materialization_without_tool_lifecycle",
+            "director_no_materialized_changes",
+            "closed_without_tools",
+            "incomplete_materialization",
+            "multi_task_incomplete_without_tools",
+            "director_stage_incomplete_without_tools",
+        )
+    )
+
+
+def _lifecycle_event_is_unresolved(event: Mapping[str, Any]) -> bool:
+    """Return whether a canonical lifecycle row remains unresolved.
+
+    Terminal incomplete-materialization seals (R137/R177) are requirement
+    evidence, not open gaps: they clear missing_required_task_keys for integrity
+    while failure attribution stays on the seal row itself.
+    """
+
+    if _is_terminal_incomplete_materialization_seal(event):
+        return False
     return bool(event.get("dropped")) or bool(event.get("failed")) or event.get("ok") is False
 
 
@@ -2068,28 +2211,47 @@ def project_tool_lifecycle_failure_status(summary: Mapping[str, Any] | None) -> 
             "degraded": degraded,
             "fallback": fallback,
         }
-    if not unresolved_by_task:
+    if unresolved_by_task:
+        latest = next(reversed(tuple(unresolved_by_task.values())))
+        latest_event = dict(latest) if isinstance(latest, Mapping) else {}
+        dropped = bool(latest_event.get("dropped"))
+        failure_class = normalize_failure_class(
+            _clean_string(latest_event.get("failure_class"))
+            or (FailureClassV1.TOOL_DISPATCH_DROPPED.value if dropped else FailureClassV1.TOOL_LIFECYCLE_FAILED.value)
+        )
         return {
-            "failed": False,
-            "status": "",
-            "failure_class": "",
-            "reason": "",
+            "failed": True,
+            "status": _clean_string(latest_event.get("status")) or ("dropped" if dropped else "failed"),
+            "failure_class": failure_class,
+            "reason": _clean_string(latest_event.get("reason")) or failure_class,
             "degraded": degraded,
             "fallback": fallback,
         }
-
-    latest = next(reversed(tuple(unresolved_by_task.values())))
-    latest_event = dict(latest) if isinstance(latest, Mapping) else {}
-    dropped = bool(latest_event.get("dropped"))
-    failure_class = normalize_failure_class(
-        _clean_string(latest_event.get("failure_class"))
-        or (FailureClassV1.TOOL_DISPATCH_DROPPED.value if dropped else FailureClassV1.TOOL_LIFECYCLE_FAILED.value)
-    )
+    # Terminal incomplete seals satisfy integrity (not missing) but remain
+    # attributable as outcome failures for multi-task incomplete materialization.
+    latest_by_task_raw = projected.get("latest_by_task")
+    latest_by_task = latest_by_task_raw if isinstance(latest_by_task_raw, Mapping) else {}
+    for raw_event in reversed(tuple(latest_by_task.values())):
+        if not isinstance(raw_event, Mapping):
+            continue
+        event = dict(raw_event)
+        if not _is_terminal_incomplete_materialization_seal(event):
+            continue
+        return {
+            "failed": True,
+            "status": _clean_string(event.get("status")) or "blocked",
+            "failure_class": normalize_failure_class(
+                event.get("failure_class") or FailureClassV1.INCOMPLETE_MATERIALIZATION.value
+            ),
+            "reason": _clean_string(event.get("reason")) or "incomplete_materialization",
+            "degraded": degraded,
+            "fallback": fallback,
+        }
     return {
-        "failed": True,
-        "status": _clean_string(latest_event.get("status")) or ("dropped" if dropped else "failed"),
-        "failure_class": failure_class,
-        "reason": _clean_string(latest_event.get("reason")) or failure_class,
+        "failed": False,
+        "status": "",
+        "failure_class": "",
+        "reason": "",
         "degraded": degraded,
         "fallback": fallback,
     }
@@ -2779,6 +2941,7 @@ __all__ = [
     "ToolCallLifecycleReceiptV1",
     "ToolLifecycleRequirementV1",
     "batch_receipt_has_dispatch_evidence",
+    "build_claimed_materialization_without_tool_lifecycle_receipt",
     "build_missing_dispatch_lifecycle_receipt",
     "build_native_tool_call_envelope_payloads",
     "build_native_tool_call_envelopes",

@@ -2163,6 +2163,66 @@ def test_real_run_gate_build_failure_blocks_npm_start(monkeypatch: Any, tmp_path
     assert "build did not succeed" in gate["entrypoint"]["detail"] or "TS1005" in gate["entrypoint"]["detail"]
 
 
+def test_real_run_gate_build_pass_test_fail_still_attempts_npm_start(monkeypatch: Any, tmp_path: Path) -> None:
+    """R128: test failure must not erase build success or block entrypoint smoke.
+
+    r126 L1-01: tsc passed, npm start worked, but missing tests/ made the gate
+    report build_test_lint fail AND entrypoint_smoke fail ("depends on build
+    output but npm run test failed") — a false measurement on the rigid ruler.
+    """
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "build": "tsc -p tsconfig.json",
+                    "test": "node --test tests",
+                    "start": "npm run build && node dist/main.js",
+                },
+                "devDependencies": {"typescript": "^5.6.0"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("export const x = 1;\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_which(name: str) -> str | None:
+        return "/tool/npm" if name == "npm" else None
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        commands.append(command)
+        is_test = command == ["npm", "run", "test"]
+        return {
+            "command": command,
+            "ok": not is_test,
+            "returncode": 1 if is_test else 0,
+            "duration_s": 0.01,
+            "stdout_tail": "",
+            "stderr_tail": "Could not find 'tests'" if is_test else "",
+            "timeout": False,
+            "timeout_s": timeout_s,
+        }
+
+    monkeypatch.setattr(bench_gates.shutil, "which", fake_which)
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["src/main.ts", "package.json", "tsconfig.json"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["requirements"]["build_test_lint_ran"]["ok"] is True
+    assert "build passed" in gate["requirements"]["build_test_lint_ran"]["detail"]
+    assert "test failed" in gate["requirements"]["build_test_lint_ran"]["detail"]
+    script_names = [cmd[2] for cmd in commands if cmd[0] == "npm" and len(cmd) >= 3]
+    assert "build" in script_names
+    assert "test" in script_names
+    assert "start" in script_names
+    assert gate["requirements"]["entrypoint_smoke"]["ok"] is True
+    assert gate["entrypoint"]["kind"] == "npm_start"
+    assert gate["entrypoint"]["ok"] is True
+
+
 def test_real_run_gate_build_first_when_no_ts_but_build_is_tsc(monkeypatch: Any, tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text(
         json.dumps(

@@ -1,0 +1,55 @@
+{
+  "defect_id": "R147-TS-SYNTAX-SSOT-AND-CONTROL-FLOW-COMMA",
+  "status": "fixed_platform_unit_and_live_validated",
+  "summary": "Post-write/materialization syntax SSOT skipped TypeScript, so broken TS (return,) never entered tool feedback or quality repair ladder; Director write path also lacked control-flow comma hygiene.",
+  "root_cause": {
+    "evidence_run": "r146 factory_983ee9a17fa7",
+    "machine_readable": "check_source_file_syntax_omitted_typescript + missing_control_flow_comma_hygiene",
+    "mechanism": [
+      "check_source_file_syntax handled py/js/json/html only; .ts returned None",
+      "post-write attach_post_write_syntax_check therefore never set syntax_check=failed for TS",
+      "materialization artifact quality scan also skipped TS parse errors",
+      "weak model wrote return, (TS1109); object-literal comma repair does not rewrite bare control-flow commas",
+      "Director DEO write path did not normalize return,/break,/continue,"
+    ],
+    "not_primary": [
+      "missing tests (downstream incomplete delivery once engine files fail build)",
+      "late GET timeouts (observability load residual)"
+    ]
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/kernelone/quality/artifact_quality.py",
+      "src/backend/polaris/kernelone/llm/toolkit/executor/handlers/filesystem_guards.py",
+      "src/backend/polaris/kernelone/llm/toolkit/executor/handlers/filesystem.py",
+      "src/backend/polaris/cells/roles/adapters/internal/director/execution_tools.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_execution_tools.py",
+      "src/backend/polaris/tests/unit/kernelone/quality/test_artifact_quality.py"
+    ],
+    "changes": [
+      "check_source_file_syntax delegates .ts/.tsx to syntax_gate check_file_syntax",
+      "sanitize_js_ts_control_flow_statement_commas + sanitize_js_ts_write_hygiene",
+      "Director write applies hygiene + attach_post_write_syntax_check"
+    ]
+  },
+  "verification": {
+    "pytest": "6 passed (2 quality SSOT + 4 write hygiene)",
+    "ruff": "clean",
+    "rebench": {
+      "work_dir": "/tmp/factory-bench-l1-01-r147-ts-syntax-ssot",
+      "wall_s": 217,
+      "chain_exit": 1,
+      "ts_syntax": "ok",
+      "residual": [
+        "package.json missing",
+        "test_files=0",
+        "real_run_gate scaffolding/build/entrypoint",
+        "run_ledger_integrity_failed",
+        "incomplete multi-task (~217s)"
+      ]
+    }
+  },
+  "four_pillars": "NOT_MET",
+  "do_not_advance": "L1-02",
+  "next_action": "R148: incomplete multi-task delivery / missing package.json — stay on L1-01"
+}

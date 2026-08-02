@@ -95,13 +95,14 @@ class TestExtractDeclaredStepTargetFiles:
 
 
 class TestPinWriteToolFileParam:
-    def test_pins_write_tools_and_leaves_read_tools_alone(self) -> None:
+    def test_pins_write_file_only_and_leaves_edit_and_read_alone(self) -> None:
         pinned = pin_write_tool_file_param_to_targets(_DEFS, ("style.css", "./style.css"))
 
         write_file_schema = pinned[0]["function"]["parameters"]["properties"]["file"]
         edit_blocks_schema = pinned[2]["function"]["parameters"]["properties"]["file"]
         assert write_file_schema["enum"] == ["style.css", "./style.css"]
-        assert edit_blocks_schema["enum"] == ["style.css", "./style.css"]
+        # R131: edit_blocks/edit_file must not receive path enums (qualification).
+        assert "enum" not in edit_blocks_schema
         assert pinned[1] == _DEFS[1]
 
     def test_source_definitions_are_not_mutated(self) -> None:
@@ -179,16 +180,17 @@ class TestPinWriteToolFileParam:
 
 
 class TestPinSurvivesLineRangeNarrowing:
-    def test_pinned_enum_survives_edit_blocks_narrowing(self) -> None:
-        """The W1.10 wholesale parameters rewrite must carry the pinned enum —
-        losing it at the most-forced attempt would reopen the wrong-file escape."""
+    def test_edit_blocks_narrowing_does_not_require_path_enum(self) -> None:
+        """edit_blocks is no longer path-enum pinned; narrowing stays independent."""
         pinned = pin_write_tool_file_param_to_targets(_DEFS, ("main.js", "./main.js"))
         narrowed = narrow_edit_blocks_schema_to_line_range(pinned)
 
         parameters = narrowed[2]["function"]["parameters"]
         assert parameters["required"] == ["file", "start", "end", "replace"]
+        assert "enum" not in parameters["properties"]["file"]
         assert "blocks" not in parameters["properties"]
-        assert parameters["properties"]["file"]["enum"] == ["main.js", "./main.js"]
+        # write_file still pinned; edit_blocks not
+        assert pinned[0]["function"]["parameters"]["properties"]["file"]["enum"] == ["main.js", "./main.js"]
 
     def test_unpinned_narrowing_has_no_enum(self) -> None:
         narrowed = narrow_edit_blocks_schema_to_line_range(_DEFS)

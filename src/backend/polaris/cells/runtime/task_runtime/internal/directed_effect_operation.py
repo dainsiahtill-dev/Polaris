@@ -196,6 +196,12 @@ _EXECUTION_ATTEMPT_FAILURE_CODES: dict[TaskRuntimeExecutionAttemptValidationCode
 
 _READ_FACT_FAILURE_CODES: dict[str, DirectedEffectOperationCodeV1] = {
     "event_sourcing_error": "fact_stream_unknown_failure",
+    # KernelOne LockedRegularFileSetV1 raises lock_acquisition_timeout when
+    # flock exceeds the monotonic deadline (default 2s / raised 15s for
+    # JsonlEventStore). Without this map, DEO surfaces opaque
+    # fact_stream_unknown_failure and multi-task batches soft-drop every
+    # write (r148 residual: deo_member_admission_failed:fact_stream_unknown_failure).
+    "lock_acquisition_timeout": "stream_lock_timeout",
     "file_lock_timeout": "stream_lock_timeout",
     "lock_timeout": "stream_lock_timeout",
     "stream_lock_timeout": "stream_lock_timeout",
@@ -1189,6 +1195,7 @@ class DirectedEffectOperationRepository:
         registry: _ParentRegistry,
         binding: DirectedEffectParentBindingV1,
         outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+        for_batch_rollover: bool = False,
     ) -> _ParentSettlementPreparation | DirectedEffectSettlementPreBarrierVerdictV1:
         verdict = self._parent_settlement_verdict
         sealed = registry.sealed_inventories_by_binding_id.get(binding.binding_id)
@@ -1228,7 +1235,10 @@ class DirectedEffectOperationRepository:
                 },
             )
         classified = self._classify_parent_settlement_aggregates(
-            aggregates, ready.ordered_operation_ids, outcome=outcome
+            aggregates,
+            ready.ordered_operation_ids,
+            outcome=outcome,
+            for_batch_rollover=for_batch_rollover,
         )
         if isinstance(classified, DirectedEffectSettlementPreBarrierVerdictV1):
             return classified
@@ -1241,6 +1251,7 @@ class DirectedEffectOperationRepository:
         ordered_operation_ids: tuple[str, ...],
         *,
         outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+        for_batch_rollover: bool = False,
     ) -> tuple[tuple[dict[str, object], ...], tuple[_Aggregate, ...]] | DirectedEffectSettlementPreBarrierVerdictV1:
         receipts: list[dict[str, object]] = []
         candidates: list[_Aggregate] = []
@@ -1256,7 +1267,10 @@ class DirectedEffectOperationRepository:
                 continue
             if aggregate.state == "ABORTED":
                 continue
-            if aggregate.state == "DEAD_LETTER" and outcome != "completed":
+            # R136: batch rollover may close a parent that carries terminal dead-letters
+            # after residual recovery terminalization. Terminal attempt settlement keeps
+            # the stricter completed-vs-dead-letter conflict below.
+            if aggregate.state == "DEAD_LETTER" and (for_batch_rollover or outcome != "completed"):
                 continue
             code: _SettlementPreBarrierCode = (
                 "settlement_effect_outcome_conflict"
@@ -1646,12 +1660,27 @@ class DirectedEffectOperationRepository:
         binding = registry.open_binding
         if binding is None:
             return registry
+        # R136: partial physical failure can leave INTENT_COMMITTED / RECOVERY_PENDING
+        # residuals that permanently block multi-batch admit (deo_parent_admission_failed).
+        # Terminalize those residuals under the held attempt lock before rollover prep.
+        terminalized = self._terminalize_open_parent_residuals_for_batch_rollover(
+            command,
+            registry=registry,
+            binding=binding,
+        )
+        if isinstance(terminalized, DirectedEffectOperationResultV1):
+            return terminalized
+        registry = terminalized
+        binding = registry.open_binding
+        if binding is None:
+            return registry
         prepared = self._prepare_parent_settlement_operations(
             command.execution_attempt,
             identity=registry.identity,
             registry=registry,
             binding=binding,
-            outcome="completed",
+            outcome="failed",
+            for_batch_rollover=True,
         )
         if isinstance(prepared, DirectedEffectSettlementPreBarrierVerdictV1):
             reason_by_code = {
@@ -1696,6 +1725,180 @@ class DirectedEffectOperationRepository:
             batch_rollover_hash=batch_rollover_hash,
             receipt_summary_hash=receipt_summary_hash,
         )
+
+    def _terminalize_open_parent_residuals_for_batch_rollover(
+        self,
+        command: AdmitDirectedEffectParentBatchCommandV1,
+        *,
+        registry: _ParentRegistry,
+        binding: DirectedEffectParentBindingV1,
+    ) -> _ParentRegistry | DirectedEffectOperationResultV1:
+        """Abort unclaimed siblings and dead-letter recovery residuals for rollover.
+
+        Multi-batch materialization (director + deferred repair) shares one attempt
+        parent registry. When a physical effect fails after fence consumption it
+        lands in RECOVERY_PENDING; sibling intents may remain INTENT_COMMITTED.
+        Those residuals must become ABORTED / DEAD_LETTER before the open parent
+        can close with ``close_kind=batch_rollover`` and free the next batch admit.
+        ``EFFECT_STARTED`` stays fail-closed (still-inflight physical effect).
+        """
+
+        ready = registry.ready_inventories_by_binding_id.get(binding.binding_id)
+        sealed = registry.sealed_inventories_by_binding_id.get(binding.binding_id)
+        if sealed is None or ready is None or ready.inventory_hash != sealed.inventory_hash:
+            return registry
+
+        operation_read = self._read_stream(
+            command.execution_attempt.workspace,
+            binding.operation_stream_token,
+            max_events=_MAX_OPERATION_EVENTS,
+            stream_kind="operation",
+        )
+        if isinstance(operation_read, DirectedEffectOperationResultV1):
+            return self._parent_registry_conflict(
+                "parent_open_conflict",
+                registry,
+                {
+                    "reason": "batch_rollover_operation_stream_unavailable",
+                    "operation_result_code": operation_read.code,
+                    "operation_evidence": dict(operation_read.evidence),
+                },
+                binding=binding,
+            )
+        reduced = self._reduce_operation_stream(operation_read, binding, target=None)
+        if isinstance(reduced, DirectedEffectOperationResultV1):
+            return self._parent_registry_conflict(
+                "parent_open_conflict",
+                registry,
+                {
+                    "reason": "batch_rollover_operation_stream_invalid",
+                    "operation_result_code": reduced.code,
+                    "operation_evidence": dict(reduced.evidence),
+                },
+                binding=binding,
+            )
+
+        aggregates = {aggregate.operation.operation_id: aggregate for aggregate in reduced.aggregates}
+        if set(aggregates) != set(ready.ordered_operation_ids):
+            return self._parent_registry_conflict(
+                "parent_open_conflict",
+                registry,
+                {
+                    "reason": "batch_rollover_operation_set_mismatch",
+                    "ready_operation_ids": ready.ordered_operation_ids,
+                    "observed_operation_ids": tuple(sorted(aggregates)),
+                },
+                binding=binding,
+            )
+
+        next_expected_seq = reduced.source_head_seq + 1
+        mutated = False
+        for operation_id in ready.ordered_operation_ids:
+            aggregate = aggregates[operation_id]
+            state = aggregate.state
+            if state in {"RECEIPT_COMMITTED", "CLOSED_BY_PARENT", "ABORTED", "DEAD_LETTER"}:
+                continue
+            if state == "INTENT_COMMITTED":
+                aborted = self._mutate(
+                    AbortDirectedEffectOperationCommandV1(
+                        workspace=command.execution_attempt.workspace,
+                        task_id=command.execution_attempt.task_id,
+                        execution_attempt=command.execution_attempt,
+                        parent_binding=binding,
+                        tool_call_id=aggregate.operation.tool_call_id,
+                        effect_id=aggregate.operation.effect_id,
+                        expected_version=aggregate.version,
+                        expected_seq=next_expected_seq,
+                        actor="runtime.task_runtime.batch_rollover",
+                        intended_effect_fingerprint=aggregate.intended_effect_fingerprint,
+                        policy_verdict_hash=aggregate.policy_verdict_hash,
+                        expected_receipt_binding_hash=aggregate.expected_receipt_binding_hash,
+                        reason="batch_rollover_unclaimed_sibling",
+                    ),
+                    kind="abort",
+                    target="ABORTED",
+                    allowed_from=frozenset({"INTENT_COMMITTED"}),
+                    attempt_authority_lock_held=True,
+                )
+                if not aborted.ok or aborted.state != "ABORTED":
+                    return self._parent_registry_conflict(
+                        "parent_open_conflict",
+                        registry,
+                        {
+                            "reason": "batch_rollover_residual_abort_failed",
+                            "operation_id": operation_id,
+                            "operation_result_code": aborted.code,
+                            "operation_state": aborted.state,
+                        },
+                        binding=binding,
+                    )
+                next_expected_seq += 1
+                mutated = True
+                continue
+            if state == "RECOVERY_PENDING":
+                resolution_evidence_hash = _hash_token(
+                    {
+                        "schema_version": "task-runtime.batch-rollover-dead-letter/1",
+                        "binding_id": binding.binding_id,
+                        "operation_id": operation_id,
+                        "reason": "batch_rollover_unresolved_recovery",
+                    }
+                )
+                dead_lettered = self._mutate(
+                    DeadLetterDirectedEffectOperationCommandV1(
+                        workspace=command.execution_attempt.workspace,
+                        task_id=command.execution_attempt.task_id,
+                        execution_attempt=command.execution_attempt,
+                        parent_binding=binding,
+                        tool_call_id=aggregate.operation.tool_call_id,
+                        effect_id=aggregate.operation.effect_id,
+                        expected_version=aggregate.version,
+                        expected_seq=next_expected_seq,
+                        actor="runtime.task_runtime.batch_rollover",
+                        intended_effect_fingerprint=aggregate.intended_effect_fingerprint,
+                        policy_verdict_hash=aggregate.policy_verdict_hash,
+                        expected_receipt_binding_hash=aggregate.expected_receipt_binding_hash,
+                        reason="batch_rollover_unresolved_recovery",
+                        resolution_evidence_ref=(f"batch-rollover-dead-letter://{binding.binding_id}/{operation_id}"),
+                        resolution_evidence_hash=resolution_evidence_hash,
+                    ),
+                    kind="dead_letter",
+                    target="DEAD_LETTER",
+                    allowed_from=frozenset({"RECOVERY_PENDING"}),
+                    attempt_authority_lock_held=True,
+                )
+                if not dead_lettered.ok or dead_lettered.state != "DEAD_LETTER":
+                    return self._parent_registry_conflict(
+                        "parent_open_conflict",
+                        registry,
+                        {
+                            "reason": "batch_rollover_residual_dead_letter_failed",
+                            "operation_id": operation_id,
+                            "operation_result_code": dead_lettered.code,
+                            "operation_state": dead_lettered.state,
+                        },
+                        binding=binding,
+                    )
+                next_expected_seq += 1
+                mutated = True
+                continue
+            return self._parent_registry_conflict(
+                "parent_open_conflict",
+                registry,
+                {
+                    "reason": "batch_rollover_operation_unresolved",
+                    "operation_id": operation_id,
+                    "operation_state": state,
+                },
+                binding=binding,
+            )
+
+        if not mutated:
+            return registry
+        refreshed = self._load_registry(command.execution_attempt.workspace, registry.identity)
+        if isinstance(refreshed, DirectedEffectOperationResultV1):
+            return refreshed
+        return refreshed
 
     def _close_parent_batch_children(
         self,
@@ -1771,7 +1974,10 @@ class DirectedEffectOperationRepository:
             "receipt_summary_hash": receipt_summary_hash,
             "receipt_count": len(prepared.receipt_records),
             "failed_receipt_count": 0,
-            "dead_letter_count": 0,
+            # R136: dead-letter residuals are terminal and count toward inventory close.
+            "dead_letter_count": sum(
+                1 for aggregate in guarded.final_reduced.aggregates if aggregate.state == "DEAD_LETTER"
+            ),
             "aborted_count": sum(1 for aggregate in guarded.final_reduced.aggregates if aggregate.state == "ABORTED"),
         }
         close_command = AppendIfGuardedSnapshotCommandV1(
@@ -3124,8 +3330,9 @@ class DirectedEffectOperationRepository:
                 return validated
             binding, registry = validated
             operation = self._derive_operation(command, binding)
+            ready_context: _ReadyOperationContext | None = None
             if kind in {"claim", "abort"}:
-                ready_context = self._ready_operation_context(
+                observed_ready_context = self._ready_operation_context(
                     command=cast(_ReadyGatedCommand, command),
                     operation=operation,
                     binding=binding,
@@ -3133,8 +3340,9 @@ class DirectedEffectOperationRepository:
                     operation_events=prepared.target_records(),
                     operation_head_seq=prepared.proof.target_head_seq,
                 )
-                if isinstance(ready_context, DirectedEffectOperationResultV1):
-                    return ready_context
+                if isinstance(observed_ready_context, DirectedEffectOperationResultV1):
+                    return observed_ready_context
+                ready_context = observed_ready_context
             aggregate = self._reduce_operation(
                 _StreamRead(prepared.target_records(), prepared.proof.target_head_seq),
                 operation,
@@ -3180,6 +3388,27 @@ class DirectedEffectOperationRepository:
                 )
                 if replay_authority_failure is not None:
                     return replay_authority_failure
+                # Durable claim transitions must rehydrate a grant. Otherwise an
+                # ambiguous first append can leave EFFECT_STARTED without a
+                # usable claim capability and the lifecycle freezes fail-closed.
+                if (
+                    kind == "claim"
+                    and aggregate.state == "EFFECT_STARTED"
+                    and isinstance(command, ClaimDirectedEffectCommandV1)
+                    and ready_context is not None
+                ):
+                    claim_replay = self._claim_exact_replay_result(
+                        command=command,
+                        operation=operation,
+                        binding=binding,
+                        registry=registry,
+                        aggregate=aggregate,
+                        committed=committed,
+                        ready_context=ready_context,
+                        requested_descriptor=descriptor,
+                    )
+                    if claim_replay is not None:
+                        return claim_replay
                 return self._replay_result(operation, aggregate, committed, descriptor)
             if registry.open_binding is None or registry.open_binding.binding_id != binding.binding_id:
                 return self._parent_registry_conflict(
@@ -4736,11 +4965,12 @@ class DirectedEffectOperationRepository:
             dead_letter_count = cast(int, payload["dead_letter_count"])
             aborted_count = cast(int, payload["aborted_count"])
             ready = registry.ready_inventories_by_binding_id.get(str(payload.get("binding_id") or ""))
+            # R136: batch_rollover inventory may include terminal dead-letters after residual
+            # recovery terminalization. failed receipts still reserved (count must stay 0).
             if (
                 ready is None
                 or failed_receipt_count != 0
-                or dead_letter_count != 0
-                or receipt_count + aborted_count != len(ready.ordered_operation_ids)
+                or receipt_count + dead_letter_count + aborted_count != len(ready.ordered_operation_ids)
             ):
                 return self._parent_registry_failure(
                     "strict_stream_corruption",
@@ -6339,19 +6569,23 @@ class DirectedEffectOperationRepository:
                     "parent_binding_id": projection.binding.binding_id,
                 },
             )
-        try:
-            canonical_receipt = append_if_guarded_snapshot(guarded_command)
-        except FactStreamError as exc:
+        transition = matches[0]
+        canonical_receipt = self._canonical_receipt_for_durable_transition(
+            receipt=receipt,
+            transition=transition,
+            guarded_command=guarded_command,
+        )
+        if isinstance(canonical_receipt, FactStreamError):
             return self._guarded_receipt_failure(
                 operation=operation,
                 aggregate=projection.aggregate,
                 reason="public_exact_replay_receipt_failed",
                 evidence={
-                    "fact_stream_code": exc.code,
-                    "fact_stream_details": dict(exc.details),
+                    "fact_stream_code": canonical_receipt.code,
+                    "fact_stream_details": dict(canonical_receipt.details),
                     "parent_binding_id": projection.binding.binding_id,
-                    "transition_event_id": matches[0].event_id,
-                    "transition_seq": matches[0].seq,
+                    "transition_event_id": transition.event_id,
+                    "transition_seq": transition.seq,
                 },
             )
         return self._confirmed_mutation_result(
@@ -6360,7 +6594,7 @@ class DirectedEffectOperationRepository:
             kind=kind,
             target=target,
             projection=projection,
-            transition=matches[0],
+            transition=transition,
             expected_previous_version=expected_previous_version,
             guarded_attempt=guarded_attempt,
             receipt=receipt,
@@ -6393,19 +6627,23 @@ class DirectedEffectOperationRepository:
             canonical_event=canonical_event,
         )
         if len(matches) == 1:
-            try:
-                canonical_receipt = append_if_guarded_snapshot(guarded_command)
-            except FactStreamError as replay_exc:
+            transition = matches[0]
+            canonical_receipt = self._canonical_receipt_for_durable_transition(
+                receipt=receipt,
+                transition=transition,
+                guarded_command=guarded_command,
+            )
+            if isinstance(canonical_receipt, FactStreamError):
                 failure = self._guarded_receipt_failure(
                     operation=operation,
                     aggregate=projection.aggregate,
                     reason="public_exact_replay_receipt_failed",
                     evidence={
-                        "fact_stream_code": replay_exc.code,
-                        "fact_stream_details": dict(replay_exc.details),
+                        "fact_stream_code": canonical_receipt.code,
+                        "fact_stream_details": dict(canonical_receipt.details),
                         "parent_binding_id": projection.binding.binding_id,
-                        "transition_event_id": matches[0].event_id,
-                        "transition_seq": matches[0].seq,
+                        "transition_event_id": transition.event_id,
+                        "transition_seq": transition.seq,
                     },
                 )
                 return self._with_guarded_reconciliation_evidence(failure, exc)
@@ -6415,7 +6653,7 @@ class DirectedEffectOperationRepository:
                 kind=kind,
                 target=target,
                 projection=projection,
-                transition=matches[0],
+                transition=transition,
                 expected_previous_version=expected_previous_version,
                 guarded_attempt=guarded_attempt,
                 receipt=receipt,
@@ -6467,6 +6705,74 @@ class DirectedEffectOperationRepository:
         )
         return self._with_guarded_reconciliation_evidence(failure, exc)
 
+    def _claim_exact_replay_result(
+        self,
+        *,
+        command: ClaimDirectedEffectCommandV1,
+        operation: DirectedEffectOperationIdentityV1,
+        binding: DirectedEffectParentBindingV1,
+        registry: _ParentRegistry,
+        aggregate: _Aggregate,
+        committed: _CommittedTransition,
+        ready_context: _ReadyOperationContext,
+        requested_descriptor: Mapping[str, object],
+    ) -> DirectedEffectOperationResultV1 | None:
+        """Rehydrate a grant-bearing claim success from a durable EFFECT_STARTED.
+
+        Returns ``None`` when the committed transition is not an exact semantic
+        replay of the requested claim (caller falls through to generic replay).
+        """
+
+        requested = self._normalized_replay_descriptor(requested_descriptor)
+        if requested != committed.normalized.replay:
+            return None
+        if aggregate.state != "EFFECT_STARTED" or committed.state != "EFFECT_STARTED":
+            return None
+        if committed.version != aggregate.version or committed.version < 2:
+            return None
+        projection = _StrictOperationProjection(
+            binding=binding,
+            registry=registry,
+            aggregate=aggregate,
+            operation_records=(),
+            ready_context=ready_context,
+        )
+        try:
+            claim_grant = self._claim_grant(
+                command=command,
+                operation=operation,
+                projection=projection,
+                transition=committed,
+            )
+        except (TypeError, ValueError):
+            return None
+        snapshot = self._project_snapshot(aggregate)
+        if snapshot is None:
+            return None
+        evidence: dict[str, object] = {
+            "event_id": committed.event_id,
+            "appended_seq": committed.seq,
+            "authoritative_append": False,
+            "authoritative_effect_receipt": True,
+            "append_disposition": "committed_or_exact_replay",
+            "committed_event_id": committed.event_id,
+            "committed_seq": committed.seq,
+            "source_head_seq": aggregate.source_head_seq,
+            "claim_exact_replay": True,
+        }
+        evidence.update(self._transition_descriptor_evidence(committed))
+        return DirectedEffectOperationResultV1(
+            ok=True,
+            code="effect_claimed",
+            operation=operation,
+            state="EFFECT_STARTED",
+            version=aggregate.version,
+            snapshot=snapshot,
+            idempotent=False,
+            evidence=evidence,
+            claim_grant=claim_grant,
+        )
+
     def _replay_result(
         self,
         operation: DirectedEffectOperationIdentityV1,
@@ -6508,6 +6814,31 @@ class DirectedEffectOperationRepository:
             idempotent=True,
             evidence=evidence,
         )
+
+    def _canonical_receipt_for_durable_transition(
+        self,
+        *,
+        receipt: GuardedFactAppendedV1 | None,
+        transition: _CommittedTransition,
+        guarded_command: AppendIfGuardedSnapshotCommandV1,
+    ) -> GuardedFactAppendedV1 | FactStreamError:
+        """Prefer public exact-replay receipt; fall back to original when durable.
+
+        When the transition is already on the operation stream and the original
+        guarded receipt binds that event, a public exact-replay failure must not
+        orphan EFFECT_STARTED / RECEIPT_COMMITTED without a success result.
+        """
+
+        try:
+            return append_if_guarded_snapshot(guarded_command)
+        except FactStreamError as exc:
+            if (
+                receipt is not None
+                and receipt.event_id == transition.event_id
+                and receipt.appended_seq == transition.seq
+            ):
+                return receipt
+            return exc
 
     @staticmethod
     def _transition_descriptor_evidence(transition: _CommittedTransition) -> dict[str, object]:

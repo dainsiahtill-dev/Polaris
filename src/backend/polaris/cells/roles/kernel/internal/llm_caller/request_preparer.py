@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -298,7 +299,16 @@ def _ensure_current_user_message_final(
     messages: list[dict[str, Any]],
     current_user_instruction: Any,
 ) -> list[dict[str, Any]]:
-    """Keep the active user turn as the final provider-visible instruction."""
+    """Keep the active user turn as the final provider-visible instruction.
+
+    R143: never shrink a richer provider-visible user body when the instruction is
+    only a substring of that body. Director messages embed
+    ``actual_sibling_exports`` (parent source bodies + receipt markers). A short
+    ``context.message`` that appears inside the long turn used to match via
+    ``instruction in content`` and then overwrite content with the short token,
+    stripping sibling exports so final-request coverage failed closed with
+    ``missing_required_refs=actual_sibling_exports`` (L1-01 r142c TASK-2).
+    """
 
     current_user_token = _normalize_user_message_for_dedupe(current_user_instruction)
     if not current_user_token:
@@ -311,18 +321,114 @@ def _ensure_current_user_message_final(
         if role != "user":
             continue
         content_token = _normalize_user_message_for_dedupe(message.get("content", ""))
+        if not content_token:
+            continue
         if content_token == current_user_token or current_user_token in content_token:
             last_match_index = index
 
     if last_match_index >= 0:
         current_message = normalized_messages.pop(last_match_index)
         current_message["role"] = "user"
-        current_message["content"] = current_user_token
+        existing_token = _normalize_user_message_for_dedupe(current_message.get("content", ""))
+        if existing_token == current_user_token:
+            current_message["content"] = current_user_token
+        elif current_user_token in existing_token:
+            # Keep the richer body (director turn with sibling-export evidence).
+            pass
+        else:
+            current_message["content"] = current_user_token
         normalized_messages.append(current_message)
         return normalized_messages
 
     normalized_messages.append({"role": "user", "content": current_user_token})
     return normalized_messages
+
+
+def _render_actual_sibling_exports_pin(payload: Mapping[str, Any]) -> str:
+    """Render the exact provider-visible pin expected by final-request coverage."""
+
+    snapshot_hash = str(payload.get("snapshot_sha256") or "").strip()
+    lines = [
+        "已提交父任务的真实依赖产物 / Committed parent-task dependency artifacts:",
+        (
+            f"polaris.actual_sibling_exports.evidence.v2 snapshot_sha256={snapshot_hash} "
+            "(effect-receipt bound; exact bodies below are authoritative)"
+        ),
+        ("消费这些文件时必须使用下列真实定义；不得用 planned_exports、tentative_exports 或猜测符号覆盖物理事实。"),
+    ]
+    modules = payload.get("modules")
+    if isinstance(modules, list):
+        for module in modules:
+            if not isinstance(module, Mapping):
+                continue
+            lines.extend(
+                [
+                    (
+                        f"--- parent_task_id={module.get('parent_task_id')} "
+                        f"receipt_id={module.get('effect_receipt_id')} "
+                        f"path={module.get('path')} sha256={module.get('sha256')} ---"
+                    ),
+                    str(module.get("body") or ""),
+                ]
+            )
+    return "\n".join(lines)
+
+
+def _ensure_actual_sibling_exports_message_bound(
+    messages: list[dict[str, Any]],
+    context_override: Any,
+) -> list[dict[str, Any]]:
+    """Re-pin structured sibling-export evidence into provider messages when unbound.
+
+    R150: transaction multi-turn tool continuation keeps
+    ``context_override.actual_sibling_exports`` but prebuilt chat history often
+    drops the original user turn bodies after large tool results. Final-request
+    coverage requires both structured payload and message binding
+    (``polaris.actual_sibling_exports.evidence.v2`` + module headers/bodies).
+    Without re-pin, TASK-2 follow-up fails closed with
+    ``missing_required_refs=actual_sibling_exports`` and the director process
+    exits without a canonical outcome (r149 residual).
+    """
+
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+        _actual_sibling_exports_message_bound,
+        _looks_like_actual_sibling_exports,
+    )
+
+    if not isinstance(context_override, Mapping):
+        return [dict(message) for message in messages if isinstance(message, dict)]
+
+    candidate: Any = context_override.get("actual_sibling_exports")
+    if not isinstance(candidate, Mapping):
+        metadata = context_override.get("metadata")
+        if isinstance(metadata, Mapping):
+            candidate = metadata.get("actual_sibling_exports")
+    if not isinstance(candidate, Mapping):
+        return [dict(message) for message in messages if isinstance(message, dict)]
+
+    payload = dict(candidate)
+    # Structure-only validation first; message binding is restored below when needed.
+    if not _looks_like_actual_sibling_exports(payload, messages=None):
+        return [dict(message) for message in messages if isinstance(message, dict)]
+
+    normalized = [dict(message) for message in messages if isinstance(message, dict)]
+    if _actual_sibling_exports_message_bound(payload, normalized):
+        return normalized
+
+    pin = _render_actual_sibling_exports_pin(payload)
+    if not pin.strip():
+        return normalized
+    # R152: insert among leading system messages — never append after the
+    # trailing user/tool turn. ContextOS prompt audit requires
+    # current_user_final (final_role == "user"); a trailing system pin from
+    # R150 made final_role=system → context_os_prompt_audit_failed →
+    # final_request_context_quality_failed → director task fail-closed after
+    # successful tool batches (r151 residual).
+    insert_at = 0
+    while insert_at < len(normalized) and str(normalized[insert_at].get("role") or "").strip().lower() == "system":
+        insert_at += 1
+    normalized.insert(insert_at, {"role": "system", "content": pin})
+    return normalized
 
 
 def _ensure_core_role_identity(
@@ -1221,6 +1327,12 @@ class LLMRequestPreparer:
             messages = list(context_result.messages)
 
         messages = _ensure_current_user_message_final(messages, getattr(context, "message", ""))
+        # R150: tool-loop multi-turn can keep structured sibling exports while
+        # dropping the original user-turn bodies. Re-pin before coverage audit.
+        messages = _ensure_actual_sibling_exports_message_bound(
+            messages,
+            override if isinstance(override, dict) else getattr(context, "context_override", None),
+        )
         _reject_preexisting_factory_evidence_protocol(
             messages,
             factory_authority_bound=factory_authority is not None,

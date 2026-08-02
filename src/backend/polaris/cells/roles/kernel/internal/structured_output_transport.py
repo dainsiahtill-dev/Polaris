@@ -269,16 +269,58 @@ def trusted_structured_output_stream_evidence(event: Mapping[str, Any]) -> dict[
     return dict(evidence)
 
 
+def _coerce_structured_output_payload_defaults(
+    payload: Mapping[str, Any],
+    json_schema: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Fill missing/null required empty containers before strict schema validation.
+
+    Provider structured-output frequently omits empty arrays such as CE
+    ``risk_flags: []``. SCHEMA-REPAIR that re-asks the model can fail the same
+    way. Coerce only missing/null required top-level properties whose schema
+    type is ``array`` -> ``[]`` or ``object`` -> ``{}``. Scalars, enums, and
+    wrong-type values remain fail-closed under the validator.
+    """
+
+    result = dict(payload)
+    properties = json_schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return result
+    required = json_schema.get("required")
+    if not isinstance(required, (list, tuple)):
+        return result
+    for key in required:
+        if not isinstance(key, str) or not key.strip():
+            continue
+        prop_schema = properties.get(key)
+        if not isinstance(prop_schema, Mapping):
+            continue
+        prop_type = prop_schema.get("type")
+        if key in result and result[key] is not None:
+            continue
+        if prop_type == "array":
+            result[key] = []
+        elif prop_type == "object":
+            result[key] = {}
+    return result
+
+
 def _validate_payload(
     payload: Mapping[str, Any],
     plan: StructuredOutputTransportPlan,
-) -> None:
+) -> dict[str, Any]:
+    """Coerce empty-container defaults, then fail-closed on residual schema errors."""
+
+    schema = plan.contract.json_schema
+    if not isinstance(schema, Mapping):
+        raise ValueError("structured_output_json_schema_must_be_object")
+    coerced = _coerce_structured_output_payload_defaults(payload, schema)
     errors = sorted(
-        Draft202012Validator(plan.contract.json_schema).iter_errors(dict(payload)),
+        Draft202012Validator(dict(schema)).iter_errors(coerced),
         key=lambda item: tuple(str(part) for part in item.absolute_path),
     )
     if not errors:
-        return
+        return coerced
     first = errors[0]
     path = ".".join(str(part) for part in first.absolute_path) or "$"
     raise ValueError(f"structured_output_payload_schema_mismatch:{path}:{first.message}")
@@ -326,7 +368,7 @@ def normalize_structured_output_response(
         raise ValueError("structured_output_tool_must_be_called_exactly_once")
     result_call = result_calls[0]
     payload = _tool_call_arguments(result_call)
-    _validate_payload(payload, plan)
+    payload = _validate_payload(payload, plan)
     payload_json = _canonical_json(payload)
     evidence = _transport_evidence(
         plan,
@@ -367,8 +409,8 @@ class StructuredOutputStreamNormalizer:
             args = sanitized_event.get("args")
             if not isinstance(args, Mapping):
                 raise ValueError("structured_output_tool_arguments_must_be_object")
-            _validate_payload(args, self._plan)
-            self._payload_json = _canonical_json(args)
+            coerced = _validate_payload(args, self._plan)
+            self._payload_json = _canonical_json(coerced)
             self._call_id = str(sanitized_event.get("call_id") or "").strip()
             return ()
         if event_type != "complete":

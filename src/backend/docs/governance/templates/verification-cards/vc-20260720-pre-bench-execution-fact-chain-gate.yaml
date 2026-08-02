@@ -1,7 +1,12 @@
 card_id: vc-20260720-pre-bench-execution-fact-chain-gate
 classification: structural
 status: active
-bench_status: r119_consumed_terminal_offline_closed_pending_independent_review_not_schedulable
+bench_status: r119_audit_closed_authorized_one_fresh_isolated_l1_04
+authorization: >-
+  R119 independent review AUDIT_CLOSED (2026-08-01). Exactly one fresh isolated
+  single-project factory_bench is authorized for project_id L1-04 with
+  --launcher-instance-mode isolated --bench-session-reporting off; no 49977/5173;
+  no concurrent multi-project; do not fabricate COMPLETED_VERIFIED.
 bug_summary: >-
   DEO-1A through DEO-4 and B3.4-B3.6 are closed. The first authorized fresh
   isolated L1-04 run exposed final_request_role_included_refs_drift before CE

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import stat
 from dataclasses import dataclass
@@ -39,6 +40,7 @@ from polaris.cells.director.runtime.public import (
 from polaris.cells.director.runtime.public.directed_effect_contracts import (
     DirectedEffectErrorCodeV1,
     DirectedEffectImmutableItemsV1,
+    DirectedEffectImmutableSequenceV1,
 )
 from polaris.cells.director.runtime.public.directed_effect_policy_contracts import (
     DirectorEffectPolicySnapshotStatusV1,
@@ -57,10 +59,87 @@ from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 from .execution_tools import DirectorToolExecutor as _DirectorToolExecutor
 
+logger = logging.getLogger(__name__)
+
 _NO_FILE_HASH = "0" * 64
-_WRITE_TOOLS = frozenset({"write_file", "edit_file", "delete_file"})
+# Must stay aligned with DirectorToolExecutor physical write surface and platform
+# ACTIVE_WRITE_TOOLS. R179: edit_blocks is the preferred LLM write tool but was
+# missing here → every edit_blocks call hit deo_director_policy_denied at
+# snapshot and dropped the entire DEO batch (TOOL_RESULT_FAILED).
+_WRITE_TOOLS = frozenset(
+    {
+        "write_file",
+        "edit_file",
+        "delete_file",
+        "edit_blocks",
+        "search_replace",
+    }
+)
 _COMMAND_TOOLS = frozenset({"execute_command", "run_command"})
+_PATH_ARGUMENT_KEYS = (
+    "path",
+    "file",
+    "filepath",
+    "file_path",
+    "filePath",
+    "target_file",
+    "target_path",
+    "targetFile",
+    "targetPath",
+)
 _CAPABILITY_SCOPE_VERSION = "director-capability-scope.v1"
+
+
+def _preview_edit_blocks_content(
+    *,
+    old_content: str,
+    values: dict[str, Any],
+    target_path: str,
+) -> str:
+    """Dry-run edit_blocks onto ``old_content`` for write-policy evidence (R179).
+
+    Fail-closed: if blocks cannot be applied, return ``old_content`` so
+    require_change policy denies empty mutations instead of inventing content.
+    """
+
+    from polaris.kernelone.editing.editblock_engine import apply_edit_blocks, parse_edit_blocks
+
+    raw_blocks = (
+        values.get("blocks")
+        if values.get("blocks") is not None
+        else values.get("content")
+        if values.get("content") is not None
+        else values.get("edits")
+        if values.get("edits") is not None
+        else values.get("diff")
+        if values.get("diff") is not None
+        else ""
+    )
+    if isinstance(raw_blocks, (list, tuple)):
+        blocks_text = "\n".join(str(item or "") for item in raw_blocks)
+    else:
+        blocks_text = str(raw_blocks or "")
+    if not blocks_text.strip():
+        return old_content
+    normalized_target = str(target_path or "").replace("\\", "/").strip().lstrip("./")
+    try:
+        blocks = parse_edit_blocks(blocks_text, default_filepath=normalized_target or None)
+    except (TypeError, ValueError):
+        return old_content
+    if not blocks:
+        return old_content
+    scoped = []
+    for block in blocks:
+        block_path = str(block.filepath or "").replace("\\", "/").strip().lstrip("./")
+        if not block_path or block_path == normalized_target:
+            scoped.append(block)
+    if not scoped:
+        return old_content
+    try:
+        applied = apply_edit_blocks({normalized_target: old_content}, scoped, fuzzy=True)
+    except (RuntimeError, TypeError, ValueError):
+        return old_content
+    return str(applied.get(normalized_target, old_content))
 _JOB_TOKEN_VERSION = "job-token-restriction.v1"
 _EXECUTION_ENVELOPE_VERSION = "director-execution-envelope.v1"
 _ALLOWED_COMMANDS_VERSION = "director-allowed-commands.v1"
@@ -177,12 +256,56 @@ def _scope_tokens(items: DirectedEffectImmutableItemsV1, *, field_name: str) -> 
     return _tuple_tokens(_items_to_dict(items).get(field_name, ()), field_name=field_name)
 
 
+def _normalize_relative_workspace_path(raw_path: str) -> str | None:
+    """Return a canonical workspace-relative posix path, or None if unsafe/empty.
+
+    R158: models commonly emit ``./package.json`` (and similar ``./src/...`` forms).
+    Path.resolve() collapses that to ``package.json``, but baseline capture previously
+    compared the raw argument string to the resolved relative path and false-denied
+    with ``deo_path_scope_denied`` — aborting the first write of a greenfield project.
+    """
+
+    token = str(raw_path or "").replace("\\", "/").strip()
+    if not token or "\n" in token or "\r" in token:
+        return None
+    if Path(token).is_absolute() or token.startswith("/"):
+        return None
+    while token.startswith("./"):
+        token = token[2:]
+    token = token.lstrip("/")
+    if not token or token == ".":
+        return None
+    parts: list[str] = []
+    for part in token.split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            return None
+        parts.append(part)
+    if not parts:
+        return None
+    return "/".join(parts)
+
+
 def _thaw(value: object) -> object:
+    """Rehydrate frozen DEO argument values into plain Python containers.
+
+    ``DirectedEffectImmutableMapV1`` and ``DirectedEffectImmutableSequenceV1`` both
+    expose an ``items`` tuple attribute. Map items are ``(key, value)`` pairs;
+    sequence items are plain values. Discriminating only on ``hasattr(..., "items")``
+    mis-treats sequences as maps and raises ``ValueError: too many values to unpack``
+    during policy capture — historically mislabeled as ``deo_authorization_hash_drift``.
+    """
+
+    if isinstance(value, DirectedEffectImmutableMapV1):
+        return {str(key): _thaw(item) for key, item in value.items}
+    if isinstance(value, DirectedEffectImmutableSequenceV1):
+        return [_thaw(item) for item in value.items]
     if isinstance(value, tuple):
+        # Bare tuples may still appear from older frozen argument shapes.
+        if value and all(isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str) for item in value):
+            return {str(key): _thaw(item) for key, item in value}  # type: ignore[misc]
         return [_thaw(item) for item in value]
-    items = getattr(value, "items", None)
-    if isinstance(items, tuple):
-        return {key: _thaw(item) for key, item in items}
     return value
 
 
@@ -205,10 +328,15 @@ class _DirectorEffectPolicySnapshotPort:
 
         values = _items_to_dict(request.normalized_arguments)
         raw_path = next(
-            (values.get(key) for key in ("path", "file", "filepath") if values.get(key) is not None),
+            (values.get(key) for key in _PATH_ARGUMENT_KEYS if values.get(key) is not None),
             "",
         )
-        expected_target_path = raw_path if isinstance(raw_path, str) else ""
+        # Always store the canonical relative form so sealed baseline evidence matches
+        # resolve()-derived target_path (R158 ./prefix collapse).
+        if isinstance(raw_path, str) and raw_path.strip():
+            expected_target_path = _normalize_relative_workspace_path(raw_path) or raw_path.strip()
+        else:
+            expected_target_path = ""
         current, error = self._read_target_state(
             normalized_tool_name=request.normalized_tool_name,
             normalized_arguments=request.normalized_arguments,
@@ -342,39 +470,39 @@ class _DirectorEffectPolicySnapshotPort:
                 raise ValueError("capture identity mismatch")
 
             restriction = _restriction_values(request.current_job_token_restriction_evidence)
-            policy_target = self._capture_policy_target_source(request)
-            operation = self._capture_operation_source(request)
-            capability_scope = self._capture_capability_scope_source(
-                request,
-                restriction,
-            )
-            job_token = self._capture_job_token_source(request, restriction)
-            tool_spec = self._capture_tool_spec_source(request)
-            execution_envelope = self._capture_execution_envelope_source(request)
-            allowed_commands = self._capture_allowed_commands_source(
-                request,
-                restriction,
-            )
-            if any(
-                source is None
-                for source in (
-                    policy_target,
-                    operation,
-                    capability_scope,
-                    job_token,
-                    tool_spec,
-                    execution_envelope,
-                    allowed_commands,
-                )
-            ):
-                raise ValueError("current source unavailable")
-            assert policy_target is not None
-            assert operation is not None
-            assert capability_scope is not None
-            assert job_token is not None
-            assert tool_spec is not None
-            assert execution_envelope is not None
-            assert allowed_commands is not None
+            sources: dict[str, object] = {
+                "policy_target": self._capture_policy_target_source(request),
+                "operation": self._capture_operation_source(request),
+                "capability_scope": self._capture_capability_scope_source(
+                    request,
+                    restriction,
+                ),
+                "job_token": self._capture_job_token_source(request, restriction),
+                "tool_spec": self._capture_tool_spec_source(request),
+                "execution_envelope": self._capture_execution_envelope_source(request),
+                "allowed_commands": self._capture_allowed_commands_source(
+                    request,
+                    restriction,
+                ),
+            }
+            missing = [name for name, value in sources.items() if value is None]
+            if missing:
+                # Keep the public error closed, but name the failing source for logs.
+                raise ValueError(f"current source unavailable: {','.join(missing)}")
+            policy_target = sources["policy_target"]
+            operation = sources["operation"]
+            capability_scope = sources["capability_scope"]
+            job_token = sources["job_token"]
+            tool_spec = sources["tool_spec"]
+            execution_envelope = sources["execution_envelope"]
+            allowed_commands = sources["allowed_commands"]
+            assert isinstance(policy_target, tuple)
+            assert isinstance(operation, tuple)
+            assert isinstance(capability_scope, tuple)
+            assert isinstance(job_token, tuple)
+            assert isinstance(tool_spec, tuple)
+            assert isinstance(execution_envelope, tuple)
+            assert isinstance(allowed_commands, tuple)
             evidence = DirectorEffectCurrentPolicyEvidenceV1(
                 baseline_authorization_binding_hash=binding.authorization_binding_hash,
                 baseline_public_policy_evidence_hash=public_policy.public_policy_evidence_hash,
@@ -396,7 +524,12 @@ class _DirectorEffectPolicySnapshotPort:
                 allowed_commands_version=allowed_commands[0],
                 allowed_commands_hash=allowed_commands[1],
             )
-        except (AttributeError, KeyError, TypeError, ValueError):
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            logger.warning(
+                "deo_current_policy_evidence_unavailable tool=%s reason=%s",
+                getattr(request, "normalized_tool", ""),
+                exc,
+            )
             return DirectorEffectCurrentPolicyEvidenceCaptureResultV1(
                 status="denied",
                 evidence=None,
@@ -429,6 +562,27 @@ class _DirectorEffectPolicySnapshotPort:
             return False
         return canonical == grant
 
+    @staticmethod
+    def _target_evidence_semantically_matches(
+        current: DirectorEffectTargetStateEvidenceV1,
+        baseline: DirectorEffectTargetStateEvidenceV1,
+    ) -> bool:
+        """Return True when target binding is unchanged for post-claim policy capture.
+
+        R141: full dataclass equality embeds volatile ``stat_*`` fields in
+        ``minimal_content_evidence``. Content-identical targets must not deny
+        claim after multi-member batches just because mtime/ino noise differs.
+        Semantic match is path + exists + content hash + agents policy + no-file.
+        """
+
+        return (
+            current.target_path == baseline.target_path
+            and current.exists == baseline.exists
+            and current.is_no_file_state == baseline.is_no_file_state
+            and current.before_content_hash == baseline.before_content_hash
+            and current.agents_policy_hash == baseline.agents_policy_hash
+        )
+
     def _capture_policy_target_source(
         self,
         request: DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
@@ -443,7 +597,7 @@ class _DirectorEffectPolicySnapshotPort:
         if (
             error is not None
             or current is None
-            or current.evidence != baseline
+            or not self._target_evidence_semantically_matches(current.evidence, baseline)
             or not snapshot.policy_version.strip()
             or not snapshot.policy_hash.strip()
         ):
@@ -489,18 +643,32 @@ class _DirectorEffectPolicySnapshotPort:
     def _capture_tool_spec_source(
         request: DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
     ) -> tuple[str, str] | None:
+        """Re-verify the authorized tool definition; bind evidence to baseline hashes.
+
+        R174/M02: live ``capture_effective_spec`` embeds the *entire* registry
+        alias map in ``alias_binding_hash`` / ``snapshot_hash``. Unrelated mid-batch
+        registry growth (lazy tool registration, alias inject) previously
+        false-denied the Nth serial write after N-1 successes with opaque
+        ``deo_current_policy_evidence_unavailable``. Post-claim only needs proof
+        that the authorized tool's effective definition and canonical resolution
+        still match; evidence continuity uses the frozen baseline binding hashes.
+        """
+
         binding = request.baseline_authorization_binding
         classification = binding.classification_evidence
-        current = ToolSpecRegistry.capture_effective_spec(classification.raw_tool_name)
+        try:
+            current = ToolSpecRegistry.capture_effective_spec(classification.raw_tool_name)
+        except (RuntimeError, TypeError, ValueError):
+            return None
         if (
             not current.registered
             or current.canonical_tool_name != request.normalized_tool
+            or current.canonical_tool_name != classification.canonical_tool_name
             or current.tool_spec_hash != binding.tool_spec_hash
-            or current.snapshot_hash != binding.tool_spec_snapshot_hash
-            or current.alias_binding_hash != binding.alias_binding_hash
+            or current.tool_spec_hash != classification.tool_spec_hash
         ):
             return None
-        return current.snapshot_hash, current.alias_binding_hash
+        return binding.tool_spec_snapshot_hash, binding.alias_binding_hash
 
     @staticmethod
     def _capture_execution_envelope_source(
@@ -959,7 +1127,12 @@ class _DirectorEffectPolicySnapshotPort:
             or not self._path_is_allowed(target_state.target_path, policy_paths)
         ):
             return self._snapshot_denial(request, "deo_path_scope_denied", target_state), observed
-        policy_result = self._validate_write_policy(request, observed, policy_paths)
+        try:
+            policy_result = self._validate_write_policy(request, observed, policy_paths)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            # Malformed thawed arguments (e.g. nested list content) must deny with a
+            # typed tool-normalization code, not bubble as authorization hash drift.
+            return self._snapshot_denial(request, "deo_tool_normalization_failed", target_state), observed
         if not bool(policy_result.get("ok")):
             return self._snapshot_denial(request, "deo_director_policy_denied", target_state), observed
         return self._snapshot_allowed(request, target_state, policy_result), observed
@@ -1024,10 +1197,25 @@ class _DirectorEffectPolicySnapshotPort:
             )
             return _TargetRead(evidence=evidence, old_content=""), None
         values = _items_to_dict(normalized_arguments)
-        raw_path = next((values.get(key) for key in ("path", "file", "filepath") if values.get(key) is not None), None)
+        raw_path = next(
+            (values.get(key) for key in _PATH_ARGUMENT_KEYS if values.get(key) is not None),
+            None,
+        )
+        # Missing/malformed path is a tool-argument contract failure, not a
+        # capability-scope denial. R140: models often emit search/replace without
+        # file; mislabeling that as deo_path_scope_denied hid the real gap and
+        # aborts the whole multi-mutation batch as an opaque scope failure.
         if not isinstance(raw_path, str) or not raw_path.strip() or "\n" in raw_path or "\r" in raw_path:
+            return None, "deo_tool_normalization_failed"
+        normalized_arg_path = _normalize_relative_workspace_path(raw_path)
+        if normalized_arg_path is None:
+            # Absolute / traversal / empty-after-collapse → path scope, not tool shape.
             return None, "deo_path_scope_denied"
-        candidate = Path(raw_path)
+        expected_raw = str(expected_target_path or "").strip()
+        expected_normalized = _normalize_relative_workspace_path(expected_raw) if expected_raw else None
+        if expected_raw and expected_normalized is None:
+            return None, "deo_path_scope_denied"
+        candidate = Path(normalized_arg_path)
         if candidate.is_absolute():
             return None, "deo_path_scope_denied"
         try:
@@ -1038,7 +1226,10 @@ class _DirectorEffectPolicySnapshotPort:
         if target == self._workspace or target.is_dir():
             return None, "deo_path_scope_denied"
         target_path = target.relative_to(self._workspace).as_posix()
-        if target_path != expected_target_path:
+        # Compare on the canonical relative form so ``./package.json`` matches
+        # baseline/scope evidence that stores ``package.json`` (and vice versa).
+        # Empty expected binding is fail-closed for file mutations (matches pre-R158).
+        if expected_normalized is None or target_path != expected_normalized:
             return None, "deo_path_scope_denied"
         try:
             try:
@@ -1116,13 +1307,15 @@ class _DirectorEffectPolicySnapshotPort:
                 or before_link_target != after_link_target
             ):
                 raise ValueError("AGENTS policy candidate changed during observation")
+            # Race detection still uses before/after lstat/stat above, but the
+            # hash material must stay content-stable. Embedding mtime/ino
+            # (R141 gap) made multi-member post-claim capture false-deny when
+            # any applicable AGENTS.md was touched mid-batch.
             records.append(
                 {
                     "content_hash": hashlib.sha256(content).hexdigest(),
-                    "lstat": _stat_identity(before_lstat),
                     "path": candidate.relative_to(self._workspace).as_posix(),
                     "resolved_path": before_relative,
-                    "stat": _stat_identity(before_stat),
                     "symlink_target": before_link_target,
                 }
             )
@@ -1137,27 +1330,79 @@ class _DirectorEffectPolicySnapshotPort:
         values = {key: _thaw(value) for key, value in request.normalized_arguments}
         values["allowed_scope"] = list(policy_paths)
         proposed = values.get("content", "")
-        new_content = proposed if isinstance(proposed, str) else ""
-        operation = request.normalized_tool_name
+        # write_file/edit_file require string bodies. Nested dict/list content is
+        # tool-arg corruption (e.g. HTML/JSON misparse); never coerce to empty write.
+        if request.normalized_tool_name in {"write_file", "edit_file"} and not isinstance(proposed, str):
+            raise ValueError("write tool content must be a string")
+        if request.normalized_tool_name == "edit_file":
+            for field_name in ("old_string", "new_string", "old_content", "new_content"):
+                field_value = values.get(field_name)
+                if field_value is not None and not isinstance(field_value, str):
+                    raise ValueError(f"edit_file {field_name} must be a string")
+        tool_name = request.normalized_tool_name
+        if tool_name == "delete_file":
+            new_content = ""
+        elif tool_name == "edit_blocks":
+            new_content = _preview_edit_blocks_content(
+                old_content=target_read.old_content,
+                values=values,
+                target_path=target_read.evidence.target_path,
+            )
+        elif tool_name in {"edit_file", "search_replace"}:
+            search = str(
+                values.get("search")
+                or values.get("old_string")
+                or values.get("oldText")
+                or values.get("old_content")
+                or ""
+            )
+            replace = str(
+                values.get("replace")
+                or values.get("new_string")
+                or values.get("newText")
+                or values.get("new_content")
+                or ""
+            )
+            if search and search in target_read.old_content:
+                new_content = target_read.old_content.replace(search, replace, 1)
+            else:
+                new_content = proposed if isinstance(proposed, str) else target_read.old_content
+        else:
+            new_content = proposed if isinstance(proposed, str) else ""
+        operation = tool_name
         if operation == "write_file":
             operation = "write_file:modify" if target_read.evidence.exists else "write_file:create"
+        elif operation in {"edit_blocks", "search_replace"}:
+            # Policy evidence uses edit_file family for partial rewrites.
+            operation = "edit_file"
         return _DirectorToolExecutor._validate_director_policy_for_write(
             cast(_DirectorToolExecutor, self),
             workspace=self._workspace,
             rel_path=target_read.evidence.target_path,
             old_content=target_read.old_content,
-            new_content="" if request.normalized_tool_name == "delete_file" else new_content,
+            new_content=new_content,
             operation=operation,
             tool_kwargs=values,
         )
 
     @staticmethod
     def _path_is_allowed(target_path: str, scopes: tuple[str, ...]) -> bool:
-        return bool(scopes) and any(
-            target_path == scope.strip("/") or target_path.startswith(f"{scope.strip('/')}/")
-            for scope in scopes
-            if scope.strip("/")
-        )
+        """Capability-scope match with canonical relative path forms (R158 ./prefix)."""
+
+        normalized = _normalize_relative_workspace_path(target_path)
+        if not normalized:
+            return False
+        for scope in scopes:
+            scope_norm = _normalize_relative_workspace_path(scope)
+            if not scope_norm:
+                # Fall back for already-clean tokens that only need slash strip.
+                cleaned = str(scope or "").replace("\\", "/").strip().strip("/")
+                if not cleaned or cleaned == "." or ".." in cleaned.split("/"):
+                    continue
+                scope_norm = cleaned
+            if normalized == scope_norm or normalized.startswith(f"{scope_norm}/"):
+                return True
+        return False
 
     def _snapshot_allowed(
         self,

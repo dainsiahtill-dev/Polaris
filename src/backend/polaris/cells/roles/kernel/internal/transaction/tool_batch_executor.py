@@ -18,6 +18,7 @@ from typing import Any, NoReturn, cast
 from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
     AppendToolCallLifecycleEventCommandV1,
+    FailureClassV1,
     append_run_ledger_event,
     append_tool_call_lifecycle_event,
     build_tool_batch_lifecycle_receipt_from_sources,
@@ -120,12 +121,165 @@ from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
 logger = logging.getLogger(__name__)
 
 
+def _is_deo_abort_error(message: str) -> bool:
+    """Return True when a RuntimeError is a Directed-Effect authorization abort."""
+
+    token = str(message or "").strip()
+    if not token:
+        return False
+    lowered = token.lower()
+    return lowered.startswith("deo_") or lowered.startswith("directed_effect_")
+
+
+# R149: advisory flock contention under multi-member DEO inventory admit maps
+# (or previously failed to map) to these upstream codes.  Retry after yielding
+# the event loop so concurrent settlement/heartbeat queries can release locks.
+_TRANSIENT_DEO_PREPARE_UPSTREAM_CODES: frozenset[str] = frozenset(
+    {
+        "stream_lock_timeout",
+        "lock_acquisition_timeout",
+        "file_lock_timeout",
+        "lock_timeout",
+        # Pre-R149 taxonomy: lock_acquisition_timeout fell through to unknown.
+        "fact_stream_unknown_failure",
+    }
+)
+_DEO_PREPARE_LOCK_RETRY_ATTEMPTS = 4
+_DEO_PREPARE_LOCK_RETRY_BASE_SECONDS = 0.05
+
+
+def _deo_prepare_upstream_code(prepared: Any) -> str:
+    """Extract TaskRuntime upstream_code from a lifecycle prepare denial."""
+
+    for key, value in getattr(prepared, "upstream_evidence", None) or ():
+        if str(key) == "upstream_code" and value:
+            return str(value).strip()
+    return ""
+
+
+def _is_transient_deo_prepare_lock_failure(prepared: Any) -> bool:
+    """Return True when prepare_batch failed on a retryable fact-stream lock."""
+
+    if getattr(prepared, "status", None) == "ready" and getattr(prepared, "prepared_batch", None) is not None:
+        return False
+    upstream = _deo_prepare_upstream_code(prepared)
+    if upstream in _TRANSIENT_DEO_PREPARE_UPSTREAM_CODES:
+        return True
+    # port_exception shells may wrap the raw lock code.
+    if any(token in upstream for token in _TRANSIENT_DEO_PREPARE_UPSTREAM_CODES):
+        return True
+    error_code = str(getattr(prepared, "error_code", None) or "")
+    return any(token in error_code for token in ("stream_lock_timeout", "lock_acquisition_timeout"))
+
+
+def _seal_deo_abort_tool_lifecycle(
+    *,
+    workspace: str,
+    run_id: str,
+    task_id: str,
+    turn_id: str,
+    role_id: str,
+    invocations: list[Any],
+    metadata: Mapping[str, Any] | None,
+    ledger: TurnLedger | None,
+    error_code: str,
+    provider_response_hash: str = "",
+) -> dict[str, Any]:
+    """Seal a blocked tool lifecycle receipt when DEO aborts before physical dispatch.
+
+    R135: Claimed materialization that dies on ``deo_director_policy_denied`` (or
+    sibling DEO aborts) must not leave Run Ledger as bare TOOL_LIFECYCLE_MISSING.
+    This helper is best-effort and never swallows the original abort.
+
+    Complexity:
+        O(n) over decoded invocations for dropped-call refs and ledger append.
+    """
+
+    meta = dict(metadata) if isinstance(metadata, Mapping) else {}
+    error_token = str(error_code or "directed_effect_policy_denied").strip() or "directed_effect_policy_denied"
+    dropped_refs: list[dict[str, str]] = []
+    for invocation in invocations:
+        tool_name = extract_invocation_tool_name(invocation) or "unknown_tool"
+        dropped_refs.append(
+            tool_invocation_audit_ref(
+                invocation,
+                reason=error_token,
+                tool_name=tool_name,
+                target_file=extract_target_file_from_invocation_args(invocation),
+            )
+        )
+    if not dropped_refs:
+        dropped_refs = [{"tool_name": "write_file", "reason": error_token}]
+
+    lifecycle = build_tool_batch_lifecycle_receipt_from_sources(
+        run_id=str(run_id or ""),
+        task_id=str(task_id or ""),
+        turn_id=str(turn_id or ""),
+        role=str(role_id or ""),
+        provider_response_hash=str(provider_response_hash or meta.get("provider_response_hash") or ""),
+        metadata=meta,
+        decoded_tool_calls_count=len(invocations),
+        receipts=[],
+        dropped_tool_calls=dropped_refs,
+        missing_receipt_reason=error_token,
+    ).to_dict()
+    # Authoritative DEO abort is a blocked post-decode outcome, not silent missing.
+    lifecycle["dispatch_status"] = "blocked"
+    lifecycle["failure_class"] = FailureClassV1.TOOL_RESULT_FAILED.value
+    lifecycle["ok"] = False
+    lifecycle["reason"] = error_token
+    lifecycle["deo_abort"] = True
+    lifecycle["deo_error_code"] = error_token
+
+    if ledger is not None:
+        ledger.anomaly_flags.append(
+            {
+                "type": "DEO_ABORT",
+                "error_code": error_token,
+                "failure_class": FailureClassV1.TOOL_RESULT_FAILED.value,
+                "tool_call_lifecycle_receipt": dict(lifecycle),
+                "turn_id": str(turn_id or ""),
+            }
+        )
+    resolved_run_id = str(run_id or lifecycle.get("run_id") or "").strip()
+    if not resolved_run_id and ledger is not None:
+        resolved_run_id = str(getattr(ledger, "run_id", "") or "").strip()
+    if not resolved_run_id:
+        # Last-resort identity: never invent a fake run, but still keep anomaly on ledger.
+        logger.warning(
+            "R135: DEO-abort lifecycle sealed only in-memory (missing run_id) turn_id=%s error=%s",
+            turn_id,
+            error_token,
+        )
+        return lifecycle
+    try:
+        append_tool_call_lifecycle_event(
+            AppendToolCallLifecycleEventCommandV1(
+                workspace=workspace,
+                run_id=resolved_run_id,
+                task_id=str(task_id or ""),
+                turn_id=str(turn_id or ""),
+                role=str(role_id or ""),
+                lifecycle_receipt=lifecycle,
+                stage="tool_batch",
+                project_id=str(task_id or ""),
+                ok=False,
+            )
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        logger.debug("R135: failed to append DEO-abort tool lifecycle to Run Ledger", exc_info=True)
+    return lifecycle
+
+
 @dataclass(frozen=True, slots=True)
 class _PreparedDirectedEffectDispatchV1:
     """Whole mutation batch plus exact gateway-owned JobToken restrictions."""
 
     batch: PreparedDirectedEffectBatchV1
     restrictions_by_call_id: tuple[tuple[str, DirectedEffectImmutableItemsV1], ...]
+    # Soft-denied members (call_id, tool_name, error_code) that must not abort
+    # siblings. Empty when every mutation authorized.
+    dropped_members: tuple[tuple[str, str, str], ...] = ()
 
 
 def _is_mutation_for_speculative_routing(
@@ -1269,12 +1423,8 @@ class ToolBatchExecutor:
         self.directed_effect_execution_attempt = directed_effect_execution_attempt
         self.directed_effect_execution_attempt_authority = directed_effect_execution_attempt_authority
         deferred_request_fence = DeferredRequestReplayFence()
-        self._deferred_repair_synthesizer = DeferredRepairEffectSynthesizer(
-            _replay_fence=deferred_request_fence
-        )
-        self._deferred_command_synthesizer = DeferredCommandEffectSynthesizer(
-            _replay_fence=deferred_request_fence
-        )
+        self._deferred_repair_synthesizer = DeferredRepairEffectSynthesizer(_replay_fence=deferred_request_fence)
+        self._deferred_command_synthesizer = DeferredCommandEffectSynthesizer(_replay_fence=deferred_request_fence)
         # FIX-20250422: Track files already read in this session to block redundant reads
         self._session_read_files: set[str] = set()
 
@@ -1421,13 +1571,17 @@ class ToolBatchExecutor:
 
         candidates: list[DirectedEffectLifecycleCandidateV1] = []
         restrictions: list[tuple[str, DirectedEffectImmutableItemsV1]] = []
-        for ordinal, invocation in enumerate(mutations):
+        dropped_members: list[tuple[str, str, str]] = []
+        # R140: one malformed/out-of-scope mutation must not abort authorized
+        # siblings (e.g. edit_file with path + valid blocks next to search/replace
+        # missing file). Soft-deny members and renumber inventory ordinals.
+        for invocation in mutations:
             try:
                 verdict = await guard.evaluate_authoritative(
                     DirectedEffectAuthoritativePolicyGuardRequestV1(
                         invocation=invocation,
                         workspace=workspace,
-                        inventory_ordinal=ordinal,
+                        inventory_ordinal=len(candidates),
                         execution_attempt=execution_attempt,
                         turn_id=normalized_turn_id,
                         batch_id=normalized_batch_id,
@@ -1443,8 +1597,15 @@ class ToolBatchExecutor:
                 or verdict.authorization_binding is None
                 or verdict.current_job_token_restriction_evidence is None
             ):
-                error_code = getattr(verdict, "error_code", None)
-                raise RuntimeError(str(error_code or "directed_effect_policy_denied"))
+                error_code = str(getattr(verdict, "error_code", None) or "directed_effect_policy_denied")
+                dropped_members.append(
+                    (
+                        str(invocation.call_id),
+                        str(invocation.tool_name or invocation.raw_tool_name or "unknown_tool"),
+                        error_code,
+                    )
+                )
+                continue
             candidates.append(
                 DirectedEffectLifecycleCandidateV1(
                     preflight=verdict.preflight,
@@ -1459,21 +1620,55 @@ class ToolBatchExecutor:
                 )
             )
 
+        if not candidates:
+            first_error = dropped_members[0][2] if dropped_members else "directed_effect_policy_denied"
+            raise RuntimeError(first_error)
+
         lifecycle = DirectedEffectLifecycleService(
             policy_snapshot_port=runtime.policy_snapshot_port,
         )
-        prepared = lifecycle.prepare_batch(
-            execution_attempt=execution_attempt,
-            execution_attempt_authority=execution_authority,
-            turn_id=normalized_turn_id,
-            batch_id=normalized_batch_id,
-            candidates=tuple(candidates),
-        )
-        if prepared.status != "ready" or prepared.prepared_batch is None:
-            raise RuntimeError(str(prepared.error_code or "directed_effect_batch_prepare_denied"))
+        prepared = None
+        for prepare_attempt in range(_DEO_PREPARE_LOCK_RETRY_ATTEMPTS):
+            prepared = lifecycle.prepare_batch(
+                execution_attempt=execution_attempt,
+                execution_attempt_authority=execution_authority,
+                turn_id=normalized_turn_id,
+                batch_id=normalized_batch_id,
+                candidates=tuple(candidates),
+            )
+            if prepared.status == "ready" and prepared.prepared_batch is not None:
+                break
+            if prepare_attempt + 1 >= _DEO_PREPARE_LOCK_RETRY_ATTEMPTS:
+                break
+            if not _is_transient_deo_prepare_lock_failure(prepared):
+                break
+            # Yield the event loop so concurrent FactStream holders (settlement,
+            # heartbeats, factory cutoff) can release advisory locks.
+            delay = _DEO_PREPARE_LOCK_RETRY_BASE_SECONDS * (2**prepare_attempt)
+            logger.warning(
+                "DEO prepare_batch transient fact-stream lock failure; retrying "
+                "attempt=%s/%s delay=%.3fs error=%s upstream=%s turn_id=%s batch_id=%s",
+                prepare_attempt + 1,
+                _DEO_PREPARE_LOCK_RETRY_ATTEMPTS,
+                delay,
+                prepared.error_code,
+                _deo_prepare_upstream_code(prepared),
+                normalized_turn_id,
+                normalized_batch_id,
+            )
+            await asyncio.sleep(delay)
+        if prepared is None or prepared.status != "ready" or prepared.prepared_batch is None:
+            # Preserve upstream TaskRuntime code (e.g. lease_version_mismatch)
+            # so control-plane receipts are not opaque deo_* shells.
+            code = str(
+                (prepared.error_code if prepared is not None else None) or "directed_effect_batch_prepare_denied"
+            )
+            upstream = _deo_prepare_upstream_code(prepared) if prepared is not None else ""
+            raise RuntimeError(f"{code}:{upstream}" if upstream else code)
         return canonical, _PreparedDirectedEffectDispatchV1(
             batch=prepared.prepared_batch,
             restrictions_by_call_id=tuple(restrictions),
+            dropped_members=tuple(dropped_members),
         )
 
     def _build_tool_batch_runtime(
@@ -1670,12 +1865,32 @@ class ToolBatchExecutor:
         )
         if followup is None:
             return []
-        inventory_invocations, followup_prepared = await self._prepare_directed_effect_dispatch(
-            invocations=list(followup.inventory_invocations),
-            workspace=workspace,
-            turn_id=turn_id,
-            batch_id=followup.batch_id,
-        )
+        try:
+            inventory_invocations, followup_prepared = await self._prepare_directed_effect_dispatch(
+                invocations=list(followup.inventory_invocations),
+                workspace=workspace,
+                turn_id=turn_id,
+                batch_id=followup.batch_id,
+            )
+        except RuntimeError as deo_exc:
+            error_token = str(deo_exc)
+            if _is_deo_abort_error(error_token):
+                _seal_deo_abort_tool_lifecycle(
+                    workspace=workspace,
+                    run_id=str(getattr(ledger, "run_id", "") or ""),
+                    task_id=str(
+                        getattr(self.directed_effect_execution_attempt, "external_task_id", "")
+                        if self.directed_effect_execution_attempt is not None
+                        else ""
+                    ),
+                    turn_id=turn_id,
+                    role_id=str(getattr(self.config, "role_id", "") or ""),
+                    invocations=list(followup.inventory_invocations),
+                    metadata={},
+                    ledger=ledger,
+                    error_code=error_token,
+                )
+            raise
         if followup_prepared is None:
             raise RuntimeError("deo_deferred_repair_followup_not_prepared")
         self._check_effect_policy(inventory_invocations, turn_id)
@@ -2269,12 +2484,33 @@ class ToolBatchExecutor:
 
         # Classify every final invocation and prepare the complete mutation
         # inventory before any read, speculative adoption, or physical effect.
-        invocations, prepared_directed_effect = await self._prepare_directed_effect_dispatch(
-            invocations=invocations,
-            workspace=workspace,
-            turn_id=turn_id,
-            batch_id=str(tool_batch.get("batch_id") or f"{turn_id}_batch"),
-        )
+        try:
+            invocations, prepared_directed_effect = await self._prepare_directed_effect_dispatch(
+                invocations=invocations,
+                workspace=workspace,
+                turn_id=turn_id,
+                batch_id=str(tool_batch.get("batch_id") or f"{turn_id}_batch"),
+            )
+        except RuntimeError as deo_exc:
+            # R135: seal blocked lifecycle before re-raising so claimed materialization
+            # never ends as bare TOOL_LIFECYCLE_MISSING after DEO abort.
+            error_token = str(deo_exc)
+            if _is_deo_abort_error(error_token):
+                _seal_deo_abort_tool_lifecycle(
+                    workspace=workspace,
+                    run_id=execution_run_id,
+                    task_id=execution_task_id,
+                    turn_id=turn_id,
+                    role_id=str(getattr(self.config, "role_id", "") or ""),
+                    invocations=invocations,
+                    metadata=metadata if isinstance(metadata, Mapping) else {},
+                    ledger=ledger,
+                    error_code=error_token,
+                    provider_response_hash=str(
+                        (metadata or {}).get("provider_response_hash") if isinstance(metadata, Mapping) else ""
+                    ),
+                )
+            raise
 
         # Effect policy enforcement gate
         self._check_effect_policy(invocations, turn_id)
@@ -2438,22 +2674,38 @@ class ToolBatchExecutor:
         replay_invocations = normalize_replay_execution_modes(replay_invocations)
 
         # 对未命中的 invocation 走 authoritative batch 执行
+        dropped_member_ids: set[str] = set()
+        dropped_member_rows: list[tuple[str, str, str]] = []
+        if prepared_directed_effect is not None:
+            dropped_member_rows = list(prepared_directed_effect.dropped_members)
+            dropped_member_ids = {call_id for call_id, _tool, _code in dropped_member_rows}
         if replay_invocations:
+
+            def _keep_for_dispatch(inv: Any) -> bool:
+                call_id = str(inv.get("call_id") or "")
+                return call_id not in dropped_member_ids
+
             replay_batch = ToolBatch(
                 batch_id=tool_batch.get("batch_id", BatchId(f"{turn_id}_replay")),
                 parallel_readonly=[
                     inv
                     for inv in replay_invocations
-                    if inv.get("execution_mode") == ToolExecutionMode.READONLY_PARALLEL
+                    if inv.get("execution_mode") == ToolExecutionMode.READONLY_PARALLEL and _keep_for_dispatch(inv)
                 ],
                 readonly_serial=[
-                    inv for inv in replay_invocations if inv.get("execution_mode") == ToolExecutionMode.READONLY_SERIAL
+                    inv
+                    for inv in replay_invocations
+                    if inv.get("execution_mode") == ToolExecutionMode.READONLY_SERIAL and _keep_for_dispatch(inv)
                 ],
                 serial_writes=[
-                    inv for inv in replay_invocations if inv.get("execution_mode") == ToolExecutionMode.WRITE_SERIAL
+                    inv
+                    for inv in replay_invocations
+                    if inv.get("execution_mode") == ToolExecutionMode.WRITE_SERIAL and _keep_for_dispatch(inv)
                 ],
                 async_receipts=[
-                    inv for inv in replay_invocations if inv.get("execution_mode") == ToolExecutionMode.ASYNC_RECEIPT
+                    inv
+                    for inv in replay_invocations
+                    if inv.get("execution_mode") == ToolExecutionMode.ASYNC_RECEIPT and _keep_for_dispatch(inv)
                 ],
             )
             receipts = await self._build_tool_batch_runtime(
@@ -2466,6 +2718,40 @@ class ToolBatchExecutor:
                 TurnId(turn_id),
             )
             receipts_as_dicts.extend(normalize_batch_receipts(receipts))
+
+        # R140: surface soft-denied DEO members as tool errors so the model sees
+        # per-call reasons while authorized siblings still execute.
+        if dropped_member_rows:
+            dropped_results: list[dict[str, Any]] = []
+            for call_id, tool_name, error_code in dropped_member_rows:
+                reason = str(error_code or "directed_effect_policy_denied")
+                dropped_results.append(
+                    {
+                        "call_id": call_id,
+                        "tool_name": tool_name,
+                        "status": "error",
+                        "result": {
+                            "ok": False,
+                            "error": reason,
+                            "error_type": "deo_member_soft_denied",
+                        },
+                        "error": reason,
+                        "effect_receipt": None,
+                        "directed_effect_claim_status": "not_claimed",
+                    }
+                )
+            receipts_as_dicts.append(
+                {
+                    "batch_id": str(tool_batch.get("batch_id") or f"{turn_id}_batch"),
+                    "turn_id": turn_id,
+                    "results": dropped_results,
+                    "raw_results": [dict(item) for item in dropped_results],
+                    "success_count": 0,
+                    "failure_count": len(dropped_results),
+                    "pending_async_count": 0,
+                    "has_pending_async": False,
+                }
+            )
 
         # DEO-2C: adapter repair planning may return one typed deferred request
         # only after the active ToolBatch has completed and released its JIT

@@ -9,6 +9,7 @@ from polaris.cells.control_plane.run_ledger.public.task_boundary import (
     TaskBoundaryFailureClassV1,
     evaluate_task_boundary_verdict,
     normalize_task_boundary_verdict,
+    reconcile_task_boundary_artifacts_with_workspace,
 )
 
 
@@ -25,6 +26,52 @@ def test_task_boundary_reports_incomplete_materialization(tmp_path: Path) -> Non
     assert verdict["failure_class"] == "INCOMPLETE_MATERIALIZATION"
     assert verdict["responsible_layer"] == "director"
     assert verdict["missing_target_files"] == ["src/index.js"]
+
+
+def test_r181_reconcile_promotes_on_disk_pending_to_completed(tmp_path: Path) -> None:
+    """Stale downstream_pending must not contradict files already on disk."""
+
+    (tmp_path / "package.json").write_text('{"name":"garden"}\n', encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("export const x = 1;\n", encoding="utf-8")
+    completed, pending = reconcile_task_boundary_artifacts_with_workspace(
+        workspace=tmp_path,
+        target_files=["src/main.ts"],
+        completed_artifacts=["index.html"],
+        downstream_pending_artifacts=["package.json", "src/main.ts", "src/missing.ts"],
+    )
+    assert "package.json" in completed
+    assert "src/main.ts" in completed
+    assert "index.html" in completed
+    assert "src/missing.ts" in pending
+    assert "package.json" not in pending
+    assert "src/main.ts" not in pending
+
+
+def test_r181_evaluate_boundary_ok_when_pending_files_already_on_disk(tmp_path: Path) -> None:
+    """r181 false-incomplete: declared pending artifacts exist → completed_verified."""
+
+    (tmp_path / "package.json").write_text(
+        '{"name":"garden","main":"dist/main.js","scripts":{"build":"tsc"}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("export function main(): void {}\n", encoding="utf-8")
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="3",
+        run_id="factory_r181",
+        target_files=["src/main.ts"],
+        completed_artifacts=[],
+        downstream_pending_artifacts=["package.json", "src/main.ts", "src/models/index.ts"],
+    ).to_dict()
+    # src/models/index.ts still missing → may fail incomplete if it is a target,
+    # but as downstream-only pending, reconcile drops only on-disk paths.
+    assert "package.json" in verdict["completed_artifacts"]
+    assert "src/main.ts" in verdict["completed_artifacts"]
+    assert "src/models/index.ts" in verdict["downstream_pending_artifacts"]
+    assert verdict["ok"] is True
+    assert verdict["status"] == "completed_verified"
 
 
 def test_task_boundary_failure_class_is_public_contract_export() -> None:

@@ -241,13 +241,13 @@ def _agents_hash(workspace: Path, target_path: str) -> str:
             after_stat.st_size,
             after_stat.st_mtime_ns,
         )
+        # Match production content-stable agents policy hash (R174/M02): omit volatile
+        # lstat/stat identity so mtime noise cannot false-deny post-claim capture.
         records.append(
             {
                 "content_hash": hashlib.sha256(content).hexdigest(),
-                "lstat": (before_lstat.st_dev, before_lstat.st_ino, before_lstat.st_size, before_lstat.st_mtime_ns),
                 "path": candidate.relative_to(root).as_posix(),
                 "resolved_path": resolved_relative,
-                "stat": (before_stat.st_dev, before_stat.st_ino, before_stat.st_size, before_stat.st_mtime_ns),
                 "symlink_target": candidate.readlink().as_posix() if candidate.is_symlink() else None,
             }
         )
@@ -1253,6 +1253,121 @@ async def test_current_policy_capture_binds_live_sources_after_claim(tmp_path: P
     )
 
 
+async def test_current_policy_capture_tolerates_stat_noise_when_content_stable(
+    tmp_path: Path,
+) -> None:
+    """R141: mtime/ino noise must not deny post-claim capture for identical content."""
+
+    workspace = tmp_path / "workspace"
+    target = workspace / "src" / "a.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("before\n", encoding="utf-8")
+    (workspace / "AGENTS.md").write_text("# policy\n", encoding="utf-8")
+    port, request = await _current_policy_capture_request(workspace)
+
+    # Touch preserves content but changes mtime/stat identity fields.
+    import os
+    import time
+
+    time.sleep(0.01)
+    os.utime(target, None)
+
+    result = await port.capture_current_policy_evidence(request)
+    assert result.status == "captured"
+    assert result.error_code is None
+    assert result.evidence is not None
+
+
+async def test_current_policy_capture_tolerates_agents_mtime_noise(
+    tmp_path: Path,
+) -> None:
+    """R174/M02: AGENTS.md mtime must not flip agents_policy_hash mid-batch."""
+
+    import os
+    import time
+
+    workspace = tmp_path / "workspace"
+    target = workspace / "src" / "a.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("before\n", encoding="utf-8")
+    agents = workspace / "AGENTS.md"
+    agents.write_text("# policy\n", encoding="utf-8")
+    port, request = await _current_policy_capture_request(workspace)
+
+    time.sleep(0.01)
+    os.utime(agents, None)
+
+    result = await port.capture_current_policy_evidence(request)
+    assert result.status == "captured"
+    assert result.error_code is None
+    assert result.evidence is not None
+
+
+async def test_current_policy_capture_survives_unrelated_registry_alias_growth(
+    tmp_path: Path,
+) -> None:
+    """R174/M02: lazy registry growth must not deny post-claim tool_spec capture."""
+
+    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+    port, request = await _current_policy_capture_request(tmp_path / "workspace")
+    # Register an unrelated tool after authorize-time binding was frozen.
+    # Expanding the global alias map used to flip write_file snapshot/alias
+    # hashes and opaque-deny the Nth serial claim (r173 pattern).
+    ToolSpecRegistry.register(
+        "r174_probe_unrelated_tool",
+        {
+            "category": "read",
+            "description": "probe tool for registry growth",
+            "aliases": ["r174_probe_alias"],
+            "arguments": [],
+        },
+    )
+
+    result = await port.capture_current_policy_evidence(request)
+
+    assert result.status == "captured"
+    assert result.error_code is None
+    assert result.evidence is not None
+    assert result.evidence.tool_spec_snapshot_hash == request.baseline_authorization_binding.tool_spec_snapshot_hash
+    assert result.evidence.alias_binding_hash == request.baseline_authorization_binding.alias_binding_hash
+
+
+async def test_current_policy_capture_after_sibling_greenfield_creates(
+    tmp_path: Path,
+) -> None:
+    """Serial multi-write: later member capture still OK when sibling files appear."""
+
+    workspace = tmp_path / "workspace"
+    port, request = await _current_policy_capture_request(workspace)
+    baseline_path = request.bound_snapshot.snapshot.baseline_target_state_evidence.target_path
+    assert baseline_path == "src/a.py"
+
+    # Prior batch members already created unrelated files (r173 pattern).
+    for rel in (
+        "package.json",
+        "tsconfig.json",
+        "src/models/types.ts",
+        "src/models/Firefly.ts",
+        "src/models/Flower.ts",
+        "src/models/MoonPhase.ts",
+        "src/models/Humidity.ts",
+        "src/models/index.ts",
+        "src/index.ts",
+        "src/main.ts",
+        "src/web.ts",
+    ):
+        path = workspace / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"// {rel}\n", encoding="utf-8")
+
+    # Claim target content unchanged vs authorize baseline.
+    result = await port.capture_current_policy_evidence(request)
+    assert result.status == "captured"
+    assert result.error_code is None
+    assert result.evidence is not None
+
+
 @pytest.mark.parametrize(
     "source_method",
     (
@@ -1825,3 +1940,360 @@ async def test_snapshot_denials_cover_path_command_director_and_member_boundarie
     assert member_binding.bound_snapshot is None
     assert effect_calls == []
     assert target.read_text(encoding="utf-8") == "before\n"
+
+
+async def test_missing_edit_path_is_tool_normalization_not_path_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R140: search/replace without file is normalization failure, not path scope.
+
+    Live r139 aborted a valid sibling edit_file(file=types.ts, blocks=...) because
+    a pathless search/replace peer was mislabeled deo_path_scope_denied.
+    """
+    workspace = tmp_path / "workspace"
+    target = workspace / "src" / "a.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("before\n", encoding="utf-8")
+    (workspace / "AGENTS.md").write_text("# policy\n", encoding="utf-8")
+    port = create_director_effect_policy_snapshot_port(str(workspace))
+    effect_calls = _install_zero_effect_spies(monkeypatch)
+
+    # edit_file-shaped args with search/replace but no path/file key.
+    arguments = (
+        ("regex", False),
+        ("replace", "export type { GardenState }\n"),
+        ("search", "export * from './types.js';\n"),
+    )
+    operation_hash = _operation_hash(
+        workspace=workspace,
+        normalized_tool_name="edit_file",
+        normalized_arguments=arguments,
+        effect_type="write",
+        execution_mode="write_serial",
+        inventory_ordinal=1,
+        tool_call_id="call-pathless",
+    )
+    subject = DirectorEffectPolicyOperationSubjectV1(
+        workspace=str(workspace.resolve()),
+        turn_id="turn-1",
+        batch_id="batch-1",
+        tool_call_id="call-pathless",
+        inventory_ordinal=1,
+        normalized_tool_name="edit_file",
+        normalized_arguments=arguments,
+        effect_type="write",
+        execution_mode="write_serial",
+        prospective_operation_hash=operation_hash,
+    )
+    missing_path = await port.snapshot(
+        DirectorEffectPolicySnapshotRequestV1(
+            subject=subject,
+            workspace=str(workspace.resolve()),
+            normalized_tool_name="edit_file",
+            normalized_arguments=arguments,
+            job_token_restriction_evidence=_job_evidence(),
+            expected_policy_version="director-policy-v1",
+            canonical_command="",
+            path_scope_evidence=(("allowed_paths", ("src/a.py",)),),
+            command_scope_evidence=(("allowed_commands", ("pytest -q",)),),
+            target_state_evidence=_target_state(workspace, "src/a.py"),
+        )
+    )
+    assert missing_path.allowed is False
+    assert missing_path.error_code == "deo_tool_normalization_failed"
+    assert effect_calls == []
+    assert target.read_text(encoding="utf-8") == "before\n"
+
+
+@pytest.mark.asyncio
+async def test_r158_dot_slash_package_json_write_is_in_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R158: write_file path ``./package.json`` must not false-deny path scope.
+
+    Live factory_20351314f5ac (L1-01 r158) dropped the first greenfield write:
+    ``target_file=./package.json`` → ``deo_path_scope_denied`` → zero source files.
+    Capability scope and CE/PM target_files list ``package.json`` without the
+    leading ``./``; baseline capture must normalize both sides before compare.
+    """
+    from polaris.cells.director.runtime.public import DirectorEffectPolicyBaselineCaptureRequestV1
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "AGENTS.md").write_text("# policy\n", encoding="utf-8")
+    port = create_director_effect_policy_snapshot_port(str(workspace))
+    effect_calls = _install_zero_effect_spies(monkeypatch)
+
+    dotted_path = "./package.json"
+    allowed_paths = ("package.json", "src/index.ts")
+    arguments = (
+        ("allowed_scope", allowed_paths),
+        ("content", '{"name":"garden","private":true}\n'),
+        ("path", dotted_path),
+    )
+    operation_hash = _operation_hash(
+        workspace=workspace,
+        normalized_tool_name="write_file",
+        normalized_arguments=arguments,
+        effect_type="write",
+        execution_mode="write_serial",
+        inventory_ordinal=1,
+        tool_call_id="call-pkg",
+    )
+    subject = DirectorEffectPolicyOperationSubjectV1(
+        workspace=str(workspace.resolve()),
+        turn_id="turn-1",
+        batch_id="batch-1",
+        tool_call_id="call-pkg",
+        inventory_ordinal=1,
+        normalized_tool_name="write_file",
+        normalized_arguments=arguments,
+        effect_type="write",
+        execution_mode="write_serial",
+        prospective_operation_hash=operation_hash,
+    )
+    job = _job_evidence(allowed_paths=allowed_paths)
+    path_scope = (("allowed_paths", allowed_paths),)
+
+    # Baseline capture owns target-state read; this is the live DEO entry that
+    # r158 failed before any write applied.
+    baseline = await port.capture_baseline_snapshot(
+        DirectorEffectPolicyBaselineCaptureRequestV1(
+            subject=subject,
+            workspace=str(workspace.resolve()),
+            normalized_tool_name="write_file",
+            normalized_arguments=arguments,
+            job_token_restriction_evidence=job,
+            expected_policy_version="director-policy-v1",
+            canonical_command="",
+            path_scope_evidence=path_scope,
+            command_scope_evidence=(("allowed_commands", ("pytest -q",)),),
+        )
+    )
+    assert baseline.allowed is True, baseline.error_code
+    assert baseline.error_code is None
+    assert baseline.baseline_target_state_evidence.target_path == "package.json"
+    assert baseline.baseline_target_state_evidence.exists is False
+
+    # Args keep the model-emitted ``./package.json`` form; expected evidence uses
+    # the canonical relative path that capability scope / CE target_files list.
+    snapshot = await port.snapshot(
+        DirectorEffectPolicySnapshotRequestV1(
+            subject=subject,
+            workspace=str(workspace.resolve()),
+            normalized_tool_name="write_file",
+            normalized_arguments=arguments,
+            job_token_restriction_evidence=job,
+            expected_policy_version="director-policy-v1",
+            canonical_command="",
+            path_scope_evidence=path_scope,
+            command_scope_evidence=(("allowed_commands", ("pytest -q",)),),
+            target_state_evidence=_target_state(workspace, "package.json"),
+        )
+    )
+    assert snapshot.allowed is True, snapshot.error_code
+    assert effect_calls == []
+    assert not (workspace / "package.json").exists()
+
+
+def test_thaw_distinguishes_map_items_from_sequence_items() -> None:
+    """Map and sequence both expose ``items``; thaw must not unpack sequence as pairs.
+
+    L1-01 r121 regression: nested HTML write_file content froze lists as
+    DirectedEffectImmutableSequenceV1; ``_thaw`` treated ``.items`` as map pairs
+    and raised ValueError, which the authoritative guard collapsed into
+    ``deo_authorization_hash_drift``.
+    """
+    from polaris.cells.director.runtime.public import DirectedEffectImmutableSequenceV1
+    from polaris.cells.roles.adapters.internal.director.directed_effect_policy_snapshot import (
+        _thaw,
+    )
+
+    nested_map = DirectedEffectImmutableMapV1(
+        items=(
+            ("body", DirectedEffectImmutableMapV1(items=(("class", "main"),))),
+            ("title", "ok"),
+        )
+    )
+    nested_sequence = DirectedEffectImmutableSequenceV1(
+        items=(
+            "div",
+            DirectedEffectImmutableMapV1(items=(("id", "root"),)),
+            DirectedEffectImmutableSequenceV1(items=("span", "text")),
+        )
+    )
+
+    assert _thaw(nested_map) == {"body": {"class": "main"}, "title": "ok"}
+    assert _thaw(nested_sequence) == ["div", {"id": "root"}, ["span", "text"]]
+
+
+@pytest.mark.asyncio
+async def test_write_file_nested_sequence_content_denies_without_hash_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Corrupted nested write_file content must fail closed as tool normalization."""
+    from polaris.cells.director.runtime.public import (
+        DirectedEffectImmutableSequenceV1,
+        DirectorEffectPolicyBaselineCaptureRequestV1,
+    )
+    from polaris.cells.director.runtime.public.directed_effect_policy_contracts import (
+        hash_director_effect_policy_operation_subject,
+    )
+
+    workspace = tmp_path / "workspace"
+    target = workspace / "index.html"
+    target.parent.mkdir(parents=True)
+    target.write_text("<html></html>\n", encoding="utf-8")
+    (workspace / "AGENTS.md").write_text("# policy\n", encoding="utf-8")
+    port = create_director_effect_policy_snapshot_port(str(workspace))
+    effect_calls = _install_zero_effect_spies(monkeypatch)
+
+    nested_content = DirectedEffectImmutableMapV1(
+        items=(
+            (
+                "$text",
+                "<!DOCTYPE html><html><body></body></html>",
+            ),
+            (
+                "div",
+                DirectedEffectImmutableSequenceV1(
+                    items=(
+                        DirectedEffectImmutableMapV1(items=(("class", "app"),)),
+                        "canvas",
+                    )
+                ),
+            ),
+            ("script", DirectedEffectImmutableSequenceV1(items=("src/web.js",))),
+        )
+    )
+    arguments: DirectedEffectImmutableItemsV1 = (
+        ("content", nested_content),
+        ("file", "index.html"),
+    )
+    provisional = DirectorEffectPolicyOperationSubjectV1(
+        workspace=str(workspace.resolve()),
+        turn_id="turn-1",
+        batch_id="batch-1",
+        tool_call_id="call-nested",
+        inventory_ordinal=0,
+        normalized_tool_name="write_file",
+        normalized_arguments=arguments,
+        effect_type="write",
+        execution_mode="write_serial",
+        prospective_operation_hash="0" * 64,
+    )
+    subject = replace(
+        provisional,
+        prospective_operation_hash=hash_director_effect_policy_operation_subject(provisional),
+    )
+    result = await port.capture_baseline_snapshot(
+        DirectorEffectPolicyBaselineCaptureRequestV1(
+            subject=subject,
+            workspace=str(workspace.resolve()),
+            normalized_tool_name="write_file",
+            normalized_arguments=arguments,
+            job_token_restriction_evidence=_job_evidence(
+                allowed_paths=("index.html",),
+            ),
+            expected_policy_version="director-policy-v1",
+            canonical_command="",
+            path_scope_evidence=(("allowed_paths", ("index.html",)),),
+            command_scope_evidence=(("allowed_commands", ("pytest -q",)),),
+        )
+    )
+
+    assert result.allowed is False
+    assert result.error_code == "deo_tool_normalization_failed"
+    assert result.error_code != "deo_authorization_hash_drift"
+    assert effect_calls == []
+    assert target.read_text(encoding="utf-8") == "<html></html>\n"
+
+
+def _edit_blocks_request(
+    workspace: Path,
+    *,
+    target_path: str = "src/a.py",
+    old_text: str = "before\n",
+    new_text: str = "after\n",
+) -> DirectorEffectPolicySnapshotRequestV1:
+    """R179: build a prospective edit_blocks snapshot request against one file."""
+
+    blocks = (
+        f"<<<<<<< SEARCH\n{old_text}=======\n{new_text}>>>>>>> REPLACE\n"
+    )
+    arguments = (
+        ("allowed_scope", ("src/a.py",)),
+        ("blocks", blocks),
+        ("file", target_path),
+    )
+    operation_hash = _operation_hash(
+        workspace=workspace,
+        normalized_tool_name="edit_blocks",
+        normalized_arguments=arguments,
+        effect_type="write",
+        execution_mode="write_serial",
+        inventory_ordinal=1,
+        tool_call_id="call-edit-blocks-1",
+    )
+    subject = DirectorEffectPolicyOperationSubjectV1(
+        workspace=str(workspace.resolve()),
+        turn_id="turn-1",
+        batch_id="batch-1",
+        tool_call_id="call-edit-blocks-1",
+        inventory_ordinal=1,
+        normalized_tool_name="edit_blocks",
+        normalized_arguments=arguments,
+        effect_type="write",
+        execution_mode="write_serial",
+        prospective_operation_hash=operation_hash,
+    )
+    return DirectorEffectPolicySnapshotRequestV1(
+        subject=subject,
+        workspace=str(workspace.resolve()),
+        normalized_tool_name="edit_blocks",
+        normalized_arguments=arguments,
+        job_token_restriction_evidence=_job_evidence(),
+        expected_policy_version="director-policy-v1",
+        canonical_command="",
+        path_scope_evidence=(("allowed_paths", ("src/a.py",)),),
+        command_scope_evidence=(("allowed_commands", ("pytest -q",)),),
+        target_state_evidence=_target_state(workspace, target_path),
+    )
+
+
+@pytest.mark.asyncio
+async def test_r179_edit_blocks_is_allowed_write_tool_not_policy_denied(tmp_path: Path) -> None:
+    """R179/M03: preferred edit_blocks tool must pass DEO write-tool membership.
+
+    Live L1-01 residual: edit_blocks was absent from private _WRITE_TOOLS, so every
+    edit_blocks call was denied as deo_director_policy_denied before path/policy
+    evaluation, dropping the whole DEO batch as TOOL_RESULT_FAILED.
+    """
+
+    workspace = tmp_path / "workspace"
+    target = workspace / "src" / "a.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("before\n", encoding="utf-8")
+    (workspace / "AGENTS.md").write_text("# policy\n", encoding="utf-8")
+
+    result = await create_director_effect_policy_snapshot_port(str(workspace)).snapshot(
+        _edit_blocks_request(workspace)
+    )
+
+    assert result.error_code != "deo_director_policy_denied" or result.allowed is True
+    # Preferred outcome: allowed when scope + SEARCH/REPLACE apply cleanly.
+    assert result.allowed is True
+    assert result.error_code is None
+
+
+@pytest.mark.asyncio
+async def test_r179_edit_blocks_unknown_write_tool_no_longer_hard_denied(tmp_path: Path) -> None:
+    """edit_blocks membership is in _WRITE_TOOLS (regression guard)."""
+
+    from polaris.cells.roles.adapters.internal.director import directed_effect_policy_snapshot as mod
+
+    assert "edit_blocks" in mod._WRITE_TOOLS
+    assert "search_replace" in mod._WRITE_TOOLS

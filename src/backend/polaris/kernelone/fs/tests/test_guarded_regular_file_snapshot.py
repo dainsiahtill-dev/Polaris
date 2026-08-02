@@ -514,6 +514,26 @@ def test_guarded_compare_create_requires_commit_time_absence_and_is_public(tmp_p
     assert public_fs.guarded_compare_and_create_regular_file is guarded_compare_and_create_regular_file
 
 
+def test_guarded_compare_create_makes_missing_intermediate_directories(tmp_path: Path) -> None:
+    """DEO materialization smoke writes (tests/*.test.ts) need parent dirs created."""
+
+    root = tmp_path / "root"
+    root.mkdir()
+    target = root / "tests" / "unit" / "verify.test.ts"
+    assert not target.parent.exists()
+
+    created = guarded_compare_and_create_regular_file(
+        root,
+        "tests/unit/verify.test.ts",
+        b"export {}\n",
+        max_bytes=64,
+    )
+
+    assert created.content == b"export {}\n"
+    assert target.is_file()
+    assert target.read_bytes() == b"export {}\n"
+
+
 def test_guarded_compare_remove_deletes_only_exact_snapshot_and_is_public(tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()

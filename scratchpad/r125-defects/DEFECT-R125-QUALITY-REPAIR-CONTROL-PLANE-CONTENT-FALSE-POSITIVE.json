@@ -1,0 +1,16 @@
+{
+  "defect_id": "R125-QUALITY-REPAIR-CONTROL-PLANE-CONTENT-FALSE-POSITIVE",
+  "title": "ContextOS content isolation false-positive blocks Director quality repair",
+  "status": "platform_fixed_pending_rebench",
+  "root_cause": "delivery_mode / director_quality_repair / blueprint_id in intentional repair prompts flagged as control_plane content leaks → final_request_context_quality_failed",
+  "fix": "prompt-safe operational content key carve-out in context_os_prompt.py",
+  "tests": [
+    "test_context_os_prompt_audit_allows_director_quality_repair_protocol_text",
+    "test_context_os_prompt_audit_still_rejects_capability_token_in_system_with_repair"
+  ],
+  "r124_evidence": {
+    "factory_run_id": "factory_a472b6d47bde",
+    "error": "final_request_context_quality_failed",
+    "content_hits": ["delivery_mode", "director_quality_repair", "blueprint_id"]
+  }
+}

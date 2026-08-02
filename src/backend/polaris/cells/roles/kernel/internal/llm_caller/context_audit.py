@@ -126,6 +126,18 @@ def _final_request_redaction_safety(messages: list[dict[str, Any]]) -> dict[str,
 
 
 def _request_messages(ai_request: Any, fallback: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Messages for final-request evidence binding.
+
+    Prepared/provider-bound messages are authoritative (final provider request
+    SSoT). Cognitive ``chat_messages`` / context history is only a fallback when
+    the prepared list is empty — otherwise stale short history can win and make
+    ``actual_sibling_exports`` message-binding fail closed incorrectly.
+    """
+
+    prepared_messages = [dict(item) for item in fallback if isinstance(item, dict)]
+    if prepared_messages:
+        return prepared_messages
+
     ctx = getattr(ai_request, "context", None)
     raw_messages: Any = None
     if isinstance(ctx, dict):
@@ -140,7 +152,7 @@ def _request_messages(ai_request: Any, fallback: list[dict[str, Any]]) -> list[d
     input_text = str(getattr(ai_request, "input", "") or "")
     if input_text.strip():
         return [{"role": "user", "content": input_text}]
-    return [dict(item) for item in fallback if isinstance(item, dict)]
+    return []
 
 
 def _context_window_tokens(prepared: PreparedLLMRequest, profile: Any) -> int:
@@ -2594,6 +2606,16 @@ def _add_context_os_audit_findings(
     if context_os_audit.get("expected") is True and context_os_audit.get("ok") is not True:
         control_plane = context_os_audit.get("control_plane")
         control_payload = control_plane if isinstance(control_plane, Mapping) else {}
+        requirements = context_os_audit.get("requirements")
+        failed_requirements = (
+            [
+                str(name)
+                for name, value in requirements.items()
+                if isinstance(name, str) and name.strip() and value is False
+            ]
+            if isinstance(requirements, Mapping)
+            else []
+        )
         if not any(
             isinstance(item, Mapping) and item.get("code") == "context_os_prompt_audit_failed" for item in findings
         ):
@@ -2608,6 +2630,11 @@ def _add_context_os_audit_findings(
                     "content_hits": [
                         str(item) for item in (control_payload.get("content_hits") or ()) if str(item).strip()
                     ],
+                    # R152: surface which ContextOS prompt requirement failed
+                    # (e.g. current_user_final) — empty hits alone misled audits
+                    # when isolation was true but final_role was system.
+                    "failed_requirements": failed_requirements,
+                    "final_role": str(context_os_audit.get("final_role") or ""),
                 }
             )
     projected["findings"] = findings

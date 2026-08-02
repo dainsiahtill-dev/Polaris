@@ -1,0 +1,13 @@
+{
+  "defect_id": "R140-PATH-SCOPE-SOFT-DROP",
+  "status": "fixed_platform_validated_live",
+  "summary": "Missing edit path mislabeled as path scope; whole DEO batch aborted. Soft-drop siblings + reclassify missing path.",
+  "rebench": {
+    "work_dir": "/tmp/factory-bench-l1-01-r140-path-scope-soft-drop",
+    "factory_run_id": "factory_2ec31daed166",
+    "deo_path_scope_denied_count": 0,
+    "index_html": true,
+    "engine": true
+  },
+  "next": "R141 TASK-2 3/4 effects + TS syntax + missing tests"
+}

@@ -373,6 +373,13 @@ def test_all_deo_results_are_frozen_typed_and_closed() -> None:
     assert all(is_dataclass(contract_type) for contract_type in classes)
     assert all(hasattr(contract_type, "__slots__") for contract_type in classes)
     assert set(get_args(contracts.DirectedEffectErrorCodeV1)) == _EXPECTED_ERROR_CODES
+    # Runtime validation uses the private frozenset, not only the TypeAlias. The
+    # two must stay identical or TOOL_BATCH_EXECUTING can raise ValueError while
+    # constructing an otherwise-valid denial (observed: deo_current_policy_evidence_unavailable).
+    assert contracts._ERROR_CODES == _EXPECTED_ERROR_CODES
+    assert contracts.validate_directed_effect_error_code("deo_current_policy_evidence_unavailable") == (
+        "deo_current_policy_evidence_unavailable"
+    )
     assert set(get_args(contracts.DirectorEffectPreflightStatusV1)) == {
         "authorized",
         "not_applicable",

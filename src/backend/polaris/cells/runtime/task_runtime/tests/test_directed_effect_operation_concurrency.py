@@ -787,6 +787,58 @@ def test_task6_final_admission_racing_finalize_never_publishes_partial_ready(
     assert len(_stream_events(identity, binding.operation_stream_token)) == 2
 
 
+def test_r145_inventory_finalize_survives_same_owner_lease_renew_after_admits(
+    tmp_path: Path,
+) -> None:
+    """r144 residual: concurrent same-owner heartbeat after multi-member admit
+    must not block inventory_ready (deo_inventory_ready_failed root cause).
+    """
+
+    identity, binding, seal_command = _setup_unsealed_inventory(
+        str(tmp_path.resolve()),
+        member_count=4,
+    )
+    sealed = seal_directed_effect_inventory(seal_command)
+    assert sealed.projection is not None
+    for index, member in enumerate(sealed.projection.members, start=1):
+        admitted = admit_directed_effect_operation(
+            _admission_for_member(identity, binding, member, expected_seq=index)
+        )
+        assert admitted.code == "admitted"
+
+    # Concurrent same-owner heartbeat advances lease_expires_at while finalize
+    # still holds the pre-heartbeat execution_attempt identity (live r144 pattern).
+    heartbeat = heartbeat_task_runtime_execution_attempt(
+        HeartbeatTaskRuntimeExecutionAttemptCommandV1(
+            workspace=identity.workspace,
+            identity=identity,
+            lease_ttl_seconds=120,
+            context_summary="director_loop_same_owner_renew_during_deo_prepare",
+            lock_timeout_seconds=5.0,
+        )
+    )
+    assert heartbeat.success is True
+    assert heartbeat.renewed_identity is not None
+    assert heartbeat.renewed_identity.lease_expires_at != identity.lease_expires_at
+
+    finalize = FinalizeDirectedEffectInventoryAdmissionCommandV1(
+        workspace=identity.workspace,
+        task_id=identity.task_id,
+        execution_attempt=identity,
+        parent_binding=binding,
+        inventory_hash=sealed.projection.inventory_hash,
+        expected_registry_version=2,
+        expected_registry_seq=3,
+        expected_operation_head_seq=4,
+    )
+    ready = finalize_directed_effect_inventory_admission(finalize)
+    assert ready.code == "inventory_ready", ready.evidence
+    assert ready.projection is not None
+    assert ready.projection.inventory_ready is True
+    assert ready.projection.admitted_count == 4
+    assert len(_stream_events(identity, binding.registry_stream_token)) == 3
+
+
 def test_task6_ready_claim_racing_abort_has_one_terminal_winner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1071,10 +1123,16 @@ def test_two_prepared_same_semantic_calls_share_one_conservative_receipt(
         assert result.snapshot.last_event_id == event["event_id"]
 
 
-def test_guard_drift_then_lease_rotation_blocks_reprepare_and_child_append(
+def test_guard_drift_then_same_owner_lease_rotation_does_not_block_authority_reprepare(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """R145: same-owner heartbeat during guarded reprepare is not authority steal.
+
+    Parent close still fails the admit for business reasons; the point is that
+    concurrent lease renew must not be the blocking reason.
+    """
+
     identity, binding, command = _setup(str(tmp_path.resolve()))
     closed = False
 
@@ -1113,10 +1171,9 @@ def test_guard_drift_then_lease_rotation_blocks_reprepare_and_child_append(
     )
     result = admit_directed_effect_operation(command)
 
-    assert result.code == "lease_version_mismatch"
-    assert result.evidence["guarded_attempt"] == 1
-    assert result.evidence["guarded_authority_phase"] == "reprepare"
-    assert result.evidence["drift_codes"] == ("guard_snapshot_drift",)
+    # Same-owner lease renew is accepted; parent close remains the business failure.
+    assert result.code != "lease_version_mismatch"
+    assert result.ok is False
     events = query_fact_events(
         QueryFactEventsV1(
             workspace=identity.workspace,

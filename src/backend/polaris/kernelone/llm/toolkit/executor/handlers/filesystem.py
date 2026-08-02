@@ -65,6 +65,7 @@ from polaris.kernelone.llm.toolkit.executor.handlers.filesystem_guards import (
     is_blank_sentinel_write,
     is_edit_fragment_write_violation,
     is_empty_write_content_violation,
+    sanitize_js_ts_write_hygiene,
 )
 from polaris.kernelone.llm.toolkit.executor.handlers.filesystem_io import (
     _SUGGEST_BARE_NAME_MAX_DEPTH,
@@ -131,11 +132,6 @@ _SOURCE_NARRATION_LEAK_RE = re.compile(
     r")"
 )
 
-_JS_TS_BLOCK_COMMENT_EXTENSIONS = {".js", ".jsx", ".ts", ".tsx"}
-_BLOCK_COMMENT_GLOB_CLOSURE_RE = re.compile(r"\*\*/(?=[A-Za-z0-9_*.[{])")
-_BLOCK_COMMENT_GLOB_FOLLOW_RE = re.compile(r"[A-Za-z0-9_*.[{]")
-
-
 def _coerce_syntax_error_line(value: Any) -> int | None:
     if value is None or isinstance(value, bool):
         return None
@@ -190,61 +186,11 @@ def _syntax_error_excerpt(
     return excerpts
 
 
-def _find_js_ts_block_comment_close(text: str, start: int = 0) -> int:
-    close_index = text.find("*/", start)
-    while close_index >= 0:
-        next_char = text[close_index + 2 : close_index + 3]
-        if (
-            close_index > 0
-            and text[close_index - 1] == "*"
-            and next_char
-            and _BLOCK_COMMENT_GLOB_FOLLOW_RE.match(next_char)
-        ):
-            close_index = text.find("*/", close_index + 2)
-            continue
-        return close_index
-    return -1
-
-
 def _sanitize_js_ts_block_comment_glob_closures(rel: str, text: str) -> tuple[str, bool]:
-    """Keep glob examples in JS/TS block comments from closing the comment."""
+    """Compatibility wrapper; applies full JS/TS write hygiene (R146+R147)."""
 
-    if Path(rel).suffix.lower() not in _JS_TS_BLOCK_COMMENT_EXTENSIONS:
-        return text, False
-    if "**/" not in text or "/*" not in text:
-        return text, False
-
-    changed = False
-    in_block_comment = False
-    sanitized_lines: list[str] = []
-    for line in text.splitlines(keepends=True):
-        cursor = 0
-        pieces: list[str] = []
-        while cursor < len(line):
-            if not in_block_comment:
-                block_start = line.find("/*", cursor)
-                if block_start < 0:
-                    pieces.append(line[cursor:])
-                    cursor = len(line)
-                    continue
-                pieces.append(line[cursor : block_start + 2])
-                cursor = block_start + 2
-                in_block_comment = True
-
-            close_index = _find_js_ts_block_comment_close(line, cursor)
-            segment_end = close_index if close_index >= 0 else len(line)
-            segment = line[cursor:segment_end]
-            repaired = _BLOCK_COMMENT_GLOB_CLOSURE_RE.sub("** /", segment)
-            changed = changed or repaired != segment
-            pieces.append(repaired)
-            if close_index < 0:
-                cursor = len(line)
-                continue
-            pieces.append("*/")
-            cursor = close_index + 2
-            in_block_comment = False
-        sanitized_lines.append("".join(pieces))
-    return "".join(sanitized_lines), changed
+    sanitized, flags = sanitize_js_ts_write_hygiene(rel, text)
+    return sanitized, any(flags.values())
 
 
 def _source_narration_leak_error(rel: str, text: str) -> dict[str, Any] | None:
@@ -501,7 +447,7 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
                 "to (re)write the file, emit write_file with the full, self-contained content."
             ),
         }
-    text, block_comment_glob_sanitized = _sanitize_js_ts_block_comment_glob_closures(rel, text)
+    text, write_hygiene_flags = sanitize_js_ts_write_hygiene(rel, text)
     policy_result = _validate_director_policy_for_write(
         self,
         rel=rel,
@@ -587,8 +533,10 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
     }
     if normalized.normalized_patch_like:
         result["normalized_patch_like_write"] = True
-    if block_comment_glob_sanitized:
+    if write_hygiene_flags.get("block_comment_glob_sanitized"):
         result["block_comment_glob_sanitized"] = True
+    if write_hygiene_flags.get("control_flow_comma_sanitized"):
+        result["control_flow_comma_sanitized"] = True
 
     result = attach_post_write_syntax_check(result, str(target))
     return _attach_director_policy_evidence(result, policy_result.get("director_policy"))

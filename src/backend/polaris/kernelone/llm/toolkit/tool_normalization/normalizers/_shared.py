@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -182,6 +183,11 @@ def _normalize_workspace_alias_path(value: Any) -> str:
         suffix = normalized[len("/stress_reports/") :].strip("/")
         return f"./stress_reports/{suffix}" if suffix else "./stress_reports"
 
+    # R158: collapse leading ``./`` so DEO path-scope evidence compares equal to
+    # resolved workspace-relative paths (``./package.json`` → ``package.json``).
+    # Keep non-leading ``./`` segments and do not invent absolute roots.
+    while token.startswith("./"):
+        token = token[2:]
     return token
 
 
@@ -318,6 +324,90 @@ def _remove_aliases(normalized: dict[str, Any], aliases: tuple[str, ...]) -> Non
     """
     for alias in aliases:
         normalized.pop(alias, None)
+
+
+# ============================================================================
+# Structured write-body recovery (R138)
+# ============================================================================
+
+
+_HTML_TAG_NAME = re.compile(r"^[A-Za-z][\w:-]*$")
+
+
+def recover_write_body_string(value: Any) -> str | None:
+    """Recover a plain string body from structured write_file content artifacts.
+
+    R138: some providers/models emit ``content`` as a ``$text`` map with sibling
+    keys that are either mid-token continuations (e.g. ``$text`` ends with
+    ``\"is not a \"`` and sibling ``canvas`` continues ``\" element; ...\"``) or
+    nested HTML-ish fragments. DEO freezes non-string bodies fail-closed as
+    ``deo_tool_normalization_failed`` and drops the whole write batch.
+
+    Returns:
+        A recovered non-empty string body, or ``None`` when recovery is unsafe.
+    """
+
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        if value and all(isinstance(item, str) for item in value):
+            return "\n".join(value)
+        return None
+    if not isinstance(value, Mapping):
+        return None
+    return _flatten_structured_write_body(value)
+
+
+def _flatten_structured_write_body(value: Mapping[str, Any]) -> str | None:
+    parts: list[str] = []
+    text = value.get("$text")
+    if text is not None and not isinstance(text, str):
+        return None
+    if isinstance(text, str):
+        parts.append(text)
+
+    children = [(str(key), child) for key, child in value.items() if str(key) != "$text"]
+    htmlish_context = any(isinstance(child, Mapping) for _, child in children) or (
+        isinstance(text, str) and ("<!doctype" in text.lower() or "<html" in text.lower())
+    )
+
+    for key, child in children:
+        if isinstance(child, str):
+            if htmlish_context and _HTML_TAG_NAME.fullmatch(key):
+                parts.append(f"<{key}>{child}</{key}>")
+            else:
+                # Word/token continuation: the key was split out of the source stream.
+                parts.append(key)
+                parts.append(child)
+            continue
+        if isinstance(child, Mapping):
+            inner = _flatten_structured_write_body(child)
+            if inner is None:
+                return None
+            if _HTML_TAG_NAME.fullmatch(key):
+                parts.append(f"<{key}>{inner}</{key}>")
+            else:
+                parts.append(inner)
+            continue
+        if isinstance(child, (list, tuple)):
+            for item in child:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, Mapping):
+                    inner = _flatten_structured_write_body(item)
+                    if inner is None:
+                        return None
+                    if _HTML_TAG_NAME.fullmatch(key):
+                        parts.append(f"<{key}>{inner}</{key}>")
+                    else:
+                        parts.append(inner)
+                else:
+                    return None
+            continue
+        return None
+
+    joined = "".join(parts)
+    return joined if joined else None
 
 
 # ============================================================================

@@ -1269,91 +1269,191 @@ class FactoryRoleEvidenceAuthorityPort:
                         return ack
 
                     self._require_acquisition_live(request)
-                    try:
-                        resolved = self._source_authority.resolve_source_cut(
-                            request=request,
-                            authority=authority,
-                            factory_run=cast(FactoryRun, run),
-                        )
-                    except FactoryRoleEvidenceAuthorityError:
-                        raise
-                    except Exception as exc:
-                        raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_source_resolver_failed") from exc
-                    if type(resolved) is not FactoryRoleEvidenceResolvedCutV1:
-                        raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_source_cut_type_invalid")
-                    try:
-                        FactoryRoleEvidenceResolvedCutV1.__post_init__(resolved)
-                    except (TypeError, ValueError) as exc:
-                        raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_source_cut_invalid") from exc
-                    if resolved.role != request.role:
-                        raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_source_cut_role_mismatch")
-                    revalidate_claim()
-                    self._require_acquisition_live(request)
+                    # Exit stage-claim flock BEFORE any await.  Holding the OS
+                    # flock across await lets heartbeat renew (or another
+                    # cutoff) block the same event-loop thread that must resume
+                    # to release the claim — process-wide self-deadlock
+                    # (R142 locks_lock_inode_wait / GET 30s / keepalive 1011).
+                    frozen_run = cast(FactoryRun, run)
+                    frozen_authority = authority
+                    frozen_request_hash = request_hash
 
-                    body = FactoryRoleEvidenceCutoffBodyV1(
-                        factory_run_id=authority.factory_run_id,
+                # Stage claim released: resolve off-loop without admission flock.
+                try:
+                    resolved = await asyncio.to_thread(
+                        self._source_authority.resolve_source_cut,
                         request=request,
-                        authority=authority,
-                        resolved_source_cut=resolved,
+                        authority=frozen_authority,
+                        factory_run=frozen_run,
                     )
-                    _raw, body_hash, fragment_payloads = _fragment_cutoff_body(body)
-                    self._require_unchanged_head(scan.captured_head)
-                    expected_sequence = scan.captured_head.next_expected_global_seq
-                    persisted_fragments: list[_StoredFragment] = []
-                    for fragment_payload in fragment_payloads:
-                        revalidate_claim()
-                        self._require_acquisition_live(request)
-                        appended = self._append_event(
-                            event_type=FACTORY_ROLE_EVIDENCE_CUTOFF_FRAGMENT_EVENT_TYPE,
-                            payload=fragment_payload.to_record(),
-                            idempotency_key=(
-                                f"role-evidence-cutoff:{request.request_freeze_id}:fragment:{fragment_payload.index}"
-                            ),
-                            expected_sequence=expected_sequence,
-                        )
-                        self._require_acquisition_live(request)
-                        persisted_fragments.append(
-                            _StoredFragment(
-                                event_id=appended.event_id,
-                                sequence=appended.global_seq,
-                                event_hash=appended.event_hash,
-                                payload=fragment_payload,
-                            )
-                        )
-                        expected_sequence += 1
-                    fragments = tuple(persisted_fragments)
-                    vector_hash = _fragment_vector_hash(fragments)
-                    partial = _PartialCutoff(
-                        request_authority_hash=request_hash,
-                        body_hash=body_hash,
-                        fragment_count=len(fragments),
-                        fragments=fragments,
+                except FactoryRoleEvidenceAuthorityError:
+                    raise
+                except Exception as exc:
+                    raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_source_resolver_failed") from exc
+                if type(resolved) is not FactoryRoleEvidenceResolvedCutV1:
+                    raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_source_cut_type_invalid")
+                try:
+                    FactoryRoleEvidenceResolvedCutV1.__post_init__(resolved)
+                except (TypeError, ValueError) as exc:
+                    raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_source_cut_invalid") from exc
+                if resolved.role != request.role:
+                    raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_source_cut_role_mismatch")
+
+                body = FactoryRoleEvidenceCutoffBodyV1(
+                    factory_run_id=frozen_authority.factory_run_id,
+                    request=request,
+                    authority=frozen_authority,
+                    resolved_source_cut=resolved,
+                )
+                _raw, body_hash, fragment_payloads = _fragment_cutoff_body(body)
+
+                # Multi-fragment fsync appends under stage claim must not run on
+                # the asyncio event loop: each append holds the segmented fact
+                # stream lock for durability, and concurrent heartbeat/settlement
+                # queries time out at the default 2s budget (R143/R144
+                # factory_role_evidence_cutoff_append_failed).  Execute the whole
+                # claim+write critical section off-loop on one worker thread.
+                try:
+                    ack = await asyncio.to_thread(
+                        self._finalize_cutoff_after_resolve,
+                        request=request,
+                        frozen_authority=frozen_authority,
+                        frozen_request_hash=frozen_request_hash,
                         body=body,
-                        fragment_vector_hash=vector_hash,
+                        body_hash=body_hash,
+                        fragment_payloads=fragment_payloads,
                     )
-                    revalidate_claim()
-                    self._require_acquisition_live(request)
-                    commit = self._append_authorized_commit(
-                        request=request,
-                        partial=partial,
-                        expected_sequence=expected_sequence,
+                except FactoryRoleEvidenceAuthorityError:
+                    raise
+                except Exception as exc:
+                    # Preserve lease/admission conflicts (tests + live fail-closed
+                    # paths expect the original conflict type, not a wrap into
+                    # append_failed).
+                    from polaris.cells.factory.pipeline.public.contracts import (
+                        FactoryWorkspaceRunLeaseConflictError,
                     )
-                    ack = self._strict_reread_ack(
-                        request=request,
-                        expected_body=body,
-                        expected_body_hash=body_hash,
-                        expected_fragment_count=len(fragments),
-                        expected_fragment_vector_hash=vector_hash,
-                        commit=commit,
-                    )
-                    revalidate_claim()
-                    self._require_acquisition_live(request)
-                    ack = self._publish_ack_and_end_acquisition(request=request, ack=ack)
-                    lease_active = False
-                    return ack
+
+                    if isinstance(exc, FactoryWorkspaceRunLeaseConflictError):
+                        raise
+                    raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_cutoff_append_failed") from exc
+                lease_active = False
+                return ack
             finally:
                 if lease_active:
                     self._end_acquisition()
+
+    def _finalize_cutoff_after_resolve(
+        self,
+        *,
+        request: FactoryRoleEvidenceCutoffRequestV1,
+        frozen_authority: FactoryRoleEvidenceStageAuthorityV1,
+        frozen_request_hash: str,
+        body: FactoryRoleEvidenceCutoffBodyV1,
+        body_hash: str,
+        fragment_payloads: tuple[Any, ...],
+    ) -> FactoryRoleEvidenceCutoffAckV1:
+        """Claim + durable fragment/commit path; must run fully sync on one thread."""
+
+        with self._admission.hold_active_stage_claim(
+            frozen_authority.factory_run_id,
+            fencing_token=frozen_authority.workspace_fencing_token,
+            stage=frozen_authority.stage,
+            attempt=frozen_authority.stage_claim_attempt,
+            nonce=frozen_authority.stage_claim_nonce,
+        ) as revalidate_claim:
+            revalidate_claim()
+            self._require_acquisition_live(request)
+            rescan = self._scan_authority_events()
+            replay_after = rescan.stored.get(request.request_freeze_id)
+            if replay_after is not None:
+                if not self._same_request_and_authority(replay_after.body, request):
+                    raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_cutoff_replay_conflict")
+                revalidate_claim()
+                self._require_acquisition_live(request)
+                return self._publish_ack_and_end_acquisition(
+                    request=request,
+                    ack=self._ack(replay_after),
+                )
+            partial_after = rescan.partial.get(request.request_freeze_id)
+            if partial_after is not None:
+                if partial_after.request_authority_hash != frozen_request_hash:
+                    raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_cutoff_replay_conflict")
+                if partial_after.body is None or partial_after.fragment_vector_hash is None:
+                    raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_cutoff_partial_incomplete")
+                if not self._same_request_and_authority(partial_after.body, request):
+                    raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_cutoff_replay_conflict")
+                self._require_unchanged_head(rescan.captured_head)
+                revalidate_claim()
+                self._require_acquisition_live(request)
+                commit = self._append_authorized_commit(
+                    request=request,
+                    partial=partial_after,
+                    expected_sequence=rescan.captured_head.next_expected_global_seq,
+                )
+                ack = self._strict_reread_ack(
+                    request=request,
+                    expected_body=partial_after.body,
+                    expected_body_hash=partial_after.body_hash,
+                    expected_fragment_count=partial_after.fragment_count,
+                    expected_fragment_vector_hash=partial_after.fragment_vector_hash,
+                    commit=commit,
+                )
+                revalidate_claim()
+                self._require_acquisition_live(request)
+                return self._publish_ack_and_end_acquisition(request=request, ack=ack)
+
+            self._require_unchanged_head(rescan.captured_head)
+            expected_sequence = rescan.captured_head.next_expected_global_seq
+            persisted_fragments: list[_StoredFragment] = []
+            for fragment_payload in fragment_payloads:
+                revalidate_claim()
+                self._require_acquisition_live(request)
+                appended = self._append_event(
+                    event_type=FACTORY_ROLE_EVIDENCE_CUTOFF_FRAGMENT_EVENT_TYPE,
+                    payload=fragment_payload.to_record(),
+                    idempotency_key=(
+                        f"role-evidence-cutoff:{request.request_freeze_id}:fragment:{fragment_payload.index}"
+                    ),
+                    expected_sequence=expected_sequence,
+                )
+                self._require_acquisition_live(request)
+                persisted_fragments.append(
+                    _StoredFragment(
+                        event_id=appended.event_id,
+                        sequence=appended.global_seq,
+                        event_hash=appended.event_hash,
+                        payload=fragment_payload,
+                    )
+                )
+                expected_sequence += 1
+            fragments = tuple(persisted_fragments)
+            vector_hash = _fragment_vector_hash(fragments)
+            partial = _PartialCutoff(
+                request_authority_hash=frozen_request_hash,
+                body_hash=body_hash,
+                fragment_count=len(fragments),
+                fragments=fragments,
+                body=body,
+                fragment_vector_hash=vector_hash,
+            )
+            revalidate_claim()
+            self._require_acquisition_live(request)
+            commit = self._append_authorized_commit(
+                request=request,
+                partial=partial,
+                expected_sequence=expected_sequence,
+            )
+            ack = self._strict_reread_ack(
+                request=request,
+                expected_body=body,
+                expected_body_hash=body_hash,
+                expected_fragment_count=len(fragments),
+                expected_fragment_vector_hash=vector_hash,
+                commit=commit,
+            )
+            revalidate_claim()
+            self._require_acquisition_live(request)
+            return self._publish_ack_and_end_acquisition(request=request, ack=ack)
 
     async def resolve_cutoff_proof(
         self,

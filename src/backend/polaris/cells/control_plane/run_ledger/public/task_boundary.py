@@ -547,6 +547,38 @@ def build_deferred_followup_task_boundary_verdict(
     )
 
 
+def reconcile_task_boundary_artifacts_with_workspace(
+    *,
+    workspace: str | Path,
+    target_files: list[str] | tuple[str, ...] | None = None,
+    completed_artifacts: list[str] | tuple[str, ...] | None = None,
+    downstream_pending_artifacts: list[str] | tuple[str, ...] | None = None,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Promote on-disk paths into completed; drop them from downstream_pending.
+
+    R181/M06: multi-task delivery often lands files via sibling tasks or
+    end-of-stage settle while the current task's tool_results only list a
+    subset. Stale ``downstream_pending`` lists then contradict the workspace
+    and falsely block director_dispatch even when real_run would pass.
+
+    Complexity: O(n) path checks for n declared artifact paths.
+    """
+
+    workspace_path = Path(workspace).expanduser().resolve()
+    targets = _string_list(target_files)
+    completed = list(_string_list(completed_artifacts))
+    completed_set = set(completed)
+    pending_raw = _string_list(downstream_pending_artifacts)
+    for path in [*targets, *pending_raw]:
+        if not path or path in completed_set:
+            continue
+        if _path_exists(workspace_path, path):
+            completed.append(path)
+            completed_set.add(path)
+    downstream = tuple(path for path in pending_raw if path not in completed_set and not _path_exists(workspace_path, path))
+    return tuple(completed), downstream
+
+
 def evaluate_task_boundary_verdict(
     *,
     workspace: str | Path,
@@ -571,8 +603,12 @@ def evaluate_task_boundary_verdict(
 
     workspace_path = Path(workspace).expanduser().resolve()
     targets = tuple(_string_list(target_files))
-    completed = tuple(_string_list(completed_artifacts))
-    downstream = tuple(_string_list(downstream_pending_artifacts))
+    completed, downstream = reconcile_task_boundary_artifacts_with_workspace(
+        workspace=workspace_path,
+        target_files=targets,
+        completed_artifacts=completed_artifacts,
+        downstream_pending_artifacts=downstream_pending_artifacts,
+    )
     blocked = tuple(_string_list(blocked_dependencies))
     required_evidence = tuple(_string_list(required_evidence_modalities))
     present_evidence = tuple(_string_list(present_evidence_modalities))
@@ -805,4 +841,5 @@ __all__ = [
     "build_deferred_followup_task_boundary_verdict",
     "evaluate_task_boundary_verdict",
     "normalize_task_boundary_verdict",
+    "reconcile_task_boundary_artifacts_with_workspace",
 ]

@@ -312,6 +312,53 @@ def _retain_directory(
     return witness
 
 
+def _retain_or_mkdir_directory(
+    stack: ExitStack,
+    *,
+    parent: _DirectoryWitness,
+    entry_name: str,
+    display_name: str,
+) -> _DirectoryWitness:
+    """Open an existing directory under parent, or create it when missing.
+
+    Used only for intermediate ancestors of a create target under an already
+    validated workspace root. Symlinks and non-directory entries still fail
+    closed via ``_retain_directory`` / ``_open_descriptor``.
+    """
+
+    try:
+        return _retain_directory(
+            stack,
+            parent=parent,
+            entry_name=entry_name,
+            display_name=display_name,
+        )
+    except GuardedRegularFileSnapshotError as exc:
+        if exc.code != "guarded_snapshot_missing":
+            raise
+
+    parent_fd = parent.fd
+    try:
+        os.mkdir(entry_name, 0o755, dir_fd=parent_fd)
+    except FileExistsError:
+        # Concurrent create: open and re-verify identity below.
+        pass
+    except OSError as exc:
+        raise _fail(
+            "guarded_create_mkdir_failed",
+            "guarded create could not create intermediate directory",
+            name=display_name,
+            errno=exc.errno,
+        ) from exc
+
+    return _retain_directory(
+        stack,
+        parent=parent,
+        entry_name=entry_name,
+        display_name=display_name,
+    )
+
+
 def _file_fingerprint(
     fd: int,
     *,
@@ -1168,7 +1215,10 @@ def guarded_compare_and_create_regular_file(
         relative_display: list[str] = []
         for component in path_parts[:-1]:
             relative_display.append(component)
-            current = _retain_directory(
+            # Create missing intermediate directories under the validated root so
+            # deferred DEO materialization (e.g. tests/verify.test.ts smoke) can
+            # land without a separate mkdir tool. Root ancestors stay strict.
+            current = _retain_or_mkdir_directory(
                 stack,
                 parent=current,
                 entry_name=component,

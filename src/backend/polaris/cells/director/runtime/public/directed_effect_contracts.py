@@ -182,6 +182,7 @@ _ERROR_CODES: Final[frozenset[str]] = frozenset(
         "deo_public_policy_evidence_drift",
         "deo_capability_scope_drift",
         "deo_job_token_evidence_drift",
+        "deo_current_policy_evidence_unavailable",
     }
 )
 _LOWER_HEX: Final[frozenset[str]] = frozenset("0123456789abcdef")

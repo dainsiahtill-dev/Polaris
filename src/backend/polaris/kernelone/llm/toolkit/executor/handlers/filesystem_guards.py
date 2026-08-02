@@ -9,6 +9,7 @@ the foundation of the handler import graph.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -197,3 +198,120 @@ def _destructive_shrink_error(target: str, removed_lines: int, added_lines: int,
         "error_type": "destructive_shrink",
         "retryable": True,
     }
+
+
+# ---------------------------------------------------------------------------
+# JS/TS block-comment glob hygiene (shared by AgentAccel + Director DEO writes)
+# ---------------------------------------------------------------------------
+# LLM comments often write glob examples like ``src/**/*.ts``. Inside a block
+# comment the substring ``*/`` terminates the comment early (TS1109 cascade).
+# R146: Director execution_tools historically bypassed this sanitizer, so
+# DEO-path writes shipped unparseable TS and failed real_run_gate build.
+
+_JS_TS_BLOCK_COMMENT_EXTENSIONS = frozenset({".js", ".jsx", ".ts", ".tsx"})
+_BLOCK_COMMENT_GLOB_CLOSURE_RE = re.compile(r"\*\*/(?=[A-Za-z0-9_*.[{])")
+_BLOCK_COMMENT_GLOB_FOLLOW_RE = re.compile(r"[A-Za-z0-9_*.[{]")
+# Weak models often write ``return,`` / ``break,`` / ``continue,`` instead of
+# statement terminators (r146 L1-01 src/web.ts:72 → TS1109 Expression expected).
+_JS_TS_CONTROL_FLOW_COMMA_RE = re.compile(r"^(\s*)(return|break|continue)\s*,\s*$")
+
+
+def _find_js_ts_block_comment_close(text: str, start: int = 0) -> int:
+    """Find a real ``*/`` closer, skipping ``**/`` glob fragments."""
+
+    close_index = text.find("*/", start)
+    while close_index >= 0:
+        next_char = text[close_index + 2 : close_index + 3]
+        if (
+            close_index > 0
+            and text[close_index - 1] == "*"
+            and next_char
+            and _BLOCK_COMMENT_GLOB_FOLLOW_RE.match(next_char)
+        ):
+            close_index = text.find("*/", close_index + 2)
+            continue
+        return close_index
+    return -1
+
+
+def sanitize_js_ts_block_comment_glob_closures(rel: str, text: str) -> tuple[str, bool]:
+    """Keep glob examples in JS/TS block comments from closing the comment.
+
+    Returns ``(sanitized_text, changed)``. Paths outside JS/TS extensions are
+    returned unchanged.
+    """
+
+    if Path(str(rel or "")).suffix.lower() not in _JS_TS_BLOCK_COMMENT_EXTENSIONS:
+        return text, False
+    if "**/" not in text or "/*" not in text:
+        return text, False
+
+    changed = False
+    in_block_comment = False
+    sanitized_lines: list[str] = []
+    for line in text.splitlines(keepends=True):
+        cursor = 0
+        pieces: list[str] = []
+        while cursor < len(line):
+            if not in_block_comment:
+                block_start = line.find("/*", cursor)
+                if block_start < 0:
+                    pieces.append(line[cursor:])
+                    cursor = len(line)
+                    continue
+                pieces.append(line[cursor : block_start + 2])
+                cursor = block_start + 2
+                in_block_comment = True
+
+            close_index = _find_js_ts_block_comment_close(line, cursor)
+            segment_end = close_index if close_index >= 0 else len(line)
+            segment = line[cursor:segment_end]
+            repaired = _BLOCK_COMMENT_GLOB_CLOSURE_RE.sub("** /", segment)
+            changed = changed or repaired != segment
+            pieces.append(repaired)
+            if close_index < 0:
+                cursor = len(line)
+                continue
+            pieces.append("*/")
+            cursor = close_index + 2
+            in_block_comment = False
+        sanitized_lines.append("".join(pieces))
+    return "".join(sanitized_lines), changed
+
+
+def sanitize_js_ts_control_flow_statement_commas(rel: str, text: str) -> tuple[str, bool]:
+    """Rewrite bare ``return,`` / ``break,`` / ``continue,`` to statement terminators.
+
+    Only whole-line control-flow keywords with a trailing comma are rewritten so
+    object-literal / expression commas stay untouched.
+    """
+
+    if Path(str(rel or "")).suffix.lower() not in _JS_TS_BLOCK_COMMENT_EXTENSIONS:
+        return text, False
+    if not re.search(r"\b(?:return|break|continue)\s*,", text):
+        return text, False
+
+    changed = False
+    repaired_lines: list[str] = []
+    for line in str(text or "").splitlines(keepends=True):
+        body = line.rstrip("\r\n")
+        newline = line[len(body) :]
+        match = _JS_TS_CONTROL_FLOW_COMMA_RE.match(body)
+        if match is None:
+            repaired_lines.append(line)
+            continue
+        repaired_lines.append(f"{match.group(1)}{match.group(2)};{newline}")
+        changed = True
+    return "".join(repaired_lines), changed
+
+
+def sanitize_js_ts_write_hygiene(rel: str, text: str) -> tuple[str, dict[str, bool]]:
+    """Apply shared JS/TS write hygiene. Returns ``(text, flags)``."""
+
+    flags: dict[str, bool] = {
+        "block_comment_glob_sanitized": False,
+        "control_flow_comma_sanitized": False,
+    }
+    text, flags["block_comment_glob_sanitized"] = sanitize_js_ts_block_comment_glob_closures(rel, text)
+    text, flags["control_flow_comma_sanitized"] = sanitize_js_ts_control_flow_statement_commas(rel, text)
+    return text, flags

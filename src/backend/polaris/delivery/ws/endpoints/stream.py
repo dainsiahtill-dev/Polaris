@@ -7,6 +7,7 @@ This module contains core functions for:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from contextlib import suppress
@@ -34,6 +35,24 @@ logger = logging.getLogger(__name__)
 # value below (margin under the 1 MiB limit) and elide oversized payloads in
 # place, preserving small control-plane fields so consumers still parse status.
 _WS_FRAME_MAX_BYTES = 900_000
+
+
+def _prepare_ws_frame_text(payload: dict[str, Any], *, max_bytes: int) -> tuple[str, bool]:
+    """Serialize (and elide) one runtime.v2 frame off the asyncio event loop.
+
+    Director/factory events can embed multi-MB StageResult output. Running
+    ``jsonable_encoder`` + ``json.dumps`` (+ a second dump after elision) on the
+    event loop starves HTTP/WS keepalive for tens of seconds (R142 factory GET
+    30–48s while frames repeatedly exceed 900KB).
+    """
+
+    safe_payload = jsonable_encoder(payload)
+    json_text = json.dumps(safe_payload, ensure_ascii=False)
+    encoded = json_text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return json_text, False
+    safe_payload = elide_oversized_frame(safe_payload, max_bytes)
+    return json.dumps(safe_payload, ensure_ascii=False), True
 
 
 # =============================================================================
@@ -73,11 +92,12 @@ async def send_json(
     }
 
     try:
-        safe_payload = jsonable_encoder(payload)
-        json_text = json.dumps(safe_payload, ensure_ascii=False)
-        if len(json_text.encode("utf-8")) > _WS_FRAME_MAX_BYTES:
-            safe_payload = elide_oversized_frame(safe_payload, _WS_FRAME_MAX_BYTES)
-            json_text = json.dumps(safe_payload, ensure_ascii=False)
+        json_text, elided = await asyncio.to_thread(
+            _prepare_ws_frame_text,
+            payload,
+            max_bytes=_WS_FRAME_MAX_BYTES,
+        )
+        if elided:
             logger.warning(
                 "runtime.v2 frame exceeded %d bytes; elided oversized payload before send",
                 _WS_FRAME_MAX_BYTES,

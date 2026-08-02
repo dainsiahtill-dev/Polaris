@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
     _add_context_os_audit_findings,
     _add_evidence_coverage_findings,
@@ -37,6 +38,8 @@ def test_context_os_audit_failure_is_first_class_final_request_finding() -> None
                 "chief_engineer_llm_timeout_seconds:",
                 "chief_engineer_deadline_decision:",
             ],
+            "failed_requirements": [],
+            "final_role": "",
         }
     ]
 
@@ -59,6 +62,44 @@ def test_context_os_audit_success_does_not_change_final_request_quality() -> Non
 
     assert projected["context_needs_review"] is False
     assert projected["findings"] == []
+
+
+@pytest.mark.module_final_request_context
+def test_r152_context_os_audit_finding_surfaces_current_user_final_failure() -> None:
+    quality: dict[str, object] = {"findings": [], "missing_coverage": []}
+
+    projected = _add_context_os_audit_findings(
+        quality,
+        {
+            "ok": False,
+            "expected": True,
+            "final_role": "system",
+            "control_plane": {
+                "isolated": True,
+                "metadata_key_hits": [],
+                "content_hits": [],
+            },
+            "requirements": {
+                "truth_source_context_os": True,
+                "control_plane_isolated": True,
+                "current_user_final": False,
+                "current_user_instruction_preserved": True,
+            },
+        },
+    )
+
+    assert projected["context_needs_review"] is True
+    assert projected["findings"] == [
+        {
+            "code": "context_os_prompt_audit_failed",
+            "severity": "error",
+            "control_plane_isolated": True,
+            "metadata_key_hits": [],
+            "content_hits": [],
+            "failed_requirements": ["current_user_final"],
+            "final_role": "system",
+        }
+    ]
 
 
 def test_add_evidence_coverage_findings_uses_structured_missing_evidence_slots() -> None:

@@ -1,0 +1,33 @@
+{
+  "defect_id": "R133-NATIVE-TOOLS-NO-DISPATCH-LIFECYCLE",
+  "status": "fixed_platform_pending_rebench",
+  "discovered_from": {
+    "project": "L1-01",
+    "bench_label": "r132-sibling-last-write",
+    "factory_run_id": "factory_eea00a1518cb",
+    "task": "TASK-2",
+    "run_id": "director-17e1cc617757"
+  },
+  "r132_closed": {
+    "id": "R132-SIBLING-MULTI-RECEIPT-LAST-WRITE-WINS",
+    "result": "validated_live",
+    "evidence": "TASK-2 missing_required_refs=[]; actual_sibling_exports=true"
+  },
+  "root_cause": {
+    "category": "Run Ledger / turn completion seal",
+    "primary": "build_missing_dispatch_lifecycle_receipt returned None when required_write_tools was empty even though provider emitted native write_file envelopes. Turn completion therefore wrote no tool_call_lifecycle for claimed TASK-2 → TOOL_LIFECYCLE_MISSING + LEDGER_PROJECTION_INCOMPLETE.",
+    "secondary_open": "Why native write_file tool_calls were not actually executed (batch never ran) still needs separate investigation; R133 only seals fail-closed lifecycle evidence when completion path runs."
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py",
+      "src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py"
+    ],
+    "change": "Derive write tools from native envelopes when required_write_tools empty; reason=native_tool_calls_without_dispatch; ignore read-only-only envelopes."
+  },
+  "verification": {
+    "pytest_missing_dispatch": "6 passed test_tool_lifecycle -k missing_dispatch",
+    "pytest_turn_completion": "9 passed test_transaction_turn_completion -k missing_dispatch or lifecycle"
+  },
+  "next_action": "one isolated L1-01 rebench r133; if tools still not executed, open R134 on batch dispatch after call_end"
+}

@@ -1786,6 +1786,136 @@ def test_parent_batch_admission_blocks_unresolved_previous_effect(tmp_path: Path
     assert len(registry_events) == 3
 
 
+def test_parent_batch_admission_rolls_over_recovery_pending_and_unclaimed_siblings(
+    tmp_path: Path,
+) -> None:
+    """R136: partial physical failure must not permanently block multi-batch admit.
+
+    Live L1-01 residual: deferred-repair parent left RECOVERY_PENDING + INTENT_COMMITTED
+    residuals, so the next director write batch failed with deo_parent_admission_failed.
+    Batch rollover must terminalize those residuals (dead-letter + abort) and admit the
+    successor parent.
+    """
+
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    _enroll_operation(identity, binding)
+    recovery_cmd, unclaimed_cmd = _seal_operation_commands(
+        identity,
+        binding,
+        _operation_command(
+            identity,
+            binding,
+            tool_call_id="tool-recovery",
+            effect_id="effect-recovery",
+            fingerprint="fingerprint-recovery",
+            expected_seq=1,
+        ),
+        _operation_command(
+            identity,
+            binding,
+            tool_call_id="tool-unclaimed",
+            effect_id="effect-unclaimed",
+            fingerprint="fingerprint-unclaimed",
+            expected_seq=2,
+        ),
+    )
+    assert admit_directed_effect_operation(recovery_cmd).code == "admitted"
+    assert admit_directed_effect_operation(unclaimed_cmd).code == "admitted"
+    _finalize_operation_inventory(identity, binding)
+
+    claimed = claim_directed_effect(
+        ClaimDirectedEffectCommandV1(
+            workspace=identity.workspace,
+            task_id=identity.task_id,
+            execution_attempt=identity,
+            parent_binding=binding,
+            tool_call_id=recovery_cmd.tool_call_id,
+            effect_id=recovery_cmd.effect_id,
+            expected_version=1,
+            expected_seq=3,
+            actor="test-child",
+            intended_effect_fingerprint=recovery_cmd.intended_effect_fingerprint,
+            policy_verdict_hash=recovery_cmd.policy_verdict_hash,
+            expected_receipt_binding_hash=recovery_cmd.expected_receipt_binding_hash,
+        )
+    )
+    assert claimed.code == "effect_claimed"
+    pending = mark_directed_effect_recovery_pending(
+        MarkDirectedEffectRecoveryPendingCommandV1(
+            workspace=identity.workspace,
+            task_id=identity.task_id,
+            execution_attempt=identity,
+            parent_binding=binding,
+            tool_call_id=recovery_cmd.tool_call_id,
+            effect_id=recovery_cmd.effect_id,
+            expected_version=2,
+            expected_seq=4,
+            actor="test-recovery",
+            intended_effect_fingerprint=recovery_cmd.intended_effect_fingerprint,
+            policy_verdict_hash=recovery_cmd.policy_verdict_hash,
+            expected_receipt_binding_hash=recovery_cmd.expected_receipt_binding_hash,
+            reason="physical executor returned a non-success result after fence consumption",
+            recovery_evidence_ref="recovery://director/r136-partial-batch",
+            recovery_evidence_hash="c" * 64,
+        )
+    )
+    assert pending.code == "recovery_pending"
+    assert pending.state == "RECOVERY_PENDING"
+
+    second = admit_directed_effect_parent_batch(
+        _parent_batch_command(
+            identity,
+            turn_id="turn-2",
+            batch_id="batch-2",
+            admission_idempotency_key="parent-2",
+        )
+    )
+
+    assert second.ok is True, second
+    assert second.code == "parent_admitted"
+    assert second.parent_binding is not None
+    assert second.parent_binding.parent_sequence == 2
+
+    recovery_op = get_directed_effect_operation(
+        GetDirectedEffectOperationQueryV1(
+            workspace=identity.workspace,
+            task_id=identity.task_id,
+            execution_attempt=identity,
+            parent_binding=binding,
+            tool_call_id=recovery_cmd.tool_call_id,
+            effect_id=recovery_cmd.effect_id,
+        )
+    )
+    unclaimed_op = get_directed_effect_operation(
+        GetDirectedEffectOperationQueryV1(
+            workspace=identity.workspace,
+            task_id=identity.task_id,
+            execution_attempt=identity,
+            parent_binding=binding,
+            tool_call_id=unclaimed_cmd.tool_call_id,
+            effect_id=unclaimed_cmd.effect_id,
+        )
+    )
+    assert recovery_op.state == "DEAD_LETTER"
+    assert unclaimed_op.state == "ABORTED"
+
+    registry_events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=identity.workspace,
+            stream=binding.registry_stream_token,
+            strict_integrity=True,
+        )
+    ).events
+    batch_close = cast(dict[str, object], registry_events[-2]["payload"])
+    assert batch_close["schema_version"] == DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V3
+    assert batch_close["close_kind"] == "batch_rollover"
+    assert batch_close["receipt_count"] == 0
+    assert batch_close["dead_letter_count"] == 1
+    assert batch_close["aborted_count"] == 1
+
+
 def test_terminal_settlement_accepts_crash_after_batch_close_before_next_admission(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

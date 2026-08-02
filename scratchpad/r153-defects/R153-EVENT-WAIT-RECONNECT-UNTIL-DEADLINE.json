@@ -1,0 +1,53 @@
+{
+  "defect_id": "R153-EVENT-WAIT-RECONNECT-UNTIL-DEADLINE",
+  "status": "fixed_platform_unit_pending_live",
+  "summary": "R152 residual: TASK-3 factory_physical_attempt_authority_closed / director_no_materialized_changes / tool_lifecycle_failed was caused by bench event-wait treating a single runtime.v2 keepalive ping timeout as fatal and immediately cancelling a healthy multi-task Director stage.",
+  "root_cause": {
+    "evidence_run": "r152 factory_1144f4dce894",
+    "machine_readable": "event_wait_ws_keepalive_cancel_closes_physical_attempt_authority",
+    "root_cause_signature": "runtime_environment:event_wait_runtime_v2_connection_failed",
+    "timeline": {
+      "director_stage_start": "2026-08-01T03:56:26Z",
+      "task1_completed": "2026-08-01T03:59:18Z",
+      "task2_completed": "2026-08-01T04:04:46Z",
+      "task3_llm_start": "2026-08-01T04:06:12Z",
+      "task3_authority_closed": "2026-08-01T04:06:14Z",
+      "factory_cancelled": "2026-08-01T04:06:16Z",
+      "cancel_reason": "factory-bench event wait timeout after 5400s",
+      "event_wait_error_kind": "runtime_v2_connection_failed",
+      "event_wait_error_message": "received 1011 (internal error) keepalive ping timeout",
+      "wall_clock_note": "run only ~13min old; not true 5400s timeout; observation kill"
+    },
+    "mechanism": [
+      "wait_run_until_terminal used websockets.connect(ping_interval=30) with default short ping_timeout",
+      "On WebSocketException, returned runtime_v2_connection_failed immediately without reconnect",
+      "run_factory_chain cancelled backend run whenever event_wait_error present",
+      "Cancel closed FactoryRoleEvidenceAuthority / physical attempt grants",
+      "TASK-3 reserve/start failed factory_physical_attempt_authority_closed before tools",
+      "Taxonomy projected control_plane:tool_lifecycle_failed (secondary residual)"
+    ]
+  },
+  "fix": {
+    "principle": "Observation failure must not kill healthy execution before wall-clock deadline (Codex/agent CLI reconnect pattern)",
+    "files": [
+      "src/backend/scripts/factory_bench/factory_http_client.py",
+      "src/backend/scripts/factory_bench/run_factory_bench.py",
+      "src/backend/scripts/factory_bench/test_factory_http_client.py",
+      "src/backend/scripts/factory_bench/test_bench_to_backend_integration.py"
+    ],
+    "changes": [
+      "Reconnect runtime.v2 WS until wall-clock deadline with exponential backoff",
+      "Raise ping_timeout to 120s and ping_interval to 20s",
+      "Only surface runtime_v2_connection_failed / timeout after deadline",
+      "Cancel reason distinguishes connection-failed vs pure timeout"
+    ]
+  },
+  "verification": {
+    "pytest": "14 passed (TestEventWaitUntilTerminal + event_wait integration)",
+    "ruff": "pending",
+    "rebench": "pending r153"
+  },
+  "four_pillars": "NOT_MET",
+  "do_not_advance": "L1-02",
+  "next_action": "isolated L1-01 rebench with reconnect fix; expect TASK-3 not killed by keepalive"
+}

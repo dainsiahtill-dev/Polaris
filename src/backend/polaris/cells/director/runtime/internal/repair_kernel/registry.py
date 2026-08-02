@@ -81,26 +81,41 @@ from .typescript_syntax import (
     HTML_TYPESCRIPT_MODULE_SCRIPT_SOURCE_TOOL,
     JAVASCRIPT_TYPESCRIPT_ANNOTATION_SOURCE_TOOL,
     TYPEORM_MODEL_NORMALIZATION_SOURCE_TOOL,
+    TYPESCRIPT_ARG_TYPE_FUNCTION_ALIAS_SOURCE_TOOL,
     TYPESCRIPT_BRANDED_LITERAL_CAST_SOURCE_TOOL,
     TYPESCRIPT_CANVAS_SCALE_RETURN_TYPE_SOURCE_TOOL,
     TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL,
     TYPESCRIPT_CONFIG_KEY_SPLIT_SOURCE_TOOL,
     TYPESCRIPT_DOM_LOCAL_SHIM_CLEANUP_SOURCE_TOOL,
+    TYPESCRIPT_DUPLICATE_FUNCTION_SOURCE_TOOL,
     TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL,
     TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL,
     TYPESCRIPT_EXPECT_ERROR_PLACEMENT_SOURCE_TOOL,
     TYPESCRIPT_EXPORT_AMBIGUITY_SOURCE_TOOL,
     TYPESCRIPT_HTML_CONTAINER_SELECTOR_SOURCE_TOOL,
     TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL,
+    TYPESCRIPT_IMPLICIT_RETURN_TYPE_SOURCE_TOOL,
     TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,
+    TYPESCRIPT_INIT_PROPERTY_ALIAS_SOURCE_TOOL,
+    TYPESCRIPT_JSON_AS_SOURCE_SOURCE_TOOL,
+    TYPESCRIPT_LITERAL_UNION_EXPAND_SOURCE_TOOL,
     TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL,
     TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,
     TYPESCRIPT_MISSING_CLOSING_BRACE_SOURCE_TOOL,
     TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
     TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
+    TYPESCRIPT_MISSING_RELATIVE_MODULE_SOURCE_TOOL,
+    TYPESCRIPT_INVALID_MODULE_AUGMENTATION_SOURCE_TOOL,
     TYPESCRIPT_NUMBER_PROPERTY_CALL_SOURCE_TOOL,
     TYPESCRIPT_NUMBER_TO_STRING_ARGUMENT_SOURCE_TOOL,
+    TYPESCRIPT_OBJECT_ASSIGN_ASSERTION_SOURCE_TOOL,
+    TYPESCRIPT_OBJECT_LITERAL_MISSING_PROPS_SOURCE_TOOL,
+    TYPESCRIPT_IDENTIFIER_SUGGESTION_SOURCE_TOOL,
+    TYPESCRIPT_ARGUMENT_SHAPE_ADAPTER_SOURCE_TOOL,
+    TYPESCRIPT_UNUSED_LOCAL_SOURCE_TOOL,
+    TYPESCRIPT_PARAM_OBJECT_PROPERTY_SOURCE_TOOL,
     TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL,
+    TYPESCRIPT_READONLY_ARRAY_MUTATION_SOURCE_TOOL,
     TYPESCRIPT_READONLY_ASSIGNMENT_SOURCE_TOOL,
     TYPESCRIPT_REEXPORT_SOURCE_TOOL,
     TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL,
@@ -112,6 +127,7 @@ from .typescript_syntax import (
     TYPESCRIPT_STRING_LITERAL_SUGGESTION_SOURCE_TOOL,
     TYPESCRIPT_TEST_BLOCK_RESIDUE_SOURCE_TOOL,
     TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL,
+    TYPESCRIPT_TRUNCATED_EOF_SOURCE_TOOL,
     TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL,
     TYPESCRIPT_TSCONFIG_ROOTDIR_SOURCE_TOOL,
     TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL,
@@ -194,7 +210,23 @@ _RUNTIME_MIGRATION_SOURCE_TOOLS = frozenset(
         TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,
         TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
         TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
+        TYPESCRIPT_MISSING_RELATIVE_MODULE_SOURCE_TOOL,
+        TYPESCRIPT_INVALID_MODULE_AUGMENTATION_SOURCE_TOOL,
         TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL,
+        TYPESCRIPT_DUPLICATE_FUNCTION_SOURCE_TOOL,
+        TYPESCRIPT_JSON_AS_SOURCE_SOURCE_TOOL,
+        TYPESCRIPT_IMPLICIT_RETURN_TYPE_SOURCE_TOOL,
+        TYPESCRIPT_OBJECT_ASSIGN_ASSERTION_SOURCE_TOOL,
+        TYPESCRIPT_READONLY_ARRAY_MUTATION_SOURCE_TOOL,
+        TYPESCRIPT_PARAM_OBJECT_PROPERTY_SOURCE_TOOL,
+        TYPESCRIPT_TRUNCATED_EOF_SOURCE_TOOL,
+        TYPESCRIPT_OBJECT_LITERAL_MISSING_PROPS_SOURCE_TOOL,
+        TYPESCRIPT_IDENTIFIER_SUGGESTION_SOURCE_TOOL,
+        TYPESCRIPT_ARGUMENT_SHAPE_ADAPTER_SOURCE_TOOL,
+        TYPESCRIPT_UNUSED_LOCAL_SOURCE_TOOL,
+        TYPESCRIPT_LITERAL_UNION_EXPAND_SOURCE_TOOL,
+        TYPESCRIPT_INIT_PROPERTY_ALIAS_SOURCE_TOOL,
+        TYPESCRIPT_ARG_TYPE_FUNCTION_ALIAS_SOURCE_TOOL,
         TYPESCRIPT_REEXPORT_SOURCE_TOOL,
         TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL,
         TYPESCRIPT_RELATIVE_IMPORT_CASE_SOURCE_TOOL,
@@ -1623,6 +1655,22 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 metadata=_executable_runtime_metadata(scope="html_typescript_module_script_text_replace"),
             ),
             RepairRuleDefinition(
+                rule_id="html.truncated_entrypoint_closure",
+                source_tool=HTML_TYPESCRIPT_MODULE_SCRIPT_SOURCE_TOOL,
+                language="html",
+                phase="quality_repair",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=1,
+                raw_terms=("truncated/incomplete html",),
+                risk_level="low",
+                description=(
+                    "Closes truncated HTML entrypoints (missing </html> / unclosed <script>) "
+                    "and rewrites TypeScript module scripts to compiled JavaScript."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="html_truncated_entrypoint_closure_span_text_replace"),
+            ),
+            RepairRuleDefinition(
                 rule_id="java.cannot_find_symbol",
                 source_tool=JAVA_POST_SOURCE_TOOL,
                 language="java",
@@ -2907,6 +2955,37 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 metadata=_executable_runtime_metadata(scope="missing_member_declaration_text_replace"),
             ),
             RepairRuleDefinition(
+                rule_id="typescript.missing_relative_module",
+                source_tool=TYPESCRIPT_MISSING_RELATIVE_MODULE_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.WRONG_IMPORT_PATH,
+                priority=1,
+                diagnostic_codes=("typescript_ts2307",),
+                message_terms=("cannot find module",),
+                risk_level="low",
+                description=(
+                    "Creates a minimal relative TypeScript module stub for TS2307 when a local "
+                    "./ or ../ import target is missing (R180 verify.js)."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="missing_relative_module_write_file"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.invalid_module_augmentation",
+                source_tool=TYPESCRIPT_INVALID_MODULE_AUGMENTATION_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.WRONG_IMPORT_PATH,
+                priority=2,
+                diagnostic_codes=("typescript_ts2664",),
+                message_terms=("invalid module name in augmentation", "cannot be found"),
+                risk_level="low",
+                description="Removes invalid declare module augmentation blocks reported as TS2664.",
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="invalid_module_augmentation_remove"),
+            ),
+            RepairRuleDefinition(
                 rule_id="typescript.private_constructor_access",
                 source_tool=TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL,
                 language="typescript",
@@ -3085,10 +3164,13 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 phase="quality_repair",
                 archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
                 priority=1,
-                diagnostic_codes=("typescript_ts1117",),
-                message_terms=("object literal", "multiple properties"),
+                diagnostic_codes=("typescript_ts1117", "typescript_ts2300"),
+                message_terms=("object literal", "multiple properties", "duplicate identifier"),
                 risk_level="low",
-                description="Removes duplicate single-line TypeScript object literal properties reported as TS1117.",
+                description=(
+                    "Removes later duplicate single-line TypeScript object-literal (TS1117) or "
+                    "interface/type member (TS2300) properties, keeping the first occurrence."
+                ),
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(
@@ -3278,19 +3360,122 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 phase="quality_repair",
                 archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
                 priority=1,
-                diagnostic_codes=("typescript_ts2540",),
-                message_terms=("cannot assign to", "read-only property"),
+                diagnostic_codes=("typescript_ts2540", "typescript_ts2542"),
                 risk_level="low",
-                description="Removes a same-file readonly property modifier when generated code mutates that property.",
+                description=(
+                    "Removes same-file readonly property modifiers and ReadonlyArray "
+                    "wrappers when generated code mutates those properties or indexes."
+                ),
                 runtime_plan_available=True,
                 metadata={
                     "rule_status": "executable_runtime",
                     "metadata_only": False,
                     "executable_runtime_binding": True,
                     "planner_helper_available": True,
-                    "runtime_plan_scope": "same_file_readonly_property_modifier_text_replace",
+                    "runtime_plan_scope": "same_file_readonly_property_or_array_mutability_text_replace",
                     "unsafe_cases_fail_closed": True,
                 },
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.duplicate_function",
+                source_tool=TYPESCRIPT_DUPLICATE_FUNCTION_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=1,
+                diagnostic_codes=("typescript_ts2393", "typescript_ts2323"),
+                raw_terms=("duplicate function",),
+                risk_level="low",
+                description=(
+                    "Removes later duplicate function declarations (TS2393/TS2323) so "
+                    "materialized TypeScript builds can complete."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="typescript_duplicate_function_span_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.redeclare_exported_function",
+                source_tool=TYPESCRIPT_DUPLICATE_FUNCTION_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=1,
+                diagnostic_codes=("typescript_ts2323",),
+                message_terms=("cannot redeclare exported variable",),
+                risk_level="low",
+                description="Removes later redeclared exported function bindings that block tsc.",
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="typescript_duplicate_function_span_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.json_as_source",
+                source_tool=TYPESCRIPT_JSON_AS_SOURCE_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.GENERATED_RESIDUE,
+                priority=0,
+                # Match broad parse-failure codes; planner content-gates on
+                # package-manifest JSON bodies in .ts/.tsx paths (R159).
+                diagnostic_codes=("typescript_ts1005", "typescript_ts1128"),
+                risk_level="low",
+                description=(
+                    "Rewrites package-manifest JSON written into .ts/.tsx paths (R159) and "
+                    "creates a minimal Node smoke test when package.json scripts.test "
+                    "targets are missing."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="typescript_json_as_source_write_file"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.literal_union_expand",
+                source_tool=TYPESCRIPT_LITERAL_UNION_EXPAND_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=1,
+                diagnostic_codes=("typescript_ts2322",),
+                message_terms=("not assignable to type",),
+                risk_level="low",
+                description=(
+                    "Expands string-literal union type aliases when usage emits a missing "
+                    "literal (R160 TS2322 waxing/waning vs MoonPhaseName)."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="typescript_literal_union_expand_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.init_property_alias",
+                source_tool=TYPESCRIPT_INIT_PROPERTY_ALIAS_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=1,
+                diagnostic_codes=("typescript_ts2353",),
+                message_terms=("object literal", "known properties"),
+                risk_level="low",
+                description=(
+                    "Renames common excess init object keys (fireflies→fireflyCount) when "
+                    "the target *Init type declares the alias (R160 TS2353)."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="typescript_init_property_alias_line_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.arg_type_function_alias",
+                source_tool=TYPESCRIPT_ARG_TYPE_FUNCTION_ALIAS_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.WRONG_IMPORT_PATH,
+                priority=1,
+                diagnostic_codes=("typescript_ts2345",),
+                message_terms=("argument of type", "not assignable to parameter of type"),
+                risk_level="low",
+                description=(
+                    "Rewrites wrong-domain callees when argument type mismatches the parameter "
+                    "(R161: adjustHumidity(FlowerState) → adjustHydration)."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="typescript_arg_type_function_alias_line_text_replace"),
             ),
             RepairRuleDefinition(
                 rule_id="typescript.shorthand_property_scope",
@@ -3524,6 +3709,26 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 metadata=_executable_runtime_metadata(scope="duplicate_export_import_binding_text_replace"),
             ),
             RepairRuleDefinition(
+                rule_id="typescript.import_type_value_conflict",
+                source_tool=TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
+                language="typescript",
+                phase="export_resolution",
+                archetype=RepairArchetype.WRONG_IMPORT_PATH,
+                priority=1,
+                # Match by diagnostic code only (message_terms are AND-ed and would
+                # incorrectly require both TS2300 and TS1361 phrases on one diagnostic).
+                diagnostic_codes=("typescript_ts2300", "typescript_ts1361"),
+                message_terms=(),
+                risk_level="low",
+                description=(
+                    "Resolves type-only vs value import conflicts in the same module: drops "
+                    "redundant ``type X`` bindings when a value ``X`` import exists, or promotes "
+                    "type-only imports to value imports when TS1361 reports value use (R164)."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="import_type_value_conflict_text_replace"),
+            ),
+            RepairRuleDefinition(
                 rule_id="typescript.branded_literal_cast",
                 source_tool=TYPESCRIPT_BRANDED_LITERAL_CAST_SOURCE_TOOL,
                 language="typescript",
@@ -3539,6 +3744,156 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 ),
                 runtime_plan_available=True,
                 metadata=_executable_runtime_metadata(scope="branded_literal_cast_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.truncated_eof",
+                source_tool=TYPESCRIPT_TRUNCATED_EOF_SOURCE_TOOL,
+                language="typescript",
+                phase="syntax",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=0,
+                diagnostic_codes=("typescript_ts1005", "typescript_ts1003", "typescript_ts1109", "typescript_ts1128"),
+                message_terms=("expected",),
+                risk_level="medium",
+                description=(
+                    "Closes truncated TypeScript files that end mid-signature or with unbalanced braces "
+                    "so later semantic repairs can run (R168 incomplete Flower.consume)."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="truncated_eof_write_file"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.implicit_return_type",
+                source_tool=TYPESCRIPT_IMPLICIT_RETURN_TYPE_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.NULLABLE_TYPE_MISMATCH,
+                priority=1,
+                diagnostic_codes=("typescript_ts7010",),
+                message_terms=("lacks return-type annotation",),
+                risk_level="low",
+                description=(
+                    "Adds ``: void`` to interface method signatures reported by TS7010 under noImplicitAny "
+                    "(R167 canvas-like interface stubs)."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="implicit_return_type_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.object_assign_assertion",
+                source_tool=TYPESCRIPT_OBJECT_ASSIGN_ASSERTION_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.NULLABLE_TYPE_MISMATCH,
+                priority=2,
+                diagnostic_codes=("typescript_ts2322",),
+                message_terms=("not assignable to type",),
+                risk_level="low",
+                description=(
+                    "Asserts Object.freeze({...}) payloads as the declared named type when nested string "
+                    "literals widen and fail TS2322 (R167 SimulationConfig defaults)."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="object_assign_assertion_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.readonly_array_mutation",
+                source_tool=TYPESCRIPT_READONLY_ARRAY_MUTATION_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.NULLABLE_TYPE_MISMATCH,
+                priority=1,
+                diagnostic_codes=("typescript_ts2339",),
+                message_terms=("push", "readonly"),
+                risk_level="low",
+                description=("Retypes empty-array bindings away from readonly array types so push is legal (R167)."),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="readonly_array_mutation_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.param_object_property",
+                source_tool=TYPESCRIPT_PARAM_OBJECT_PROPERTY_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.NULLABLE_TYPE_MISMATCH,
+                priority=1,
+                diagnostic_codes=("typescript_ts2339",),
+                message_terms=("does not exist on type", "number"),
+                risk_level="low",
+                description=(
+                    "Retypes function parameters from primitive to object types that own the accessed "
+                    "property (R167 humidityPercent: number used as .percent)."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="param_object_property_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.object_literal_missing_props",
+                source_tool=TYPESCRIPT_OBJECT_LITERAL_MISSING_PROPS_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.NULLABLE_TYPE_MISMATCH,
+                priority=1,
+                diagnostic_codes=("typescript_ts2345", "typescript_ts2739"),
+                message_terms=("missing the following properties from type",),
+                risk_level="low",
+                description=(
+                    "Injects stub methods/fields into object literals missing required interface "
+                    "properties (R170 incomplete CompilerHost for ts.createProgram)."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="object_literal_missing_props_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.identifier_suggestion",
+                source_tool=TYPESCRIPT_IDENTIFIER_SUGGESTION_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=0,
+                diagnostic_codes=("typescript_ts2552",),
+                message_terms=("cannot find name", "did you mean"),
+                risk_level="low",
+                description=(
+                    "Renames identifiers when tsc TS2552 offers a same-scope suggestion "
+                    "(R172 ``_context`` vs local ``context`` null-check)."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="identifier_suggestion_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.argument_shape_adapter",
+                source_tool=TYPESCRIPT_ARGUMENT_SHAPE_ADAPTER_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.NULLABLE_TYPE_MISMATCH,
+                priority=1,
+                diagnostic_codes=("typescript_ts2345",),
+                message_terms=("argument of type", "missing the following properties", "parameter of type"),
+                risk_level="low",
+                description=(
+                    "Adapts call-site arguments that miss required object properties "
+                    "(R172 FireflyFlashEvent intensity vs { glow, phase })."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="argument_shape_adapter_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.unused_local",
+                source_tool=TYPESCRIPT_UNUSED_LOCAL_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.GENERATED_RESIDUE,
+                priority=2,
+                diagnostic_codes=("typescript_ts6133",),
+                message_terms=("is declared but", "never read"),
+                risk_level="low",
+                description=(
+                    "Prefixes unused locals (including destructured bindings) with underscore "
+                    "for noUnusedLocals (R172 unused canvas context binding)."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="unused_local_text_replace"),
             ),
             RepairRuleDefinition(
                 rule_id="typescript.literal_union_value_facade",

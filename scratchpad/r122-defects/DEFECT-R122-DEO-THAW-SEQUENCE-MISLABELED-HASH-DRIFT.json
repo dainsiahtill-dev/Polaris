@@ -1,0 +1,21 @@
+{
+  "defect_id": "R122-DEO-THAW-SEQUENCE-MISLABELED-HASH-DRIFT",
+  "title": "DEO _thaw mislabels Sequence items as Map pairs → deo_authorization_hash_drift",
+  "severity": "L1-01 r121 TASK-2: four write_file planned; TransactionKernel fails at DECISION_DECODED with deo_authorization_hash_drift; no tool lifecycle for TASK-2",
+  "root_cause": "polaris.cells.roles.adapters.internal.director.directed_effect_policy_snapshot._thaw used getattr(value,'items') for both DirectedEffectImmutableMapV1 and DirectedEffectImmutableSequenceV1. Sequence items are values, not (key,value) pairs → ValueError too many values to unpack when write_file content nested lists (HTML-like corruption). evaluate_authoritative except collapsed to deo_authorization_hash_drift.",
+  "fix_files": [
+    "src/backend/polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py",
+    "src/backend/polaris/cells/roles/kernel/internal/directed_effect_policy_guard.py",
+    "src/backend/polaris/cells/roles/adapters/tests/test_director_directed_effect_policy_snapshot.py"
+  ],
+  "tests": [
+    "test_thaw_distinguishes_map_items_from_sequence_items",
+    "test_write_file_nested_sequence_content_denies_without_hash_drift"
+  ],
+  "evidence": {
+    "factory_run_id": "factory_78557f75aaa2",
+    "truthlog": "ErrorEvent message=deo_authorization_hash_drift state_at_error=DECISION_DECODED turn=director-4b79a43ecfdd--TASK-2",
+    "offline_repro_post_fix": "index.html/simulation.ts → deo_tool_normalization_failed; renderer/web string content → authorized"
+  },
+  "status": "platform_fixed_pending_rebench"
+}

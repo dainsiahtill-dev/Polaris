@@ -53,6 +53,7 @@ from polaris.cells.runtime.task_runtime.public import (
     EnrollDirectedEffectParentRegistryStreamCommandV1,
     FinalizeDirectedEffectInventoryAdmissionCommandV1,
     GetDirectedEffectOperationQueryV1,
+    MarkDirectedEffectRecoveryPendingCommandV1,
     ParentCorrelationV1,
     SealDirectedEffectInventoryCommandV1,
     TaskRuntimeExecutionAttemptAuthorityHeartbeatVerdictV1,
@@ -67,6 +68,7 @@ from polaris.cells.runtime.task_runtime.public import (
     enroll_directed_effect_parent_registry_stream,
     finalize_directed_effect_inventory_admission,
     get_directed_effect_operation,
+    mark_directed_effect_recovery_pending,
     seal_directed_effect_inventory,
 )
 
@@ -156,6 +158,10 @@ class DirectedEffectTaskRuntimePortsV1:
         [AbortDirectedEffectOperationCommandV1],
         DirectedEffectOperationResultV1,
     ] = abort_directed_effect_operation
+    mark_recovery_pending: Callable[
+        [MarkDirectedEffectRecoveryPendingCommandV1],
+        DirectedEffectOperationResultV1,
+    ] = mark_directed_effect_recovery_pending
 
 
 _ResultT = TypeVar("_ResultT")
@@ -564,22 +570,59 @@ class DirectedEffectLifecycleService:
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             return _port_exception("inventory_seal", "deo_inventory_seal_failed", exc)
         sealed = sealed_result.projection
-        if (
-            not sealed_result.ok
-            or sealed_result.code not in {"inventory_sealed", "inventory_seal_idempotent_replay"}
-            or sealed is None
-            or sealed.inventory_ready
-            or sealed.execution_attempt != execution_attempt
-            or sealed.workspace != execution_attempt.workspace
-            or sealed.task_id != execution_attempt.task_id
-            or sealed.parent_binding_id != parent_binding.binding_id
-            or sealed.parent_registry_source_head_seq != parent_binding.registry_version + 1
-            or sealed.sealed_event_seq != parent_binding.registry_version + 1
-            or sealed.operation_source_head_seq != 0
-            or len(sealed.members) != len(typed_intents)
-            or tuple(member.tool_call_id for member in sealed.members)
-            != tuple(intent.tool_call_id for intent in typed_intents)
-            or any(
+        # R155 live L1-01: TASK-2 write batch dropped with opaque
+        # deo_inventory_seal_failed:inventory_seal_idempotent_replay while seal
+        # actually returned ok=True. Lifecycle was treating legitimate seal
+        # idempotent_replay (prepare_batch retry after seal/ready progressed)
+        # as failure via inventory_ready / operation_head guards, and denied
+        # using the success code — so ledger projected TOOL_RESULT_FAILED and
+        # index.html/engine writes never dispatched.
+        is_seal_replay = sealed_result.code == "inventory_seal_idempotent_replay"
+        seal_fail_reasons: list[str] = []
+        if not sealed_result.ok:
+            seal_fail_reasons.append("result_not_ok")
+        if sealed_result.code not in {"inventory_sealed", "inventory_seal_idempotent_replay"}:
+            seal_fail_reasons.append(f"unexpected_code:{sealed_result.code or 'empty'}")
+        if sealed is None:
+            seal_fail_reasons.append("projection_missing")
+        else:
+            # Fresh seal must start pre-ready with empty operation stream.
+            # Idempotent seal replay may already be mid-flight or fully ready.
+            if sealed.inventory_ready and not is_seal_replay:
+                seal_fail_reasons.append("inventory_already_ready")
+            # Lease-independent binding: same-owner heartbeats renew lease_expires_at
+            # between seal and later prepare retries (R171).
+            if not _same_attempt_binding(sealed.execution_attempt, execution_attempt):
+                seal_fail_reasons.append("execution_attempt_mismatch")
+            if sealed.workspace != execution_attempt.workspace:
+                seal_fail_reasons.append("workspace_mismatch")
+            if sealed.task_id != execution_attempt.task_id:
+                seal_fail_reasons.append("task_id_mismatch")
+            if sealed.parent_binding_id != parent_binding.binding_id:
+                seal_fail_reasons.append("parent_binding_mismatch")
+            expected_seal_seq = parent_binding.registry_version + 1
+            if is_seal_replay:
+                # Parent binding still carries admit-time registry_version, but
+                # seal/ready events may have advanced the parent registry head.
+                # Accept any head/seal seq that is still on this binding lineage.
+                if sealed.sealed_event_seq < expected_seal_seq:
+                    seal_fail_reasons.append("sealed_event_seq_before_parent_admit")
+                if sealed.parent_registry_source_head_seq < sealed.sealed_event_seq:
+                    seal_fail_reasons.append("parent_registry_head_before_seal")
+            else:
+                if sealed.parent_registry_source_head_seq != expected_seal_seq:
+                    seal_fail_reasons.append("parent_registry_head_mismatch")
+                if sealed.sealed_event_seq != expected_seal_seq:
+                    seal_fail_reasons.append("sealed_event_seq_mismatch")
+            if sealed.operation_source_head_seq != 0 and not is_seal_replay:
+                seal_fail_reasons.append("operation_head_nonzero")
+            if len(sealed.members) != len(typed_intents):
+                seal_fail_reasons.append("member_count_mismatch")
+            elif tuple(member.tool_call_id for member in sealed.members) != tuple(
+                intent.tool_call_id for intent in typed_intents
+            ):
+                seal_fail_reasons.append("member_tool_call_id_mismatch")
+            elif any(
                 (
                     member.ordinal,
                     member.tool_call_id,
@@ -601,9 +644,11 @@ class DirectedEffectLifecycleService:
                     intent.expected_receipt_binding_hash,
                 )
                 for member, intent in zip(sealed.members, typed_intents, strict=True)
-            )
-        ):
-            return _denied("inventory_seal", "deo_inventory_seal_failed", sealed_result.code)
+            ):
+                seal_fail_reasons.append("member_field_mismatch")
+        if seal_fail_reasons:
+            detail = f"{sealed_result.code or 'unknown'}:{','.join(seal_fail_reasons)}"
+            return _denied("inventory_seal", "deo_inventory_seal_failed", detail)
 
         policy_bindings = []
         for candidate, member in zip(candidates, sealed.members, strict=True):
@@ -640,7 +685,14 @@ class DirectedEffectLifecycleService:
             policy_bindings.append(canonical_binding)
 
         prepared_members: list[DirectedEffectPreparedMemberV1] = []
-        operation_head = sealed.operation_source_head_seq
+        # On seal idempotent_replay, operation stream may already hold admitted
+        # members (head == len). Re-admit from seq 0 so each member hits
+        # idempotent_replay rather than inventing seq beyond the stream.
+        operation_head = (
+            0
+            if is_seal_replay and sealed.operation_source_head_seq > 0
+            else sealed.operation_source_head_seq
+        )
         for member, binding in zip(sealed.members, policy_bindings, strict=True):
             expected_operation_seq = operation_head + 1
             try:
@@ -665,9 +717,10 @@ class DirectedEffectLifecycleService:
                 )
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 return _port_exception("member_admission", "deo_member_admission_failed", exc)
+            is_admit_replay = result.code == "idempotent_replay"
             if (
                 not result.ok
-                or result.code != "admitted"
+                or result.code not in {"admitted", "idempotent_replay"}
                 or result.operation is None
                 or (
                     result.operation.workspace,
@@ -691,13 +744,19 @@ class DirectedEffectLifecycleService:
                     member.operation_id,
                     parent_binding.operation_stream_token,
                 )
-                or result.version != 1
-                or result.state != "INTENT_COMMITTED"
-                or result.snapshot is None
-                or result.snapshot.operation != result.operation
-                or result.snapshot.state != result.state
-                or result.snapshot.version != result.version
-                or result.snapshot.source_head_seq != expected_operation_seq
+                or (
+                    not is_admit_replay
+                    and (
+                        result.version != 1
+                        or result.state != "INTENT_COMMITTED"
+                        or result.snapshot is None
+                        or result.snapshot.operation != result.operation
+                        or result.snapshot.state != result.state
+                        or result.snapshot.version != result.version
+                        or result.snapshot.source_head_seq != expected_operation_seq
+                    )
+                )
+                or (is_admit_replay and result.snapshot is None)
             ):
                 return _denied("member_admission", "deo_member_admission_failed", result.code)
             operation_head = result.snapshot.source_head_seq
@@ -709,6 +768,21 @@ class DirectedEffectLifecycleService:
                     latest_operation_stream_head=operation_head,
                 )
             )
+
+        # R145: re-bind attempt authority after multi-member admit so finalize
+        # and any residual exact-lease writers observe the latest same-owner
+        # lease without treating concurrent heartbeats as authority steal.
+        finalize_heartbeat = refresh_directed_effect_attempt(
+            authority=execution_attempt_authority,
+            expected_execution_attempt=execution_attempt,
+            context_summary="directed_effect_inventory_finalize",
+        )
+        if finalize_heartbeat.status != "fresh" or finalize_heartbeat.execution_attempt is None:
+            return _denied(
+                "execution_attempt_heartbeat",
+                "deo_execution_attempt_heartbeat_failed",
+            )
+        execution_attempt = finalize_heartbeat.execution_attempt
 
         try:
             ready_result = _canonical_port_result(
@@ -730,16 +804,25 @@ class DirectedEffectLifecycleService:
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             return _port_exception("inventory_ready", "deo_inventory_ready_failed", exc)
         ready = ready_result.projection
+        is_ready_replay = ready_result.code == "inventory_ready_idempotent_replay"
+        # On ready idempotent_replay after seal already projected inventory_ready,
+        # parent registry head does not advance again (seq stays put).
+        expected_ready_parent_head = (
+            sealed.parent_registry_source_head_seq
+            if is_ready_replay and sealed.inventory_ready
+            else sealed.parent_registry_source_head_seq + 1
+        )
         if (
             not ready_result.ok
             or ready_result.code not in {"inventory_ready", "inventory_ready_idempotent_replay"}
             or ready is None
             or not ready.inventory_ready
-            or ready.execution_attempt != execution_attempt
+            # Ignore renewable lease_expires_at (R171 same-owner heartbeat renew).
+            or not _same_attempt_binding(ready.execution_attempt, execution_attempt)
             or ready.parent_binding_id != parent_binding.binding_id
             or ready.inventory_hash != sealed.inventory_hash
             or ready.members != sealed.members
-            or ready.parent_registry_source_head_seq != sealed.parent_registry_source_head_seq + 1
+            or ready.parent_registry_source_head_seq != expected_ready_parent_head
             or ready.ready_event_seq != ready.parent_registry_source_head_seq
             or ready.admitted_count != len(sealed.members)
             or ready.missing_operation_ids
@@ -882,25 +965,34 @@ class DirectedEffectLifecycleService:
             # head, then let the claim command's CAS reject any intervening race.
             expected_seq = operation_head + 1
             operation_claim_status = "unknown"
+            claim_command = ClaimDirectedEffectCommandV1(
+                workspace=claim_execution_attempt.workspace,
+                task_id=claim_execution_attempt.task_id,
+                execution_attempt=claim_execution_attempt,
+                parent_binding=canonical_batch.parent_binding,
+                tool_call_id=member.tool_call_id,
+                effect_id=member.effect_id,
+                expected_version=prepared_member.admitted_operation_version,
+                expected_seq=expected_seq,
+                actor="roles.kernel",
+                intended_effect_fingerprint=member.intended_effect_fingerprint,
+                policy_verdict_hash=member.policy_verdict_hash,
+                expected_receipt_binding_hash=member.expected_receipt_binding_hash,
+            )
             claim_result = _canonical_port_result(
-                self._ports.claim_operation(
-                    ClaimDirectedEffectCommandV1(
-                        workspace=claim_execution_attempt.workspace,
-                        task_id=claim_execution_attempt.task_id,
-                        execution_attempt=claim_execution_attempt,
-                        parent_binding=canonical_batch.parent_binding,
-                        tool_call_id=member.tool_call_id,
-                        effect_id=member.effect_id,
-                        expected_version=prepared_member.admitted_operation_version,
-                        expected_seq=expected_seq,
-                        actor="roles.kernel",
-                        intended_effect_fingerprint=member.intended_effect_fingerprint,
-                        policy_verdict_hash=member.policy_verdict_hash,
-                        expected_receipt_binding_hash=member.expected_receipt_binding_hash,
-                    )
-                ),
+                self._ports.claim_operation(claim_command),
                 DirectedEffectOperationResultV1,
             )
+            # Durable EFFECT_STARTED without a grant-bearing result (ambiguous
+            # append confirmation) can be rehydrated by one exact-replay claim.
+            if (
+                not claim_result.ok or claim_result.code != "effect_claimed" or claim_result.claim_grant is None
+            ) and claim_result.state == "EFFECT_STARTED":
+                operation_claim_status = "claimed"
+                claim_result = _canonical_port_result(
+                    self._ports.claim_operation(claim_command),
+                    DirectedEffectOperationResultV1,
+                )
         except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
             return _claim_denied(
                 "deo_claim_failed",
@@ -908,6 +1000,9 @@ class DirectedEffectLifecycleService:
             )
 
         grant = claim_result.claim_grant
+        durable_started = claim_result.state == "EFFECT_STARTED"
+        if durable_started:
+            operation_claim_status = "claimed"
         if (
             not claim_result.ok
             or claim_result.code != "effect_claimed"
@@ -933,7 +1028,7 @@ class DirectedEffectLifecycleService:
         ):
             return _claim_denied(
                 "deo_claim_failed",
-                operation_claim_status="unknown",
+                operation_claim_status=operation_claim_status,
             )
         operation_claim_status = "claimed"
 
@@ -955,6 +1050,11 @@ class DirectedEffectLifecycleService:
                 )
             )
         except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+            self._seal_claimed_recovery_pending(
+                grant=grant,
+                member=member,
+                reason="current_policy_capture_exception",
+            )
             return _claim_denied(
                 "deo_current_policy_evidence_unavailable",
                 operation_claim_status=operation_claim_status,
@@ -970,6 +1070,11 @@ class DirectedEffectLifecycleService:
                 grant=grant,
             )
         ):
+            self._seal_claimed_recovery_pending(
+                grant=grant,
+                member=member,
+                reason="current_policy_capture_denied_or_mismatch",
+            )
             return _claim_denied(
                 "deo_current_policy_evidence_unavailable",
                 operation_claim_status=operation_claim_status,
@@ -1000,6 +1105,46 @@ class DirectedEffectLifecycleService:
             error_code=None,
             operation_claim_status="claimed",
         )
+
+    def _seal_claimed_recovery_pending(
+        self,
+        *,
+        grant: DirectedEffectClaimGrantV1,
+        member: object,
+        reason: str,
+    ) -> None:
+        """Best-effort RECOVERY_PENDING after durable claim cannot continue.
+
+        R141: post-claim policy capture failure used to leave EFFECT_STARTED
+        orphaned (multi-write batches stuck at 3/4 receipts). Recovery is
+        append-only evidence; failures here must not mask the original denial.
+        """
+
+        try:
+            intended = str(getattr(member, "intended_effect_fingerprint", "") or "")
+            policy_hash = str(getattr(member, "policy_verdict_hash", "") or "")
+            receipt_binding = str(getattr(member, "expected_receipt_binding_hash", "") or "")
+            self._ports.mark_recovery_pending(
+                MarkDirectedEffectRecoveryPendingCommandV1(
+                    workspace=grant.execution_attempt.workspace,
+                    task_id=grant.execution_attempt.task_id,
+                    execution_attempt=grant.execution_attempt,
+                    parent_binding=grant.parent_binding,
+                    tool_call_id=grant.operation.tool_call_id,
+                    effect_id=grant.operation.effect_id,
+                    expected_version=grant.operation_version,
+                    expected_seq=grant.claim_event_seq + 1,
+                    actor="roles.kernel",
+                    intended_effect_fingerprint=intended,
+                    policy_verdict_hash=policy_hash,
+                    expected_receipt_binding_hash=receipt_binding,
+                    reason=str(reason or "post_claim_policy_unavailable")[:200],
+                    recovery_evidence_ref="recovery://roles.kernel/post_claim_policy_unavailable",
+                    recovery_evidence_hash="0" * 64,
+                )
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return
 
     def abort_unclaimed_members(
         self,

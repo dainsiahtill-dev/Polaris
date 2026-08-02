@@ -1,0 +1,54 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "DEFECT-R120-DEO-ERROR-CODE-FROZENSET-DRIFT-20260801",
+  "status": "fixed",
+  "severity": "P0",
+  "category": "execution_control_plane",
+  "owner_layer": "director.runtime.public.directed_effect_contracts",
+  "phenomenon": "L1-04 isolated full chain reached Director tool_batch with 8 native write_file calls; 5 Go files physically landed; then turn aborted mid TOOL_BATCH_EXECUTING with ValueError: error_code must be a DirectedEffectErrorCodeV1 value. Task-1 stuck in_progress, no tool lifecycle/TaskBoundary, Factory failed with director.canonical_task_boundary_missing / control_plane:tool_lifecycle_failed.",
+  "physical_evidence": {
+    "bench_work_dir": "/tmp/factory-bench-l1-04-goal-serial",
+    "factory_run_id": "factory_cd272c4a99e6",
+    "director_run_id": "director-401f7dd0e4be",
+    "truthlog_error": {
+      "event_type": "ErrorEvent",
+      "error_type": "ValueError",
+      "message": "error_code must be a DirectedEffectErrorCodeV1 value",
+      "state_at_error": "TOOL_BATCH_EXECUTING",
+      "turn_id": "director-401f7dd0e4be--TASK-1--attempt-txi_a76c933edec18dc1abc7c92f-0"
+    },
+    "file_edits_before_crash": [
+      "go.mod",
+      "models/capsule.go",
+      "models/exhibit.go",
+      "models/gallery.go",
+      "main.go"
+    ],
+    "real_run_gate": "passed (go test + go run .)",
+    "llm_route_audit": "passed (pm deepseek-v4-pro, ce deepseek-v4-pro, director MiniMax-M3)",
+    "root_cause_signature_reported": "control_plane:tool_lifecycle_failed"
+  },
+  "root_cause": "DirectedEffectErrorCodeV1 TypeAlias included deo_current_policy_evidence_unavailable, and production claim path returns that code when current policy capture fails/mismatches, but the runtime validation frozenset _ERROR_CODES omitted it. Constructing the denial raised ValueError, aborting the tool batch without lifecycle receipts or task settlement.",
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/director/runtime/public/directed_effect_contracts.py",
+      "src/backend/polaris/cells/director/runtime/public/tests/test_directed_effect_authorization.py"
+    ],
+    "change": "Add deo_current_policy_evidence_unavailable to _ERROR_CODES; assert frozenset==TypeAlias in contract tests."
+  },
+  "verification": {
+    "ruff": "pass",
+    "pytest": "test_directed_effect_authorization.py 92 passed"
+  },
+  "attribution": "Director DEO control-plane contract drift (not model weakness)",
+  "next_action": "Re-run sequential L1-01 isolated bench with advanced model bindings; expect Director tool batch to deny/complete without ValueError crash.",
+  "updated_at": "2026-07-31T17:16:56.088517+00:00",
+  "post_fix_verification": {
+    "bench": "L1-01 isolated /tmp/factory-bench-l1-01-r120-deo-fix",
+    "result": "DEO ValueError no longer aborts tool_batch; tool_batch_started/completed + CompletionEvent success observed; 15 native write_file, 13 effect receipts, lifecycle requirement_status=satisfied for required tasks. L1-01 still FAIL for other reasons (no tests, quality_failed, sibling exports on follow-up).",
+    "evidence_paths": [
+      "/tmp/factory-bench-l1-01-r120-deo-fix/factory_audits.json",
+      "/tmp/factory-bench-l1-01-r120-deo-fix/L1-01.chain.log"
+    ]
+  }
+}
