@@ -3148,6 +3148,9 @@ def _build_typescript_missing_relative_module_plan(
             module_ref=module_ref,
             importer_text=importer_text,
         )
+        # Invent stubs keep compile moving but must never be treated as
+        # authoritative product delivery (unattended: declared verify/smoke
+        # still requires real generation or INCOMPLETE_MATERIALIZATION).
         operations.append(
             RepairOperation(
                 kind="write_file",
@@ -3161,6 +3164,11 @@ def _build_typescript_missing_relative_module_plan(
                     "write_file_reason": "new_relative_typescript_module_stub",
                     "write_file_allowed_category": "fallback",
                     "write_file_policy_decision": "allowed_fallback",
+                    "requires_revalidation": True,
+                    "authoritative": False,
+                    "agi_execution_authority": False,
+                    "invent_stub": True,
+                    "product_delivery_authority": False,
                 },
             )
         )

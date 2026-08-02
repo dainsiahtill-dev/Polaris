@@ -71,6 +71,10 @@ from polaris.kernelone.benchmark.factory_depth_contract import (
     build_factory_bench_level_contract,
     format_level_contract_for_requirements,
 )
+from polaris.kernelone.platform_modules.residual_attribution import (
+    build_factory_audits_attribution_pack,
+)
+from polaris.kernelone.platform_modules.unattended_supervisor import plan_unattended_step
 from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_roots
 from scripts.factory_bench.backend_fingerprint import (
     build_run_backend_metadata,
@@ -712,6 +716,29 @@ def _prepare_director_resume_workspace(workspace: Path) -> None:
     from polaris.cells.factory.pipeline.internal.factory_stage_executor import OrchestrationStageExecutor
 
     OrchestrationStageExecutor(workspace)._create_pre_director_snapshot(run_id="bench_director_resume_seed")
+
+
+def _attach_platform_residual_attribution(
+    payload: dict[str, Any],
+    *,
+    source_path: str = "",
+) -> dict[str, Any]:
+    """Embed platform residual attribution + unattended next-step into audits.
+
+    Does not change bench pass/fail. Supervisors read
+    ``platform_residual_attribution.primary.primary_module_id`` and
+    ``unattended_next_step.commands`` after a failed run.
+    """
+
+    pack = build_factory_audits_attribution_pack(payload, source_path=source_path)
+    step = plan_unattended_step(
+        attribution=pack.get("primary") or {},
+        module_gate_ok=None,
+        cascade_ok=None,
+    )
+    payload["platform_residual_attribution"] = pack
+    payload["unattended_next_step"] = step.to_dict()
+    return payload
 
 
 def _next_immutable_json_path(path: Path) -> Path:
@@ -4359,13 +4386,14 @@ def main() -> int:
         out_path = base / "factory_audits.json"
         partial_agg = aggregate_factory_audits(records)
         partial_goal_audit = aggregate_goal_audit(records)
+        partial_payload = {
+            "aggregate": partial_agg,
+            "goal_audit": partial_goal_audit,
+            "records": records,
+        }
+        _attach_platform_residual_attribution(partial_payload, source_path=str(out_path))
         out_path.write_text(
-            json.dumps(
-                {"aggregate": partial_agg, "goal_audit": partial_goal_audit, "records": records},
-                ensure_ascii=False,
-                indent=1,
-            )
-            + "\n",
+            json.dumps(partial_payload, ensure_ascii=False, indent=1) + "\n",
             encoding="utf-8",
         )
         # Write immutable per-run audit package
@@ -4389,16 +4417,31 @@ def main() -> int:
     agg = aggregate_factory_audits(records)
     goal_audit = aggregate_goal_audit(records)
     out_path = base / "factory_audits.json"
+    final_payload = {
+        "aggregate": agg,
+        "goal_audit": goal_audit,
+        "records": records,
+    }
+    _attach_platform_residual_attribution(final_payload, source_path=str(out_path))
     out_path.write_text(
-        json.dumps(
-            {"aggregate": agg, "goal_audit": goal_audit, "records": records},
-            ensure_ascii=False,
-            indent=1,
-        )
-        + "\n",
+        json.dumps(final_payload, ensure_ascii=False, indent=1) + "\n",
         encoding="utf-8",
     )
     run_success = agg["all_checks_passed"] == agg["total"]
+    primary_attr = (final_payload.get("platform_residual_attribution") or {}).get("primary") or {}
+    if primary_attr and not run_success:
+        # Surface machine-readable unattended next module for supervisors.
+        _logger.info(
+            "platform residual attribution primary_module_id=%s delivery_status=%s",
+            primary_attr.get("primary_module_id"),
+            primary_attr.get("delivery_status"),
+        )
+        print(
+            f"[factory-bench] residual_module={primary_attr.get('primary_module_id')} "
+            f"delivery_status={primary_attr.get('delivery_status')} "
+            f"next_phase={(final_payload.get('unattended_next_step') or {}).get('phase')}",
+            flush=True,
+        )
     _emit_bench_event(
         workspace=base,
         project_id="-",

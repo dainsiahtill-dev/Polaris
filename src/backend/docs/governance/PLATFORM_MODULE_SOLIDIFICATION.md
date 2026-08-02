@@ -169,3 +169,19 @@ After any platform fix:
 4. If multi-module: `--mode cascade`
 5. Only then isolated L1-01 `--mode bench` or `run_factory_bench.py`
 6. Update `defect_latest.json` with module_id + gate evidence
+
+---
+
+## 9. Unattended automation (machine residual → next step)
+
+For **无人值守** loops, do **not** hand-pick modules from free text. Use:
+
+| Surface | Path |
+|---------|------|
+| Attribution API | `polaris.kernelone.platform_modules.residual_attribution` |
+| Step planner | `polaris.kernelone.platform_modules.unattended_supervisor` |
+| CLI | `scripts/platform_modules/attribute_factory_audit.py` |
+| Embedded in audits | `factory_audits.json` → `platform_residual_attribution` + `unattended_next_step` |
+| Doctrine | `PLATFORM_UNATTENDED_AUTOMATION.md` |
+
+Hard rules (same as freeze rule 4): one residual → one `module_id`; module gate → cascade → one isolated L1-01; four pillars + N-batch before L1-02.

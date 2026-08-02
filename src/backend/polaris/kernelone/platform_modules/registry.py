@@ -297,7 +297,12 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "R174: settle planned 5 deferred repairs (tsc + json_as_source smoke) but "
             "synthesize_batch fail-all deo_deferred_repair_target_conflict on shared "
             "src/main.ts — committed=0, tests/ never wrote. Partition deferred commits "
-            "into non-overlapping forward-path waves so smoke tests still land."
+            "into non-overlapping forward-path waves so smoke tests still land. "
+            "R181: real_run green while director_dispatch failed on "
+            "canonical_task_boundary_missing / task_runtime_not_converged with stale "
+            "downstream_pending. Disk reconcile + completed_verified supersedes "
+            "non-completed runtime rows; multi-pass post-settle recovery re-evaluates "
+            "authority. Residual attribution maps this class to M06, not M10."
         ),
     ),
     "M07_factory_stage_chain": PlatformModuleRecord(
@@ -308,17 +313,28 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
         owner_paths=(
             "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
             "src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py",
+            "src/backend/polaris/kernelone/platform_modules/residual_attribution.py",
+            "src/backend/polaris/kernelone/platform_modules/unattended_supervisor.py",
         ),
         pytest_targets=(
             "src/backend/polaris/cells/factory/pipeline/tests/test_factory_execution_control_plane_ssot.py",
+            "src/backend/polaris/kernelone/platform_modules/tests/test_residual_attribution.py",
+            "src/backend/polaris/kernelone/platform_modules/tests/test_registry.py",
         ),
         invariants=(
             "chain_is_pm_ce_director_only",
             "missing_ce_blocks_director",
             "stage_persistence_commits_before_next_stage",
+            "residual_maps_to_exactly_one_module_id",
+            "unattended_module_gate_before_cascade_before_bench",
         ),
         depends_on=("M05_stage_lease_heartbeat", "M06_director_multi_task"),
         markers=("module_factory_chain",),
+        notes=(
+            "Unattended residual attribution + step planner live under KernelOne "
+            "platform_modules and gate with M07 so cascade enforces "
+            "one-residual-one-module before L1-01 bench."
+        ),
     ),
     "M08_run_ledger_tool_lifecycle": PlatformModuleRecord(
         module_id="M08_run_ledger_tool_lifecycle",
