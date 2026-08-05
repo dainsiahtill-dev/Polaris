@@ -1164,12 +1164,29 @@ def _publish_run_ledger_projection_update(
 
 
 def append_run_ledger_event(command: AppendRunLedgerEventCommandV1) -> RunLedgerAppendResultV1:
-    """Commit one Fact-backed ledger row through the projection-owned transaction."""
+    """Commit one Fact-backed ledger row through the projection-owned transaction.
+
+    Managed-process lifecycle events may only enter via
+    ``project_managed_process_lifecycle`` (GR3B-B3), which sets a private
+    call-stack ContextVar.  There is **no** public authorize keyword; any
+    direct append of ``managed_process_lifecycle`` fails closed.
+    """
+
+    from polaris.cells.control_plane.run_ledger.public.contracts import ControlPlaneRunLedgerV1Error
+    from polaris.cells.control_plane.run_ledger.public.managed_process_lifecycle import (
+        MANAGED_PROCESS_LIFECYCLE_EVENT_TYPE,
+        managed_process_append_is_authorized,
+    )
 
     workspace = Path(command.workspace).expanduser().resolve()
     ledger = RunLedger(workspace, run_id=command.run_id)
     prepared_event = ledger.prepare_idempotent_event(dict(command.event))
     event_type = str(prepared_event.get("event_type") or "control_plane_event").strip()
+    if event_type == MANAGED_PROCESS_LIFECYCLE_EVENT_TYPE and not managed_process_append_is_authorized():
+        raise ControlPlaneRunLedgerV1Error(
+            "managed_process_lifecycle_requires_typed_projection:"
+            "use project_managed_process_lifecycle; generic append is forbidden"
+        )
 
     def prove_partial_tail_fact(
         canonical_event: dict[str, Any],
@@ -1243,13 +1260,32 @@ def append_tool_call_lifecycle_event(command: AppendToolCallLifecycleEventComman
         This is the single public append path for tool lifecycle receipts.
         Callers may build different receipt payloads, but they do not own the
         Run Ledger event envelope, job-token projection, or append command
-        construction.
+        construction.  Managed-process lifecycle facts must not be smuggled
+        through this path (GR3B-B3).
 
     Complexity:
         O(e + d) through lifecycle normalization, matching
         ``build_tool_call_lifecycle_run_ledger_event`` where ``e`` is native
         envelope refs and ``d`` is dropped-call refs.
     """
+
+    from polaris.cells.control_plane.run_ledger.public.contracts import ControlPlaneRunLedgerV1Error
+    from polaris.cells.control_plane.run_ledger.public.managed_process_lifecycle import (
+        looks_like_managed_process_tool_lifecycle_substitute,
+    )
+
+    if looks_like_managed_process_tool_lifecycle_substitute(command.lifecycle_receipt):
+        raise ControlPlaneRunLedgerV1Error(
+            "managed_process_lifecycle_forbids_tool_lifecycle_substitute"
+        )
+    if str(command.stage or "").strip().lower() in {
+        "managed_process",
+        "managed_process_lifecycle",
+        "process_receipt",
+    }:
+        raise ControlPlaneRunLedgerV1Error(
+            "managed_process_lifecycle_forbids_tool_lifecycle_substitute:stage"
+        )
 
     event = build_tool_call_lifecycle_run_ledger_event(
         run_id=command.run_id,
@@ -1271,6 +1307,16 @@ def append_tool_call_lifecycle_event(command: AppendToolCallLifecycleEventComman
             event=event,
         )
     )
+
+
+def project_managed_process_lifecycle(command: Any) -> RunLedgerAppendResultV1:
+    """Public re-export of GR3B-B3 typed managed-process lifecycle projection."""
+
+    from polaris.cells.control_plane.run_ledger.public.managed_process_lifecycle import (
+        project_managed_process_lifecycle as _project,
+    )
+
+    return _project(command)
 
 
 def read_run_provenance_bundle(query: ReadRunProvenanceBundleQueryV1) -> RunProvenanceBundleResultV1:

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:14.934591Z",
-  "source_hash": "27fdd3a678dbbe86",
+  "generated_at": "2026-08-02T15:47:43.523450Z",
+  "source_hash": "2b13812f527f62d6",
   "cell_id": "orchestration.workflow_runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -201,8 +201,8 @@
     },
     {
       "type": "function",
-      "name": "_materialized_any_files",
-      "description": "Whether a runtime row's adapter result landed at least one file on disk.",
+      "name": "_has_task_runtime_dependency_satisfaction",
+      "description": "Whether TaskRuntime durably authorized failed-output consumption.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
     },
     {
@@ -292,6 +292,10 @@
           "doc": ""
         },
         {
+          "name": "workflow_handler",
+          "doc": ""
+        },
+        {
           "name": "run",
           "doc": "`@workflow.run` decorator."
         },
@@ -314,6 +318,14 @@
         {
           "name": "decorator",
           "doc": ""
+        },
+        {
+          "name": "execute_activity",
+          "doc": "执行 Activity，并等待完成。"
+        },
+        {
+          "name": "execute_child_workflow",
+          "doc": "执行子工作流并等待终态。"
         },
         {
           "name": "now",
@@ -451,7 +463,19 @@
     },
     {
       "type": "function",
+      "name": "_resolve_runtime_engine",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
       "name": "_lookup_activity_handler",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_execute_activity_with_engine",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
     },
@@ -470,6 +494,12 @@
     {
       "type": "function",
       "name": "_snapshot_result",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_wait_child_workflow_completion",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
     },
@@ -828,6 +858,14 @@
           "doc": "Remove a UI event handler."
         },
         {
+          "name": "start",
+          "doc": "Start bridging events to UI."
+        },
+        {
+          "name": "stop",
+          "doc": "Stop bridging events."
+        },
+        {
           "name": "_on_event",
           "doc": "Process orchestration event and emit UI events."
         },
@@ -854,6 +892,14 @@
         {
           "name": "__init__",
           "doc": "Initialize metrics collector."
+        },
+        {
+          "name": "start",
+          "doc": "Start collecting metrics."
+        },
+        {
+          "name": "stop",
+          "doc": "Stop collecting metrics."
         },
         {
           "name": "_on_event",
@@ -888,12 +934,24 @@
           "doc": "Initialize health monitor."
         },
         {
+          "name": "start",
+          "doc": "Start health monitoring."
+        },
+        {
+          "name": "stop",
+          "doc": "Stop health monitoring."
+        },
+        {
           "name": "_on_event",
           "doc": "Process event for health status."
         },
         {
           "name": "get_health_status",
           "doc": "Get current health status."
+        },
+        {
+          "name": "wait_for_backend",
+          "doc": "Wait for backend to be ready (Electron protocol stability)."
         },
         {
           "name": "is_backend_ready",
@@ -912,8 +970,24 @@
           "doc": "Initialize structured logger."
         },
         {
+          "name": "start",
+          "doc": "Start logging."
+        },
+        {
+          "name": "stop",
+          "doc": "Stop logging and flush remaining events."
+        },
+        {
           "name": "_on_event",
           "doc": "Process event for logging."
+        },
+        {
+          "name": "_flush_loop",
+          "doc": "Periodic flush task."
+        },
+        {
+          "name": "_flush",
+          "doc": "Flush buffer to file."
         }
       ]
     },
@@ -924,25 +998,92 @@
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/observability.py"
     },
     {
+      "type": "function",
+      "name": "start_observability",
+      "description": "Start all observability components.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/observability.py"
+    },
+    {
+      "type": "function",
+      "name": "stop_observability",
+      "description": "Stop all observability components.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/observability.py"
+    },
+    {
       "type": "class",
       "name": "OrchestrationService",
       "description": "统一编排服务接口",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/ports.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "submit_run",
+          "doc": "提交编排运行"
+        },
+        {
+          "name": "query_run",
+          "doc": "查询运行状态"
+        },
+        {
+          "name": "query_run_tasks",
+          "doc": "查询运行任务详情"
+        },
+        {
+          "name": "signal_run",
+          "doc": "向运行发送控制信号"
+        },
+        {
+          "name": "cancel_run",
+          "doc": "取消运行"
+        },
+        {
+          "name": "list_runs",
+          "doc": "列出运行"
+        }
+      ]
     },
     {
       "type": "class",
       "name": "OrchestrationEventPublisher",
       "description": "编排事件发布端口",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/ports.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "publish_snapshot",
+          "doc": "发布状态快照"
+        },
+        {
+          "name": "publish_event",
+          "doc": "发布事件"
+        }
+      ]
     },
     {
       "type": "class",
       "name": "OrchestrationRepository",
       "description": "编排存储库端口",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/ports.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "save_snapshot",
+          "doc": "保存快照"
+        },
+        {
+          "name": "get_snapshot",
+          "doc": "获取快照"
+        },
+        {
+          "name": "list_snapshots",
+          "doc": "列出快照"
+        },
+        {
+          "name": "save_request",
+          "doc": "保存请求（用于恢复）"
+        },
+        {
+          "name": "get_request",
+          "doc": "获取请求"
+        }
+      ]
     },
     {
       "type": "class",
@@ -953,6 +1094,10 @@
         {
           "name": "role_id",
           "doc": "角色标识"
+        },
+        {
+          "name": "execute",
+          "doc": "执行任务"
         },
         {
           "name": "get_capabilities",
@@ -1003,6 +1148,22 @@
           "doc": "Initialize the process launcher."
         },
         {
+          "name": "launch",
+          "doc": "Launch a subprocess with the given request."
+        },
+        {
+          "name": "terminate",
+          "doc": "Terminate a running process gracefully."
+        },
+        {
+          "name": "wait_for",
+          "doc": "Wait for process to complete."
+        },
+        {
+          "name": "get_active_processes",
+          "doc": "Get list of active process handles."
+        },
+        {
           "name": "_require_broker",
           "doc": ""
         },
@@ -1019,6 +1180,18 @@
           "doc": "Build a Director launch request."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "launch_pm_once",
+      "description": "Convenience function to launch PM once.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/process_launcher.py"
+    },
+    {
+      "type": "function",
+      "name": "launch_director_once",
+      "description": "Convenience function to launch Director once.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/process_launcher.py"
     },
     {
       "type": "class",
@@ -1040,6 +1213,26 @@
       "description": "Port for running subprocesses.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/process_runner_port.py",
       "methods": [
+        {
+          "name": "launch",
+          "doc": "Launch a subprocess."
+        },
+        {
+          "name": "terminate",
+          "doc": "Terminate a running process."
+        },
+        {
+          "name": "kill",
+          "doc": "Forcefully kill a process."
+        },
+        {
+          "name": "status",
+          "doc": "Get current process status."
+        },
+        {
+          "name": "wait_for",
+          "doc": "Wait for process to complete."
+        },
         {
           "name": "list_active",
           "doc": "List all active processes managed by this runner."
@@ -1084,14 +1277,60 @@
           "doc": ""
         },
         {
+          "name": "start",
+          "doc": "启动适配器。"
+        },
+        {
+          "name": "stop",
+          "doc": "停止适配器。"
+        },
+        {
           "name": "_require_runtime",
           "doc": ""
         },
         {
           "name": "_snapshot_payload",
           "doc": ""
+        },
+        {
+          "name": "submit_workflow",
+          "doc": "提交任意工作流。"
+        },
+        {
+          "name": "submit_pm_workflow",
+          "doc": "提交 PM 工作流（轻量兼容入口）。"
+        },
+        {
+          "name": "describe_workflow",
+          "doc": "查询工作流状态。"
+        },
+        {
+          "name": "wait_workflow_completion",
+          "doc": "Wait for workflow completion via runtime task completion, without polling."
+        },
+        {
+          "name": "query_workflow",
+          "doc": "Query 工作流。"
+        },
+        {
+          "name": "cancel_workflow",
+          "doc": "取消工作流。"
+        },
+        {
+          "name": "signal_workflow",
+          "doc": "发送 Signal。"
+        },
+        {
+          "name": "execute_activity_sync",
+          "doc": "同步执行 Activity。"
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_get_runtime_backend",
+      "description": "Load runtime backend factory lazily to avoid import-time circular references.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py"
     },
     {
       "type": "function",
@@ -1113,7 +1352,43 @@
     },
     {
       "type": "function",
+      "name": "get_adapter",
+      "description": "Get the adapter for the current context, creating one if needed.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "start_adapter",
+      "description": "Start the adapter for the current context.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "stop_adapter",
+      "description": "Stop the adapter for the current context.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py"
+    },
+    {
+      "type": "function",
       "name": "_run_sync",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_describe_workflow_sync_async",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_query_workflow_sync_async",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_submit_pm_workflow_sync_async",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py"
     },
@@ -1394,8 +1669,44 @@
     },
     {
       "type": "function",
+      "name": "_run_director_execution",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
       "name": "_is_no_director_mode",
       "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "get_ready_tasks",
+      "description": "Return tasks already selected by the PM contract.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "claim_task",
+      "description": "Perform lightweight task claim validation before execution.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_task_phase",
+      "description": "Execute a real 4-phase Director step through the canonical role adapter.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "record_director_task_terminal_result",
+      "description": "Persist the workflow-child terminal result over the legacy task artifact.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "complete_task",
+      "description": "Return a completion marker for successful Director child workflows.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
     },
     {
@@ -1432,6 +1743,24 @@
       "type": "function",
       "name": "_record_chief_engineer_cognitive_receipt",
       "description": "Record Cognitive Runtime evidence for the deterministic ChiefEngineer blueprint activity.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/pm_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_pm_tasks",
+      "description": "Bridge a precomputed PM payload into the Workflow workflow.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/pm_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "run_chief_engineer_blueprint",
+      "description": "Generate ChiefEngineer blueprints and enrich PM tasks before Director dispatch.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/pm_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_task_contract",
+      "description": "Run the existing PM quality gate before Director execution.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/pm_activities.py"
     },
     {
@@ -1495,6 +1824,36 @@
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
     },
     {
+      "type": "function",
+      "name": "record_qa_blocked",
+      "description": "Persist explicit evidence that QA did not run because upstream blocked.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "record_qa_cognitive_receipt",
+      "description": "Record Cognitive Runtime evidence for the final QA gate.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "run_integration_qa",
+      "description": "Run the existing integration QA verifier used by the PM runtime.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "run_unit_qa",
+      "description": "Run a lightweight unit/smoke verification pass.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "collect_evidence",
+      "description": "Collect evidence references emitted by prior activities.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
+    },
+    {
       "type": "class",
       "name": "ActivityDefinition",
       "description": "Activity 定义",
@@ -1554,10 +1913,36 @@
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/factory.py",
       "methods": [
         {
+          "name": "create_runtime",
+          "doc": "Create runtime instance."
+        },
+        {
+          "name": "_create_workflow",
+          "doc": "Create self-hosted workflow runtime."
+        },
+        {
+          "name": "_register_workflows_and_activities",
+          "doc": "Register workflow and activity handlers."
+        },
+        {
+          "name": "get_runtime",
+          "doc": "Get current runtime instance."
+        },
+        {
+          "name": "shutdown_runtime",
+          "doc": "Shutdown runtime."
+        },
+        {
           "name": "get_runtime_type",
           "doc": "Get runtime type."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "get_runtime",
+      "description": "Get runtime instance.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/factory.py"
     },
     {
       "type": "class",
@@ -1602,6 +1987,12 @@
     },
     {
       "type": "function",
+      "name": "get_workflow_registry_async",
+      "description": "获取全局 Workflow 注册表（异步安全）",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/workflow_registry.py"
+    },
+    {
+      "type": "function",
       "name": "register_workflow",
       "description": "Workflow 注册装饰器",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/workflow_registry.py"
@@ -1621,8 +2012,22 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "_broadcast_task_trace",
+          "doc": "Broadcast task trace event to frontend."
+        },
+        {
+          "name": "run",
+          "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_broadcast_task_progress",
+      "description": "Broadcast task progress update to frontend via message bus.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_task_workflow.py"
     },
     {
       "type": "function",
@@ -1668,6 +2073,10 @@
       "methods": [
         {
           "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "run",
           "doc": ""
         }
       ]
@@ -1744,12 +2153,28 @@
           "doc": ""
         },
         {
+          "name": "run",
+          "doc": "执行流水线"
+        },
+        {
           "name": "_init_task_states",
           "doc": "初始化任务状态"
         },
         {
+          "name": "_execute_pipeline",
+          "doc": "执行流水线"
+        },
+        {
           "name": "_find_ready_tasks",
           "doc": "找到依赖已满足的就绪任务"
+        },
+        {
+          "name": "_execute_task",
+          "doc": "执行单个任务"
+        },
+        {
+          "name": "_call_role_adapter",
+          "doc": "调用角色适配器"
         },
         {
           "name": "_build_result",
@@ -1769,27 +2194,6 @@
       "methods": []
     },
     {
-      "type": "class",
-      "name": "PMWorkflow",
-      "description": "PM Workflow 兼容包装器",
-      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/generic_pipeline_workflow.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "DirectorWorkflow",
-      "description": "Director Workflow 兼容包装器",
-      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/generic_pipeline_workflow.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "QAWorkflow",
-      "description": "QA Workflow 兼容包装器",
-      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/generic_pipeline_workflow.py",
-      "methods": []
-    },
-    {
       "type": "function",
       "name": "get_workflow_api",
       "description": "获取工作流 API 实例.",
@@ -1803,6 +2207,14 @@
       "methods": [
         {
           "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_broadcast_task_trace",
+          "doc": "Broadcast PM task trace event to frontend."
+        },
+        {
+          "name": "run",
           "doc": ""
         }
       ]
@@ -1857,6 +2269,10 @@
       "methods": [
         {
           "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "run",
           "doc": ""
         }
       ]
@@ -1937,6 +2353,26 @@
           "doc": "Initialize runtime orchestrator."
         },
         {
+          "name": "shutdown",
+          "doc": "Shutdown the orchestrator and cleanup all resources."
+        },
+        {
+          "name": "submit",
+          "doc": "Submit a service for execution."
+        },
+        {
+          "name": "status",
+          "doc": "Get service status."
+        },
+        {
+          "name": "terminate",
+          "doc": "Terminate a service gracefully."
+        },
+        {
+          "name": "wait_for_completion",
+          "doc": "Wait for service to complete."
+        },
+        {
           "name": "list_active",
           "doc": "List all active services."
         },
@@ -1945,8 +2381,32 @@
           "doc": "List all services."
         },
         {
+          "name": "_wait_for_dependencies",
+          "doc": "Wait for dependencies to be ready."
+        },
+        {
+          "name": "_launch_service",
+          "doc": "Launch a service."
+        },
+        {
+          "name": "_monitor_service",
+          "doc": "Monitor a service and update state."
+        },
+        {
+          "name": "_maybe_restart",
+          "doc": "Check if service should be restarted."
+        },
+        {
           "name": "_emit_event",
           "doc": "Emit an orchestration event."
+        },
+        {
+          "name": "launch_pm",
+          "doc": "Convenience method to launch PM."
+        },
+        {
+          "name": "launch_director",
+          "doc": "Convenience method to launch Director."
         }
       ]
     },
@@ -2106,6 +2566,26 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "save_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "get_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "save_request",
+          "doc": "持久化请求供恢复使用"
+        },
+        {
+          "name": "get_request",
+          "doc": "恢复请求"
+        },
+        {
+          "name": "list_snapshots",
+          "doc": ""
         }
       ]
     },
@@ -2114,7 +2594,16 @@
       "name": "LoggingEventPublisher",
       "description": "日志事件发布实现",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "publish_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "publish_event",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "class",
@@ -2135,6 +2624,30 @@
           "doc": "Set the application-owned role adapter factory."
         },
         {
+          "name": "submit_run",
+          "doc": "提交编排运行"
+        },
+        {
+          "name": "query_run",
+          "doc": "查询运行状态"
+        },
+        {
+          "name": "query_run_tasks",
+          "doc": "查询任务详情"
+        },
+        {
+          "name": "signal_run",
+          "doc": "发送控制信号"
+        },
+        {
+          "name": "cancel_run",
+          "doc": "取消运行"
+        },
+        {
+          "name": "list_runs",
+          "doc": "列出运行"
+        },
+        {
           "name": "_coerce_positive_int",
           "doc": "将输入转换为正整数，失败时返回默认值"
         },
@@ -2151,6 +2664,18 @@
           "doc": "创建初始快照"
         },
         {
+          "name": "_execute_workflow",
+          "doc": "执行 Workflow 模式"
+        },
+        {
+          "name": "_execute_chat",
+          "doc": "执行 Chat 模式"
+        },
+        {
+          "name": "_execute_task",
+          "doc": "执行单个任务"
+        },
+        {
           "name": "_run_role_adapter_in_worker",
           "doc": "Run adapter execution in an isolated event loop on a worker thread."
         },
@@ -2163,8 +2688,36 @@
           "doc": "Reconcile Director-only task-runtime completion into the canonical result artifact."
         },
         {
+          "name": "_update_task_status",
+          "doc": "更新任务状态"
+        },
+        {
+          "name": "_update_snapshot",
+          "doc": "更新并发布快照"
+        },
+        {
           "name": "_categorize_error",
           "doc": "错误分类"
+        },
+        {
+          "name": "_get_request_from_snapshot",
+          "doc": "从快照恢复请求"
+        },
+        {
+          "name": "_handle_cancel",
+          "doc": "处理取消信号"
+        },
+        {
+          "name": "_handle_retry",
+          "doc": "处理重试信号"
+        },
+        {
+          "name": "_handle_skip",
+          "doc": "处理跳过信号"
+        },
+        {
+          "name": "_update_task_status_with_changes",
+          "doc": "更新任务状态并包含文件变更信息"
         },
         {
           "name": "_trigger_run_archive",
@@ -2173,6 +2726,10 @@
         {
           "name": "_cleanup_run",
           "doc": "清理运行资源"
+        },
+        {
+          "name": "get_ui_state",
+          "doc": "获取 UI 状态（用于前端展示）"
         }
       ]
     },
@@ -2213,6 +2770,36 @@
     },
     {
       "type": "function",
+      "name": "_bounded_result_text",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_bounded_nonnegative_int",
+      "description": "Project an untrusted counter without retaining arbitrary nested data.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_bounded_claim_attempts",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_bounded_taskboard_claim_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_bounded_role_result_evidence",
+      "description": "Project role results into a small, auditable orchestration fact.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
+    },
+    {
+      "type": "function",
       "name": "_adapter_task_id_for_role",
       "description": "Resolve the physical adapter task id without leaking workflow ids.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
@@ -2233,6 +2820,12 @@
       "type": "function",
       "name": "get_orchestration_role_adapter_factory",
       "description": "Return the registered role adapter factory.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_orchestration_service",
+      "description": "获取编排服务单例",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
     },
     {
@@ -2281,6 +2874,24 @@
     },
     {
       "type": "function",
+      "name": "_wait_for_adapter_workflow_completion",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
+    },
+    {
+      "type": "function",
+      "name": "_wait_for_workflow_completion_async",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
+    },
+    {
+      "type": "function",
+      "name": "_submit_pm_workflow_async",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
+    },
+    {
+      "type": "function",
       "name": "submit_pm_workflow_sync",
       "description": "Submit PM workflow through self-hosted runtime with Workflow-compatible result.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
@@ -2301,6 +2912,12 @@
       "type": "function",
       "name": "query_workflow_sync",
       "description": "Query workflow with compatibility payload.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
+    },
+    {
+      "type": "function",
+      "name": "_cancel_workflow_async",
+      "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
     },
     {
@@ -2386,6 +3003,42 @@
         },
         {
           "name": "init_schema",
+          "doc": ""
+        },
+        {
+          "name": "create_execution",
+          "doc": ""
+        },
+        {
+          "name": "append_event",
+          "doc": ""
+        },
+        {
+          "name": "get_events",
+          "doc": ""
+        },
+        {
+          "name": "get_execution",
+          "doc": ""
+        },
+        {
+          "name": "update_execution",
+          "doc": ""
+        },
+        {
+          "name": "upsert_task_state",
+          "doc": ""
+        },
+        {
+          "name": "list_task_states",
+          "doc": ""
+        },
+        {
+          "name": "create_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "list_workflows",
           "doc": ""
         }
       ]

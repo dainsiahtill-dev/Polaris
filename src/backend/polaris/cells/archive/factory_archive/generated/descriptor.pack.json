@@ -1,6 +1,6 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:19.165727Z",
+  "generated_at": "2026-08-02T15:47:49.991008Z",
   "source_hash": "494c28053175e811",
   "cell_id": "archive.factory_archive",
   "workspace": "/home/dains/Documents/polaris/src/backend",
@@ -203,6 +203,12 @@
     {
       "type": "function",
       "name": "trigger_factory_archive",
+      "description": "",
+      "defined_in": "polaris/cells/archive/factory_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_do_archive",
       "description": "",
       "defined_in": "polaris/cells/archive/factory_archive/public/service.py"
     },

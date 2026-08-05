@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:13.601666Z",
-  "source_hash": "e4b000f0d84e0014",
+  "generated_at": "2026-08-02T15:47:42.023770Z",
+  "source_hash": "afca23494378fe1e",
   "cell_id": "context.engine",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -214,6 +214,12 @@
       "type": "function",
       "name": "_context_hash_from_ref",
       "description": "",
+      "defined_in": "polaris/cells/context/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_final_physical_provider_request",
+      "description": "Project the exact provider-native body for ContextOS/UI consumers.",
       "defined_in": "polaris/cells/context/engine/public/service.py"
     },
     {

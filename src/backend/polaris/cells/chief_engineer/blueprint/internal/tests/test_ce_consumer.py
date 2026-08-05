@@ -8,6 +8,45 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from polaris.cells.chief_engineer.blueprint.internal.ce_consumer import CEConsumer
+from polaris.cells.control_plane.run_ledger.public import stable_hash
+
+
+def _parent_authority_payload(
+    *authorized_paths: str,
+    blueprint_hash: str = "blueprint-hash",
+) -> dict[str, object]:
+    paths = list(authorized_paths or ("src/provider.py", "src/consumer.py"))
+    parent_token = {
+        "schema_version": 1,
+        "token_id": "job-parent",
+        "run_id": "r",
+        "factory_run_id": "r",
+        "project_id": "project-1",
+        "stage": "pending_exec",
+        "target_files": paths,
+        "allowed_paths": paths,
+        "allowed_write_paths": paths,
+        "allowed_read_paths": paths,
+        "required_artifacts": ["p", *paths],
+        "gate_policy": {"required_evidence_modalities": ["tool_receipt"]},
+        "capability_audit": {"ok": True, "issues": []},
+        "contract_hash": "parent-contract",
+        "parent_token_id": "",
+        "repair_lineage": [],
+        "blueprint_hash": blueprint_hash,
+        "source": "control_plane.job_token",
+    }
+    return {
+        "run_id": "r",
+        "blueprint_hash": blueprint_hash,
+        "contract_hash": "parent-contract",
+        "job_token_id": "job-parent",
+        "job_token": parent_token,
+        "control_plane_job_token": parent_token,
+        "capability_token": parent_token,
+        "capability_token_hash": stable_hash(parent_token),
+        "control_plane_lineage": {"job_token_id": "job-parent"},
+    }
 
 
 class TestCEConsumerInit:
@@ -388,12 +427,10 @@ class TestStepSplitterIntegration:
         consumer._publish_step_tasks(
             "PM-0001-1",
             {
-                "run_id": "r",
-                "blueprint_hash": "bh",
-                "contract_hash": "ch",
-                "job_token_id": "job-1",
-                "job_token": {"token_id": "job-1", "contract_hash": "ch", "blueprint_hash": "bh"},
-                "control_plane_lineage": {"blueprint_hash": "bh"},
+                **_parent_authority_payload(
+                    *(str(step["target_file"]) for step in split),
+                    blueprint_hash="bh",
+                ),
                 "architecture_decisions": [
                     {
                         "concern": "application_architecture",
@@ -410,9 +447,10 @@ class TestStepSplitterIntegration:
         )
         published = [c.args[0].payload["construction_step"] for c in consumer._svc.publish_work_item.call_args_list]
         first_command = consumer._svc.publish_work_item.call_args_list[0].args[0]
-        assert first_command.payload["job_token"]["token_id"] == "job-1"
+        assert first_command.payload["job_token"]["token_id"] != "job-parent"
+        assert first_command.payload["job_token"]["parent_token_id"] == "job-parent"
         assert first_command.payload["blueprint_hash"] == "bh"
-        assert first_command.metadata["job_token"]["token_id"] == "job-1"
+        assert first_command.metadata["job_token"] == first_command.payload["job_token"]
         assert first_command.payload["architecture_decisions"][0]["concern"] == "application_architecture"
         assert first_command.metadata["selected_libraries"] == ["Layered Architecture", "Dependency Injection"]
         ids = [s["step_id"] for s in published]
@@ -421,6 +459,188 @@ class TestStepSplitterIntegration:
         # fills publish with edit_on_prior preserved (publish path must not strip it).
         fills = [s for s in published if "-fill" in s["step_id"]]
         assert fills and all(s.get("edit_on_prior") is True for s in fills)
+
+
+class TestLeafConstructionAuthority:
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    def test_leaf_write_is_exact_and_declared_dependency_remains_readable(self, mock_get: MagicMock) -> None:
+        from polaris.cells.roles.kernel.internal.directed_effect_policy_guard import (
+            _gateway_denial_code,
+            _path_matches_capability_scope,
+        )
+
+        mock_get.return_value = MagicMock()
+        consumer = CEConsumer(workspace="/test", worker_id="w1")
+        steps = [
+            {
+                "step_id": "PM-1-S1",
+                "target_file": "src/provider.py",
+                "public_symbols": ["Provider"],
+                "depends_on": [],
+                "verify": "python -m py_compile src/provider.py",
+            },
+            {
+                "step_id": "PM-1-S2",
+                "target_file": "src/consumer.py",
+                "consumes_symbols": {"src/provider.py": ["Provider"]},
+                "depends_on": ["PM-1-S1"],
+                "verify": "python -m py_compile src/consumer.py",
+            },
+        ]
+
+        consumer._publish_step_tasks(
+            "PM-1",
+            _parent_authority_payload(),
+            steps,
+            blueprint_id="bp-1",
+            blueprint_path="runtime/blueprints/bp-1.json",
+        )
+
+        consumer_command = consumer._svc.publish_work_item.call_args_list[1].args[0]
+        token = consumer_command.payload["job_token"]
+        assert token["allowed_write_paths"] == ["src/consumer.py"]
+        assert token["target_files"] == ["src/consumer.py"]
+        assert token["allowed_read_paths"] == ["src/consumer.py", "src/provider.py"]
+        assert token["parent_token_id"] == "job-parent"
+        assert token["contract_hash"] == consumer_command.payload["construction_contract_hash"]
+        assert consumer_command.payload["scope_paths"] == ["src/consumer.py", "src/provider.py"]
+        assert consumer_command.payload["capability_token_hash"]
+        assert consumer_command.metadata["job_token"] == token
+        lineage = consumer_command.payload["control_plane_lineage"]
+        assert lineage["parent_job_token_id"] == "job-parent"
+        assert lineage["step_id"] == "PM-1-S2"
+        assert lineage["target_file"] == "src/consumer.py"
+        assert lineage["construction_contract_hash"] == token["contract_hash"]
+        assert not _path_matches_capability_scope("src/provider.py", token["allowed_write_paths"])
+        assert _gateway_denial_code("path scope denied") == "deo_path_scope_denied"
+
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    def test_missing_parent_capability_fails_before_any_leaf_publication(self, mock_get: MagicMock) -> None:
+        """A fission leaf must never mint authority from only CE-local fields."""
+        mock_get.return_value = MagicMock()
+        consumer = CEConsumer(workspace="/test", worker_id="w1")
+
+        with pytest.raises(ValueError, match="CE parent JobToken aliases are required"):
+            consumer._publish_step_tasks(
+                "PM-1",
+                {"run_id": "r", "blueprint_hash": "bp-hash"},
+                [
+                    {
+                        "step_id": "PM-1-S1",
+                        "target_file": "src/main.py",
+                        "depends_on": [],
+                        "verify": "python -m py_compile src/main.py",
+                    }
+                ],
+                blueprint_id="bp-1",
+                blueprint_path="runtime/blueprints/bp-1.json",
+            )
+
+        consumer._svc.publish_work_item.assert_not_called()
+
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    def test_leaf_signature_changes_with_contract_or_target(self, mock_get: MagicMock) -> None:
+        mock_get.return_value = MagicMock()
+        consumer = CEConsumer(workspace="/test", worker_id="w1")
+
+        def publish(step: dict[str, object]) -> tuple[str, str]:
+            consumer._svc.publish_work_item.reset_mock()
+            consumer._publish_step_tasks(
+                "PM-1",
+                _parent_authority_payload(str(step["target_file"])),
+                [step],
+                blueprint_id="bp-1",
+                blueprint_path="runtime/blueprints/bp-1.json",
+            )
+            command = consumer._svc.publish_work_item.call_args.args[0]
+            return command.payload["job_token_id"], command.payload["construction_contract_hash"]
+
+        token_a, contract_a = publish(
+            {"step_id": "PM-1-S1", "target_file": "src/a.py", "depends_on": [], "verify": "verify-a"}
+        )
+        token_b, contract_b = publish(
+            {"step_id": "PM-1-S1", "target_file": "src/a.py", "depends_on": [], "verify": "verify-b"}
+        )
+        token_c, contract_c = publish(
+            {"step_id": "PM-1-S1", "target_file": "src/b.py", "depends_on": [], "verify": "verify-b"}
+        )
+
+        assert contract_a != contract_b
+        assert token_a != token_b
+        assert contract_b != contract_c
+        assert token_b != token_c
+
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    def test_later_invalid_leaf_causes_zero_publications(self, mock_get: MagicMock) -> None:
+        mock_get.return_value = MagicMock()
+        consumer = CEConsumer(workspace="/test", worker_id="w1")
+        with pytest.raises(ValueError, match="outside parent allowed_write_paths"):
+            consumer._publish_step_tasks(
+                "PM-1",
+                _parent_authority_payload("src/allowed.py"),
+                [
+                    {"step_id": "PM-1-S1", "target_file": "src/allowed.py", "depends_on": [], "verify": "ok"},
+                    {"step_id": "PM-1-S2", "target_file": "src/escape.py", "depends_on": [], "verify": "no"},
+                ],
+                blueprint_id="bp-1",
+                blueprint_path="runtime/blueprints/bp-1.json",
+            )
+        consumer._svc.publish_work_item.assert_not_called()
+
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    def test_dependency_outside_parent_read_scope_causes_zero_publications(self, mock_get: MagicMock) -> None:
+        mock_get.return_value = MagicMock()
+        consumer = CEConsumer(workspace="/test", worker_id="w1")
+        payload = _parent_authority_payload("src/consumer.py", "src/provider.py")
+        token = payload["job_token"]
+        assert isinstance(token, dict)
+        token["allowed_read_paths"] = ["src/consumer.py"]
+        token["allowed_paths"] = ["src/consumer.py"]
+        payload["capability_token_hash"] = stable_hash(token)
+        with pytest.raises(ValueError, match="outside parent allowed_read_paths"):
+            consumer._publish_step_tasks(
+                "PM-1",
+                payload,
+                [
+                    {
+                        "step_id": "PM-1-S2",
+                        "target_file": "src/consumer.py",
+                        "depends_on": ["PM-1-S1"],
+                        "verify": "ok",
+                    },
+                    {"step_id": "PM-1-S1", "target_file": "src/provider.py", "depends_on": [], "verify": "ok"},
+                ],
+                blueprint_id="bp-1",
+                blueprint_path="runtime/blueprints/bp-1.json",
+            )
+        consumer._svc.publish_work_item.assert_not_called()
+
+    @pytest.mark.parametrize("defect", ("audit", "blueprint", "alias", "content_hash"))
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    def test_parent_job_token_drift_fails_before_publish(self, mock_get: MagicMock, defect: str) -> None:
+        mock_get.return_value = MagicMock()
+        consumer = CEConsumer(workspace="/test", worker_id="w1")
+        payload = _parent_authority_payload("src/main.py")
+        token = payload["job_token"]
+        assert isinstance(token, dict)
+        if defect == "audit":
+            token["capability_audit"] = {"ok": False, "issues": ["drift"]}
+            payload["capability_token_hash"] = stable_hash(token)
+        elif defect == "blueprint":
+            payload["blueprint_hash"] = "different-blueprint"
+        elif defect == "alias":
+            payload["capability_token"] = {**token, "source": "forged"}
+        else:
+            token["source"] = "mutated-same-token-id"
+        with pytest.raises(ValueError):
+            consumer._publish_step_tasks(
+                "PM-1",
+                payload,
+                [{"step_id": "PM-1-S1", "target_file": "src/main.py", "depends_on": [], "verify": "ok"}],
+                blueprint_id="bp-1",
+                blueprint_path="runtime/blueprints/bp-1.json",
+            )
+        consumer._svc.publish_work_item.assert_not_called()
 
 
 class TestCEConsumerStop:
@@ -473,7 +693,7 @@ class TestCrossParentFileOwnershipInjection:
         prior = {"main.js": {"owner_step_id": "PM-1-S4", "owner_parent": "PM-0001-1"}}
         consumer._publish_step_tasks(
             "PM-0001-2",
-            {"run_id": "r"},
+            _parent_authority_payload("main.js"),
             self._steps(),
             blueprint_id="b",
             blueprint_path="p",
@@ -492,7 +712,7 @@ class TestCrossParentFileOwnershipInjection:
         steps = [{"step_id": "S", "target_file": "style.css", "verify": "test -f style.css", "title": "style"}]
         consumer._publish_step_tasks(
             "PM-0001-2",
-            {"run_id": "r"},
+            _parent_authority_payload("style.css"),
             steps,
             blueprint_id="b",
             blueprint_path="p",
@@ -510,7 +730,7 @@ class TestCrossParentFileOwnershipInjection:
         prior = {"main.js": {"owner_step_id": "PM-2-S1", "owner_parent": "PM-0001-2"}}
         consumer._publish_step_tasks(
             "PM-0001-2",
-            {"run_id": "r"},
+            _parent_authority_payload("main.js"),
             self._steps(),
             blueprint_id="b",
             blueprint_path="p",

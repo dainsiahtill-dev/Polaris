@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:15.040207Z",
-  "source_hash": "dd2b4ce7477a974d",
+  "generated_at": "2026-08-02T15:47:43.649878Z",
+  "source_hash": "d9c2155bf259a175",
   "cell_id": "orchestration.workflow_activity",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -104,14 +104,56 @@
     },
     {
       "type": "function",
+      "name": "_run_director_execution",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/director_activities.py"
+    },
+    {
+      "type": "function",
       "name": "_is_no_director_mode",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/director_activities.py"
     },
     {
       "type": "function",
+      "name": "get_ready_tasks",
+      "description": "Return tasks already selected by the PM contract.",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "claim_task",
+      "description": "Perform lightweight task claim validation before execution.",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_task_phase",
+      "description": "Execute a real 4-phase Director step through the canonical role adapter.",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "complete_task",
+      "description": "Return a completion marker for successful Director child workflows.",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/director_activities.py"
+    },
+    {
+      "type": "function",
       "name": "_validate_tasks",
       "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/pm_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_pm_tasks",
+      "description": "Bridge a precomputed PM payload into the Workflow workflow.",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/pm_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_task_contract",
+      "description": "Run the existing PM quality gate before Director execution.",
       "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/pm_activities.py"
     },
     {
@@ -142,6 +184,24 @@
       "type": "function",
       "name": "_detect_unit_command",
       "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/qa_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "run_integration_qa",
+      "description": "Run the existing integration QA verifier used by the PM runtime.",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/qa_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "run_unit_qa",
+      "description": "Run a lightweight unit/smoke verification pass.",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/qa_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "collect_evidence",
+      "description": "Collect evidence references emitted by prior activities.",
       "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/qa_activities.py"
     },
     {
@@ -269,6 +329,10 @@
           "doc": ""
         },
         {
+          "name": "workflow_handler",
+          "doc": ""
+        },
+        {
           "name": "run",
           "doc": "`@workflow.run` decorator."
         },
@@ -291,6 +355,14 @@
         {
           "name": "decorator",
           "doc": ""
+        },
+        {
+          "name": "execute_activity",
+          "doc": "Execute an activity and wait for completion."
+        },
+        {
+          "name": "execute_child_workflow",
+          "doc": "Execute a child workflow and wait for terminal state."
         },
         {
           "name": "now",
@@ -418,6 +490,12 @@
     },
     {
       "type": "function",
+      "name": "_wait_child_workflow_completion",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
       "name": "_pick_run_method_name",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_activity/internal/embedded_api.py"
@@ -436,7 +514,19 @@
     },
     {
       "type": "function",
+      "name": "_resolve_runtime_engine",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
       "name": "_lookup_activity_handler",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_execute_activity_with_engine",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_activity/internal/embedded_api.py"
     },
@@ -705,12 +795,32 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "_broadcast_task_trace",
+          "doc": "Broadcast task trace event to frontend."
+        },
+        {
+          "name": "run",
+          "doc": ""
         }
       ]
     },
     {
       "type": "function",
       "name": "_create_rollback_guard",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/workflows/director_task_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_snapshot_files",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/workflows/director_task_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_rollback_director",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_activity/internal/workflows/director_task_workflow.py"
     },
@@ -757,6 +867,18 @@
       "defined_in": "polaris/cells/orchestration/workflow_activity/internal/workflows/director_task_workflow.py"
     },
     {
+      "type": "function",
+      "name": "_register_traceability_commit_activity",
+      "description": "Activity that registers a traceability commit node.",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/workflows/director_task_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_broadcast_task_progress",
+      "description": "Broadcast task progress update to frontend via message bus.",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/workflows/director_task_workflow.py"
+    },
+    {
       "type": "class",
       "name": "DirectorWorkflow",
       "description": "Execute Director tasks as workflow child workflows.",
@@ -764,6 +886,10 @@
       "methods": [
         {
           "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "run",
           "doc": ""
         }
       ]
@@ -806,6 +932,14 @@
       "methods": [
         {
           "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_broadcast_task_trace",
+          "doc": "Broadcast PM task trace event to frontend."
+        },
+        {
+          "name": "run",
           "doc": ""
         }
       ]
@@ -855,6 +989,10 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "run",
+          "doc": ""
         }
       ]
     },
@@ -874,6 +1012,12 @@
       "type": "function",
       "name": "_workflow_classification",
       "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/workflows/qa_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_register_traceability_verdict_activity",
+      "description": "Register a qa_verdict traceability node as a bypass observer.",
       "defined_in": "polaris/cells/orchestration/workflow_activity/internal/workflows/qa_workflow.py"
     }
   ],

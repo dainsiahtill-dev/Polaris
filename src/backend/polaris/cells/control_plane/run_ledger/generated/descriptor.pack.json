@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:10.776488Z",
-  "source_hash": "82d0be112e2ff598",
+  "generated_at": "2026-08-02T15:47:38.653484Z",
+  "source_hash": "85769d6e5f4bd275",
   "cell_id": "control_plane.run_ledger",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -30,6 +30,13 @@
       "type": "class",
       "name": "AppendRunLedgerEventCommandV1",
       "description": "Append one immutable platform run-ledger event.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AppendToolCallLifecycleEventCommandV1",
+      "description": "Append one canonical tool-call lifecycle event.",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/contracts.py",
       "methods": []
     },
@@ -69,6 +76,217 @@
       "methods": []
     },
     {
+      "type": "function",
+      "name": "_is_lower_sha256",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/directed_effect_receipt_validation.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_exact_nonempty_string",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/directed_effect_receipt_validation.py"
+    },
+    {
+      "type": "function",
+      "name": "_receipt_payload_field_errors",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/directed_effect_receipt_validation.py"
+    },
+    {
+      "type": "function",
+      "name": "directed_effect_receipt_payload_hash",
+      "description": "Recompute the schema-v2 immutable payload hash without trusting its digest.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/directed_effect_receipt_validation.py"
+    },
+    {
+      "type": "function",
+      "name": "_receipt_hash_errors",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/directed_effect_receipt_validation.py"
+    },
+    {
+      "type": "function",
+      "name": "_receipt_shape_errors",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/directed_effect_receipt_validation.py"
+    },
+    {
+      "type": "function",
+      "name": "_receipt_commit_errors",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/directed_effect_receipt_validation.py"
+    },
+    {
+      "type": "function",
+      "name": "directed_effect_receipt_v2_errors",
+      "description": "Return authoritative binding errors, or ``None`` for non-v2 legacy data.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/directed_effect_receipt_validation.py"
+    },
+    {
+      "type": "class",
+      "name": "FailureClassV1",
+      "description": "Canonical failure classes carried through run-ledger evidence.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FailureEvidenceV1",
+      "description": "Structured failure evidence suitable for Run Ledger and QA projections.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_failure_class_key",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_failure_class",
+      "description": "Normalize *value* to a canonical failure-class string when known.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_failure_class_evidence_value",
+      "description": "Project a failure-evidence class from structured rows, not prose.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "is_failure_class",
+      "description": "Return whether *value* denotes *expected*, case-insensitively.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "merge_failure_evidence_rows",
+      "description": "Return JSON-safe failure evidence rows with stable de-duplication.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedupe_text_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_bool_value",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_truthy_metadata_value",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_int_value",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_clean_text",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedupe_text_list",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_json_safe_failure_evidence_value",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_boundary_verdict_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "task_boundary_failure_evidence_from_verdict",
+      "description": "Project a failed TaskBoundary verdict into one failure-evidence row.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "merge_failure_evidence_payload",
+      "description": "Merge aggregate/runtime failure-evidence payloads without prose parsing.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "looks_like_failure_evidence_payload",
+      "description": "Return whether *value* is structured failure evidence.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_failure_evidence_rows_into_payload",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_failed_gate_evidence_context_slot",
+      "description": "Project a final-request failed-gate context slot from structured evidence.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_explicit_failure_classes_from_rows",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_failure_evidence_rows",
+      "description": "Return the canonical metadata summary for failure evidence rows.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "suspected_files_from_failure_evidence_payload",
+      "description": "Project suspected file paths from structured failure evidence.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "append_values",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "collect_from_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "append_failure_evidence_to_metadata",
+      "description": "Append structured failure evidence rows and refresh metadata summary.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py"
+    },
+    {
       "type": "class",
       "name": "JobToken",
       "description": "Immutable capability token carried across PM/CE/Director/QA projections.",
@@ -91,8 +309,68 @@
           "doc": ""
         },
         {
+          "name": "_validate_canonical_run_id",
+          "doc": ""
+        },
+        {
+          "name": "prepare_event",
+          "doc": "Build the deterministic projection row without writing it."
+        },
+        {
+          "name": "prepare_idempotent_event",
+          "doc": "Build stable canonical identity without inventing projection time."
+        },
+        {
+          "name": "fact_idempotency_key",
+          "doc": "Return stable fact identity; semantic drift then conflicts fail-closed."
+        },
+        {
           "name": "append_event",
-          "doc": "Append one event and return the persisted event receipt."
+          "doc": "Append one rebuildable projection row and return its receipt."
+        },
+        {
+          "name": "_scan_projection_locked",
+          "doc": "Strictly scan complete binary rows and detach any incomplete tail."
+        },
+        {
+          "name": "_build_canonical_projection_row",
+          "doc": ""
+        },
+        {
+          "name": "_ensure_projection_capacity",
+          "doc": ""
+        },
+        {
+          "name": "_write_projection_bytes_locked",
+          "doc": ""
+        },
+        {
+          "name": "_flush_projection_locked",
+          "doc": ""
+        },
+        {
+          "name": "_fsync_projection_locked",
+          "doc": ""
+        },
+        {
+          "name": "_rollback_projection_locked",
+          "doc": "Restore the pre-write prefix durably while caller owns the flock."
+        },
+        {
+          "name": "_sync_projection_locked",
+          "doc": ""
+        },
+        {
+          "name": "_append_serialized_row_locked",
+          "doc": "Append one row or durably roll back to the exact pre-write offset."
+        },
+        {
+          "name": "append_event_once",
+          "doc": "Append one canonical row, deduplicating under the owning file lock."
+        },
+        {
+          "name": "append_event_with_fact_transaction",
+          "doc": "Commit Fact then projection while holding the projection's owning flock."
         },
         {
           "name": "read_events",
@@ -110,6 +388,60 @@
       "type": "function",
       "name": "stable_hash",
       "description": "Return the stable content hash for a ledger payload.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_stable_json",
+      "description": "Serialize canonical identity data while rejecting non-finite numbers.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_stable_hash",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_projection_corrupt",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_strict_object_pairs",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_reject_nonfinite_constant",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_strict_projection_row",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_hash_id",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_event_id",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_recorded_at",
+      "description": "",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/ledger.py"
     },
     {
@@ -162,6 +494,12 @@
     },
     {
       "type": "function",
+      "name": "_task_boundary_task_key",
+      "description": "Return the stable task identity for a task-boundary verdict row.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/projection.py"
+    },
+    {
+      "type": "function",
       "name": "_merge_evidence_modality",
       "description": "",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/projection.py"
@@ -210,6 +548,12 @@
     },
     {
       "type": "function",
+      "name": "_recovery_entries",
+      "description": "Extract TaskRuntime recovery/dead-letter facts from nested tool evidence.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/projection.py"
+    },
+    {
+      "type": "function",
       "name": "_mapping_entries",
       "description": "",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/projection.py"
@@ -217,6 +561,12 @@
     {
       "type": "function",
       "name": "_tool_receipts_from_physical_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/projection.py"
+    },
+    {
+      "type": "function",
+      "name": "_directed_effect_recoveries_from_physical_evidence",
       "description": "",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/projection.py"
     },
@@ -264,7 +614,55 @@
     },
     {
       "type": "function",
+      "name": "_is_lower_sha256",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/projection.py"
+    },
+    {
+      "type": "function",
+      "name": "_directed_effect_receipt_payload_hash",
+      "description": "Compatibility alias for existing tests and local callers.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/projection.py"
+    },
+    {
+      "type": "function",
+      "name": "_directed_effect_receipt_errors",
+      "description": "Validate the TaskRuntime authority binding for a DEO-3 receipt projection.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/projection.py"
+    },
+    {
+      "type": "function",
+      "name": "_directed_effect_recovery_errors",
+      "description": "Validate one durable TaskRuntime recovery/dead-letter projection.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/projection.py"
+    },
+    {
+      "type": "function",
       "name": "_tool_receipt_modality",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/projection.py"
+    },
+    {
+      "type": "function",
+      "name": "_classify_tool_receipts",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/projection.py"
+    },
+    {
+      "type": "function",
+      "name": "_legacy_tool_receipt_errors",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/projection.py"
+    },
+    {
+      "type": "function",
+      "name": "_classify_directed_effect_recoveries",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/projection.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_receipt_modality_detail",
       "description": "",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/projection.py"
     },
@@ -389,6 +787,43 @@
       "defined_in": "polaris/cells/control_plane/run_ledger/public/provenance.py"
     },
     {
+      "type": "class",
+      "name": "_RunLedgerFactAuthority",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_is_run_ledger_fact_candidate",
+      "description": "Identify every suspicious Run Ledger authority for strict validation.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_run_ledger_fact_authority",
+      "description": "Strictly reconstruct one candidate Fact authority, or ignore unrelated evidence.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_next_run_ledger_fact_page_offset",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_run_ledger_fact_authorities",
+      "description": "Page all same-run Facts once, proving bounded identity and authority order.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_reconcile_run_ledger_partial_tail_authority",
+      "description": "Require the projection to be the exact authority prefix plus one partial row.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
       "type": "function",
       "name": "_count_value",
       "description": "",
@@ -404,6 +839,12 @@
       "type": "function",
       "name": "_safe_token",
       "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_unique_run_ids",
+      "description": "Return non-empty run identifiers once, preserving caller order.",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
     },
     {
@@ -426,8 +867,74 @@
     },
     {
       "type": "function",
+      "name": "_ledger_paths_for_run_ids",
+      "description": "Read compatibility paths only for the canonical scope's selected runs.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
       "name": "_read_events",
       "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_event_run_id",
+      "description": "Extract the authoritative run identifier carried by an event payload.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_query_scope",
+      "description": "Project the caller-selected boundary into auditable response metadata.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_factory_project_scope",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_runtime_fact_matches_scope",
+      "description": "Match only explicit TaskRuntime factory/project facts, never inferred IDs.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_structured_string_list",
+      "description": "Normalize a structured string sequence without parsing prose.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_task_runtime_execution_facts",
+      "description": "Read exact TaskRuntime facts for one run or factory/project scope.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_runtime_tool_lifecycle_requirement_event",
+      "description": "Project a Director materialization claim into a lifecycle requirement.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_lifecycle_requirement_events_from_task_runtime",
+      "description": "Return canonical requirement events from TaskRuntime execution facts.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_discover_factory_child_run_ids",
+      "description": "Resolve child runs from paginated canonical TaskRuntime execution facts.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_execution_control_plane_facts",
+      "description": "Read paginated canonical control-plane facts for a selected run set.",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
     },
     {
@@ -444,6 +951,12 @@
     },
     {
       "type": "function",
+      "name": "_group_events_for_query_scope",
+      "description": "Group events by the caller's authoritative projection boundary.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
       "name": "_merge_evidence_policy",
       "description": "",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
@@ -451,12 +964,6 @@
     {
       "type": "function",
       "name": "_merge_evidence_modalities",
-      "description": "",
-      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_merge_tool_lifecycle",
       "description": "",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
     },
@@ -480,6 +987,12 @@
     },
     {
       "type": "function",
+      "name": "query_factory_settlement_barrier",
+      "description": "Return the current settlement barrier for one exact Factory run.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
       "name": "read_run_ledger_projection_barrier",
       "description": "Read a projection after the requested ledger barrier is visible.",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
@@ -493,7 +1006,25 @@
     {
       "type": "function",
       "name": "append_run_ledger_event",
-      "description": "Append one platform run-ledger event through the public control-plane boundary.",
+      "description": "Commit one Fact-backed ledger row through the projection-owned transaction.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "prove_partial_tail_fact",
+      "description": "Prove complete Fact ownership before repairing one partial tail.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "append_canonical_fact",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "append_tool_call_lifecycle_event",
+      "description": "Append a canonical tool-call lifecycle event through Run Ledger public APIs.",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
     },
     {
@@ -501,6 +1032,119 @@
       "name": "read_run_provenance_bundle",
       "description": "Read one run's provenance bundle through the public ledger boundary.",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementBarrierQueryError",
+      "description": "Raised when a Factory settlement query has an invalid scope.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/settlement_barrier.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementBarrierQueryV1",
+      "description": "Exact workspace and Factory-run scope for a settlement query.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/settlement_barrier.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementBarrierResultV1",
+      "description": "Immutable settlement state derived from canonical execution facts.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/settlement_barrier.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_LifecycleCounts",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/settlement_barrier.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_clean_string",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/settlement_barrier.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/settlement_barrier.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/settlement_barrier.py"
+    },
+    {
+      "type": "function",
+      "name": "_non_negative_int",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/settlement_barrier.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_identity",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/settlement_barrier.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_state",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/settlement_barrier.py"
+    },
+    {
+      "type": "function",
+      "name": "_latest_task_facts",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/settlement_barrier.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_key_matches_terminal_ids",
+      "description": "Return True when a tool-lifecycle task key maps to a terminal TaskRuntime id.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/settlement_barrier.py"
+    },
+    {
+      "type": "function",
+      "name": "_lifecycle_counts",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/settlement_barrier.py"
+    },
+    {
+      "type": "function",
+      "name": "_fact_reference",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/settlement_barrier.py"
+    },
+    {
+      "type": "function",
+      "name": "_evidence_references",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/settlement_barrier.py"
+    },
+    {
+      "type": "function",
+      "name": "_blocking_reasons",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/settlement_barrier.py"
+    },
+    {
+      "type": "function",
+      "name": "project_factory_settlement_barrier",
+      "description": "Project one deterministic settlement result from canonical facts.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/settlement_barrier.py"
+    },
+    {
+      "type": "class",
+      "name": "TaskBoundaryFailureClassV1",
+      "description": "Task-boundary failure classes owned by the run-ledger public contract.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py",
+      "methods": []
     },
     {
       "type": "class",
@@ -516,8 +1160,44 @@
     },
     {
       "type": "function",
+      "name": "_task_boundary_failure_class_key",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_task_boundary_failure_class",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py"
+    },
+    {
+      "type": "function",
       "name": "_clean_path",
       "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_concrete_local_entrypoint_target",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_generated_entrypoint_artifact",
+      "description": "Return true for build/verifier outputs that are not source obligations.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_source_sibling_for_entrypoint",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_entrypoint_is_satisfied_by_typescript_source",
+      "description": "Return true when a missing JS entrypoint is represented by TS source.",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py"
     },
     {
@@ -570,6 +1250,48 @@
     },
     {
       "type": "function",
+      "name": "_is_local_source_file",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_test_like_source_path",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_artifact_semantic_mismatches",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_local_import_specifiers",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_local_import_target_candidates",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_unresolved_local_imports",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_required_items_not_satisfied",
+      "description": "Return required obligations with no present or failed evidence.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py"
+    },
+    {
+      "type": "function",
       "name": "build_completed_task_boundary_verdict",
       "description": "Return a completed task-boundary verdict.",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py"
@@ -578,6 +1300,12 @@
       "type": "function",
       "name": "build_deferred_followup_task_boundary_verdict",
       "description": "Return a verdict for work that requires another governed execution step.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "reconcile_task_boundary_artifacts_with_workspace",
+      "description": "Promote on-disk paths into completed; drop them from downstream_pending.",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/task_boundary.py"
     },
     {
@@ -594,6 +1322,18 @@
     },
     {
       "type": "class",
+      "name": "NativeToolCallEnvelopeV1",
+      "description": "Stable provider-neutral reference for one native tool call.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "ToolCallLifecycleReceiptV1",
       "description": "Canonical lifecycle receipt for provider tool calls.",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py",
@@ -601,6 +1341,18 @@
         {
           "name": "to_dict",
           "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ToolLifecycleRequirementV1",
+      "description": "One task-scoped requirement for authoritative tool lifecycle evidence.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return the stable JSON projection used by Run Ledger events."
         }
       ]
     },
@@ -624,7 +1376,25 @@
     },
     {
       "type": "function",
+      "name": "_dispatch_status_key",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_dispatch_status",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
       "name": "_int_value",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_list",
       "description": "",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
     },
@@ -636,14 +1406,74 @@
     },
     {
       "type": "function",
+      "name": "_text_fallback_lifecycle_fields",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_dropped_tool_call_refs",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_dropped_tool_call_count",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_native_tool_call_envelope_refs",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_native_tool_call_envelope_refs",
+      "description": "Return deduplicated native tool-call envelope refs.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping_ref_key",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping_refs",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_dropped_tool_calls_from_native_envelopes",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
       "name": "_result_items",
       "description": "",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
     },
     {
       "type": "function",
-      "name": "_effect_receipt_from_result",
+      "name": "_effect_receipt_and_commit_from_result",
       "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_sha256",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_effect_receipt_from_result",
+      "description": "Prefer TaskRuntime-committed DEO-3 receipts; keep legacy receipts readable.",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
     },
     {
@@ -660,6 +1490,12 @@
     },
     {
       "type": "function",
+      "name": "_first_tool_result_failure_reason",
+      "description": "Return the first concrete non-success tool result error/abort reason.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
       "name": "_batch_receipt_refs",
       "description": "",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
@@ -672,8 +1508,374 @@
     },
     {
       "type": "function",
+      "name": "build_tool_batch_lifecycle_receipt",
+      "description": "Build the lifecycle receipt for a decoded transaction tool batch.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "build_tool_batch_lifecycle_receipt_from_sources",
+      "description": "Build a tool-batch lifecycle receipt from canonical native sources.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "batch_receipt_has_dispatch_evidence",
+      "description": "Return whether a batch receipt contains dispatch evidence.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_effect_receipt_copy",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_top_level_effect_receipts",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_result_effect_receipts",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "effect_receipts_from_batch_receipts",
+      "description": "Extract effect receipts from normalized or raw batch receipts.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "build_missing_dispatch_lifecycle_receipt",
+      "description": "Return a dropped-dispatch lifecycle receipt for missing write dispatch.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "build_claimed_materialization_without_tool_lifecycle_receipt",
+      "description": "Seal blocked lifecycle for a claimed materialization that never produced tools.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "build_tool_call_lifecycle_run_ledger_event",
+      "description": "Return the canonical Run Ledger event for a lifecycle receipt.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
       "name": "normalize_tool_call_lifecycle_receipt",
       "description": "Return a safe tool lifecycle receipt mapping.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "tool_call_lifecycle_receipts_from_metadata",
+      "description": "Return deduplicated lifecycle receipts from legacy/canonical metadata keys.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "append_receipt",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "native_tool_call_facts_from_lifecycle_receipt",
+      "description": "Derive native tool-call count/name facts from lifecycle receipt evidence.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "native_tool_call_envelope_refs_from_metadata",
+      "description": "Return native tool-call envelope refs from lifecycle-aware metadata.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "native_tool_call_facts_from_metadata",
+      "description": "Derive native tool-call facts from lifecycle-aware metadata.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_raw_native_tool_call_name",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_observed_tool_call_name",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "native_tool_call_facts_from_raw_calls",
+      "description": "Derive native tool-call facts from provider-native raw call payloads.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_native_tool_call_arguments",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_native_tool_call_id",
+      "description": "",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "build_native_tool_call_envelopes",
+      "description": "Build stable envelope refs for provider-native tool calls.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "build_native_tool_call_envelope_payloads",
+      "description": "Return JSON-ready native tool-call envelope refs.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "native_tool_call_facts_from_sources",
+      "description": "Derive canonical native tool-call facts from structured sources.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "native_tool_call_count_from_metadata",
+      "description": "Derive native tool-call count from lifecycle-aware metadata.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "native_tool_call_count_from_facts",
+      "description": "Derive native tool-call count from a Run Ledger native-fact mapping.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "tool_dispatch_dropped_guard_applies",
+      "description": "Return whether a provider tool-call response was dropped before dispatch.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "native_tool_call_names_from_facts",
+      "description": "Derive native tool-call names from a Run Ledger native-fact mapping.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "observed_tool_call_names_from_sources",
+      "description": "Derive observed tool-call names from runtime calls and lifecycle metadata.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "project_native_tool_call_facts_from_evidence_to_metadata",
+      "description": "Project lifecycle-derived native tool-call facts from evidence.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "task_boundary_tool_dispatch_from_lifecycle_receipt",
+      "description": "Project TaskBoundary tool-dispatch evidence from one lifecycle receipt.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "task_boundary_tool_dispatch_from_lifecycle_metadata",
+      "description": "Project TaskBoundary tool-dispatch evidence from lifecycle metadata.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "build_tool_lifecycle_requirement_run_ledger_event",
+      "description": "Build a canonical projection event from one structured requirement.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "project_tool_lifecycle_requirement",
+      "description": "Project task-scoped lifecycle obligations from structured facts only.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_lifecycle_is_required",
+      "description": "Return an explicitly declared lifecycle requirement.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_lifecycle_requirement_status",
+      "description": "Classify lifecycle evidence against its explicit requirement.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_lifecycle_task_identity",
+      "description": "Return the stable task identity for one lifecycle projection row.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_terminal_incomplete_materialization_seal",
+      "description": "Return True for R137 blocked seals that close a claimed-without-tools gap.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_lifecycle_event_is_unresolved",
+      "description": "Return whether a canonical lifecycle row remains unresolved.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_lifecycle_outcome_projection_from_events",
+      "description": "Project latest and unresolved lifecycle state once per task identity.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_lifecycle_outcome_projection",
+      "description": "Return a normalized canonical outcome projection when one is present.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_legacy_lifecycle_outcome_projection",
+      "description": "Project old lifecycle summaries with an explicit structured fallback.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "project_tool_lifecycle_event",
+      "description": "Project one lifecycle receipt into the canonical Run Ledger read-model row.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_tool_lifecycle_events",
+      "description": "Summarize canonical lifecycle event rows for Run Ledger projections.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "project_tool_lifecycle_summary",
+      "description": "Project the canonical lifecycle summary into Run Ledger read-model shape.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "project_tool_lifecycle_failure_status",
+      "description": "Project aggregate lifecycle failure status from a canonical summary.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "empty_tool_lifecycle_summary",
+      "description": "Return the canonical empty tool-lifecycle summary shape.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "merge_tool_lifecycle_summaries",
+      "description": "Merge project-level lifecycle summaries into a single read model.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "project_native_tool_call_facts_to_metadata",
+      "description": "Write canonical native tool-call facts to a metadata projection.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "project_native_tool_call_envelopes_to_metadata",
+      "description": "Project native tool-call envelope evidence and derived facts.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "project_completion_dispatch_evidence_to_metadata",
+      "description": "Project stream/non-stream completion dispatch evidence into metadata.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "project_completion_audit_evidence_to_metadata",
+      "description": "Project completion audit evidence and lifecycle-derived facts.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "failure_evidence_from_lifecycle_receipt",
+      "description": "Project lifecycle failure evidence into the Run Ledger taxonomy.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "build_tool_dispatch_dropped_anomaly_projection",
+      "description": "Return the canonical dropped-dispatch anomaly projection.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "build_tool_dispatch_dropped_anomaly_from_sources",
+      "description": "Return the dropped-dispatch anomaly from canonical native sources.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt",
+      "description": "Return the canonical anomaly flag for a dropped-dispatch lifecycle.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "tool_dispatch_dropped_error_message",
+      "description": "Return the canonical runtime error text for dropped tool dispatch.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "build_tool_dispatch_dropped_lifecycle_from_anomaly_flags",
+      "description": "Return a canonical dropped-dispatch lifecycle from anomaly flags.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "build_tool_dispatch_dropped_lifecycle_from_observed_calls",
+      "description": "Return a dropped-dispatch lifecycle for observed calls without results.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "project_lifecycle_failure_evidence_to_metadata",
+      "description": "Append lifecycle-derived failure evidence to metadata.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "project_tool_lifecycle_metadata",
+      "description": "Project canonical lifecycle, failure, and native tool facts into metadata.",
+      "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "project_tool_lifecycle_receipt_to_metadata",
+      "description": "Project one lifecycle receipt into canonical/compat metadata keys.",
       "defined_in": "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py"
     }
   ],

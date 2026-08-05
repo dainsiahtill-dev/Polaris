@@ -1,6 +1,6 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:17.891026Z",
+  "generated_at": "2026-08-02T15:47:47.618654Z",
   "source_hash": "f6318087c2916332",
   "cell_id": "adapters.kernelone",
   "workspace": "/home/dains/Documents/polaris/src/backend",
@@ -14,6 +14,22 @@
         {
           "name": "__init__",
           "doc": "Initialize the adapter with Cells' ValueAlignmentService."
+        },
+        {
+          "name": "evaluate",
+          "doc": "Evaluate an action against the value alignment matrix."
+        },
+        {
+          "name": "is_action_aligned",
+          "doc": "Check if an action is aligned with governance values."
+        },
+        {
+          "name": "get_alignment_score",
+          "doc": "Get an alignment score for an action."
+        },
+        {
+          "name": "explain_misalignment",
+          "doc": "Explain why an action is misaligned."
         }
       ]
     },
@@ -34,6 +50,10 @@
         {
           "name": "poll",
           "doc": "Poll the next message for `receiver` using blocking sleep."
+        },
+        {
+          "name": "poll_async",
+          "doc": "Poll the next message for `receiver` using async sleep."
         },
         {
           "name": "ack",

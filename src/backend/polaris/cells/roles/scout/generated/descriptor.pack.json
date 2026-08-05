@@ -1,6 +1,6 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:17.789158Z",
+  "generated_at": "2026-08-02T15:47:47.448936Z",
   "source_hash": "2240799ba819316c",
   "cell_id": "roles.scout",
   "workspace": "/home/dains/Documents/polaris/src/backend",
@@ -30,7 +30,12 @@
       "name": "DeterministicDistiller",
       "description": "Zero-cost DistillerPort: format the ranked findings as a compact list.",
       "defined_in": "polaris/cells/roles/scout/internal/distiller.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "distill",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "class",
@@ -41,8 +46,18 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "distill",
+          "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "escalate_probe",
+      "description": "Run scout via ``execute_role_session`` and return the role output text.",
+      "defined_in": "polaris/cells/roles/scout/internal/escalation.py"
     },
     {
       "type": "function",
@@ -85,7 +100,12 @@
       "name": "DistillerPort",
       "description": "Summarize findings into a token-bounded pack.",
       "defined_in": "polaris/cells/roles/scout/internal/ports.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "distill",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "class",
@@ -111,6 +131,10 @@
       "methods": [
         {
           "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "distill",
           "doc": ""
         }
       ]
@@ -269,6 +293,14 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "probe",
+          "doc": ""
+        },
+        {
+          "name": "_escalate",
+          "doc": "Bridge to a governed read-only scout role-session. Returns its output."
         }
       ]
     },

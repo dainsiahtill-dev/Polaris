@@ -10,6 +10,14 @@
     "QueryResidentStatusV1",
     "ResidentCycleCompletedEventV1",
     "ResidentAutonomyResultV1",
-    "ResidentAutonomyErrorV1"
+    "ResidentAutonomyError",
+    "StartResidentGoalAttemptCommandV1",
+    "ObserveResidentGoalAttemptCommandV1",
+    "SettleResidentGoalAttemptCommandV1",
+    "ArchiveResidentGoalCommandV1",
+    "QueryResidentGoalExecutionV1",
+    "ResidentGoalAttemptReceiptV1",
+    "ResidentGoalExecutionV1",
+    "ResidentGoalLifecycleErrorV1"
   ]
 }

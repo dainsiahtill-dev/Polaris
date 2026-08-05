@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:17.999291Z",
-  "source_hash": "f3d2d98a3b9cccd0",
+  "generated_at": "2026-08-02T15:47:47.811276Z",
+  "source_hash": "272c6a18b302a778",
   "cell_id": "llm.provider_config",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -32,7 +32,7 @@
     },
     {
       "type": "function",
-      "name": "sync_settings_from_llm",
+      "name": "apply_llm_config_updates_to_settings",
       "description": "Apply relevant LLM config fields back onto process settings.",
       "defined_in": "polaris/cells/llm/provider_config/internal/settings_sync.py"
     },
@@ -126,6 +126,14 @@
       "defined_in": "polaris/cells/llm/provider_config/public/contracts.py",
       "methods": [
         {
+          "name": "resolve_provider_context",
+          "doc": "Resolve provider config context."
+        },
+        {
+          "name": "resolve_test_context",
+          "doc": "Resolve LLM test execution context."
+        },
+        {
           "name": "sync_settings",
           "doc": "Sync runtime settings from LLM config."
         }
@@ -151,6 +159,14 @@
       "methods": [
         {
           "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "resolve_provider_context",
+          "doc": ""
+        },
+        {
+          "name": "resolve_test_context",
           "doc": ""
         },
         {

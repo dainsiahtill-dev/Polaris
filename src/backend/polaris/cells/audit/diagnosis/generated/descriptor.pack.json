@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:13.269551Z",
-  "source_hash": "27ae61a022b75172",
+  "generated_at": "2026-08-02T15:47:41.573783Z",
+  "source_hash": "a81bd7315be51725",
   "cell_id": "audit.diagnosis",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -21,6 +21,12 @@
       "type": "function",
       "name": "write_ws_connection_event_sync",
       "description": "Emit WS lifecycle event via KernelAuditRuntime only (no JSONL dual-write).",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/connection_audit_service.py"
+    },
+    {
+      "type": "function",
+      "name": "write_ws_connection_event",
+      "description": "",
       "defined_in": "polaris/cells/audit/diagnosis/internal/connection_audit_service.py"
     },
     {
@@ -219,7 +225,7 @@
     },
     {
       "type": "function",
-      "name": "to_legacy_result",
+      "name": "to_script_projection",
       "description": "Lazy import to avoid package-level circular dependency.",
       "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/__init__.py"
     },
@@ -795,8 +801,8 @@
     },
     {
       "type": "function",
-      "name": "to_legacy_result",
-      "description": "Flatten unified envelope to legacy script-friendly payload.",
+      "name": "to_script_projection",
+      "description": "Flatten unified envelope to the script-friendly projection payload.",
       "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
     },
     {
@@ -962,7 +968,16 @@
       "name": "IAuditDiagnosisService",
       "description": "",
       "defined_in": "polaris/cells/audit/diagnosis/public/contracts.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "run_diagnosis",
+          "doc": "Execute one diagnosis command."
+        },
+        {
+          "name": "query_trail",
+          "doc": "Query diagnosis events/trail."
+        }
+      ]
     },
     {
       "type": "function",

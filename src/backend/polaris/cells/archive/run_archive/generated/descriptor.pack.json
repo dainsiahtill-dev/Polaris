@@ -1,6 +1,6 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:19.146751Z",
+  "generated_at": "2026-08-02T15:47:49.951438Z",
   "source_hash": "fc4eda9364af9944",
   "cell_id": "archive.run_archive",
   "workspace": "/home/dains/Documents/polaris/src/backend",
@@ -54,6 +54,22 @@
         {
           "name": "trigger_factory_archive",
           "doc": "Trigger async archiving of a factory run."
+        },
+        {
+          "name": "shutdown",
+          "doc": "Shutdown the hook and cancel all pending tasks."
+        },
+        {
+          "name": "_archive_run_async",
+          "doc": "Async implementation of run archiving."
+        },
+        {
+          "name": "_archive_task_snapshot_async",
+          "doc": "Async implementation of task snapshot archiving."
+        },
+        {
+          "name": "_archive_factory_async",
+          "doc": "Async implementation of factory archiving."
         }
       ]
     },

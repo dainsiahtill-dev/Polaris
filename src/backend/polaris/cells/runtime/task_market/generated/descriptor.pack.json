@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:19.369693Z",
-  "source_hash": "1893fac6f39d706f",
+  "generated_at": "2026-08-02T15:47:50.240961Z",
+  "source_hash": "87f2d132f462f725",
   "cell_id": "runtime.task_market",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -190,6 +190,10 @@
           "doc": ""
         },
         {
+          "name": "route_owner_rework",
+          "doc": "Atomically route a leased requester behind its file-owning task."
+        },
+        {
           "name": "requeue_task",
           "doc": ""
         },
@@ -227,6 +231,38 @@
         },
         {
           "name": "_integration_qa_reopen_allowed",
+          "doc": ""
+        },
+        {
+          "name": "_owner_rework_result",
+          "doc": ""
+        },
+        {
+          "name": "_owner_rework_handoff_map",
+          "doc": ""
+        },
+        {
+          "name": "_owner_rework_handoff_matches",
+          "doc": ""
+        },
+        {
+          "name": "_owner_rework_idempotency_reason",
+          "doc": ""
+        },
+        {
+          "name": "_dependency_reaches",
+          "doc": ""
+        },
+        {
+          "name": "_owner_rework_handoff_record",
+          "doc": ""
+        },
+        {
+          "name": "_persist_owner_rework_handoff",
+          "doc": ""
+        },
+        {
+          "name": "_owner_rework_failure_payload",
           "doc": ""
         },
         {
@@ -386,6 +422,12 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_resolved_only_dependency_ids",
+      "description": "Return typed owner dependencies or ``None`` for corrupt handoff state.",
+      "defined_in": "polaris/cells/runtime/task_market/internal/claim_readiness.py"
     },
     {
       "type": "function",
@@ -902,6 +944,46 @@
       "name": "_normalize_status_field",
       "description": "",
       "defined_in": "polaris/cells/runtime/task_market/internal/models.py"
+    },
+    {
+      "type": "class",
+      "name": "TaskMarketProjection",
+      "description": "Build dashboard views without transferring task-market ownership.",
+      "defined_in": "polaris/cells/runtime/task_market/internal/projection.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "get_queue_depth_by_stage",
+          "doc": "Return queued work-item counts grouped by stage."
+        },
+        {
+          "name": "get_in_progress_count",
+          "doc": "Return active work-item counts grouped by effective status."
+        },
+        {
+          "name": "get_dead_letter_count",
+          "doc": "Return total dead-lettered work items."
+        },
+        {
+          "name": "get_active_work_items",
+          "doc": "Return active work items, optionally restricted to one stage."
+        },
+        {
+          "name": "get_worker_load",
+          "doc": "Return claimed work-item counts grouped by worker."
+        },
+        {
+          "name": "get_trace_timeline",
+          "doc": "Return work items for one trace in creation order."
+        },
+        {
+          "name": "get_dashboard_summary",
+          "doc": "Return the complete task-market dashboard read model."
+        }
+      ]
     },
     {
       "type": "class",
@@ -1509,6 +1591,13 @@
     },
     {
       "type": "class",
+      "name": "OwnerReworkRouteReasonV1",
+      "description": "Stable outcomes for an owner-rework routing transaction.",
+      "defined_in": "polaris/cells/runtime/task_market/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "PublishTaskWorkItemCommandV1",
       "description": "",
       "defined_in": "polaris/cells/runtime/task_market/public/contracts.py",
@@ -1548,6 +1637,29 @@
       "description": "",
       "defined_in": "polaris/cells/runtime/task_market/public/contracts.py",
       "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RouteOwnerReworkCommandV1",
+      "description": "Atomically defer a requester until its file-owning task is repaired.",
+      "defined_in": "polaris/cells/runtime/task_market/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "OwnerReworkHandoffV1",
+      "description": "Canonical persisted handoff joining one requester to its file owner.",
+      "defined_in": "polaris/cells/runtime/task_market/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": "Return the JSON-serializable persistence representation."
+        },
+        {
+          "name": "from_record",
+          "doc": "Decode a persisted handoff and reject incomplete or malformed state."
+        }
+      ]
     },
     {
       "type": "class",
@@ -1672,6 +1784,13 @@
       "type": "class",
       "name": "TaskMarketStatusResultV1",
       "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "OwnerReworkRouteResultV1",
+      "description": "Result of one atomic owner-rework routing attempt.",
       "defined_in": "polaris/cells/runtime/task_market/public/contracts.py",
       "methods": []
     },

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:13.163841Z",
-  "source_hash": "1332473a5bc93eab",
+  "generated_at": "2026-08-02T19:21:07.038090Z",
+  "source_hash": "327607f901bcdada",
   "cell_id": "audit.evidence",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -175,6 +175,12 @@
     },
     {
       "type": "function",
+      "name": "_run_with_timeout",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "function",
       "name": "_runner",
       "description": "",
       "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
@@ -194,6 +200,12 @@
     {
       "type": "function",
       "name": "_result_from_role_runtime",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "_invoke_audit_role_runtime",
       "description": "",
       "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
     },
@@ -277,6 +289,64 @@
       "methods": []
     },
     {
+      "type": "class",
+      "name": "PersistManagedProcessReceiptCommandV1",
+      "description": "Request durable receipt ownership without trusting caller identity.",
+      "defined_in": "polaris/cells/audit/evidence/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ReadManagedProcessReceiptQueryV1",
+      "description": "Read one workspace-scoped receipt by its owner-calculated hash.",
+      "defined_in": "polaris/cells/audit/evidence/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ManagedProcessReceiptPersistResultV1",
+      "description": "Content-addressed append outcome.",
+      "defined_in": "polaris/cells/audit/evidence/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ManagedProcessReceiptRecordV1",
+      "description": "Immutable full receipt body reconstructed from durable evidence.",
+      "defined_in": "polaris/cells/audit/evidence/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_normalize_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_lower_sha256",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_freeze_json_value",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_freeze_receipt",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_receipt_ref",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/contracts.py"
+    },
+    {
       "type": "function",
       "name": "_utc_now",
       "description": "",
@@ -316,6 +386,48 @@
       "type": "function",
       "name": "_all_evidence_records",
       "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_plain_json_value",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_receipt_json",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_managed_process_receipt_hash",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_managed_process_receipt_ref",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_managed_process_receipt_records",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "persist_managed_process_receipt",
+      "description": "Persist one canonical full receipt idempotently through audit.evidence.",
+      "defined_in": "polaris/cells/audit/evidence/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "read_managed_process_receipt",
+      "description": "Read immutable receipt data by hash within one workspace boundary.",
       "defined_in": "polaris/cells/audit/evidence/public/service.py"
     },
     {
@@ -417,6 +529,78 @@
       "defined_in": "polaris/delivery/http/audit_router.py"
     },
     {
+      "type": "function",
+      "name": "get_audit_logs",
+      "description": "Query audit events with filters.",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "function",
+      "name": "export_audit",
+      "description": "Export audit logs in specified format.",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "function",
+      "name": "verify_audit_chain",
+      "description": "Verify integrity of audit log chain.",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "function",
+      "name": "get_audit_stats",
+      "description": "Get audit statistics for specified time range.",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "function",
+      "name": "cleanup_audit",
+      "description": "Clean up audit logs older than retention period.",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_triage",
+      "description": "Generate complete triage bundle.",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "function",
+      "name": "analyze_failure",
+      "description": "Analyze failure chain with 3-hop diagnosis.",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "function",
+      "name": "scan_project",
+      "description": "Run project-level QA/audit scan.",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "function",
+      "name": "check_code_region",
+      "description": "Run focused QA/audit checks on a file region/function.",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "function",
+      "name": "get_audit_trace",
+      "description": "Get full audit timeline for a trace_id.",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "function",
+      "name": "get_failure_hops",
+      "description": "Get 3-hops failure localization result.",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "function",
+      "name": "get_corruption_log",
+      "description": "Get corruption log.",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
       "type": "class",
       "name": "AuditStoreAdapter",
       "description": "Expose AuditStore through the KernelOne audit port.",
@@ -479,6 +663,14 @@
         {
           "name": "__init__",
           "doc": "Initialize sink."
+        },
+        {
+          "name": "start",
+          "doc": "Subscribe to EVENT messages on the bus."
+        },
+        {
+          "name": "stop",
+          "doc": "Unsubscribe from EVENT messages."
         }
       ]
     },
@@ -486,6 +678,12 @@
       "type": "function",
       "name": "_resolve_audit_event_type",
       "description": "Map UEP event type to KernelAuditEventType.",
+      "defined_in": "polaris/infrastructure/audit/sinks/audit_hash_sink.py"
+    },
+    {
+      "type": "function",
+      "name": "_audit_hash_sink_handler",
+      "description": "Async handler for MessageBus subscribe.",
       "defined_in": "polaris/infrastructure/audit/sinks/audit_hash_sink.py"
     },
     {
@@ -945,6 +1143,18 @@
     },
     {
       "type": "function",
+      "name": "normalize_control_plane_prompt_key",
+      "description": "Normalize snake/camel/Pascal/kebab key spellings to one taxonomy.",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "find_control_plane_prompt_content_hits",
+      "description": "Return canonical control-plane signatures found in prompt content.",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
       "name": "_find_metadata_key_hits",
       "description": "",
       "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
@@ -1178,7 +1388,7 @@
     {
       "type": "class",
       "name": "AuditFailureClass",
-      "description": "",
+      "description": "Local audit-correlation categories, not Run Ledger failure taxonomy.",
       "defined_in": "polaris/kernelone/audit/error_correlator.py",
       "methods": []
     },
@@ -1632,12 +1842,48 @@
           "doc": "Initialize the adapter."
         },
         {
+          "name": "start",
+          "doc": "Start the adapter (starts background flush loop)."
+        },
+        {
+          "name": "stop",
+          "doc": "Stop the adapter and flush remaining events."
+        },
+        {
+          "name": "emit",
+          "doc": "Queue an event for async persistence."
+        },
+        {
+          "name": "_flush_loop",
+          "doc": "Background loop that flushes buffer periodically."
+        },
+        {
+          "name": "_flush_async",
+          "doc": "Flush with async lock to prevent concurrent flushes."
+        },
+        {
+          "name": "_flush_buffer",
+          "doc": "Flush buffered events to KernelAuditRuntime."
+        },
+        {
+          "name": "_write_batch",
+          "doc": "Write a batch of events to JSONL files."
+        },
+        {
           "name": "_get_partition_key",
           "doc": "Get partition key for an event."
         },
         {
+          "name": "_write_partition",
+          "doc": "Write a partition of events to a JSONL file."
+        },
+        {
           "name": "_write_partition_sync",
           "doc": "Sync file write - runs in thread pool via asyncio.to_thread()."
+        },
+        {
+          "name": "_requeue_failed",
+          "doc": "Re-queue failed events for retry."
         },
         {
           "name": "get_stats",
@@ -1676,6 +1922,14 @@
           "doc": "Initialize the OTLP exporter."
         },
         {
+          "name": "export_span",
+          "doc": "Export a single span."
+        },
+        {
+          "name": "export_batch",
+          "doc": "Export multiple spans."
+        },
+        {
           "name": "_to_otlp_span",
           "doc": "Convert TracingAuditInterceptor span to OTLP JSON format."
         },
@@ -1684,8 +1938,20 @@
           "doc": "Build OTLP JSON payload for a batch of spans."
         },
         {
+          "name": "_flush_batch",
+          "doc": "Flush the current batch to the OTLP endpoint."
+        },
+        {
+          "name": "_send_batch",
+          "doc": "Send a batch of spans via HTTP POST."
+        },
+        {
           "name": "_sync_post",
           "doc": ""
+        },
+        {
+          "name": "flush",
+          "doc": "Flush any pending spans."
         },
         {
           "name": "get_stats",
@@ -1710,6 +1976,10 @@
         {
           "name": "_build_jaeger_payload",
           "doc": "Build Jaeger HTTP Thrift batch payload."
+        },
+        {
+          "name": "_send_batch",
+          "doc": "Send batch to Jaeger HTTP endpoint."
         },
         {
           "name": "_sync_post",
@@ -1795,6 +2065,18 @@
           "doc": "Initialize the storage tier adapter."
         },
         {
+          "name": "start",
+          "doc": "Start the adapter and background rotation task."
+        },
+        {
+          "name": "stop",
+          "doc": "Stop the adapter and flush remaining events."
+        },
+        {
+          "name": "emit",
+          "doc": "Emit an event to hot storage (via KernelRuntimeAdapter)."
+        },
+        {
           "name": "is_hot",
           "doc": "判断事件或日期是否属于热存储."
         },
@@ -1807,12 +2089,32 @@
           "doc": "Get storage tier for an event or date."
         },
         {
+          "name": "archive_old_partitions",
+          "doc": "Archive partitions older than hot_ttl_days."
+        },
+        {
+          "name": "_archive_partition",
+          "doc": "Archive a partition by gzip-compressing and moving to archive/."
+        },
+        {
+          "name": "_compress_file",
+          "doc": "Gzip-compress a file asynchronously."
+        },
+        {
           "name": "_compress_file_sync",
           "doc": "Sync gzip compression."
         },
         {
+          "name": "_delete_partition",
+          "doc": "Delete a partition directory."
+        },
+        {
           "name": "_delete_partition_sync",
           "doc": "Sync delete partition directory."
+        },
+        {
+          "name": "_rotation_loop",
+          "doc": "Background loop that periodically archives old partitions."
         },
         {
           "name": "get_stats",
@@ -1872,6 +2174,18 @@
           "doc": "Reset the default singleton (for testing)."
         },
         {
+          "name": "start",
+          "doc": "Start the background dispatch loop."
+        },
+        {
+          "name": "stop",
+          "doc": "Gracefully shutdown the bus."
+        },
+        {
+          "name": "emit",
+          "doc": "Emit an audit event (non-blocking)."
+        },
+        {
           "name": "emit_sync",
           "doc": "Synchronous emit wrapper for sync code paths."
         },
@@ -1886,6 +2200,14 @@
         {
           "name": "unsubscribe_by_name",
           "doc": "Unsubscribe an interceptor by name."
+        },
+        {
+          "name": "track_llm_interaction",
+          "doc": "Context manager for tracking LLM interactions."
+        },
+        {
+          "name": "track_tool_execution",
+          "doc": "Context manager for tracking tool executions."
         },
         {
           "name": "open_circuit",
@@ -1910,6 +2232,22 @@
         {
           "name": "get_storm_level",
           "doc": "Get current storm detection level."
+        },
+        {
+          "name": "_dispatch_loop",
+          "doc": "Background loop for processing events from the queue."
+        },
+        {
+          "name": "_dispatch_event",
+          "doc": "Dispatch a single event to all interceptors."
+        },
+        {
+          "name": "_fallback_persist",
+          "doc": "Attempt to persist event to KernelAuditRuntime or TypedEventBusAdapter."
+        },
+        {
+          "name": "_fallback_persist_unlocked",
+          "doc": "Internal fallback persist (must be called with _fallback_lock held)."
         },
         {
           "name": "_track_lost_event",
@@ -2271,8 +2609,16 @@
           "doc": "Estimate memory size of an event."
         },
         {
+          "name": "add",
+          "doc": "Add an event to the batch."
+        },
+        {
           "name": "should_flush",
           "doc": "Check if batch should be flushed."
+        },
+        {
+          "name": "flush",
+          "doc": "Flush all buffered events."
         },
         {
           "name": "get_stats",
@@ -2325,6 +2671,10 @@
         {
           "name": "add_tier_callback",
           "doc": "Add callback for tier transitions."
+        },
+        {
+          "name": "emit",
+          "doc": "Emit event using best available tier."
         },
         {
           "name": "get_current_tier",
@@ -2619,6 +2969,10 @@
         {
           "name": "wrap_generate",
           "doc": "Wrap a provider's generate method."
+        },
+        {
+          "name": "wrapped",
+          "doc": ""
         }
       ]
     },
@@ -2628,6 +2982,10 @@
       "description": "Tracks an in-progress LLM call for audit.",
       "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm_interceptor.py",
       "methods": [
+        {
+          "name": "track",
+          "doc": "Track an LLM call within this context manager."
+        },
         {
           "name": "add_prompt",
           "doc": "Record prompt details."
@@ -2639,6 +2997,14 @@
         {
           "name": "record_first_token",
           "doc": "Record when first token was received (for streaming)."
+        },
+        {
+          "name": "_emit_start",
+          "doc": "Emit LLM call start event."
+        },
+        {
+          "name": "_emit_complete",
+          "doc": "Emit LLM call complete event."
         }
       ]
     },
@@ -2684,6 +3050,18 @@
       "type": "function",
       "name": "decorator",
       "description": "",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm_interceptor.py"
+    },
+    {
+      "type": "function",
+      "name": "wrapper",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm_interceptor.py"
+    },
+    {
+      "type": "function",
+      "name": "emit_llm_event",
+      "description": "Convenience function to emit an LLM audit event.",
       "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm_interceptor.py"
     },
     {

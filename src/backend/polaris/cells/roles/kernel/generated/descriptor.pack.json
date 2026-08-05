@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T05:57:42.963910Z",
-  "source_hash": "a99d112dc003fa9a",
+  "generated_at": "2026-08-02T15:47:46.518447Z",
+  "source_hash": "066c43672ac635c8",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -690,6 +690,14 @@
           "doc": "滑动窗口策略（向后兼容）"
         },
         {
+          "name": "summarize_messages",
+          "doc": "总结消息，保留连续性摘要 + 最近窗口。"
+        },
+        {
+          "name": "_build_continuity_prompt_block_from_messages",
+          "doc": ""
+        },
+        {
           "name": "emergency_truncate",
           "doc": "Emergency truncation when budget is violated."
         },
@@ -738,6 +746,10 @@
         {
           "name": "process_context_override",
           "doc": "Process context_override dict with prompt injection detection."
+        },
+        {
+          "name": "_project_prompt_safe_value",
+          "doc": "Copy mixed data/control structures without nested runtime authority."
         },
         {
           "name": "extract_tool_messages_from_history",
@@ -791,8 +803,16 @@
           "doc": "ADR-0090 I4.1: clamp the role budget to the resolved model window."
         },
         {
+          "name": "build_context",
+          "doc": "构建上下文"
+        },
+        {
           "name": "record_projection_outcome",
           "doc": "Feed turn outcome back into the role-scoped ProjectionEngine."
+        },
+        {
+          "name": "_build_context_impl",
+          "doc": "Internal implementation of build_context with timing instrumentation."
         },
         {
           "name": "_extract_strategy_override",
@@ -817,6 +837,10 @@
         {
           "name": "build_system_context",
           "doc": "构建系统上下文（提示词部分）"
+        },
+        {
+          "name": "_process_history",
+          "doc": "处理历史消息"
         },
         {
           "name": "_is_state_first_mode_active_from_receipt",
@@ -2175,6 +2199,76 @@
     },
     {
       "type": "class",
+      "name": "DeferredRequestReplayFence",
+      "description": "Shared bounded replay fence for repair and command request identities.",
+      "defined_in": "polaris/cells/roles/kernel/internal/deferred_repair_effects.py",
+      "methods": [
+        {
+          "name": "check",
+          "doc": ""
+        },
+        {
+          "name": "consume",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DeferredRepairEffectSynthesizer",
+      "description": "One-shot pure synthesizer; it never owns a mutation port or physical executor.",
+      "defined_in": "polaris/cells/roles/kernel/internal/deferred_repair_effects.py",
+      "methods": [
+        {
+          "name": "_failure",
+          "doc": ""
+        },
+        {
+          "name": "_synthesize_candidate",
+          "doc": "Re-plan one request without spending the batch replay fence."
+        },
+        {
+          "name": "synthesize_batch",
+          "doc": "Validate every request, then atomically spend all replay identities."
+        },
+        {
+          "name": "synthesize",
+          "doc": "Re-plan and atomically spend one exact request identity."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_canonical_json",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/deferred_repair_effects.py"
+    },
+    {
+      "type": "function",
+      "name": "build_deferred_repair_planning_payload",
+      "description": "Freeze the exact public planning input into canonical UTF-8 JSON text.",
+      "defined_in": "polaris/cells/roles/kernel/internal/deferred_repair_effects.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/deferred_repair_effects.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_list",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/deferred_repair_effects.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_command_from_payload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/deferred_repair_effects.py"
+    },
+    {
+      "type": "class",
       "name": "TestResult",
       "description": "测试结果封装。",
       "defined_in": "polaris/cells/roles/kernel/internal/development_workflow_runtime.py",
@@ -2198,6 +2292,18 @@
           "doc": ""
         },
         {
+          "name": "execute_stream",
+          "doc": "流式执行开发工作流。"
+        },
+        {
+          "name": "_execute_patch",
+          "doc": "执行代码修改（patch）。"
+        },
+        {
+          "name": "_execute_parsed_tool_calls",
+          "doc": ""
+        },
+        {
           "name": "_parse_protocol_file_operations",
           "doc": ""
         },
@@ -2212,6 +2318,14 @@
         {
           "name": "_summarize_tool_errors",
           "doc": ""
+        },
+        {
+          "name": "_run_tests",
+          "doc": "运行测试并返回结果。"
+        },
+        {
+          "name": "_analyze_failure_and_create_repair_intent",
+          "doc": "使用 synthesis_llm 分析测试失败并生成修复意图。"
         },
         {
           "name": "_compute_error_signature",
@@ -2230,6 +2344,10 @@
           "doc": "Phase 4.1: Take a rollback snapshot before applying patch."
         },
         {
+          "name": "_rollback_to_snapshot",
+          "doc": "Phase 4.1: Rollback to a previously saved snapshot."
+        },
+        {
           "name": "_validate_ast_structure",
           "doc": "Phase 4.1: Validate code AST structure without full parsing."
         },
@@ -2238,6 +2356,308 @@
           "doc": "Phase 4.1: Analyze which tests are affected by file changes."
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "_FenceEntry",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_dispatch.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_PidBoundDirectedEffectFence",
+      "description": "Private shared state; capability views expose disjoint method sets.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_dispatch.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_reset_in_child",
+          "doc": ""
+        },
+        {
+          "name": "_pid_ok",
+          "doc": ""
+        },
+        {
+          "name": "_denial_context_id",
+          "doc": ""
+        },
+        {
+          "name": "_canonical_context",
+          "doc": ""
+        },
+        {
+          "name": "register",
+          "doc": ""
+        },
+        {
+          "name": "consume",
+          "doc": ""
+        },
+        {
+          "name": "release_batch",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_DirectedEffectFenceAdminView",
+      "description": "Kernel-only administrative capability over private fence state.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_dispatch.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register",
+          "doc": ""
+        },
+        {
+          "name": "release_batch",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_DirectedEffectFenceConsumeView",
+      "description": "Adapter-visible one-shot spending capability without administration.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_dispatch.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "consume",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_attempt_stable_identity",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "_context_identity",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "create_directed_effect_fence_ports",
+      "description": "Internal composition root for one fixed-capacity process-local fence.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_dispatch.py"
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectLifecycleCandidateV1",
+      "description": "One already-authorized mutation candidate; no executable capability.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectTaskRuntimePortsV1",
+      "description": "Injectable public TaskRuntime callables; production defaults are exact.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectLifecycleService",
+      "description": "Prepare the complete immutable inventory before any batch dispatch.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "prepare_batch",
+          "doc": ""
+        },
+        {
+          "name": "_current_admitted_operation",
+          "doc": "Strictly read one admitted member and return the shared stream head."
+        },
+        {
+          "name": "claim_execution_context",
+          "doc": "Claim one exact member and capture current policy before registration."
+        },
+        {
+          "name": "_seal_claimed_recovery_pending",
+          "doc": "Best-effort RECOVERY_PENDING after durable claim cannot continue."
+        },
+        {
+          "name": "abort_unclaimed_members",
+          "doc": "Abort exact unused ready-inventory members without claiming them."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_rebuild_contract_tree",
+      "description": "Re-run dataclass invariants recursively for one untrusted port result.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_port_result",
+      "description": "Require an exact, recursively reconstructable public result contract.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_denied",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_port_exception",
+      "description": "Project one collaborator failure without swallowing process-control exceptions.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_parent_admission_key",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_claim_context_id",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_claimed_operation_hash",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_current_policy_matches_claim",
+      "description": "Compare sole-producer evidence with every immutable baseline source.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_claim_denied",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_same_attempt_binding",
+      "description": "Compare every public attempt field except the renewable lease timestamp.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "_refresh_directed_effect_attempt",
+      "description": "Return typed freshness plus the upstream code needed by the legacy raw guard.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py"
+    },
+    {
+      "type": "function",
+      "name": "refresh_directed_effect_attempt",
+      "description": "Refresh one public attempt authority without touching its private state.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py"
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectPolicyGuardRequestV1",
+      "description": "One already-classified invocation and its baseline-only policy inputs.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_policy_guard.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectAuthoritativePolicyGuardRequestV1",
+      "description": "Production request whose policy and target evidence come from owners.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_policy_guard.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectPolicyGuardResultV1",
+      "description": "Typed no-effect guard verdict with baseline evidence only on success.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_policy_guard.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectPolicyGuard",
+      "description": "Consumes caller-captured classification evidence without registry rereads.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_policy_guard.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "evaluate_authoritative",
+          "doc": "Build baseline authorization only from gateway and adapter owners."
+        },
+        {
+          "name": "evaluate",
+          "doc": "Return baseline authorization evidence or a closed no-effect denial."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_freeze_value",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_policy_guard.py"
+    },
+    {
+      "type": "function",
+      "name": "_immutable_arguments",
+      "description": "Freeze tool arguments into sorted immutable DEO key/value pairs.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_policy_guard.py"
+    },
+    {
+      "type": "function",
+      "name": "_denied",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_policy_guard.py"
+    },
+    {
+      "type": "function",
+      "name": "_gateway_denial_code",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_policy_guard.py"
+    },
+    {
+      "type": "function",
+      "name": "_path_matches_capability_scope",
+      "description": "Return True when a workspace-relative path is covered by capability scope tokens.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_policy_guard.py"
+    },
+    {
+      "type": "function",
+      "name": "_deo_delete_contingency_allowed",
+      "description": "Allow DEO-sealed delete_file contingencies without exposing free LLM deletes.",
+      "defined_in": "polaris/cells/roles/kernel/internal/directed_effect_policy_guard.py"
     },
     {
       "type": "class",
@@ -2485,6 +2905,14 @@
           "doc": ""
         },
         {
+          "name": "execute",
+          "doc": "执行探索工作流"
+        },
+        {
+          "name": "execute_stream",
+          "doc": "流式执行探索工作流，产出标准 TurnEvent 事件。"
+        },
+        {
           "name": "enter_from_handoff",
           "doc": "从 ContextHandoffPack 进入，提取 handoff 信息并构造 TurnDecision。"
         },
@@ -2505,6 +2933,22 @@
           "doc": "创建探索计划"
         },
         {
+          "name": "_execute_tools",
+          "doc": "执行工具列表"
+        },
+        {
+          "name": "_execute_tools_stream",
+          "doc": "流式执行工具列表，产出 ToolBatchEvent。"
+        },
+        {
+          "name": "_continue_exploration",
+          "doc": "继续探索（自适应策略）"
+        },
+        {
+          "name": "_continue_exploration_stream",
+          "doc": "流式继续探索。"
+        },
+        {
           "name": "_analyze_results",
           "doc": "分析工具执行结果，提取关键发现"
         },
@@ -2515,6 +2959,10 @@
         {
           "name": "_generate_fallback_synthesis",
           "doc": "当 synthesis_llm 不可用时，生成基于 discoveries 的兜底摘要。"
+        },
+        {
+          "name": "_synthesize",
+          "doc": "综合分析探索结果"
         },
         {
           "name": "cancel",
@@ -2612,7 +3060,7 @@
     {
       "type": "function",
       "name": "_execute_commit_protocol",
-      "description": "Execute the durable commit protocol.",
+      "description": "Apply one turn to the rebuildable ContextOS snapshot.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/commit_protocol.py"
     },
     {
@@ -2624,7 +3072,7 @@
     {
       "type": "function",
       "name": "_commit_turn_to_snapshot",
-      "description": "Merge turn history, events, and ledger data into the ContextOS snapshot.",
+      "description": "Merge a committed turn into the rebuildable ContextOS snapshot.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/commit_protocol.py"
     },
     {
@@ -2672,6 +3120,22 @@
         {
           "name": "context_gateway_config_factory",
           "doc": "Return the runtime-injected ContextGatewayConfig factory, if any."
+        },
+        {
+          "name": "directed_effect_runtime",
+          "doc": "Return the explicitly injected DEO runtime bundle, if any."
+        },
+        {
+          "name": "directed_effect_required",
+          "doc": "Whether this production root must fail closed without DEO authority."
+        },
+        {
+          "name": "run",
+          "doc": "执行角色回合（带重试机制）"
+        },
+        {
+          "name": "run_stream",
+          "doc": "流式执行角色回合"
         }
       ]
     },
@@ -2689,8 +3153,20 @@
     },
     {
       "type": "function",
+      "name": "_context_delivery_mode_marker",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/delivery_mode.py"
+    },
+    {
+      "type": "function",
+      "name": "_text_delivery_mode_marker",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/delivery_mode.py"
+    },
+    {
+      "type": "function",
       "name": "_ensure_context_delivery_mode_marker",
-      "description": "Restore the materialize marker after ContextOS projection when needed.",
+      "description": "Restore one explicit delivery-mode marker after ContextOS projection.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/delivery_mode.py"
     },
     {
@@ -2831,8 +3307,8 @@
     },
     {
       "type": "function",
-      "name": "_validate_turn_output",
-      "description": "",
+      "name": "execute_non_stream_role_turn",
+      "description": "Execute a non-streaming role turn through TransactionKernel.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/non_stream_turn_flow.py"
     },
     {
@@ -2958,6 +3434,12 @@
     },
     {
       "type": "function",
+      "name": "_result_items_from_batch_receipt",
+      "description": "Return per-tool result rows from a batch receipt.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/role_result_projection.py"
+    },
+    {
+      "type": "function",
       "name": "tool_calls_from_batch_receipt",
       "description": "Project RoleTurnResult.tool_calls from a TransactionKernel batch receipt.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/role_result_projection.py"
@@ -2972,6 +3454,18 @@
       "type": "function",
       "name": "role_result_metadata_from_profile",
       "description": "Project stable RoleTurnResult metadata from profile, ledger, and LLM evidence.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/role_result_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "project_completion_audit_evidence",
+      "description": "Copy completion audit evidence and derive lifecycle projections.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/role_result_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "project_task_boundary_failure_to_metadata",
+      "description": "Project task-boundary failure evidence into RoleTurnResult metadata.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/role_result_projection.py"
     },
     {
@@ -3006,20 +3500,58 @@
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/stream_event_projection.py",
       "methods": [
         {
+          "name": "project",
+          "doc": "Project one typed stream event."
+        },
+        {
+          "name": "_project_content_chunk",
+          "doc": ""
+        },
+        {
+          "name": "_project_tool_batch",
+          "doc": ""
+        },
+        {
+          "name": "_project_completion",
+          "doc": ""
+        },
+        {
           "name": "_record_projection_outcome",
           "doc": ""
         },
         {
           "name": "_append_task_boundary_verdict",
           "doc": ""
+        },
+        {
+          "name": "_publish_result",
+          "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_lift_completion_audit_evidence",
+      "description": "Copy final-request dispatch-evidence keys from stream monitoring into metadata.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/stream_event_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_boundary_error_message",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/stream_event_projection.py"
     },
     {
       "type": "function",
       "name": "resolve_stream_run_id",
       "description": "Resolve a stream run id from the request, workspace metadata, or a new id.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/stream_run_id.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_stream_role_turn",
+      "description": "Execute a streaming role turn through TransactionKernel.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/stream_turn_flow.py"
     },
     {
       "type": "class",
@@ -3075,8 +3607,62 @@
     },
     {
       "type": "function",
+      "name": "_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_extend_mapping_path_fields",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_extend_task_collection_target_paths",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_items",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "_extend_context_items",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/task_boundary.py"
+    },
+    {
+      "type": "function",
       "name": "director_task_boundary_target_files",
       "description": "Extract Director target files from the current role-turn context.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "director_task_boundary_downstream_pending_artifacts",
+      "description": "Extract declared project/downstream artifact paths from role context.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "director_task_boundary_blocked_dependencies",
+      "description": "Extract explicit blocked dependency ids from the current context.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "director_task_boundary_evidence_policy",
+      "description": "Extract the current evidence policy projection from role context.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/task_boundary.py"
+    },
+    {
+      "type": "function",
+      "name": "director_task_boundary_verifier_policy",
+      "description": "Extract required/completed/failed verifier names from role context.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/task_boundary.py"
     },
     {
@@ -3117,6 +3703,12 @@
     },
     {
       "type": "function",
+      "name": "task_boundary_evidence_refs_from_metadata",
+      "description": "Project canonical context and execution-commit references for QA.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/task_boundary.py"
+    },
+    {
+      "type": "function",
       "name": "tool_schema_names_for_error_audit",
       "description": "Return stable native tool names for degraded provider-request audit evidence.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_dispatch_projection.py"
@@ -3134,6 +3726,12 @@
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_dispatch_projection.py"
     },
     {
+      "type": "function",
+      "name": "append_tool_call_lifecycle_control_plane_event",
+      "description": "Commit a tool lifecycle receipt to the Run Ledger.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_dispatch_projection.py"
+    },
+    {
       "type": "class",
       "name": "KernelToolExecutor",
       "description": "内核工具执行器",
@@ -3146,6 +3744,10 @@
         {
           "name": "create_gateway",
           "doc": "Create one per-request tool gateway with session-aware execution context."
+        },
+        {
+          "name": "execute_tools",
+          "doc": "执行工具调用"
         },
         {
           "name": "split_tool_calls_by_write_budget",
@@ -3303,6 +3905,18 @@
     },
     {
       "type": "function",
+      "name": "resolve_authorized_tool_gateway",
+      "description": "Return the same per-turn gateway used by physical tool execution.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_runtime_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_single_tool",
+      "description": "Execute one tool through the authorized tool path.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_runtime_executor.py"
+    },
+    {
+      "type": "function",
       "name": "reset_cached_tool_gateway_turn_boundary",
       "description": "Reset cached gateway counters when the authoritative turn id changes.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_runtime_executor.py"
@@ -3328,6 +3942,10 @@
       "methods": [
         {
           "name": "reset_turn_boundary",
+          "doc": ""
+        },
+        {
+          "name": "directed_effect_policy_guard",
           "doc": ""
         }
       ]
@@ -3359,26 +3977,32 @@
     },
     {
       "type": "function",
-      "name": "_coerce_positive_int",
-      "description": "",
+      "name": "_resolve_turn_transition_id",
+      "description": "Return the stable execution transition identity bound before kernel creation.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_factory.py"
     },
     {
       "type": "function",
-      "name": "_mapping_value",
-      "description": "",
+      "name": "_resolve_durable_workspace",
+      "description": "Resolve one durable workspace and reject request/kernel identity drift.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_factory.py"
     },
     {
       "type": "function",
       "name": "_resolve_existing_output_budget_tokens",
-      "description": "",
+      "description": "Delegate to the ONE llm_caller key scan (budget_policy blueprint Phase 1).",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_factory.py"
     },
     {
       "type": "function",
       "name": "_assert_task_runtime_guard_allows_tool",
       "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_directed_effect_composition",
+      "description": "Resolve one explicit DEO bundle and fresh public attempt for a turn.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_factory.py"
     },
     {
@@ -3425,6 +4049,12 @@
     },
     {
       "type": "function",
+      "name": "publish_tool_filter_conflict_stream_event",
+      "description": "Publish and return a stream error event for a tool-filter conflict.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_failure_projection.py"
+    },
+    {
+      "type": "function",
       "name": "build_transaction_execution_error_result",
       "description": "Build a non-streaming RoleTurnResult for a TransactionKernel exception.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_failure_projection.py"
@@ -3456,6 +4086,12 @@
     },
     {
       "type": "function",
+      "name": "build_transaction_invocation_setup",
+      "description": "Build ContextOS messages and provider tool surface for TransactionKernel.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_invocation_setup.py"
+    },
+    {
+      "type": "function",
       "name": "_log_delivery_mode_trace",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_invocation_setup.py"
@@ -3465,6 +4101,18 @@
       "name": "_log_prong_trace",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_invocation_setup.py"
+    },
+    {
+      "type": "function",
+      "name": "build_task_boundary_ledger_append_failure_verdict",
+      "description": "Build fail-closed evidence when a TaskBoundary ledger write fails.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "task_boundary_ledger_append_failure_error",
+      "description": "Return the public control-plane error for an append-failure verdict.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_completion.py"
     },
     {
       "type": "function",
@@ -3486,6 +4134,42 @@
     },
     {
       "type": "function",
+      "name": "_copy_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_required_tools",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_last_decision_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_missing_dispatch_lifecycle_receipt",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_tool_call_lifecycle_event",
+      "description": "Commit completion-path tool lifecycle evidence to the Run Ledger.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "record_missing_dispatch_lifecycle_receipt",
+      "description": "Record dropped required-write dispatch evidence for a completed turn.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_completion.py"
+    },
+    {
+      "type": "function",
       "name": "_resolve_completion_status",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_completion.py"
@@ -3503,11 +4187,81 @@
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_completion.py"
     },
     {
+      "type": "function",
+      "name": "_apply_task_boundary_completion_gate",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_completion.py"
+    },
+    {
       "type": "class",
       "name": "TransactionTurnExecutor",
       "description": "Execute role turns through the canonical ``TransactionKernel`` boundary.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_executor.py",
+      "methods": [
+        {
+          "name": "execute_turn",
+          "doc": "Execute one non-streaming role turn via ``TransactionKernel``."
+        },
+        {
+          "name": "execute_stream",
+          "doc": "Execute one streaming role turn via ``TransactionKernel``."
+        },
+        {
+          "name": "_iter_transaction_stream_events",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_InvocationContext",
+      "description": "Canonical request provenance independent of execution-scope binding.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py",
       "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TransactionIdentityError",
+      "description": "Raised when transaction identity is absent, partial, or contradictory.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TransactionInvocationIdentity",
+      "description": "Auditable identity for one persistent role-kernel invocation.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TransactionAttemptIdentity",
+      "description": "Authoritative transition identity for one invocation attempt.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "function",
@@ -3517,9 +4271,105 @@
     },
     {
       "type": "function",
+      "name": "_start_transaction_invocation",
+      "description": "Bind or restore one deterministic persistent invocation identity.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py"
+    },
+    {
+      "type": "function",
+      "name": "_bind_transaction_attempt",
+      "description": "Bind one deterministic attempt and return its transition identity.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_bound_transaction_attempt",
+      "description": "Validate and return the attempt identity before any transaction effect.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py"
+    },
+    {
+      "type": "function",
       "name": "_resolve_transaction_turn_id",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py"
+    },
+    {
+      "type": "function",
+      "name": "_derive_invocation_identity",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_invocation_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_execution_scope",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_existing_attempt_binding",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py"
+    },
+    {
+      "type": "function",
+      "name": "_assert_persisted_invocation_matches_request",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_execution_scope_kind",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py"
+    },
+    {
+      "type": "function",
+      "name": "_stable_invocation_id",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py"
+    },
+    {
+      "type": "function",
+      "name": "_metadata_copy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py"
+    },
+    {
+      "type": "function",
+      "name": "_attempt_transition_id",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_attempt",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_identity_token",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py"
+    },
+    {
+      "type": "function",
+      "name": "_required_text",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/transaction_turn_id.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_turn_output",
+      "description": "Validate one terminal role output without performing side effects.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/turn_output_validation.py"
     },
     {
       "type": "class",
@@ -3770,7 +4620,7 @@
     {
       "type": "function",
       "name": "_request_messages",
-      "description": "",
+      "description": "Messages for final-request evidence binding.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
     },
     {
@@ -3812,7 +4662,7 @@
     {
       "type": "function",
       "name": "_receipt_refs_from_payload",
-      "description": "",
+      "description": "Return structured receipt refs from final-request message metadata.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
     },
     {
@@ -3837,12 +4687,6 @@
       "type": "function",
       "name": "_coverage_flags",
       "description": "",
-      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
-    },
-    {
-      "type": "function",
-      "name": "_trusted_coverage_text",
-      "description": "Drop explicitly untrusted user-message bodies before scanning evidence terms.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
     },
     {
@@ -3897,6 +4741,12 @@
       "type": "function",
       "name": "_request_context",
       "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_execution_surface_audit",
+      "description": "Describe dispatch capability separately from context evidence coverage.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
     },
     {
@@ -3973,6 +4823,42 @@
     },
     {
       "type": "function",
+      "name": "_looks_like_pm_contract_evidence",
+      "description": "Accept one PM contract or a validated project contract set.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_contract_payload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_ce_blueprint_payload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_contract_summary",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_ce_blueprint_summary",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_target_scope_payload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
       "name": "_module_interface_contract_payload",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
@@ -3980,6 +4866,24 @@
     {
       "type": "function",
       "name": "_module_interface_contract_summary",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_sha256",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_actual_sibling_exports_hash",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_actual_sibling_exports_message_bound",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
     },
@@ -4027,7 +4931,61 @@
     },
     {
       "type": "function",
+      "name": "_first_evidence_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_evidence_mapping_for_keys",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_evidence_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_context_slot_payload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_find_structured_evidence_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_failed_gate_evidence_payload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_quality_evidence_payload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
       "name": "_architecture_payload_from_blueprint",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_looks_like_architecture_or_file_plan_payload",
+      "description": "Return whether a direct context value is structured plan evidence.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_architecture_payload_from_delivery_contracts",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
     },
@@ -4123,8 +5081,32 @@
     },
     {
       "type": "function",
+      "name": "_tool_schema_properties",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_provider_protocol_schema_coverage",
+      "description": "Bind one caller-owned result protocol to the exact provider surface.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_schema_registry_coverage",
+      "description": "Project registry provenance from the exact final provider tool surface.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
       "name": "_required_tool_names",
       "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_required_tools_exempt_reason",
+      "description": "Reason string when this request's tool surface is disabled BY DESIGN.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
     },
     {
@@ -4159,12 +5141,6 @@
     },
     {
       "type": "function",
-      "name": "_included_evidence_refs",
-      "description": "",
-      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
-    },
-    {
-      "type": "function",
       "name": "_final_request_evidence_enforcement_source",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
@@ -4179,12 +5155,6 @@
       "type": "function",
       "name": "enforce_final_request_evidence_coverage",
       "description": "Fail closed when strict final-request evidence coverage is incomplete.",
-      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
-    },
-    {
-      "type": "function",
-      "name": "_coverage_source",
-      "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
     },
     {
@@ -4208,6 +5178,18 @@
     {
       "type": "function",
       "name": "_add_evidence_coverage_findings",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_add_context_os_audit_findings",
+      "description": "Make prompt-isolation failure first-class in final request quality.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_prepared_context_os_audit",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/context_audit.py"
     },
@@ -4250,6 +5232,14 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "call",
+          "doc": "Call LLM in decision mode (tools exposed, tool_choice=auto)."
+        },
+        {
+          "name": "call_stream",
+          "doc": "Stream decision request (delegates to LLMInvoker.call_stream)."
         }
       ]
     },
@@ -4320,6 +5310,10 @@
           "doc": "Fire-and-forget publish of an LLM lifecycle event to the UEP bus."
         },
         {
+          "name": "_publish",
+          "doc": ""
+        },
+        {
           "name": "emit_call_error_event",
           "doc": "Emit call error event."
         },
@@ -4351,6 +5345,681 @@
     },
     {
       "type": "class",
+      "name": "FactorySemanticDispatchPropagationPort",
+      "description": "Exact live Factory authority sidecar; never provider payload data.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/factory_dispatch_propagation.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "frozen_semantic_request",
+          "doc": ""
+        },
+        {
+          "name": "validate_frozen_identity",
+          "doc": ""
+        },
+        {
+          "name": "_disabled",
+          "doc": ""
+        },
+        {
+          "name": "workspace",
+          "doc": ""
+        },
+        {
+          "name": "final_context_evidence",
+          "doc": "Return final physical ContextOS evidence after proof mint only."
+        },
+        {
+          "name": "bind_final_request_context_audit",
+          "doc": "Project observed coverage through this request's cutoff authority."
+        },
+        {
+          "name": "qualify",
+          "doc": "Arm this exact freeze only after the complete B3.5 proof passes."
+        },
+        {
+          "name": "enforce_final_request_evidence_coverage",
+          "doc": "Fail closed through the port-owned durable rejection boundary."
+        },
+        {
+          "name": "bind_provider_route_authority",
+          "doc": "Bind the trusted Engine-resolved route before provider code runs."
+        },
+        {
+          "name": "_reject",
+          "doc": ""
+        },
+        {
+          "name": "_persist_final_physical_request_context",
+          "doc": "Persist the exact provider-native request immediately before proof mint."
+        },
+        {
+          "name": "_qualified_gate",
+          "doc": ""
+        },
+        {
+          "name": "dispatch_sync",
+          "doc": ""
+        },
+        {
+          "name": "dispatch_async",
+          "doc": ""
+        },
+        {
+          "name": "dispatch_blocking_async",
+          "doc": ""
+        },
+        {
+          "name": "dispatch_stream_async",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_live_pairing_projection",
+      "description": "Revalidate and project every live object used by one exact pairing.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/factory_dispatch_propagation.py"
+    },
+    {
+      "type": "function",
+      "name": "enforce_factory_aware_final_request_evidence_coverage",
+      "description": "Use the Factory rejection ledger when an exact live sidecar exists.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/factory_dispatch_propagation.py"
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceBindingV1",
+      "description": "Future-stable typed cutoff ACK carrier; never reconstructed from mappings.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/factory_role_evidence_binding.py",
+      "methods": [
+        {
+          "name": "from_cutoff_proof",
+          "doc": ""
+        },
+        {
+          "name": "validation_error",
+          "doc": "Return stable validation error, or empty string when structurally valid."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_is_hash_64",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/factory_role_evidence_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_identifier",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/factory_role_evidence_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "get_factory_role_evidence_binding",
+      "description": "Return current typed carrier without consulting request metadata/context.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/factory_role_evidence_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "bind_factory_role_evidence",
+      "description": "Bind carrier for one call and always restore prior context.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/factory_role_evidence_binding.py"
+    },
+    {
+      "type": "class",
+      "name": "DurableFinalProviderAttemptSnapshotStore",
+      "description": "Content-addressed snapshot plus permanent Factory audit pin.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_gate.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "persist_and_pin",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FinalProviderAttemptGate",
+      "description": "Run-bound physical-dispatch port; one call equals one physical attempt.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_gate.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "for_factory_run",
+          "doc": ""
+        },
+        {
+          "name": "for_role_session",
+          "doc": ""
+        },
+        {
+          "name": "drain_coordinator",
+          "doc": ""
+        },
+        {
+          "name": "_require_lifecycle",
+          "doc": ""
+        },
+        {
+          "name": "dispatch_sync",
+          "doc": ""
+        },
+        {
+          "name": "dispatch_async",
+          "doc": "Dispatch a native async transport after durable start registration."
+        },
+        {
+          "name": "dispatch_stream_async",
+          "doc": "Keep one physical attempt open until its response is fully consumed."
+        },
+        {
+          "name": "_dispatch",
+          "doc": ""
+        },
+        {
+          "name": "_close_stream_context",
+          "doc": ""
+        },
+        {
+          "name": "dispatch_blocking_async",
+          "doc": "Run one blocking transport in a worker that owns terminal settlement."
+        },
+        {
+          "name": "_worker_owned_dispatch",
+          "doc": ""
+        },
+        {
+          "name": "_start_attempt",
+          "doc": ""
+        },
+        {
+          "name": "_append_terminal_sync",
+          "doc": ""
+        },
+        {
+          "name": "_append_terminal_async",
+          "doc": ""
+        },
+        {
+          "name": "_require_factory_control_port",
+          "doc": ""
+        },
+        {
+          "name": "_require_session_drain_coordinator",
+          "doc": ""
+        },
+        {
+          "name": "_abort_plain_reservation",
+          "doc": ""
+        },
+        {
+          "name": "_mark_start_ambiguous",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_failed_start_persistence",
+          "doc": ""
+        },
+        {
+          "name": "_begin_start_command",
+          "doc": ""
+        },
+        {
+          "name": "_commit_start_command",
+          "doc": ""
+        },
+        {
+          "name": "_await_task_resisting_cancellation",
+          "doc": ""
+        },
+        {
+          "name": "_await_task_until_timeout_resisting_cancellation",
+          "doc": "Wait without transferring caller cancellation; report a hard timeout."
+        },
+        {
+          "name": "_consume_task_outcome",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_scope_id",
+          "doc": ""
+        },
+        {
+          "name": "_freeze",
+          "doc": ""
+        },
+        {
+          "name": "_validate_role_identity",
+          "doc": ""
+        },
+        {
+          "name": "_validate_wire_equivalence",
+          "doc": ""
+        },
+        {
+          "name": "_is_valid_retry_max_tokens",
+          "doc": "Allow only a positive retry-time shrink of the authorized output cap."
+        },
+        {
+          "name": "_json_copy",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_buffered_stream_item_bytes",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_qualified_stream_event_limit",
+      "description": "Bound structured stream events from the exact physical output budget.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_gate.py"
+    },
+    {
+      "type": "class",
+      "name": "_Waiter",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_inflight.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProviderAttemptInFlightCoordinator",
+      "description": "Own exactly one Factory run or role session's physical attempts.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_inflight.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "for_factory_run",
+          "doc": ""
+        },
+        {
+          "name": "for_role_session",
+          "doc": ""
+        },
+        {
+          "name": "verification_scope",
+          "doc": ""
+        },
+        {
+          "name": "scope_id",
+          "doc": ""
+        },
+        {
+          "name": "inflight_request_ids",
+          "doc": ""
+        },
+        {
+          "name": "mint_attempt_identity",
+          "doc": "Mint a thread-safe monotonic number and globally unique request id."
+        },
+        {
+          "name": "register",
+          "doc": ""
+        },
+        {
+          "name": "terminal_acked",
+          "doc": ""
+        },
+        {
+          "name": "terminal_failed",
+          "doc": ""
+        },
+        {
+          "name": "wait_settled",
+          "doc": ""
+        },
+        {
+          "name": "snapshot",
+          "doc": ""
+        },
+        {
+          "name": "_validate_attempt_scope",
+          "doc": ""
+        },
+        {
+          "name": "_validate_wait_scope",
+          "doc": ""
+        },
+        {
+          "name": "_validated_timeout",
+          "doc": ""
+        },
+        {
+          "name": "_snapshot_locked",
+          "doc": ""
+        },
+        {
+          "name": "_notify_waiters_locked",
+          "doc": ""
+        },
+        {
+          "name": "_wake_waiter",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "StrictProviderAttemptLifecycleStore",
+      "description": "Exactly-paired start/terminal facts keyed by physical request id.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_lifecycle.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "for_factory_run",
+          "doc": ""
+        },
+        {
+          "name": "for_role_session",
+          "doc": ""
+        },
+        {
+          "name": "append_start",
+          "doc": ""
+        },
+        {
+          "name": "append_terminal",
+          "doc": ""
+        },
+        {
+          "name": "query_strict",
+          "doc": ""
+        },
+        {
+          "name": "prove_start_not_persisted",
+          "doc": "Return a captured-head proof only when the exact start fact is absent."
+        },
+        {
+          "name": "_base_payload",
+          "doc": ""
+        },
+        {
+          "name": "_validate_attempt_scope",
+          "doc": ""
+        },
+        {
+          "name": "_validate_start_permit_identity",
+          "doc": ""
+        },
+        {
+          "name": "_validate_lease_identity",
+          "doc": ""
+        },
+        {
+          "name": "_factory_identity_payload",
+          "doc": ""
+        },
+        {
+          "name": "_start_payload_matches_permit",
+          "doc": ""
+        },
+        {
+          "name": "_validate_evidence",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FinalProviderAttemptQualificationError",
+      "description": "Stable B3.5 rejection raised before reservation or transport.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_FinalProviderAttemptQualificationProofV1",
+      "description": "Runtime-private capability minted only after exact B3.5 qualification.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py",
+      "methods": [
+        {
+          "name": "_mint",
+          "doc": ""
+        },
+        {
+          "name": "audit",
+          "doc": ""
+        },
+        {
+          "name": "validate_gate_binding",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FinalProviderAttemptQualificationRejectionV1",
+      "description": "Non-authoritative failure fact; deliberately has no physical identity.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_canonical_mapping_hash",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_text",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "qualification_rejection_stream",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "append_qualification_rejection",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_frozen_payload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "final_gate_semantic_request",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "final_request_snapshot_evidence",
+      "description": "Exact frozen request record persisted inside the ContextOS snapshot.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_factory_authority_coverage_sources",
+      "description": "Project the cutoff-bound role slots into the generic coverage contract.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_rebind_context_quality_to_factory_authority",
+      "description": "Remove stale heuristic findings after the Factory cutoff becomes authoritative.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "bind_final_request_context_audit_to_frozen",
+      "description": "Bind generated audit evidence to one immutable Factory request.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_schema_name",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_enum_member_matches_json_type",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_registry_property_contract",
+      "description": "Require exact registry schema, permitting only scoped enum narrowing.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_provider_protocol_digest",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_provider_protocol_contract",
+      "description": "Remove one exact non-executable result protocol from registry validation.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_tool_registry_contract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_audit_nonnegative_int",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_token_audit_contract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_native_token_audit_contract",
+      "description": "Recompute final request metrics from the exact provider-native body.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_coverage_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_authoritative_evidence_coverage",
+      "description": "Recompute role slots and tool availability from frozen authority.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_context_snapshot",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_final_physical_context_snapshot",
+      "description": "Bind the public ContextOS ref to this exact provider-native attempt.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_stable_snapshot_audit_projection",
+      "description": "Project fields knowable both before and after snapshot-ref publication.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "context_snapshot_matches_frozen_attempt",
+      "description": "Return whether an existing readable ContextOS ref is this exact freeze.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "qualify_final_provider_request",
+      "description": "Qualify immutable semantic evidence before any reservation is minted.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "_mint_final_provider_attempt_qualification_proof",
+      "description": "Private sidecar mint; the mint itself executes all qualification.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_exact_wire_before_reservation",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+    },
+    {
+      "type": "function",
+      "name": "canonical_message_chars",
+      "description": "Count every JSON field in the provider-visible message array.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_request_metrics.py"
+    },
+    {
+      "type": "function",
+      "name": "canonical_json_chars",
+      "description": "Count canonical JSON characters for one provider-visible value.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_request_metrics.py"
+    },
+    {
+      "type": "function",
+      "name": "provider_native_request_metrics",
+      "description": "Measure the exact provider-native request body.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_request_metrics.py"
+    },
+    {
+      "type": "function",
+      "name": "validated_final_context_evidence",
+      "description": "Return only a complete physical-ref/native-audit pair.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/final_request_metrics.py"
+    },
+    {
+      "type": "class",
       "name": "FinalizationCaller",
       "description": "Semantic LLM caller for the single LLM_ONCE finalization step.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/finalization_caller.py",
@@ -4360,12 +6029,28 @@
           "doc": ""
         },
         {
+          "name": "call",
+          "doc": "Call LLM in finalization mode (no tools, tool_choice=none)."
+        },
+        {
           "name": "_override_prebuilt_system_prompt",
           "doc": "Replace the first system message in prebuilt messages with synthesis prompt."
         },
         {
           "name": "_build_finalization_system_prompt",
           "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ResolvedRequestTemperature",
+      "description": "Effective provider temperature and its structured source.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/helpers.py",
+      "methods": [
+        {
+          "name": "to_context",
+          "doc": "Project the decision into final-request audit context."
         }
       ]
     },
@@ -4395,6 +6080,18 @@
     },
     {
       "type": "function",
+      "name": "_resolve_context_timeout_ceiling",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_clamp_factory_director_timeout_to_deadline",
+      "description": "Clamp the final Director request timeout to Factory's live deadline.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/helpers.py"
+    },
+    {
+      "type": "function",
       "name": "_coerce_context_max_tokens_override",
       "description": "Parse a per-request max-token override from trusted runtime context.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/helpers.py"
@@ -4403,6 +6100,12 @@
       "type": "function",
       "name": "_mapping_payload",
       "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_context_output_budget_tokens",
+      "description": "Resolve the output-token budget declared in trusted runtime context.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/helpers.py"
     },
     {
@@ -4431,8 +6134,14 @@
     },
     {
       "type": "function",
+      "name": "resolve_temperature_with_source",
+      "description": "Resolve sampling temperature once from structured request facts.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/helpers.py"
+    },
+    {
+      "type": "function",
       "name": "resolve_temperature",
-      "description": "Resolve sampling temperature from trusted runtime context.",
+      "description": "Compatibility value projection for the canonical temperature decision.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/helpers.py"
     },
     {
@@ -4464,6 +6173,27 @@
       "name": "compute_context_summary",
       "description": "Compute hash summary of context.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/helpers.py"
+    },
+    {
+      "type": "class",
+      "name": "_FactorySemanticDispatchNotEnabledError",
+      "description": "B3.2 hard stop: semantic freeze is not physical-call authority.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_RoleBindingFallbackFailure",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_TextToolRecovery",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py",
+      "methods": []
     },
     {
       "type": "class",
@@ -4512,6 +6242,22 @@
           "doc": ""
         },
         {
+          "name": "_try_role_binding_fallback",
+          "doc": ""
+        },
+        {
+          "name": "_invoke_with_profile_binding",
+          "doc": "Invoke a retry request while preserving the selected provider/model."
+        },
+        {
+          "name": "_emit_required_tool_retry_request_audit",
+          "doc": ""
+        },
+        {
+          "name": "_retry_required_tool_if_missing",
+          "doc": "Run the required-tool retry rung for the currently selected binding."
+        },
+        {
           "name": "_get_executor",
           "doc": "Get or create AIExecutor instance (lazy, respects DI injection)."
         },
@@ -4532,12 +6278,24 @@
           "doc": "Extract context_snapshot_ref from an AIRequest's context dict, if present."
         },
         {
+          "name": "_extract_final_context_snapshot_ref",
+          "doc": ""
+        },
+        {
+          "name": "_profile_bound_request_for_evidence",
+          "doc": "Return an evidence-only request view pinned to ``profile`` binding."
+        },
+        {
           "name": "_build_call_error_response",
           "doc": "Emit the call_error event and build the failure ``LLMResponse``."
         },
         {
           "name": "_finalize_call_response",
           "doc": "Normalize a successful response, store cache, emit end, and build result."
+        },
+        {
+          "name": "_run_fallback_ladder",
+          "doc": "Run the call-phase fallback ladder after the primary invoke."
         },
         {
           "name": "emit_fallback_request_audit",
@@ -4552,12 +6310,52 @@
           "doc": "Persist a successful response to the LLM cache when eligible."
         },
         {
+          "name": "_handle_native_tools_unavailable",
+          "doc": "Handle ``native_tool_mode == 'native_tools_unavailable'`` (call phase)."
+        },
+        {
+          "name": "call",
+          "doc": "Invoke LLM with non-streaming mode."
+        },
+        {
+          "name": "_try_retryable_exception_role_binding_fallback",
+          "doc": "Fallback to another role binding when a provider raises a retryable exception."
+        },
+        {
           "name": "_call_exception_response",
           "doc": "Shared builder for the call-phase return-except arms (NOT CancelledError)."
         },
         {
+          "name": "_try_native_response_format_structured",
+          "doc": "Structured strategy 1: native response_format."
+        },
+        {
+          "name": "_try_instructor_structured",
+          "doc": "Structured strategy 2: Instructor ``create_structured``."
+        },
+        {
+          "name": "_run_structured_fallback",
+          "doc": "Structured strategy 3: deterministic text-JSON fallback."
+        },
+        {
+          "name": "call_structured",
+          "doc": "Invoke LLM with structured output validation."
+        },
+        {
           "name": "_structured_exception_response",
           "doc": "Shared builder for the structured RuntimeError except arm (NOT CancelledError)."
+        },
+        {
+          "name": "call_stream",
+          "doc": "Invoke LLM with streaming mode."
+        },
+        {
+          "name": "call_decision",
+          "doc": "Decision-phase LLM call via DecisionCaller."
+        },
+        {
+          "name": "call_finalization",
+          "doc": "Finalization-phase LLM call via FinalizationCaller."
         },
         {
           "name": "_is_cache_eligible",
@@ -4591,6 +6389,42 @@
     },
     {
       "type": "function",
+      "name": "_enforce_factory_semantic_zero_transport",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
+      "name": "_physical_dispatch_port_for_request",
+      "description": "Return exact sidecar only for unchanged frozen semantics.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
+      "name": "_invoke_executor_with_factory_dispatch",
+      "description": "Preserve the legacy executor call shape for ordinary requests.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
+      "name": "_reprepare_semantic_retry",
+      "description": "Mint a new Factory freeze/port before snapshot/audit of changed semantics.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
+      "name": "_invoker_owned_factory_semantic_identity",
+      "description": "Mint identity only for an explicitly controlled Factory child run.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
+      "name": "_refreeze_factory_semantic_identity",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
       "name": "_with_context_os_audit",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
@@ -4604,6 +6438,54 @@
     {
       "type": "function",
       "name": "_final_request_context_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
+      "name": "_prepared_request_temperature",
+      "description": "Read the effective temperature emitted by the request preparer.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
+      "name": "_required_tools_from_final_request_audit",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
+      "name": "_called_required_native_tool",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
+      "name": "_request_tool_surface_disabled",
+      "description": "True when the request physically cannot call tools (zero-tool surface).",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
+      "name": "_profile_lacks_forced_tool_choice",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
+      "name": "_allowed_tool_names_from_prepared",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
+      "name": "_recover_text_tool_calls_from_response_text",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
+      "name": "_required_tool_not_called_error",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
     },
@@ -4629,6 +6511,24 @@
       "type": "function",
       "name": "_context_snapshot_degraded_payload",
       "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
+      "name": "_snapshot_messages_for_request",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
+      "name": "_store_active_request_context_snapshot",
+      "description": "Persist final provider request evidence for the concrete active request.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
+      "name": "_store_call_start_context_snapshot",
+      "description": "Persist the final provider messages before call_start emits its ref.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
     },
     {
@@ -4730,6 +6630,56 @@
     },
     {
       "type": "class",
+      "name": "RoleRequestFactProjection",
+      "description": "Immutable projection result for one role-turn provider call.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_facts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_is_present",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_facts.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_fact",
+      "description": "Copy JSON-like evidence without retaining caller-owned containers.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_facts.py"
+    },
+    {
+      "type": "function",
+      "name": "_fact_digest",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_facts.py"
+    },
+    {
+      "type": "function",
+      "name": "project_role_request_facts",
+      "description": "Merge structured role-turn facts with deterministic precedence.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_facts.py"
+    },
+    {
+      "type": "function",
+      "name": "copy_final_request_evidence_context_fields",
+      "description": "Copy structured evidence fields into the final ``AIRequest.context``.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_facts.py"
+    },
+    {
+      "type": "function",
+      "name": "request_fact_source",
+      "description": "Return stable provenance for one projected request fact.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_facts.py"
+    },
+    {
+      "type": "class",
+      "name": "_FactoryAuthorityEntrySnapshot",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "LLMRequestPreparer",
       "description": "Build canonical LLM requests without the removed LLMCaller facade.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py",
@@ -4751,12 +6701,20 @@
           "doc": "Extract TransactionKernel-provided projected messages from context override."
         },
         {
+          "name": "_prepare_llm_request",
+          "doc": "Build canonical LLM request bundle."
+        },
+        {
           "name": "_role_native_tools",
           "doc": ""
         },
         {
           "name": "_forced_or_role_tool_schemas",
           "doc": ""
+        },
+        {
+          "name": "_reprepare_factory_semantic_retry_request",
+          "doc": "Re-cutoff and re-freeze one semantic-changing Factory retry."
         },
         {
           "name": "_build_structured_fallback_request",
@@ -4767,10 +6725,36 @@
           "doc": "Re-ask after a reasoning-model truncated mid-thought (5th floor)."
         },
         {
+          "name": "_build_required_tool_retry_request",
+          "doc": "Re-ask when a provider returned prose despite final-request required tools."
+        },
+        {
+          "name": "_build_required_tool_text_fallback_request",
+          "doc": "Ask for strict textual tool-call envelopes when forced native choice is unsupported."
+        },
+        {
           "name": "_append_fallback_instruction_to_chat_messages",
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_snapshot_factory_authority",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
+    },
+    {
+      "type": "function",
+      "name": "_revalidate_factory_authority_before_cutoff",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
+    },
+    {
+      "type": "function",
+      "name": "_acquire_factory_evidence_binding",
+      "description": "One strict cutoff/ack/proof/binding path for initial and retry preparation.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
     },
     {
       "type": "function",
@@ -4792,8 +6776,74 @@
     },
     {
       "type": "function",
+      "name": "_render_actual_sibling_exports_pin",
+      "description": "Render the exact provider-visible pin expected by final-request coverage.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
+    },
+    {
+      "type": "function",
+      "name": "_ensure_actual_sibling_exports_message_bound",
+      "description": "Re-pin structured sibling-export evidence into provider messages when unbound.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
+    },
+    {
+      "type": "function",
+      "name": "_ensure_core_role_identity",
+      "description": "Inject one canonical first-system identity marker or fail closed.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
+    },
+    {
+      "type": "function",
+      "name": "_reject_preexisting_factory_evidence_protocol",
+      "description": "Reject every caller-supplied evidence frame before authority injection.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
+    },
+    {
+      "type": "function",
+      "name": "_inject_factory_evidence_block",
+      "description": "Append the exact detached policy line after the first role marker.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
+    },
+    {
+      "type": "function",
+      "name": "_strip_factory_evidence_block_for_retry",
+      "description": "Remove the one runtime-injected evidence frame before a fresh cutoff.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
+    },
+    {
+      "type": "function",
+      "name": "_strip_stale_factory_retry_attempt_context",
+      "description": "Remove evidence that belongs to the prior physical-attempt projection.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_surface_explicitly_disabled",
+      "description": "True when this call's tool surface is disabled by design (e.g. finalization).",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_contract_context_fields",
+      "description": "Project runtime tool obligations into AIRequest.context for final-request audit.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
+    },
+    {
+      "type": "function",
       "name": "_copy_provider_policy_options",
       "description": "Copy provider type policy from role-runtime context into AIRequest options.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_reasoning_budget_tokens",
+      "description": "Validate one call-scoped manual-thinking budget.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
+    },
+    {
+      "type": "function",
+      "name": "_json_response_contract_requested",
+      "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
     },
     {
@@ -4818,6 +6868,24 @@
       "type": "function",
       "name": "_string_list",
       "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
+    },
+    {
+      "type": "function",
+      "name": "_bounded_required_tool_retry_max_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
+    },
+    {
+      "type": "function",
+      "name": "_bounded_required_tool_retry_timeout",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_execution_budget_projection",
+      "description": "Project the ACTUAL resolved budget as a ``ResolvedBudgetV1`` payload.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py"
     },
     {
@@ -4948,6 +7016,14 @@
           "doc": "Initialize stream engine."
         },
         {
+          "name": "run_stream",
+          "doc": "Run the streaming execution after request preparation."
+        },
+        {
+          "name": "_bind_factory_audit",
+          "doc": ""
+        },
+        {
           "name": "_with_context_os_audit",
           "doc": ""
         },
@@ -4987,6 +7063,12 @@
       "type": "function",
       "name": "_is_stream_cancel_requested",
       "description": "Check if stream cancellation was requested.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/stream_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_consumed_provider_stream_deadline",
+      "description": "Return whether the provider already consumed the request deadline.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/stream_engine.py"
     },
     {
@@ -5077,6 +7159,66 @@
       "type": "function",
       "name": "resolve_tool_call_provider",
       "description": "Resolve tool call format provider hint.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "stream_tool_call_signature",
+      "description": "Return a deterministic signature for stream tool-call de-duplication.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_native_call_identity",
+      "description": "Extract (tool_name, args_dict) from a decoder-native tool call payload.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_args_strict_subset",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "upsert_stream_native_tool_call",
+      "description": "Insert or refine a streamed tool call in the pending native batch.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "supersede_partial_tool_calls",
+      "description": "Drop partial duplicates of a streamed tool call before materialization.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "provider_response_hash",
+      "description": "Return the stable hash used to bind response facts to dispatch evidence.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_strategy_budget_values",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_strategy_output_budget",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_director_first_call_output_budget",
+      "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
     },
     {
@@ -5214,7 +7356,19 @@
     {
       "type": "function",
       "name": "_multi_target_first_turn_write_enabled",
-      "description": "Default OFF -> byte-identical single-target behaviour. Opt in so a multi-new-",
+      "description": "Return whether multi-target fresh materialization should force writes.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_turn_declared_target_candidates",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_missing_materialization_write_targets",
+      "description": "Return all declared target files missing from a fresh materialization turn.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
     },
     {
@@ -5256,7 +7410,7 @@
     {
       "type": "function",
       "name": "pin_write_tool_file_param_to_targets",
-      "description": "Pin write tools' ``file`` parameter to the declared step targets (enum).",
+      "description": "Pin write_file ``file`` (+ aliases) to declared step targets (enum).",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
     },
     {
@@ -6083,8 +8237,8 @@
           "doc": "验证代码内容是否包含禁止的错误模式."
         },
         {
-          "name": "validate_precision_edit_search",
-          "doc": "专门验证 precision_edit 的 search 参数."
+          "name": "validate_exact_search_text",
+          "doc": "Validate exact-search text before it is used by edit tools."
         },
         {
           "name": "validate_repo_apply_diff",
@@ -6455,6 +8609,12 @@
     },
     {
       "type": "function",
+      "name": "_project_type_artifact",
+      "description": "Map only recognized typed project classes to canonical artifacts.",
+      "defined_in": "polaris/cells/roles/kernel/internal/prompt_profiles.py"
+    },
+    {
+      "type": "function",
       "name": "_explicit_language_from_context",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/prompt_profiles.py"
@@ -6639,8 +8799,16 @@
           "doc": ""
         },
         {
+          "name": "_repair_common_llm_json_corruptions",
+          "doc": "Apply bounded repairs for common LLM JSON stream corruptions."
+        },
+        {
           "name": "_extract_all_balanced_json_objects",
           "doc": "Extract all balanced top-level JSON objects embedded in text."
+        },
+        {
+          "name": "_normalize_chief_engineer_blueprint_candidate",
+          "doc": "Normalize Chief Engineer blueprint variants."
         },
         {
           "name": "_select_json_candidate",
@@ -6652,6 +8820,10 @@
         },
         {
           "name": "add_candidate",
+          "doc": ""
+        },
+        {
+          "name": "collect_from",
           "doc": ""
         },
         {
@@ -7114,7 +9286,16 @@
       "name": "LLMInvokerProtocol",
       "description": "LLM调用器协议",
       "defined_in": "polaris/cells/roles/kernel/internal/services/contracts.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "invoke",
+          "doc": "非流式调用LLM"
+        },
+        {
+          "name": "invoke_stream",
+          "doc": "流式调用LLM"
+        }
+      ]
     },
     {
       "type": "class",
@@ -7122,6 +9303,10 @@
       "description": "上下文组装器协议",
       "defined_in": "polaris/cells/roles/kernel/internal/services/contracts.py",
       "methods": [
+        {
+          "name": "assemble",
+          "doc": "组装对话上下文"
+        },
         {
           "name": "estimate_tokens",
           "doc": "估算消息列表的token数"
@@ -7216,7 +9401,12 @@
       "name": "ToolExecutionBackend",
       "description": "工具执行后端协议",
       "defined_in": "polaris/cells/roles/kernel/internal/services/tool_executor.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "execute",
+          "doc": "执行工具调用"
+        }
+      ]
     },
     {
       "type": "class",
@@ -7247,6 +9437,34 @@
         {
           "name": "_is_retryable_from_message",
           "doc": "从错误消息判断是否可重试"
+        },
+        {
+          "name": "_execute_with_backend",
+          "doc": "使用后端执行工具调用（带超时）"
+        },
+        {
+          "name": "_execute_with_default_backend",
+          "doc": "使用默认后端（AgentAccelToolExecutor）执行工具"
+        },
+        {
+          "name": "execute_single",
+          "doc": "执行单个工具调用（公共API，带并发控制）"
+        },
+        {
+          "name": "_execute_single_impl",
+          "doc": "执行单个工具调用的内部实现（无信号量控制）"
+        },
+        {
+          "name": "execute_batch",
+          "doc": "批量执行工具调用"
+        },
+        {
+          "name": "_execute_with_semaphore",
+          "doc": ""
+        },
+        {
+          "name": "execute_with_fallback",
+          "doc": "执行工具调用（带重试机制）"
         }
       ]
     },
@@ -7301,7 +9519,16 @@
       "name": "CancellationCoordinator",
       "description": "协调 CancelToken 广播、task.cancel() 调用以及 refusal/turn 级批量清理.",
       "defined_in": "polaris/cells/roles/kernel/internal/speculation/cancel.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "refuse_turn",
+          "doc": "Refusal abort：将整个 turn 的 shadow task 标记为废弃或取消."
+        },
+        {
+          "name": "cancel_turn",
+          "doc": "Turn 级取消：由外部（如用户中断）触发的批量清理."
+        }
+      ]
     },
     {
       "type": "class",
@@ -7391,6 +9618,22 @@
         {
           "name": "predict_downstream",
           "doc": "根据上游工具名和结果，预测下游工具调用."
+        },
+        {
+          "name": "on_shadow_completed",
+          "doc": "Registry shadow 完成后的回调：触发下游推测."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SyntheticShadowToolKeyV1",
+      "description": "A non-executable, immutable key for private speculation shadow state.",
+      "defined_in": "polaris/cells/roles/kernel/internal/speculation/contracts.py",
+      "methods": [
+        {
+          "name": "build",
+          "doc": ""
         }
       ]
     },
@@ -7643,8 +9886,44 @@
           "doc": "基于当前注册表和指标构建预算快照."
         },
         {
+          "name": "start_shadow_task",
+          "doc": "启动一个新的 shadow task，保证同一 spec_key 同时最多一个 active task."
+        },
+        {
+          "name": "_runner",
+          "doc": ""
+        },
+        {
+          "name": "adopt",
+          "doc": "采用一个已完成的 shadow task 结果."
+        },
+        {
+          "name": "join",
+          "doc": "加入一个正在运行的 shadow task，等待其完成并返回结果."
+        },
+        {
+          "name": "cancel",
+          "doc": "请求取消指定任务，并级联取消所有下游任务."
+        },
+        {
+          "name": "_cascade_cancel",
+          "doc": "级联取消上游任务触发的所有下游 shadow task."
+        },
+        {
           "name": "get_turn_records",
           "doc": "获取指定 turn 的所有 shadow task 记录(只读快照)."
+        },
+        {
+          "name": "drain_turn",
+          "doc": "Drain 指定 turn 的所有 shadow task：先 salvage 评估，再分别处理."
+        },
+        {
+          "name": "mark_abandoned",
+          "doc": "将任务标记为废弃(例如 refusal abort 后)."
+        },
+        {
+          "name": "abandon_turn",
+          "doc": "批量将整个 turn 的 shadow task 标记为废弃或取消，并级联取消下游."
         }
       ]
     },
@@ -7656,6 +9935,10 @@
       "methods": [
         {
           "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "put",
           "doc": ""
         },
         {
@@ -7689,6 +9972,10 @@
         {
           "name": "_saved_ms",
           "doc": "从 shadow 任务的实际执行耗时估算被隐藏的时延（saved_ms）."
+        },
+        {
+          "name": "resolve_or_execute",
+          "doc": "根据 shadow task 状态决定 ADOPT、JOIN 或 REPLAY."
         }
       ]
     },
@@ -7787,6 +10074,18 @@
           "doc": "完成回调:清理集合并回收异常(ADR-0090 I2.3)."
         },
         {
+          "name": "cancel_all",
+          "doc": "取消任务组中的所有任务."
+        },
+        {
+          "name": "cancel_with_salvage",
+          "doc": "基于 SalvageGovernor 对给定的 shadow tasks 分别处理."
+        },
+        {
+          "name": "join_all",
+          "doc": "等待任务组中所有任务完成（不包括已 detach 的任务）."
+        },
+        {
           "name": "close",
           "doc": "关闭任务组，禁止再创建新任务."
         }
@@ -7804,11 +10103,27 @@
         },
         {
           "name": "build_prepare_invocation",
-          "doc": "从原始写工具调用构建 Prepare 阶段的只读校验调用."
+          "doc": "Build a non-executable Prepare shadow key from a real invocation."
         },
         {
           "name": "build_validate_invocation",
           "doc": "构建 Validate 阶段的只读校验调用."
+        },
+        {
+          "name": "build_prepare_shadow_key",
+          "doc": "Build a prepare shadow key without materializing a ToolInvocation."
+        },
+        {
+          "name": "_build_write_shadow_key",
+          "doc": "Build the private call-bound identity shared by start and resolve paths."
+        },
+        {
+          "name": "prepare_shadow_normalized_args",
+          "doc": "Build execution-local, real read-probe arguments outside the shadow key."
+        },
+        {
+          "name": "prepare_shadow_execution_tool_name",
+          "doc": "Return the real readonly probe used by the registry runner."
         },
         {
           "name": "build_commit_invocation",
@@ -7829,6 +10144,14 @@
         {
           "name": "enabled",
           "doc": ""
+        },
+        {
+          "name": "speculate",
+          "doc": "Speculate a single tool invocation in read-only sandbox mode."
+        },
+        {
+          "name": "execute_speculative",
+          "doc": "执行单个推测性工具调用，支持取消令牌透传."
         }
       ]
     },
@@ -7879,6 +10202,18 @@
           "doc": "Consume a stream delta and attempt to predict a tool call."
         },
         {
+          "name": "speculate_from_buffer",
+          "doc": "Try to form a speculative tool invocation from the current buffer."
+        },
+        {
+          "name": "speculate_tool_call",
+          "doc": "推测执行单个工具调用."
+        },
+        {
+          "name": "resolve_or_execute",
+          "doc": "Authoritative 阶段入口：ADOPT / JOIN / REPLAY 裁决."
+        },
+        {
           "name": "metrics",
           "doc": "暴露本 turn 的推测执行指标记录器（可能为 None）."
         },
@@ -7895,12 +10230,20 @@
           "doc": "Return True if a cross-turn speculation exists and is non-empty."
         },
         {
+          "name": "consume_speculation",
+          "doc": "Consume and clear the cross-turn speculation for a session."
+        },
+        {
           "name": "start_cross_turn_speculation",
           "doc": "Start a cross-turn speculation for the next turn."
         },
         {
           "name": "has_speculated_patch",
           "doc": "Return True if a speculated patch exists for the given intent."
+        },
+        {
+          "name": "consume_speculated_patch",
+          "doc": "Consume and clear the speculated patch for the given intent."
         },
         {
           "name": "cache_speculated_patch",
@@ -7910,9 +10253,129 @@
     },
     {
       "type": "function",
+      "name": "_task_group_proxy",
+      "description": "将已创建的 asyncio.Task 包装为可供 TurnScopedTaskGroup 追踪的协程.",
+      "defined_in": "polaris/cells/roles/kernel/internal/stream_shadow_engine.py"
+    },
+    {
+      "type": "function",
       "name": "_eval_read_shadow_timeout_ms",
       "description": "只读 shadow 的超时（毫秒）。默认 1200；评测注入大延迟时经 env 上调，",
       "defined_in": "polaris/cells/roles/kernel/internal/stream_shadow_engine.py"
+    },
+    {
+      "type": "class",
+      "name": "_ValidatedStructuredOutputStreamEvent",
+      "description": "In-process provenance minted only after reserved-tool validation.",
+      "defined_in": "polaris/cells/roles/kernel/internal/structured_output_transport.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StructuredOutputTransportPlan",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/structured_output_transport.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StructuredOutputStreamNormalizer",
+      "description": "Stateful stream projector that hides the reserved protocol tool call.",
+      "defined_in": "polaris/cells/roles/kernel/internal/structured_output_transport.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "project",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_without_untrusted_transport_metadata",
+      "description": "Strip Provider-controlled evidence reserved for the internal projector.",
+      "defined_in": "polaris/cells/roles/kernel/internal/structured_output_transport.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_json",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/structured_output_transport.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_structured_output_transport",
+      "description": "Resolve the typed contract projected by roles.runtime, if present.",
+      "defined_in": "polaris/cells/roles/kernel/internal/structured_output_transport.py"
+    },
+    {
+      "type": "function",
+      "name": "require_exact_structured_output_tool_surface",
+      "description": "Recognize only the canonical singleton result-protocol surface.",
+      "defined_in": "polaris/cells/roles/kernel/internal/structured_output_transport.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_call_name",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/structured_output_transport.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_call_arguments",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/structured_output_transport.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_call_id",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/structured_output_transport.py"
+    },
+    {
+      "type": "function",
+      "name": "_transport_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/structured_output_transport.py"
+    },
+    {
+      "type": "function",
+      "name": "is_canonical_structured_output_stream_chunk",
+      "description": "Recognize one internally validated result-protocol JSON chunk.",
+      "defined_in": "polaris/cells/roles/kernel/internal/structured_output_transport.py"
+    },
+    {
+      "type": "function",
+      "name": "trusted_structured_output_stream_evidence",
+      "description": "Return evidence only for an internally minted validated stream event.",
+      "defined_in": "polaris/cells/roles/kernel/internal/structured_output_transport.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_structured_output_payload_defaults",
+      "description": "Fill missing/null required empty containers before strict schema validation.",
+      "defined_in": "polaris/cells/roles/kernel/internal/structured_output_transport.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_payload",
+      "description": "Coerce empty-container defaults, then fail-closed on residual schema errors.",
+      "defined_in": "polaris/cells/roles/kernel/internal/structured_output_transport.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_structured_output_stream_tool_call",
+      "description": "Validate the reserved result call before it leaves the Provider stream.",
+      "defined_in": "polaris/cells/roles/kernel/internal/structured_output_transport.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_structured_output_response",
+      "description": "Convert one reserved result-tool call into strict JSON content.",
+      "defined_in": "polaris/cells/roles/kernel/internal/structured_output_transport.py"
     },
     {
       "type": "class",
@@ -8048,12 +10511,52 @@
           "doc": "Phase 4.4: Find redundant tool calls in a batch."
         },
         {
+          "name": "_thaw_directed_effect_value",
+          "doc": ""
+        },
+        {
+          "name": "_release_directed_effect_batch",
+          "doc": ""
+        },
+        {
+          "name": "_deferred_repair_invocation",
+          "doc": "Rebuild one rollback invocation from its sealed immutable effect binding."
+        },
+        {
+          "name": "_execute_directed_effect",
+          "doc": "Claim, register, revalidate, consume, then physically execute one mutation."
+        },
+        {
+          "name": "execute_batch",
+          "doc": "执行工具批次"
+        },
+        {
           "name": "_resolve_execution_plan",
           "doc": "解析批次执行计划,严格使用显式分组;禁止按工具名回退。"
         },
         {
+          "name": "_execute_parallel",
+          "doc": "并行执行只读工具"
+        },
+        {
+          "name": "_execute_single",
+          "doc": "执行单个工具"
+        },
+        {
+          "name": "_invoke",
+          "doc": ""
+        },
+        {
+          "name": "_submit_async",
+          "doc": "提交异步工具"
+        },
+        {
           "name": "_missing_effect_receipt_result",
           "doc": "Convert a write result without effect evidence into a fail-closed result."
+        },
+        {
+          "name": "_effect_receipt_commit_for_result",
+          "doc": ""
         },
         {
           "name": "_result_to_receipt",
@@ -8071,9 +10574,57 @@
     },
     {
       "type": "function",
+      "name": "_directed_effect_failure_partition",
+      "description": "Choose the exact unclaimed cleanup suffix without guessing claim state.",
+      "defined_in": "polaris/cells/roles/kernel/internal/tool_batch_runtime.py"
+    },
+    {
+      "type": "function",
       "name": "_eval_injected_read_delay_ms",
       "description": "评测专用：对只读工具注入的人工执行延迟（毫秒）.",
       "defined_in": "polaris/cells/roles/kernel/internal/tool_batch_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "native_tool_call_name",
+      "description": "Return the Run Ledger projected tool name for one native call.",
+      "defined_in": "polaris/cells/roles/kernel/internal/tool_call_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "native_tool_calls_from_response",
+      "description": "Return provider-native tool-call payloads from a response-like object.",
+      "defined_in": "polaris/cells/roles/kernel/internal/tool_call_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "native_tool_call_envelopes_from_metadata",
+      "description": "Return authoritative native tool-call envelope payloads from metadata.",
+      "defined_in": "polaris/cells/roles/kernel/internal/tool_call_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "native_tool_call_provider_from_metadata",
+      "description": "Return the canonical provider label for native tool-call envelopes.",
+      "defined_in": "polaris/cells/roles/kernel/internal/tool_call_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "native_tool_call_envelopes_from_response",
+      "description": "Return envelope payloads for native tool calls in a response-like object.",
+      "defined_in": "polaris/cells/roles/kernel/internal/tool_call_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "build_native_tool_call_from_stream_event",
+      "description": "Convert one streamed tool-call event into decoder-native shape.",
+      "defined_in": "polaris/cells/roles/kernel/internal/tool_call_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_stream_tool_call_payload",
+      "description": "Normalize stream tool events into an executable native payload.",
+      "defined_in": "polaris/cells/roles/kernel/internal/tool_call_envelope.py"
     },
     {
       "type": "class",
@@ -8140,6 +10691,13 @@
     },
     {
       "type": "class",
+      "name": "DirectedEffectGatewayPolicyInputsV1",
+      "description": "Immutable current gateway policy inputs for one authoritative DEO guard.",
+      "defined_in": "polaris/cells/roles/kernel/internal/tool_gateway.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "ToolAuthorizationError",
       "description": "工具授权失败异常",
       "defined_in": "polaris/cells/roles/kernel/internal/tool_gateway.py",
@@ -8180,12 +10738,48 @@
           "doc": "策略标识"
         },
         {
+          "name": "capture_directed_effect_policy_inputs",
+          "doc": "Capture one canonical policy/JobToken source without exposing mutable state."
+        },
+        {
           "name": "check_tool_permission",
-          "doc": "检查工具调用权限"
+          "doc": "Compatibility entry that captures and normalizes exactly one owner view."
+        },
+        {
+          "name": "check_tool_permission_from_snapshot",
+          "doc": "Apply gateway policy using only one previously captured tool view."
+        },
+        {
+          "name": "deny",
+          "doc": ""
+        },
+        {
+          "name": "_snapshot_matches_bound_tool",
+          "doc": "Reject forged or mutated snapshots without consulting the registry."
+        },
+        {
+          "name": "_snapshot_tool_category",
+          "doc": "Return one validated category using only immutable snapshot evidence."
+        },
+        {
+          "name": "_canonical_tool_whitelist_from_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "_canonical_tool_blacklist_from_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "_canonical_policy_tools_from_snapshot",
+          "doc": "Resolve role policy aliases only from the supplied frozen views."
         },
         {
           "name": "_format_refusal_message",
           "doc": "格式化拒绝消息，添加安全拒绝标记。"
+        },
+        {
+          "name": "_format_refusal_message_from_snapshot",
+          "doc": "Format a bound-entry denial without reading active category caches."
         },
         {
           "name": "_emit_tool_event_to_journal",
@@ -8194,6 +10788,10 @@
         {
           "name": "_schedule_uep_event",
           "doc": "Schedule async UEP event emission from sync gateway context."
+        },
+        {
+          "name": "_emit",
+          "doc": ""
         },
         {
           "name": "execute_tool",
@@ -8276,6 +10874,12 @@
           "doc": "清除所有网关缓存"
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_directed_effect_hash_json",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/tool_gateway.py"
     },
     {
       "type": "class",
@@ -8656,8 +11260,20 @@
           "doc": ""
         },
         {
+          "name": "default",
+          "doc": "获取全局单例（懒加载，带锁）。"
+        },
+        {
+          "name": "_create_default",
+          "doc": "构建默认实例，自动装配 EmbeddingRouter 和 SLMCoprocessor。"
+        },
+        {
           "name": "_start_silent_warmup",
           "doc": "Fire-and-forget 后台预热 SLM，不阻塞主流程。"
+        },
+        {
+          "name": "_silent_warmup",
+          "doc": "静默唤醒 SLM，利用首调用触发模型加载到 VRAM。"
         },
         {
           "name": "reset_default",
@@ -8672,8 +11288,24 @@
           "doc": "同步获取全局单例（若已初始化），用于 sync 上下文注入."
         },
         {
+          "name": "close",
+          "doc": "清理资源，取消 warmup 任务."
+        },
+        {
+          "name": "is_slm_healthy",
+          "doc": "返回 SLM 是否可用，带 TTL 缓存。"
+        },
+        {
+          "name": "_probe_slm_health",
+          "doc": "底层健康探测：尝试一次极轻量的 SLM 调用。"
+        },
+        {
           "name": "invalidate_health_cache",
           "doc": "手动失效健康缓存，用于外部感知到 SLM 状态变化时。"
+        },
+        {
+          "name": "classify_intent",
+          "doc": "级联意图分类 — Embedding → SLM → Regex。"
         },
         {
           "name": "_parse_slm_bool",
@@ -8686,6 +11318,30 @@
         {
           "name": "_parse_routing_json",
           "doc": "将 SLM 返回的 JSON 解析为 DeliveryContract + EnrichmentContext。"
+        },
+        {
+          "name": "resolve_delivery_mode",
+          "doc": "SLM 优先、regex 兜底的 delivery mode 解析。"
+        },
+        {
+          "name": "distill_logs",
+          "doc": "日志降维 — SLM 可用时走 SLM，否则暴力截断。"
+        },
+        {
+          "name": "heal_json",
+          "doc": "JSON 修复 — SLM 可用时走 SLM，否则返回 None。"
+        },
+        {
+          "name": "expand_query",
+          "doc": "搜索查询扩展 — SLM 可用时走 SLM，否则返回原查询。"
+        },
+        {
+          "name": "compress_text",
+          "doc": "通用文本压缩 — 使用自定义 prompt 调用 SLM。"
+        },
+        {
+          "name": "execute_task",
+          "doc": "统一任务调度入口。"
         }
       ]
     },
@@ -9037,6 +11693,18 @@
     },
     {
       "type": "function",
+      "name": "batch_write_failure_error_types",
+      "description": "Return normalized structured error types from failed write results.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/contract_guards.py"
+    },
+    {
+      "type": "function",
+      "name": "batch_write_failures_require_llm_replan",
+      "description": "Return whether a zero-effect write batch is safe to re-plan in this turn.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/contract_guards.py"
+    },
+    {
+      "type": "function",
       "name": "has_successful_recon_execution",
       "description": "判定 ledger 工具执行记录中是否存在至少一次成功的侦察工具执行。",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/contract_guards.py"
@@ -9051,6 +11719,12 @@
       "type": "function",
       "name": "is_safe_readonly_bootstrap_invocations",
       "description": "判定 invocations 是否为安全的只读 bootstrap 调用。",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/contract_guards.py"
+    },
+    {
+      "type": "function",
+      "name": "_delivery_mode_filtered_tool_call_ref",
+      "description": "Return audit-safe evidence for a write invocation filtered by delivery mode.",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/contract_guards.py"
     },
     {
@@ -9091,6 +11765,18 @@
     },
     {
       "type": "function",
+      "name": "record_turn_truthlog_event",
+      "description": "Best-effort append of one turn event into TruthLog.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/correlation.py"
+    },
+    {
+      "type": "function",
+      "name": "shutdown_turn_truthlog_recorder",
+      "description": "Best-effort flush and shutdown for TruthLog recorder.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/correlation.py"
+    },
+    {
+      "type": "function",
       "name": "_is_materialization_quality_repair",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/decision_message_builder.py"
@@ -9127,26 +11813,56 @@
     },
     {
       "type": "function",
+      "name": "_physical_tool_names",
+      "description": "Project the exact tool names present in the final physical request.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/decision_message_builder.py"
+    },
+    {
+      "type": "function",
       "name": "build_decision_messages",
       "description": "Build decision-stage messages with single-batch execution constraints.",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/decision_message_builder.py"
     },
     {
       "type": "function",
-      "name": "_native_tool_call_count",
-      "description": "",
-      "defined_in": "polaris/cells/roles/kernel/internal/transaction/decision_pipeline.py"
-    },
-    {
-      "type": "function",
-      "name": "_provider_response_hash",
-      "description": "",
+      "name": "build_tool_dispatch_dropped_anomaly",
+      "description": "Build the canonical anomaly + lifecycle receipt for dropped tool calls.",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/decision_pipeline.py"
     },
     {
       "type": "function",
       "name": "_with_decision_metadata",
       "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/decision_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_suppressed_tool_batch_tool_refs",
+      "description": "Return audit-safe references for decoded tool calls suppressed by policy.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/decision_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_decision_has_executable_tool_batch",
+      "description": "Return True when the decision carries at least one tool invocation.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/decision_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_native_facts_include_write_tools",
+      "description": "Return True when native facts/envelopes name at least one write tool.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/decision_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "ensure_native_write_tool_batch_or_fail",
+      "description": "Recover an executable TOOL_BATCH for native writes, else fail-closed.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/decision_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "run_decision_pipeline",
+      "description": "Run Phase 2 (request + corrective re-ask) and Phase 3 (decode) of a turn.",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/decision_pipeline.py"
     },
     {
@@ -9197,6 +11913,61 @@
       "name": "build_corrective_context",
       "description": "Return a copy of the decision context with the corrective system message appended.",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/decode_corrective.py"
+    },
+    {
+      "type": "class",
+      "name": "_RequestScanBudget",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/deferred_repair_followup.py",
+      "methods": [
+        {
+          "name": "consume",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DeferredRepairFollowupV1",
+      "description": "Exact inventory and dispatch partition for one visible follow-up batch.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/deferred_repair_followup.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DeferredCommandEffectSynthesizer",
+      "description": "One-shot validator/synthesizer for adapter-discovered command effects.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/deferred_repair_followup.py",
+      "methods": [
+        {
+          "name": "synthesize_batch",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_collect_request",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/deferred_repair_followup.py"
+    },
+    {
+      "type": "function",
+      "name": "_sanitize_and_collect",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/deferred_repair_followup.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_authoritative_requests",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/deferred_repair_followup.py"
+    },
+    {
+      "type": "function",
+      "name": "build_deferred_repair_followup",
+      "description": "Extract, sanitize, revalidate and synthesize at most one repair round.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/deferred_repair_followup.py"
     },
     {
       "type": "class",
@@ -9325,6 +12096,24 @@
     },
     {
       "type": "function",
+      "name": "_tool_surface_is_write_only",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/delivery_contract_resolver.py"
+    },
+    {
+      "type": "function",
+      "name": "_materialize_contract_from_control_plane",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/delivery_contract_resolver.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_turn_delivery_contract",
+      "description": "Resolve and record the Phase-1b delivery contract for the turn.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/delivery_contract_resolver.py"
+    },
+    {
+      "type": "function",
       "name": "has_explicit_materialize_delivery_marker",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/delivery_intent_resolver.py"
@@ -9367,8 +12156,20 @@
     },
     {
       "type": "function",
+      "name": "requires_mutation_intent_hybrid",
+      "description": "Async hybrid version of requires_mutation_intent.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/delivery_intent_resolver.py"
+    },
+    {
+      "type": "function",
       "name": "requires_mutation_intent",
       "description": "判定用户请求是否要求代码/文件突变（需要写工具）。",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/delivery_intent_resolver.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_delivery_mode_hybrid",
+      "description": "SLM 优先、regex 兜底的 delivery mode 解析。",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/delivery_intent_resolver.py"
     },
     {
@@ -9487,6 +12288,10 @@
           "doc": ""
         },
         {
+          "name": "execute_llm_once",
+          "doc": "LLM_ONCE 收口：强制 tool_choice=none，调用 LLM 生成摘要。"
+        },
+        {
           "name": "complete_with_tool_results",
           "doc": "NONE 模式：工具结果即最终答案。"
         },
@@ -9508,6 +12313,24 @@
       "type": "function",
       "name": "_canonical_batch_receipt",
       "description": "Return the canonical batch receipt used by result and completion events.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/finalization.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_result_error_text",
+      "description": "Collect display-only error text from one receipt-shaped item.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/finalization.py"
+    },
+    {
+      "type": "function",
+      "name": "_matching_raw_result_error_text",
+      "description": "Return display-only raw error text for the exact canonical result row.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/finalization.py"
+    },
+    {
+      "type": "function",
+      "name": "_display_error_for_result",
+      "description": "Build visible error text without promoting raw rows to effect evidence.",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/finalization.py"
     },
     {
@@ -9627,6 +12450,26 @@
       "methods": [
         {
           "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "handle_handoff",
+          "doc": ""
+        },
+        {
+          "name": "handle_handoff_stream",
+          "doc": ""
+        },
+        {
+          "name": "handle_development_handoff",
+          "doc": ""
+        },
+        {
+          "name": "handle_development_handoff_stream",
+          "doc": ""
+        },
+        {
+          "name": "handle_ask_user",
           "doc": ""
         }
       ]
@@ -9820,6 +12663,14 @@
           "doc": ""
         },
         {
+          "name": "classify",
+          "doc": "Classify message using embedding similarity."
+        },
+        {
+          "name": "_embed_async",
+          "doc": ""
+        },
+        {
           "name": "_find_best",
           "doc": ""
         }
@@ -9829,6 +12680,12 @@
       "type": "function",
       "name": "_cosine_similarity",
       "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/intent_embedding_router.py"
+    },
+    {
+      "type": "function",
+      "name": "classify_with_embedding_fallback",
+      "description": "Hybrid classifier: regex first, embedding resolves ambiguity.",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/intent_embedding_router.py"
     },
     {
@@ -9908,12 +12765,20 @@
           "doc": "构建 Phase 7 监控指标快照（per-turn）。"
         },
         {
+          "name": "final_decision",
+          "doc": "Return the canonical decoded decision without lossy reconstruction."
+        },
+        {
           "name": "record_decision",
           "doc": "记录决策（追加到决策列表）"
         },
         {
           "name": "replace_decision",
           "doc": "替换当前决策（用于重试场景，保持单一决策不变量）。"
+        },
+        {
+          "name": "_canonical_decision",
+          "doc": ""
         },
         {
           "name": "_decision_to_dict",
@@ -9940,6 +12805,18 @@
           "doc": "转换为审计日志格式。"
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "llm_response_metadata_from_usage",
+      "description": "Project provider usage evidence into TurnLedger LLM-call metadata.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/llm_response_metadata.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_metadata_value",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/llm_response_metadata.py"
     },
     {
       "type": "class",
@@ -10000,6 +12877,12 @@
     },
     {
       "type": "function",
+      "name": "apply_mutation_contract_guard",
+      "description": "Reconcile mutation intent and enforce the non-tool mutation guard.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/mutation_contract_guard.py"
+    },
+    {
+      "type": "function",
       "name": "detect_mutation_intent",
       "description": "检测文本是否包含 mutation 意图。",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/mutation_triggers.py"
@@ -10021,6 +12904,56 @@
       "name": "get_mutation_keyword_count",
       "description": "获取当前定义的关键词数量。",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/mutation_triggers.py"
+    },
+    {
+      "type": "class",
+      "name": "TurnOutcomeCommitError",
+      "description": "Raised when an authoritative turn outcome cannot be committed.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/outcome_commit.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DurableTurnCommit",
+      "description": "Committed outcome and its immutable durability evidence.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/outcome_commit.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "commit_turn_result",
+      "description": "Build and atomically persist the canonical result for one turn.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/outcome_commit.py"
+    },
+    {
+      "type": "function",
+      "name": "_execution_from_result",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/outcome_commit.py"
+    },
+    {
+      "type": "function",
+      "name": "_reject_unscoped_legacy_transition",
+      "description": "Fail closed when a v1 fact cannot prove transition-level equivalence.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/outcome_commit.py"
+    },
+    {
+      "type": "function",
+      "name": "_closing_from_result",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/outcome_commit.py"
+    },
+    {
+      "type": "function",
+      "name": "_failure_class_for",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/outcome_commit.py"
+    },
+    {
+      "type": "function",
+      "name": "_stable_hash",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/outcome_commit.py"
     },
     {
       "type": "class",
@@ -10084,6 +13017,30 @@
           "doc": "从 dict 反序列化（用于跨 Turn 恢复）。"
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_effect_receipt_status_is_success",
+      "description": "Return whether an effect receipt represents a successful side effect.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/phase_manager.py"
+    },
+    {
+      "type": "function",
+      "name": "_effect_receipt_has_write_semantics",
+      "description": "Return whether effect receipt metadata describes a write side effect.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/phase_manager.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_result_from_effect_receipt",
+      "description": "Derive phase evidence from a top-level effect receipt.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/phase_manager.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_results_from_effect_receipts",
+      "description": "Derive phase-only ToolResult evidence from top-level effect receipts.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/phase_manager.py"
     },
     {
       "type": "function",
@@ -10201,8 +13158,20 @@
     },
     {
       "type": "function",
+      "name": "_normalize_mapping_items",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/receipt_utils.py"
+    },
+    {
+      "type": "function",
       "name": "_normalize_result_items",
       "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/receipt_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_effect_receipts",
+      "description": "Normalize top-level effect receipts without treating them as tool rows.",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/receipt_utils.py"
     },
     {
@@ -10360,14 +13329,24 @@
       "name": "WorkflowRuntimeProtocol",
       "description": "工作流运行时协议。",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "execute",
+          "doc": "执行决策并返回结果。"
+        }
+      ]
     },
     {
       "type": "class",
       "name": "DevelopmentRuntimeProtocol",
       "description": "开发运行时协议。",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "execute",
+          "doc": "执行决策并返回结果。"
+        }
+      ]
     },
     {
       "type": "class",
@@ -10384,8 +13363,24 @@
           "doc": ""
         },
         {
+          "name": "execute_read_bootstrap_batch",
+          "doc": ""
+        },
+        {
           "name": "_build_retry_context",
           "doc": "构建重试上下文和工具定义。"
+        },
+        {
+          "name": "_execute_retry_batch",
+          "doc": "执行单个重试批次，返回 LLM 响应。"
+        },
+        {
+          "name": "_execute_deterministic_bootstrap_followup_write_fallback",
+          "doc": ""
+        },
+        {
+          "name": "retry_tool_batch_after_contract_violation",
+          "doc": ""
         }
       ]
     },
@@ -10494,6 +13489,10 @@
           "doc": ""
         },
         {
+          "name": "default",
+          "doc": "Get the global singleton instance."
+        },
+        {
           "name": "reset_default",
           "doc": "Reset singleton — primarily for test isolation."
         },
@@ -10504,6 +13503,26 @@
         {
           "name": "_build_slm_config",
           "doc": "构建调用 SLM 时的 provider config。"
+        },
+        {
+          "name": "_invoke_slm",
+          "doc": "调用 SLM，返回纯文本输出。失败时返回空字符串。"
+        },
+        {
+          "name": "classify_intent",
+          "doc": "使用 SLM 对文本进行意图分类。"
+        },
+        {
+          "name": "distill_long_logs",
+          "doc": "长日志降维 — 将冗长报错日志提炼为关键摘要。"
+        },
+        {
+          "name": "heal_json",
+          "doc": "JSON 语法修复 — 修复 LLM 输出的 malformed JSON。"
+        },
+        {
+          "name": "expand_search_query",
+          "doc": "搜索查询扩展 — 将模糊自然语言翻译为精确关键词列表。"
         }
       ]
     },
@@ -10546,44 +13565,20 @@
         {
           "name": "_resolve_shadow_workspace",
           "doc": ""
+        },
+        {
+          "name": "_call_llm_for_decision_stream_impl",
+          "doc": "流式调用LLM获取决策，yield 事件并返回最终 RawLLMResponse（通过内部 materialize 事件）。"
+        },
+        {
+          "name": "_try_speculate_tool_call",
+          "doc": ""
+        },
+        {
+          "name": "execute_turn_stream",
+          "doc": "流式执行turn的内部实现。"
         }
       ]
-    },
-    {
-      "type": "function",
-      "name": "build_native_tool_call_from_stream_event",
-      "description": "Convert a streamed tool_call UI event back into decoder-native shape.",
-      "defined_in": "polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py"
-    },
-    {
-      "type": "function",
-      "name": "stream_tool_call_signature",
-      "description": "",
-      "defined_in": "polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py"
-    },
-    {
-      "type": "function",
-      "name": "_native_call_identity",
-      "description": "Extract (tool_name, args_dict) from a decoder-native tool call payload.",
-      "defined_in": "polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py"
-    },
-    {
-      "type": "function",
-      "name": "_args_strict_subset",
-      "description": "",
-      "defined_in": "polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py"
-    },
-    {
-      "type": "function",
-      "name": "upsert_stream_native_tool_call",
-      "description": "Insert or refine a streamed tool call in the pending native batch (ADR-0090 I2.1).",
-      "defined_in": "polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py"
-    },
-    {
-      "type": "function",
-      "name": "supersede_partial_tool_calls",
-      "description": "Drop partial duplicates of a tool call before the batch materializes (ADR-0090 I2.2).",
-      "defined_in": "polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py"
     },
     {
       "type": "function",
@@ -10631,6 +13626,12 @@
       "type": "function",
       "name": "_resolve_continuation_delivery_contract",
       "description": "Resolve continuation turn delivery contract from prompt metadata first.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py"
+    },
+    {
+      "type": "function",
+      "name": "drain_speculative_tasks",
+      "description": "Drain speculative tasks and cancel leftovers to avoid task leaks.",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py"
     },
     {
@@ -10689,6 +13690,12 @@
     },
     {
       "type": "function",
+      "name": "extract_platform_tool_contract_missing_target_files",
+      "description": "Return targets that authoritative platform evidence says are absent.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/task_contract_builder.py"
+    },
+    {
+      "type": "function",
       "name": "extract_platform_tool_contract_scope_paths",
       "description": "Return directory scopes carried by platform tool-contract metadata.",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/task_contract_builder.py"
@@ -10709,6 +13716,18 @@
       "type": "function",
       "name": "platform_tool_contract_disables_phase_manager",
       "description": "Return True when an external contract owns phase progression for this batch.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/task_contract_builder.py"
+    },
+    {
+      "type": "function",
+      "name": "_context_has_actual_sibling_exports",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/task_contract_builder.py"
+    },
+    {
+      "type": "function",
+      "name": "_targets_include_test_file",
+      "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/task_contract_builder.py"
     },
     {
@@ -10755,6 +13774,13 @@
     },
     {
       "type": "class",
+      "name": "_PreparedDirectedEffectDispatchV1",
+      "description": "Whole mutation batch plus exact gateway-owned JobToken restrictions.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "ToolBatchExecutor",
       "description": "工具批次执行器 — 负责权威工具批次执行与最终化路由。",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py",
@@ -10772,8 +13798,20 @@
           "doc": "Check tool invocations against the cell's effect policy."
         },
         {
+          "name": "_canonicalize_directed_effect_invocations",
+          "doc": "Classify every final invocation once from its captured raw tool name."
+        },
+        {
+          "name": "_prepare_directed_effect_dispatch",
+          "doc": "Authorize and seal every mutation before any member of the batch executes."
+        },
+        {
           "name": "_build_tool_batch_runtime",
           "doc": ""
+        },
+        {
+          "name": "_reset_tool_runtime_turn_boundary",
+          "doc": "Explicitly notify the tool runtime of turn boundaries."
         },
         {
           "name": "_check_idempotency",
@@ -10785,6 +13823,22 @@
         },
         {
           "name": "_strip",
+          "doc": ""
+        },
+        {
+          "name": "_audit_adopted_result",
+          "doc": "重算权威结果并与投机结果比对（ADR-0077 不变量 A 的实运行验证）."
+        },
+        {
+          "name": "_execute_deferred_repair_followup",
+          "doc": "Execute at most one visible, non-recursive deferred repair batch."
+        },
+        {
+          "name": "execute_tool_batch",
+          "doc": "执行工具批次。"
+        },
+        {
+          "name": "_keep_for_dispatch",
           "doc": ""
         },
         {
@@ -10804,6 +13858,42 @@
           "doc": "构建 Mutation Bypass 结果 —— 跳过 LLM_ONCE finalization，返回 continue_multi_turn。"
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_is_deo_abort_error",
+      "description": "Return True when a RuntimeError is a Directed-Effect authorization abort.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_deo_prepare_upstream_code",
+      "description": "Extract TaskRuntime upstream_code from a lifecycle prepare denial.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_transient_deo_prepare_lock_failure",
+      "description": "Return True when prepare_batch failed on a retryable fact-stream lock.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_seal_deo_abort_tool_lifecycle",
+      "description": "Seal a blocked tool lifecycle receipt when DEO aborts before physical dispatch.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_mutation_for_speculative_routing",
+      "description": "Keep required DEO mutation routing independent of legacy name tables.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_tool_batch_execution_identity",
+      "description": "Resolve workspace/run/task identity without trusting model output.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
     },
     {
       "type": "function",
@@ -10837,6 +13927,36 @@
     },
     {
       "type": "function",
+      "name": "_is_valid_execution_mode",
+      "description": "Whether ``raw_mode`` is a ToolExecutionMode-accepted bucket value.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_missing_execution_mode",
+      "description": "Derive the canonical ``ToolExecutionMode`` for an invocation lacking one.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_set_invocation_execution_mode",
+      "description": "Return a copy of ``invocation`` with ``execution_mode`` set to ``mode``.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_set_invocation_effect_type",
+      "description": "Return a copy of ``invocation`` with ``effect_type`` set to ``effect_type``.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_replay_execution_modes",
+      "description": "Normalize ``execution_mode`` on replay-bound invocations (WS1 hot-fix).",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
       "name": "_canonical_single_target_file",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
@@ -10857,6 +13977,54 @@
       "type": "function",
       "name": "fill_single_target_line_range_edit_blocks",
       "description": "Fill omitted ``file`` for unambiguous single-target edit_blocks calls.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_contract_target_files",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_write_content_for_duplicate_check",
+      "description": "Normalize write_file content for duplicate detection (trivial whitespace only).",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_with_invocation_top_level_field",
+      "description": "Return a copy of the invocation with a top-level metadata field attached.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "fill_content_only_write_file_from_remaining_targets",
+      "description": "Fill omitted ``file`` for unambiguous content-only ``write_file`` calls.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "split_write_file_duplicate_content_rejections",
+      "description": "Separate duplicate-content rejected write_file calls from dispatchable ones.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_invocation_call_id",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "diff_write_file_autofill_evidence",
+      "description": "Map call_id -> autofill evidence for write_file targets inferred by the fill pass.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "annotate_autofilled_write_receipts",
+      "description": "Attach autofill evidence onto matching receipt result items (audit trail).",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
     },
     {
@@ -10898,7 +14066,19 @@
     {
       "type": "function",
       "name": "_effect_receipts_from_batch_receipts",
+      "description": "Compatibility wrapper for Run Ledger-owned effect receipt extraction.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_batch_result_count",
       "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_batch_has_authoritative_success",
+      "description": "Return true when a batch contains at least one successful or pending effect.",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
     },
     {
@@ -10910,12 +14090,6 @@
     {
       "type": "function",
       "name": "_mapping_value",
-      "description": "",
-      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
-    },
-    {
-      "type": "function",
-      "name": "_int_value",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
     },
@@ -11058,6 +14232,30 @@
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_predicates.py"
     },
     {
+      "type": "function",
+      "name": "_mapping_value",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_call_audit_refs.py"
+    },
+    {
+      "type": "function",
+      "name": "_clean_string",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_call_audit_refs.py"
+    },
+    {
+      "type": "function",
+      "name": "_target_file_from_arguments",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_call_audit_refs.py"
+    },
+    {
+      "type": "function",
+      "name": "tool_invocation_audit_ref",
+      "description": "Return a stable, audit-safe reference for one decoded tool invocation.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_call_audit_refs.py"
+    },
+    {
       "type": "class",
       "name": "ToolFailureCircuitBreakerSnapshot",
       "description": "Immutable evaluation result for a single tool batch.",
@@ -11176,6 +14374,12 @@
     },
     {
       "type": "function",
+      "name": "_apply_runtime_tool_policy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_surface.py"
+    },
+    {
+      "type": "function",
       "name": "resolve_transaction_tool_choice_override",
       "description": "Resolve the TransactionKernel provider tool-choice override.",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_surface.py"
@@ -11234,6 +14438,30 @@
           "doc": ""
         },
         {
+          "name": "record",
+          "doc": "Enqueue one turn event for append-only JSONL persistence."
+        },
+        {
+          "name": "flush",
+          "doc": "Flush queued events to disk and fsync current file descriptor."
+        },
+        {
+          "name": "shutdown",
+          "doc": "Gracefully stop writer task and stop accepting new records."
+        },
+        {
+          "name": "_ensure_writer_started",
+          "doc": ""
+        },
+        {
+          "name": "_send_sync_command",
+          "doc": ""
+        },
+        {
+          "name": "_writer_loop",
+          "doc": ""
+        },
+        {
           "name": "_write_record",
           "doc": ""
         },
@@ -11261,6 +14489,12 @@
       "description": "Prepared per-turn execution scope shared by execute / execute_stream.",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/turn_session_scope.py",
       "methods": []
+    },
+    {
+      "type": "function",
+      "name": "turn_session_scope",
+      "description": "Open the shared per-turn session scope.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/turn_session_scope.py"
     },
     {
       "type": "function",
@@ -11319,6 +14553,14 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "execute",
+          "doc": ""
+        },
+        {
+          "name": "execute_stream",
+          "doc": ""
         }
       ]
     },
@@ -11351,8 +14593,20 @@
           "doc": "解码LLM响应为TurnDecision"
         },
         {
+          "name": "recover_executable_tool_batch_decision",
+          "doc": "Rebuild a TOOL_BATCH decision when native tool calls are still executable."
+        },
+        {
           "name": "_extract_tool_calls",
           "doc": "提取工具调用：native-only"
+        },
+        {
+          "name": "_native_tool_calls",
+          "doc": ""
+        },
+        {
+          "name": "_native_tool_call_envelopes",
+          "doc": ""
         },
         {
           "name": "_native_tool_name_hint",
@@ -11400,11 +14654,11 @@
         },
         {
           "name": "_infer_execution_mode",
-          "doc": "根据工具名推断执行模式。"
+          "doc": "Compatibility delegate to the public canonical classifier."
         },
         {
           "name": "_infer_effect_type",
-          "doc": "根据工具名推断 effect type。"
+          "doc": "Compatibility delegate to the public canonical classifier."
         },
         {
           "name": "_generate_id",
@@ -11526,6 +14780,10 @@
           "doc": "Reset internal state for a new stream session."
         },
         {
+          "name": "process_stream",
+          "doc": "Process a raw LLM stream and yield normalized events."
+        },
+        {
           "name": "emit_deltas",
           "doc": "Yield delta events for any content/thinking not yet emitted."
         }
@@ -11607,6 +14865,10 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "render_events",
+          "doc": "渲染事件流"
         },
         {
           "name": "_render_event",
@@ -11780,6 +15042,18 @@
           "doc": ""
         },
         {
+          "name": "_proxy_call_llm_for_decision",
+          "doc": ""
+        },
+        {
+          "name": "_proxy_call_llm_for_decision_stream",
+          "doc": ""
+        },
+        {
+          "name": "_proxy_execute_tool_batch",
+          "doc": ""
+        },
+        {
           "name": "_proxy_guard_assert_single_tool_batch",
           "doc": ""
         },
@@ -11818,6 +15092,10 @@
         {
           "name": "_apply_delivery_mode_filter",
           "doc": "根据 delivery_contract 过滤决策中的 write tools。"
+        },
+        {
+          "name": "_drain_speculative_tasks",
+          "doc": "Drain speculative tasks and cancel leftovers to avoid task leaks."
         },
         {
           "name": "_extract_monitoring_metrics",
@@ -11864,6 +15142,14 @@
           "doc": "Build per-turn truthlog recorder. Failures are non-fatal for turn execution."
         },
         {
+          "name": "_record_turn_truthlog_event",
+          "doc": "Best-effort append of one turn event into TruthLog."
+        },
+        {
+          "name": "_shutdown_turn_truthlog_recorder",
+          "doc": "Best-effort flush and shutdown for TruthLog recorder."
+        },
+        {
           "name": "_emit_phase_event",
           "doc": "发送事件"
         },
@@ -11872,12 +15158,52 @@
           "doc": "对用户消息进行意图分类，返回最匹配的意图类别。"
         },
         {
+          "name": "_requires_mutation_intent_hybrid",
+          "doc": "Async hybrid version of _requires_mutation_intent."
+        },
+        {
           "name": "_requires_mutation_intent",
           "doc": "判定用户请求是否要求代码/文件突变（需要写工具）。"
         },
         {
+          "name": "_resolve_delivery_mode_hybrid",
+          "doc": "SLM 优先、regex 兜底的 delivery mode 解析。"
+        },
+        {
           "name": "_requires_verification_intent",
           "doc": "判定用户请求是否要求验证/测试（需要 test/verify 类工具）。"
+        },
+        {
+          "name": "_commit_canonical_outcome",
+          "doc": "Commit authoritative task turns; leave ad-hoc chat turns ephemeral."
+        },
+        {
+          "name": "_completion_status_from_result",
+          "doc": ""
+        },
+        {
+          "name": "execute",
+          "doc": "执行完整turn（run模式）"
+        },
+        {
+          "name": "execute_stream",
+          "doc": "流式执行turn"
+        },
+        {
+          "name": "_call_stream_llm_with_turn_tool_choice",
+          "doc": ""
+        },
+        {
+          "name": "_execute_turn",
+          "doc": "核心turn执行逻辑（run模式）"
+        },
+        {
+          "name": "_call_llm_for_decision",
+          "doc": ""
+        },
+        {
+          "name": "_call_llm_for_decision",
+          "doc": "调用LLM获取决策"
         },
         {
           "name": "_safe_token_count",
@@ -11922,8 +15248,18 @@
         {
           "name": "_check_budget",
           "doc": "Phase 3.3: Check budget status and return warnings."
+        },
+        {
+          "name": "_handle_final_answer",
+          "doc": "处理直接回答"
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_llm_error_metadata_from_exception",
+      "description": "Extract response metadata attached by the semantic LLM caller.",
+      "defined_in": "polaris/cells/roles/kernel/internal/turn_transaction_controller.py"
     },
     {
       "type": "class",
@@ -12114,6 +15450,854 @@
       "defined_in": "polaris/cells/roles/kernel/public/contracts.py"
     },
     {
+      "type": "class",
+      "name": "_DeferredRepairToolRuntime",
+      "description": "Tool runtime that only exposes DEO policy-guard construction for followup.",
+      "defined_in": "polaris/cells/roles/kernel/public/deferred_repair_commit_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "directed_effect_policy_guard",
+          "doc": ""
+        },
+        {
+          "name": "execute",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_is_deferred_success_tool_result",
+      "description": "Return True when one adapter tool_result carries a deferred repair payload.",
+      "defined_in": "polaris/cells/roles/kernel/public/deferred_repair_commit_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_forward_target_paths_from_tool_result",
+      "description": "Extract forward write paths used for multi-request conflict partitioning.",
+      "defined_in": "polaris/cells/roles/kernel/public/deferred_repair_commit_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_partition_non_conflicting_deferred_tool_results",
+      "description": "Greedy first-fit waves so concurrent deferred repairs never share targets.",
+      "defined_in": "polaris/cells/roles/kernel/public/deferred_repair_commit_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_receipts_from_deferred_tool_results",
+      "description": "Project deferred adapter tool_results into followup receipt shape.",
+      "defined_in": "polaris/cells/roles/kernel/public/deferred_repair_commit_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_capability_scope_from_tool_results",
+      "description": "Prefer caller scope; else union allowed_paths from deferred repair payloads.",
+      "defined_in": "polaris/cells/roles/kernel/public/deferred_repair_commit_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_capability_token",
+      "description": "Validate authoritative JobToken evidence for DEO policy capture.",
+      "defined_in": "polaris/cells/roles/kernel/public/deferred_repair_commit_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_noop_emit_event",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/deferred_repair_commit_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_noop_guard_assert_single_tool_batch",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/deferred_repair_commit_service.py"
+    },
+    {
+      "type": "function",
+      "name": "commit_deferred_director_repair_tool_results",
+      "description": "Physically commit deferred repair/command requests via DEO followup.",
+      "defined_in": "polaris/cells/roles/kernel/public/deferred_repair_commit_service.py"
+    },
+    {
+      "type": "function",
+      "name": "create_deferred_director_command_request",
+      "description": "Bind one adapter-discovered command to an exact TaskRuntime attempt.",
+      "defined_in": "polaris/cells/roles/kernel/public/deferred_repair_service.py"
+    },
+    {
+      "type": "function",
+      "name": "create_deferred_director_repair_request",
+      "description": "Bind one public Director plan to the exact TaskRuntime attempt.",
+      "defined_in": "polaris/cells/roles/kernel/public/deferred_repair_service.py"
+    },
+    {
+      "type": "class",
+      "name": "DeferredDirectorRepairRequestV1",
+      "description": "Immutable adapter-to-kernel request for one revalidated repair round.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DeferredDirectorCommandRequestV1",
+      "description": "Immutable adapter-to-kernel request for one governed command effect.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DeferredDirectorRepairEffectBindingV1",
+      "description": "Hash-bound repair state contract sealed through the synthetic call id.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DeferredDirectorRepairSynthesisResultV1",
+      "description": "Pure kernel synthesis result; contains invocations but no execution authority.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectExecutionContextV1",
+      "description": "Deeply immutable context registered by the process-local fence.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectPreparedMemberV1",
+      "description": "One admitted member and the exact stream heads required to claim it.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PreparedDirectedEffectBatchV1",
+      "description": "Ready immutable batch projection prepared before any physical effect.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectLifecycleResultV1",
+      "description": "Whole-batch lifecycle preparation result.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectAttemptValidationResultV1",
+      "description": "Typed validation result for the process-local TaskRuntime authority.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectAttemptHeartbeatResultV1",
+      "description": "Typed freshness result for the process-local TaskRuntime authority.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectContextClaimResultV1",
+      "description": "Typed result of claim plus current evidence, before fence registration.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectFenceRegistrationResultV1",
+      "description": "Typed one-time fence registration result.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectFenceConsumeResultV1",
+      "description": "Typed one-time fence consumption result.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectFenceReleaseResultV1",
+      "description": "Typed idempotent fence cleanup result.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectToolResultV1",
+      "description": "Canonical immutable tool payload returned by the mutation port.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectMutationPortResultV1",
+      "description": "Closed mutation outcome with optional durable failure evidence.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectFenceAdminPortV1",
+      "description": "Kernel-only fence administration capability.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": [
+        {
+          "name": "register",
+          "doc": "Register one exact immutable context before adapter visibility."
+        },
+        {
+          "name": "release_batch",
+          "doc": "Release all contexts owned by one batch during kernel cleanup."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectFenceConsumePortV1",
+      "description": "Adapter-visible one-time fence spending capability.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": [
+        {
+          "name": "consume",
+          "doc": "Spend exactly one registered context without administrative access."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectMutationPortV1",
+      "description": "Adapter-owned physical mutation port called only after fence consume.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": [
+        {
+          "name": "execute_mutation",
+          "doc": "Execute one normalized mutation and return immutable tool output."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectFencePortsV1",
+      "description": "Narrowed fence views exposed to their respective consumers.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectRuntimeDependenciesV1",
+      "description": "Kernel dependency bundle without adapter implementation access.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_require_token",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_non_negative_int",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_error_code",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_json_payload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_reject_constant",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_relative_paths",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_relative_directory",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_directed_effect_execution_context",
+      "description": "Canonical-reconstruct a context and its nested authorization and claim grant.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "create_directed_effect_fence_ports",
+      "description": "Create a new fence with disjoint kernel-admin and consume-only views.",
+      "defined_in": "polaris/cells/roles/kernel/public/directed_effect_service.py"
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceAuthorityBindingV1",
+      "description": "Runtime-only pre-cutoff capability shared across the Cell boundary.",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceCutoffRequestV1",
+      "description": "Hint-only request for one semantic request's bounded cutoff authority.",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceCutoffAckV1",
+      "description": "Locator-only acknowledgement derived from a strictly re-read fact.",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceCutoffSourceHeadV1",
+      "description": "One detached authority-captured source head in policy order.",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "validation_error",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceCutoffProofV1",
+      "description": "Detached, canonical proof reconstructed from one committed cutoff.",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py",
+      "methods": [
+        {
+          "name": "create",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleSemanticRequestIdentityV1",
+      "description": "Invoker-owned stable identity for one semantic preparation pass.",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleSemanticCandidateV1",
+      "description": "Canonical pre-evidence semantic candidate; caller containers are discarded.",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py",
+      "methods": [
+        {
+          "name": "create",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleFrozenSemanticRequestV1",
+      "description": "Immutable post-evidence request authority for later dispatch drift checks.",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py",
+      "methods": [
+        {
+          "name": "create",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceCutoffPort",
+      "description": "Async authority boundary implemented only by the Factory control plane.",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py",
+      "methods": [
+        {
+          "name": "acquire_cutoff",
+          "doc": "Issue or replay exactly one fenced cutoff fact."
+        },
+        {
+          "name": "resolve_cutoff_proof",
+          "doc": "Strictly re-read and resolve one committed locator into a detached proof."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_identifier",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py"
+    },
+    {
+      "type": "function",
+      "name": "_hash64",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py"
+    },
+    {
+      "type": "function",
+      "name": "_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_role",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py"
+    },
+    {
+      "type": "function",
+      "name": "_candidate_refs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py"
+    },
+    {
+      "type": "function",
+      "name": "_strict_json_value",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_json",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py"
+    },
+    {
+      "type": "function",
+      "name": "_identity_record",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py"
+    },
+    {
+      "type": "function",
+      "name": "_ack_record",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py"
+    },
+    {
+      "type": "function",
+      "name": "_recover_candidate_payload_from_frozen",
+      "description": "Verify and strip one prompt-safe evidence suffix.",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_factory_role_frozen_semantic_evidence_policy",
+      "description": "Bind prompt evidence to the separate typed control-plane authority.",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py"
+    },
+    {
+      "type": "function",
+      "name": "get_factory_role_evidence_authority_binding",
+      "description": "Return the current pre-cutoff capability without serializable projection.",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py"
+    },
+    {
+      "type": "function",
+      "name": "bind_factory_role_evidence_authority",
+      "description": "Bind one exact capability and restore prior task context on every exit.",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py"
+    },
+    {
+      "type": "function",
+      "name": "contains_factory_role_evidence_runtime_authority",
+      "description": "Fail-closed bounded scan for runtime-only carrier/port leakage.",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py"
+    },
+    {
+      "type": "function",
+      "name": "contains",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py"
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptGrantViewV1",
+      "description": "Exact Factory-owned execution grant facts; never caller-assembled strings.",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptCutoffViewV1",
+      "description": "Exact Factory-owned final-request cutoff bound to its execution grant.",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_FactoryPhysicalAttemptCandidateIdentityV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": [
+        {
+          "name": "_validate_candidate",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ReserveFactoryPhysicalAttemptV1",
+      "description": "Reserve capacity for one exact Factory-owned cutoff.",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_FactoryPhysicalAttemptReservationIdentityV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": [
+        {
+          "name": "_validate_reservation",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptReservationV1",
+      "description": "Drain-visible reservation; it does not authorize transport.",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "BeginFactoryPhysicalAttemptStartV1",
+      "description": "Move one exact reservation into start persistence.",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_FactoryPhysicalAttemptStartPermitIdentityV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": [
+        {
+          "name": "_validate_start_permit",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptStartPermitV1",
+      "description": "One exact permission to persist a durable start outside coordinator locks.",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptDefiniteStartNotPersistedProofV1",
+      "description": "Durable exact proof that one permitted start was definitely not persisted.",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProviderAttemptStartReceiptV1",
+      "description": "Exact durability ACK returned by the strict lifecycle store.",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CommitFactoryPhysicalAttemptStartV1",
+      "description": "Commit one exact durable start and request its physical lease.",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptLeaseV1",
+      "description": "One-shot transport lease minted only from an exact durable start ACK.",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProviderAttemptTerminalReceiptV1",
+      "description": "Exact durability ACK for one terminal lifecycle fact.",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AbortFactoryPhysicalAttemptReservationV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "MarkFactoryPhysicalAttemptStartAmbiguousV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SettleFactoryPhysicalAttemptV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FailFactoryPhysicalAttemptTerminalV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptBudgetStateV1",
+      "description": "State-derived budget projection for one exact execution authority.",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptControlPort",
+      "description": "Exact synchronous admission protocol; implementations perform no I/O under locks.",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py",
+      "methods": [
+        {
+          "name": "reserve",
+          "doc": ""
+        },
+        {
+          "name": "begin_start",
+          "doc": ""
+        },
+        {
+          "name": "commit_started",
+          "doc": ""
+        },
+        {
+          "name": "abort_reservation",
+          "doc": ""
+        },
+        {
+          "name": "mark_start_ambiguous",
+          "doc": ""
+        },
+        {
+          "name": "settle",
+          "doc": ""
+        },
+        {
+          "name": "terminal_persistence_failed",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_schema",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py"
+    },
+    {
+      "type": "function",
+      "name": "_identifier",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py"
+    },
+    {
+      "type": "function",
+      "name": "_hash64",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py"
+    },
+    {
+      "type": "function",
+      "name": "_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py"
+    },
+    {
+      "type": "function",
+      "name": "_non_negative_int",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_bool",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_role",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py"
+    },
+    {
+      "type": "function",
+      "name": "_identity_equal",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/physical_attempt_control.py"
+    },
+    {
+      "type": "class",
+      "name": "QueryFactoryProviderAttemptLifecycleReplayV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/provider_attempt_lifecycle_replay.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryProviderAttemptLifecycleReplayFactV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/provider_attempt_lifecycle_replay.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryProviderAttemptLifecycleReplaySnapshotV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/provider_attempt_lifecycle_replay.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AppendFactoryProviderAttemptRecoveryTerminalV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/provider_attempt_lifecycle_replay.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryProviderAttemptRecoveryFencePort",
+      "description": "Ephemeral Factory-owned capability required for recovery mutation.",
+      "defined_in": "polaris/cells/roles/kernel/public/provider_attempt_lifecycle_replay.py",
+      "methods": [
+        {
+          "name": "hold_recovery_terminal",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_text",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/provider_attempt_lifecycle_replay.py"
+    },
+    {
+      "type": "function",
+      "name": "_hash64",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/provider_attempt_lifecycle_replay.py"
+    },
+    {
+      "type": "function",
+      "name": "_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/provider_attempt_lifecycle_replay.py"
+    },
+    {
+      "type": "function",
+      "name": "factory_provider_attempt_lifecycle_stream",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/provider_attempt_lifecycle_replay.py"
+    },
+    {
+      "type": "function",
+      "name": "factory_provider_attempt_recovery_lease_id",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/provider_attempt_lifecycle_replay.py"
+    },
+    {
+      "type": "function",
+      "name": "query_factory_provider_attempt_lifecycle_replay",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/provider_attempt_lifecycle_replay.py"
+    },
+    {
+      "type": "function",
+      "name": "append_factory_provider_attempt_recovery_terminal",
+      "description": "CAS-append one cancelled terminal for a replay-proven unmatched start.",
+      "defined_in": "polaris/cells/roles/kernel/public/provider_attempt_lifecycle_replay.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_recovery_start_identity",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/provider_attempt_lifecycle_replay.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_recovery_terminal_identity",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/provider_attempt_lifecycle_replay.py"
+    },
+    {
+      "type": "function",
+      "name": "_terminal_receipt_from_replay",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/provider_attempt_lifecycle_replay.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_lifecycle_event",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/provider_attempt_lifecycle_replay.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_lifecycle_pairs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/provider_attempt_lifecycle_replay.py"
+    },
+    {
       "type": "function",
       "name": "normalize_role_alias",
       "description": "Resolve a role identifier to its canonical form.",
@@ -12148,6 +16332,28 @@
       "name": "publish_speculation_event",
       "description": "Publish kernel speculation telemetry through the public Cell boundary.",
       "defined_in": "polaris/cells/roles/kernel/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "RoleStructuredOutputContractV1",
+      "description": "One caller-owned JSON result contract transported by the roles kernel.",
+      "defined_in": "polaris/cells/roles/kernel/public/structured_output_contracts.py",
+      "methods": [
+        {
+          "name": "to_context_projection",
+          "doc": "Return the JSON-safe projection carried through roles.runtime."
+        },
+        {
+          "name": "from_context_projection",
+          "doc": "Rehydrate and validate one runtime context projection."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_canonical_json_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/public/structured_output_contracts.py"
     },
     {
       "type": "function",
@@ -12441,10 +16647,32 @@
     },
     {
       "type": "class",
+      "name": "ToolClassificationV1",
+      "description": "One immutable ToolSpecRegistry classification capture for a tool call.",
+      "defined_in": "polaris/cells/roles/kernel/public/turn_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_CapturedEffectiveSpecSemanticsV1",
+      "description": "Pure semantic verdict derived from one captured effective ToolSpec.",
+      "defined_in": "polaris/cells/roles/kernel/public/turn_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "ToolInvocation",
       "description": "单个工具调用定义。",
       "defined_in": "polaris/cells/roles/kernel/public/turn_contracts.py",
       "methods": [
+        {
+          "name": "_from_captured_classification",
+          "doc": "Internal decoder factory preserving its single captured classification."
+        },
+        {
+          "name": "_isolate_public_classification_injection",
+          "doc": "Keep captured classifications confined to the internal decoder factory."
+        },
         {
           "name": "_normalize",
           "doc": ""
@@ -12603,14 +16831,50 @@
     },
     {
       "type": "function",
+      "name": "classify_tool_invocation",
+      "description": "Capture one authoritative ToolSpec view and classify it conservatively.",
+      "defined_in": "polaris/cells/roles/kernel/public/turn_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_classify_captured_snapshot",
+      "description": "Derive classification from one already-captured registry snapshot only.",
+      "defined_in": "polaris/cells/roles/kernel/public/turn_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_captured_effective_spec_semantics",
+      "description": "Classify category fields together, rejecting ambiguous captured semantics.",
+      "defined_in": "polaris/cells/roles/kernel/public/turn_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_invalid_captured_effective_spec_semantics",
+      "description": "Keep invalid or ambiguous semantics on the fail-closed mutation path.",
+      "defined_in": "polaris/cells/roles/kernel/public/turn_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "tool_classification_matches_snapshot",
+      "description": "Verify classification identity against its captured snapshot without rereads.",
+      "defined_in": "polaris/cells/roles/kernel/public/turn_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_classification_matches_captured_snapshot",
+      "description": "Purely rederive a supplied captured classification without an authorization verdict.",
+      "defined_in": "polaris/cells/roles/kernel/public/turn_contracts.py"
+    },
+    {
+      "type": "function",
       "name": "_infer_execution_mode",
-      "description": "根据工具名推断执行模式 — 工程级分类入口。",
+      "description": "Compatibility delegate to the public canonical classifier.",
       "defined_in": "polaris/cells/roles/kernel/public/turn_contracts.py"
     },
     {
       "type": "function",
       "name": "_infer_effect_type",
-      "description": "根据工具名和执行模式推断副作用类型。",
+      "description": "Compatibility delegate to the public canonical classifier.",
       "defined_in": "polaris/cells/roles/kernel/public/turn_contracts.py"
     },
     {
@@ -12735,8 +16999,16 @@
       "defined_in": "polaris/cells/roles/kernel/services/contracts.py",
       "methods": [
         {
+          "name": "invoke",
+          "doc": "执行非流式LLM调用"
+        },
+        {
           "name": "invoke_stream",
           "doc": "执行流式LLM调用"
+        },
+        {
+          "name": "invoke_structured",
+          "doc": "执行结构化LLM调用（带验证）"
         }
       ]
     },

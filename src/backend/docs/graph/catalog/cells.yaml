@@ -739,7 +739,10 @@ cells:
       introducing hidden writes on query paths.
     current_modules:
       - polaris.cells.runtime.projection.internal.runtime_projection_service
+      - polaris.cells.runtime.projection.internal.director_status_owner
       - polaris.cells.runtime.projection.internal.project_outcome
+      - polaris.cells.runtime.projection.internal.project_outcome_factory_owner
+      - polaris.cells.runtime.projection.public.bootstrap
       - polaris.cells.runtime.projection.public.contracts
       - polaris.cells.runtime.projection.public.service
       - polaris.delivery.http.routers.runtime
@@ -755,15 +758,21 @@ cells:
       queries:
         - RuntimeProjectionQueryV1
         - ProjectOutcomeQueryV1
+        - ProjectOutcomeFactoryOwnerQueryV1
       events:
         - RuntimeProjectedEventV1
         - RuntimeObserverEventV1
       results:
         - RuntimeProjectionResultV1
+        - DirectorStatusObservationV1
         - ProjectOutcomeV1
+        - FactoryChainOwnerObservationV1
+        - ProjectOutcomeFactoryOwnerBindingV1
       errors:
         - RuntimeProjectionErrorV1
+        - DirectorStatusObservationV1Error
         - ProjectOutcomeValidationV1Error
+        - ProjectOutcomeOwnerObservationV1Error
     depends_on:
       - runtime.task_runtime
       - runtime.state_owner
@@ -784,7 +793,6 @@ cells:
       # status into a court topology view included in the WebSocket status payload.
       # This is a stateless aggregation mapping - no business logic is owned by projection.
       - docs.court_workflow
-      - director.execution
       - orchestration.pm_planning
       - orchestration.workflow_runtime
       - qa.audit_verdict
@@ -803,6 +811,7 @@ cells:
         - tests/test_websocket_signal_hub.py
         - tests/test_runtime_projection_observability.py
         - polaris/cells/runtime/projection/tests/test_project_outcome.py
+        - polaris/cells/runtime/projection/tests/test_factory_chain_owner_binding.py
       gaps:
         - "Projection read paths still include legacy compatibility joins."
         - >
@@ -2828,7 +2837,6 @@ cells:
       - chief_engineer.blueprint
       - director.planning
       - director.tasking
-      - factory.pipeline
       - factory.cognitive_runtime
       - policy.permission
       - policy.workspace_guard
@@ -3256,15 +3264,18 @@ cells:
       gate, evidence gate, decision profile evidence, and runtime-contract
       receipt checks.
     current_modules:
+      - polaris.cells.resident.autonomy.public.service
       - polaris.cells.resident.autonomy.internal.resident_runtime_service
       - polaris.cells.resident.autonomy.internal.agi_audit_pack
       - polaris.cells.resident.autonomy.internal.agi_capability_surface
       - polaris.cells.resident.autonomy.internal.goal_governor
+      - polaris.cells.resident.autonomy.internal.goal_attempt_ledger
       - polaris.cells.resident.autonomy.internal.decision_trace
       - polaris.cells.resident.autonomy.internal.self_improvement_lab
       - polaris.delivery.http.v2.resident
     owned_paths:
       - polaris/cells/resident/autonomy/internal/**
+      - polaris/cells/resident/autonomy/public/**
       - polaris/delivery/http/v2/resident.py
     public_contracts:
       modules:
@@ -3281,6 +3292,10 @@ cells:
         - ApproveResidentGoalCommandV1
         - RejectResidentGoalCommandV1
         - MaterializeResidentGoalCommandV1
+        - ArchiveResidentGoalCommandV1
+        - StartResidentGoalAttemptCommandV1
+        - ObserveResidentGoalAttemptCommandV1
+        - SettleResidentGoalAttemptCommandV1
         - StageResidentGoalCommandV1
         - RunResidentGoalCommandV1
         - ExtractResidentSkillsCommandV1
@@ -3290,13 +3305,17 @@ cells:
         - QueryResidentStatusV1
         - QueryResidentCapabilitiesV1
         - QueryResidentAgiAuditPackV1
+        - QueryResidentGoalExecutionV1
       events:
         - ResidentCycleCompletedEventV1
         - runtime.v2.status.resident
       results:
         - ResidentAutonomyResultV1
+        - ResidentGoalAttemptReceiptV1
+        - ResidentGoalExecutionV1
       errors:
-        - ResidentAutonomyErrorV1
+        - ResidentAutonomyError
+        - ResidentGoalLifecycleErrorV1
     runtime_projection:
       publishes:
         - channel: status.resident
@@ -3331,23 +3350,25 @@ cells:
     state_owners:
       - runtime/state/resident/*
       - runtime/resident/*
-      - workspace/meta/resident/*
+      - workspace/meta/resident/**
     effects_allowed:
       - fs.read:workspace/**
       - fs.read:runtime/**
-      - fs.write:workspace/meta/resident/*
+      - fs.write:workspace/meta/resident/**
       - fs.write:runtime/state/resident/*
       - fs.write:runtime/events/runtime.events.jsonl
       - process.spawn:resident/*
       - ws.outbound:resident/*
     verification:
       tests:
-        - tests/test_resident_api.py
-        - tests/test_resident_service.py
+        - polaris/tests/test_resident_api.py
+        - polaris/tests/test_resident_service.py
         - polaris/cells/roles/adapters/tests/test_resident_agi_adapter_pure.py
         - polaris/cells/control_plane/run_ledger/tests/test_public_service.py
-        - tests/test_resident_evidence_integration.py
-        - tests/test_resident_pm_bridge.py
+        - polaris/tests/test_resident_evidence_integration.py
+        - polaris/tests/test_resident_pm_bridge.py
+        - polaris/cells/resident/autonomy/public/tests/test_goal_attempt_ledger.py
+        - polaris/cells/resident/autonomy/public/tests/test_goal_lifecycle_persistence.py
       gaps:
         - Resident capability graph and autonomous loop policies are still being tuned for production hardening.
 
@@ -3830,6 +3851,7 @@ cells:
       events:
         - StorageLayoutResolvedEventV1
       results:
+        - ExistingRuntimeRootReadOnlyResultV1
         - StorageLayoutResultV1
       errors:
         - StorageLayoutErrorV1

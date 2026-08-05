@@ -14,7 +14,8 @@
     "commands": [],
     "queries": [
       "RuntimeProjectionQueryV1",
-      "ProjectOutcomeQueryV1"
+      "ProjectOutcomeQueryV1",
+      "ProjectOutcomeFactoryOwnerQueryV1"
     ],
     "events": [
       "RuntimeProjectedEventV1",
@@ -22,17 +23,21 @@
     ],
     "results": [
       "RuntimeProjectionResultV1",
-      "ProjectOutcomeV1"
+      "DirectorStatusObservationV1",
+      "ProjectOutcomeV1",
+      "FactoryChainOwnerObservationV1",
+      "ProjectOutcomeFactoryOwnerBindingV1"
     ],
     "errors": [
       "RuntimeProjectionErrorV1",
-      "ProjectOutcomeValidationV1Error"
+      "DirectorStatusObservationV1Error",
+      "ProjectOutcomeValidationV1Error",
+      "ProjectOutcomeOwnerObservationV1Error"
     ]
   },
   "neighbors": [
     "audit.evidence",
     "control_plane.run_ledger",
-    "director.execution",
     "docs.court_workflow",
     "events.fact_stream",
     "llm.evaluation",
@@ -61,14 +66,20 @@
   ],
   "hotspots": [
     "polaris/cells/runtime/projection/internal/runtime_projection_service.py",
+    "polaris/cells/runtime/projection/internal/director_status_owner.py",
     "polaris/cells/runtime/projection/internal/project_outcome.py",
+    "polaris/cells/runtime/projection/internal/project_outcome_factory_owner.py",
+    "polaris/cells/runtime/projection/public/bootstrap.py",
     "polaris/cells/runtime/projection/public/contracts.py",
     "polaris/delivery/http/routers/runtime.py"
   ],
   "test_targets": [
     "tests/test_realtime_single_rail_static_guard.py",
     "tests/test_runtime_projection_observability.py",
-    "polaris/cells/runtime/projection/tests/test_project_outcome.py"
+    "polaris/cells/runtime/projection/tests/test_project_outcome.py",
+    "polaris/cells/runtime/projection/tests/test_factory_chain_owner_binding.py",
+    "polaris/cells/runtime/projection/tests/test_director_status_owner_binding.py",
+    "polaris/cells/runtime/projection/tests/test_gr1c_dependency_cut.py"
   ],
   "change_guidance": {
     "read_order": [

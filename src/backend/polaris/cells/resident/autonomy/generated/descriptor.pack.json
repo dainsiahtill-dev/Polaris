@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:19.104595Z",
-  "source_hash": "308258c68beb7f59",
+  "generated_at": "2026-08-02T16:10:05.203974Z",
+  "source_hash": "2c3ba5da5e5233c8",
   "cell_id": "resident.autonomy",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -503,6 +503,138 @@
       "defined_in": "polaris/cells/resident/autonomy/internal/execution_projection.py"
     },
     {
+      "type": "function",
+      "name": "transition_goal_state",
+      "description": "Apply strict Goal transition with CAS and same-state idempotency.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_stream_path",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_json",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_semantic_hash",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_hash",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_receipt_payload",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_receipt_from_record",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_records_bytes",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_locked",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_project",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "query_goal_execution",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_check_idempotency",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_command",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_now",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_new_receipt",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "start_goal_attempt",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "build",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "observe_goal_attempt",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "build",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "settle_goal_attempt",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "build",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_attempt_ledger.py"
+    },
+    {
       "type": "class",
       "name": "GoalGovernor",
       "description": "Create, approve, reject, and materialize governed goals.",
@@ -525,7 +657,19 @@
           "doc": ""
         },
         {
+          "name": "_revision",
+          "doc": ""
+        },
+        {
+          "name": "_transition",
+          "doc": ""
+        },
+        {
           "name": "approve_goal",
+          "doc": ""
+        },
+        {
+          "name": "mutate",
           "doc": ""
         },
         {
@@ -533,7 +677,23 @@
           "doc": ""
         },
         {
+          "name": "mutate",
+          "doc": ""
+        },
+        {
           "name": "materialize_goal",
+          "doc": ""
+        },
+        {
+          "name": "mutate",
+          "doc": ""
+        },
+        {
+          "name": "archive_goal",
+          "doc": ""
+        },
+        {
+          "name": "mutate",
           "doc": ""
         },
         {
@@ -745,7 +905,15 @@
           "doc": ""
         },
         {
+          "name": "archive_goal",
+          "doc": ""
+        },
+        {
           "name": "stage_goal",
+          "doc": ""
+        },
+        {
+          "name": "run_goal",
           "doc": ""
         },
         {
@@ -942,11 +1110,27 @@
           "doc": ""
         },
         {
+          "name": "_load_goals_unlocked",
+          "doc": ""
+        },
+        {
           "name": "load_goals",
           "doc": ""
         },
         {
+          "name": "_write_goals_unlocked",
+          "doc": ""
+        },
+        {
+          "name": "mutate_goals",
+          "doc": "Run strict Goal read/mutate/atomic-write under one process-shared lock."
+        },
+        {
           "name": "save_goals",
+          "doc": ""
+        },
+        {
+          "name": "replace",
           "doc": ""
         },
         {
@@ -1066,6 +1250,981 @@
       "name": "_primary_strategy_tag",
       "description": "",
       "defined_in": "polaris/cells/resident/autonomy/internal/skill_foundry.py"
+    },
+    {
+      "type": "class",
+      "name": "ResidentGoalStateV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResidentGoalExecutionStatusV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResidentGoalAttemptStatusV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResidentGoalLifecycleErrorV1",
+      "description": "Typed fail-closed Goal/Attempt lifecycle error.",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "StartResidentGoalAttemptCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ObserveResidentGoalAttemptCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SettleResidentGoalAttemptCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryResidentGoalExecutionV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResidentGoalAttemptReceiptV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResidentGoalExecutionV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RunResidentCycleCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RecordResidentEvidenceCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StartResidentCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StopResidentCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RunResidentTickCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "UpdateResidentIdentityCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "UpdateResidentAgiParticipationCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CreateResidentGoalCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ApproveResidentGoalCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RejectResidentGoalCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RecordResidentDecisionCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExtractResidentSkillsCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RunResidentExperimentsCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RunResidentImprovementsCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryResidentStatusV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryResidentCapabilitiesV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryResidentAgiAuditPackV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryResidentAgiEvidenceInterfacesV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryResidentAgiHandoffsV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RunResidentAgiDecisionTurnCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "BuildResidentAgiRepairAdvisoryOverlayCommandV1",
+      "description": "Project Resident AGI repair suggestions into Director advisory notes.",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryResidentAgiRepairAdvisoryOverlayV1",
+      "description": "Query the latest persisted Resident AGI repair advisory overlay.",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryResidentAgiTacticalChatV1",
+      "description": "Query a read-first Resident AGI tactical-console response.",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExecuteResidentAgiTacticalActionCommandV1",
+      "description": "Execute a governed Resident AGI tactical-console action.",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResidentAgiDecisionOutputV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ResidentAgiDecisionHandoffV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "MaterializeResidentGoalCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ArchiveResidentGoalCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StageResidentGoalCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RunResidentGoalCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResidentAgiCapabilityV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ResidentAgiDecisionCapabilityV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ResidentAgiDecisionBoundaryV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ResidentCycleCompletedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResidentAutonomyResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResidentAutonomyError",
+      "description": "Raised when `resident.autonomy` contract processing fails.",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_non_empty_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_exact_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_exact_non_negative_int",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_exact_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_jetstream_publish_enabled",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "publish_resident_status_update",
+      "description": "Publish the latest Resident AGI projection to runtime.v2.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_evidence_service",
+      "description": "Return the canonical evidence bundle service.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_resident_status",
+      "description": "Handle :class:`QueryResidentStatusV1` → resident status snapshot.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "start_resident_goal_attempt",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "observe_resident_goal_attempt",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "settle_resident_goal_attempt",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_resident_goal_execution",
+      "description": "Zero-write durable execution query; does not construct ResidentService.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_resident_capabilities",
+      "description": "Handle :class:`QueryResidentCapabilitiesV1` → AGI capability surface.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_resident_agi_audit_pack",
+      "description": "Handle :class:`QueryResidentAgiAuditPackV1` → Resident AGI audit pack.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_non_empty_strings",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_participation_scope_key",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_known_participation_scope_keys",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_identity_participation",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_decision_turn_participation",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_repair_advisory_participation_enabled",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_repair_advisory_decision_relevant",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_repair_advisory_overlay_from_decision",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_resident_agi_repair_advisory_overlay",
+      "description": "Project Resident AGI repair suggestions into Director advisory notes.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_repair_advisory_overlay_from_decision_record",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_resident_agi_repair_advisory_overlay",
+      "description": "Return the latest persisted Resident AGI repair advisory overlay.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_decision_verdict",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_decision_summary",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_policy_decision",
+      "description": "Map a Resident AGI judgement into a control-plane policy decision.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_control_run_id",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_control_gate_summary",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_resident_agi_control_plane_gate",
+      "description": "Persist Resident AGI judgement as a platform control-plane gate.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_runtime_contract_gate",
+      "description": "Verify that a successful Resident AGI turn returned RoleRuntime receipt evidence.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_decision_sequence",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_output_contract_gate",
+      "description": "Validate the Resident AGI model output before accepting its decision.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "add_check",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_decision_type_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_select_decision_capability",
+      "description": "Select the AGI decision capability that governs a requested decision type.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_capability_by_id",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_interface_base",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_run_ledger_interface",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_run_provenance_bundle_interface",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_verifier_policy_interface",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_director_repair_strategy_catalog_interface",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_audit_diagnosis_interface",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_audit_verdict_interface",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_context_catalog_interface",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_context_engine_interface",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_read_json_artifact",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_chief_engineer_blueprint_interface",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_find_profile_payload",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_candidate_paths_from_refs",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_task_execution_profile_interface",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_runtime_events_interface",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_contextos_final_request_interface",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_director_repair_advisory_policy_interface",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_repair_diagnostic_candidates",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "collect",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_looks_like_repair_diagnostic",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_director_repair_coverage_interface",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_audit_pack_with_current_refs",
+      "description": "Return an audit pack view that prioritizes refs from the current decision.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_metadata_only_interface",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_evidence_interface_group_id",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_evidence_group_name",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_evidence_capability_matrix",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_resident_agi_evidence_interfaces",
+      "description": "Return the evidence interfaces a Resident AGI turn can safely inspect.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_resident_agi_tactical_chat",
+      "description": "Return a tactical-console response backed by Resident AGI public evidence.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_resident_agi_tactical_action_catalog",
+      "description": "Return the read-only Resident AGI tactical-console action catalog.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_tactical_action_tool_trace",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_tactical_follow_up_actions",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "add",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_resident_agi_tactical_action",
+      "description": "Execute a governed Resident AGI tactical-console action.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_platform_contract_refs",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_sanitize_handoff",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_handoff_row",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_resident_agi_handoffs",
+      "description": "Return Resident AGI handoff inbox items derived from decision_trace.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_required_interface_statuses",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_decision_preflight",
+      "description": "Verify required decision evidence before allowing a Resident AGI LLM turn.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_handoff_target_roles",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_handoff_status",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_handoff_allowed_actions",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resident_agi_decision_handoff",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "run_resident_agi_decision_turn",
+      "description": "Handle Resident AGI judgement through the shared role runtime contract.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "start_resident",
+      "description": "Handle :class:`StartResidentCommandV1` → activate Resident AGI.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "stop_resident",
+      "description": "Handle :class:`StopResidentCommandV1` → deactivate Resident AGI.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "run_resident_tick",
+      "description": "Handle :class:`RunResidentTickCommandV1` → advance one Resident loop.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "update_resident_identity",
+      "description": "Handle :class:`UpdateResidentIdentityCommandV1` → update Resident identity.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "update_resident_agi_participation",
+      "description": "Handle AGI participation policy updates through a scoped public contract.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "create_resident_goal",
+      "description": "Handle :class:`CreateResidentGoalCommandV1` → create a governed goal.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "approve_resident_goal",
+      "description": "Handle :class:`ApproveResidentGoalCommandV1` → approve a governed goal.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "reject_resident_goal",
+      "description": "Handle :class:`RejectResidentGoalCommandV1` → reject a governed goal.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "materialize_resident_goal",
+      "description": "Handle :class:`MaterializeResidentGoalCommandV1` through the Resident goal bridge.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "archive_resident_goal",
+      "description": "Archive a rejected or materialized Goal through strict CAS.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "stage_resident_goal",
+      "description": "Handle :class:`StageResidentGoalCommandV1` through the Resident goal bridge.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "run_resident_goal",
+      "description": "Handle :class:`RunResidentGoalCommandV1` through the governed PM bridge.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_emit_cycle_completed_event",
+      "description": "Construct and surface a :class:`ResidentCycleCompletedEventV1`.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "run_resident_cycle",
+      "description": "Handle :class:`RunResidentCycleCommandV1` → advance the resident loop.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "record_resident_evidence",
+      "description": "Handle :class:`RecordResidentEvidenceCommandV1` → append to the decision trace.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "record_resident_decision_entry",
+      "description": "Handle :class:`RecordResidentDecisionCommandV1` → append a decision trace entry.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_resident_skills",
+      "description": "Handle :class:`ExtractResidentSkillsCommandV1` → refresh skill artifacts.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "run_resident_experiments",
+      "description": "Handle :class:`RunResidentExperimentsCommandV1` → replay counterfactual experiments.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "run_resident_improvements",
+      "description": "Handle :class:`RunResidentImprovementsCommandV1` → propose self-improvements.",
+      "defined_in": "polaris/cells/resident/autonomy/public/service.py"
     },
     {
       "type": "class",
@@ -1208,6 +2367,12 @@
     },
     {
       "type": "function",
+      "name": "resident_agi_decide",
+      "description": "Run a Resident AGI decision turn through the shared role runtime.",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
       "name": "resident_agi_tactical_chat",
       "description": "Return a Resident AGI tactical-console response from public evidence.",
       "defined_in": "polaris/delivery/http/v2/resident.py"
@@ -1216,6 +2381,12 @@
       "type": "function",
       "name": "resident_agi_tactical_action_catalog",
       "description": "Return the read-only Resident AGI tactical-console action catalog.",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agi_tactical_action",
+      "description": "Execute a governed Resident AGI tactical-console action.",
       "defined_in": "polaris/delivery/http/v2/resident.py"
     },
     {
@@ -1299,6 +2470,12 @@
     {
       "type": "function",
       "name": "resident_stage_goal",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_run_goal",
       "description": "",
       "defined_in": "polaris/delivery/http/v2/resident.py"
     },

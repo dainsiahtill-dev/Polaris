@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:12.760428Z",
-  "source_hash": "7787d1376e624a73",
+  "generated_at": "2026-08-02T15:47:40.964254Z",
+  "source_hash": "46829d55512adb63",
   "cell_id": "code_intelligence.engine",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -255,7 +255,7 @@
     },
     {
       "type": "function",
-      "name": "_is_legacy_default_include",
+      "name": "_matches_builtin_default_include",
       "description": "",
       "defined_in": "polaris/infrastructure/accel/indexers/discovery.py"
     },
@@ -1486,6 +1486,14 @@
           "doc": "获取索引状态."
         },
         {
+          "name": "ensure_index_async",
+          "doc": "确保索引已构建（异步版本）."
+        },
+        {
+          "name": "_build_index_async",
+          "doc": "异步构建索引."
+        },
+        {
           "name": "_build",
           "doc": ""
         },
@@ -1514,8 +1522,20 @@
           "doc": ""
         },
         {
+          "name": "ensure_index",
+          "doc": "确保索引已构建（异步）."
+        },
+        {
+          "name": "get_context_for_task",
+          "doc": "为任务生成代码上下文（异步，带缓存）."
+        },
+        {
           "name": "_compile",
           "doc": ""
+        },
+        {
+          "name": "verify_changes",
+          "doc": "运行增量验证（异步）."
         },
         {
           "name": "_verify",
@@ -1528,6 +1548,10 @@
         {
           "name": "invalidate_cache",
           "doc": "使缓存失效."
+        },
+        {
+          "name": "close",
+          "doc": "释放服务级缓存引用，避免长生命周期对象堆积."
         }
       ]
     },

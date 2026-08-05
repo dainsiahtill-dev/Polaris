@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T06:13:41.891016Z",
-  "source_hash": "a914a499153a4511",
+  "generated_at": "2026-08-02T15:47:42.882739Z",
+  "source_hash": "793da083c54e3f66",
   "cell_id": "kernelone.core",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -24,6 +24,12 @@
       "description": "Result of artifact compression operation.",
       "defined_in": "polaris/kernelone/context/artifact_compression.py",
       "methods": []
+    },
+    {
+      "type": "function",
+      "name": "compress_if_changed",
+      "description": "Trigger incremental compression for session artifacts.",
+      "defined_in": "polaris/kernelone/context/artifact_compression.py"
     },
     {
       "type": "class",
@@ -78,189 +84,6 @@
         {
           "name": "get_user_workspace_access",
           "doc": "Get a user's access level for a workspace."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "BudgetConditions",
-      "description": "Budget constraints for a benchmark case.",
-      "defined_in": "polaris/kernelone/context/benchmarks/fixtures.py",
-      "methods": [
-        {
-          "name": "from_mapping",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "BenchmarkCase",
-      "description": "Structured representation of a benchmark fixture.",
-      "defined_in": "polaris/kernelone/context/benchmarks/fixtures.py",
-      "methods": [
-        {
-          "name": "from_mapping",
-          "doc": ""
-        },
-        {
-          "name": "to_dict",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "load_fixture",
-      "description": "Load a single fixture by case_id.",
-      "defined_in": "polaris/kernelone/context/benchmarks/fixtures.py"
-    },
-    {
-      "type": "function",
-      "name": "load_all_fixtures",
-      "description": "Load all fixtures from the fixtures/ directory.",
-      "defined_in": "polaris/kernelone/context/benchmarks/fixtures.py"
-    },
-    {
-      "type": "class",
-      "name": "ValidatorViolation",
-      "description": "A single violation detected by a validator.",
-      "defined_in": "polaris/kernelone/context/benchmarks/validators.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ValidatorResult",
-      "description": "Result of a validator run.",
-      "defined_in": "polaris/kernelone/context/benchmarks/validators.py",
-      "methods": [
-        {
-          "name": "to_dict",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ContextOSValidator",
-      "description": "Protocol for ContextOS baseline validators.",
-      "defined_in": "polaris/kernelone/context/benchmarks/validators.py",
-      "methods": [
-        {
-          "name": "validate",
-          "doc": "Run validation against a sequence of snapshots."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ContextOSLossValidator",
-      "description": "Detect null/zero/missing context_tokens.",
-      "defined_in": "polaris/kernelone/context/benchmarks/validators.py",
-      "methods": [
-        {
-          "name": "validate",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ContextOSLongSessionValidator",
-      "description": "Monitor token growth in sessions with 50+ turns.",
-      "defined_in": "polaris/kernelone/context/benchmarks/validators.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "validate",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ContextOSDesynchronizationValidator",
-      "description": "Detect token gaps / desynchronization between turns.",
-      "defined_in": "polaris/kernelone/context/benchmarks/validators.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "validate",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ContextOSIncorrectTruncationValidator",
-      "description": "Detect unexpected token drops (incorrect truncation).",
-      "defined_in": "polaris/kernelone/context/benchmarks/validators.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "validate",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ContextOSBenchmarkValidator",
-      "description": "Composite validator that runs all four baseline validators.",
-      "defined_in": "polaris/kernelone/context/benchmarks/validators.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "validate",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FixtureAwareBenchmarkValidator",
-      "description": "Composite validator that integrates fixture expectations with scoring.",
-      "defined_in": "polaris/kernelone/context/benchmarks/validators.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "benchmark_case",
-          "doc": "The fixture case loaded for this validator, if any."
-        },
-        {
-          "name": "with_case",
-          "doc": "Return a new validator instance with the given fixture case."
-        },
-        {
-          "name": "_check_budget_conditions",
-          "doc": "Validate budget conditions from fixture against snapshot data."
-        },
-        {
-          "name": "_check_evidence_paths",
-          "doc": "Validate that expected evidence paths were touched."
-        },
-        {
-          "name": "_compute_score",
-          "doc": "Compute a normalized score (0.0-1.0) based on violations."
-        },
-        {
-          "name": "validate",
-          "doc": ""
         }
       ]
     },
@@ -359,40 +182,6 @@
     },
     {
       "type": "class",
-      "name": "KernelOneCacheManager",
-      "description": "[已废弃] 向后兼容 facade。请直接使用 TieredAssetCacheManager。",
-      "defined_in": "polaris/kernelone/context/cache.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "_resolve_cache_root",
-          "doc": "覆盖缓存路径为 legacy 路径: workspace/<metadata_dir>/cache/"
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_dispose_cache_manager",
-      "description": "Dispose of a cache manager, clearing all in-memory tiers.",
-      "defined_in": "polaris/kernelone/context/cache.py"
-    },
-    {
-      "type": "function",
-      "name": "get_cache_manager",
-      "description": "Get or create the cache manager for a workspace.",
-      "defined_in": "polaris/kernelone/context/cache.py"
-    },
-    {
-      "type": "function",
-      "name": "clear_cache_manager",
-      "description": "Clear the cache manager for a workspace (useful for testing).",
-      "defined_in": "polaris/kernelone/context/cache.py"
-    },
-    {
-      "type": "class",
       "name": "_CacheTierMarker",
       "description": "Marker class so AssetCachePort can reference CacheTier in type hints.",
       "defined_in": "polaris/kernelone/context/cache_manager.py",
@@ -426,7 +215,24 @@
       "name": "AssetCachePort",
       "description": "Abstract cache interface required by WorkingSetAssembler.",
       "defined_in": "polaris/kernelone/context/cache_manager.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "get",
+          "doc": "Retrieve a cached value, or None on miss / expiry."
+        },
+        {
+          "name": "set",
+          "doc": "Store a value in the specified tier."
+        },
+        {
+          "name": "invalidate",
+          "doc": "Remove a key from a specific tier, or all tiers if tier is None."
+        },
+        {
+          "name": "get_or_compute",
+          "doc": "Return cached value, or compute with factory and cache the result."
+        }
+      ]
     },
     {
       "type": "class",
@@ -463,6 +269,38 @@
           "doc": ""
         },
         {
+          "name": "get",
+          "doc": "Retrieve a cached value, or None on miss / expiry."
+        },
+        {
+          "name": "set",
+          "doc": "Store a value in the specified tier."
+        },
+        {
+          "name": "invalidate",
+          "doc": "Remove a key from a specific tier, or all tiers if tier is None."
+        },
+        {
+          "name": "get_or_compute",
+          "doc": "Return cached value, or call factory and cache the result."
+        },
+        {
+          "name": "_get_hot_slice",
+          "doc": "LRU lookup with TTL + mtime invalidation."
+        },
+        {
+          "name": "_put_hot_slice",
+          "doc": "Store with LRU eviction when at capacity."
+        },
+        {
+          "name": "_get_session_continuity",
+          "doc": "Session continuity lookup with TTL."
+        },
+        {
+          "name": "_put_session_continuity",
+          "doc": "Store in session continuity tier (bounded by LRUBoundedCache)."
+        },
+        {
           "name": "_resolve_cache_root",
           "doc": "Resolve workspace cache root: workspace/<metadata_dir>/cache/"
         },
@@ -471,12 +309,64 @@
           "doc": "Derive a stable filesystem path for a persistent cache entry."
         },
         {
+          "name": "_get_persistent",
+          "doc": "Read a persistent cache entry; return None on miss or expiry."
+        },
+        {
           "name": "_read_json_file",
           "doc": "Read JSON file synchronously (called via asyncio.to_thread)."
         },
         {
           "name": "_write_json_file",
           "doc": "Write JSON file atomically (called via asyncio.to_thread)."
+        },
+        {
+          "name": "_put_persistent",
+          "doc": "Write a persistent cache entry atomically."
+        },
+        {
+          "name": "_invalidate_persistent",
+          "doc": "Remove a persistent cache entry."
+        },
+        {
+          "name": "get_repo_map",
+          "doc": "Get cached repo map for a language, or None if not cached / expired."
+        },
+        {
+          "name": "put_repo_map",
+          "doc": "Store repo map snapshot in persistent cache."
+        },
+        {
+          "name": "get_symbol_index",
+          "doc": "Get cached symbol index for a file, or None if not cached / expired."
+        },
+        {
+          "name": "put_symbol_index",
+          "doc": "Store symbol index in persistent cache."
+        },
+        {
+          "name": "get_hot_slice",
+          "doc": "Get hot slice by key."
+        },
+        {
+          "name": "put_hot_slice",
+          "doc": "Store content in hot slice cache."
+        },
+        {
+          "name": "get_continuity_pack",
+          "doc": "Get continuity pack for a session."
+        },
+        {
+          "name": "put_continuity_pack",
+          "doc": "Store continuity pack in projection cache."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Return current cache statistics snapshot."
+        },
+        {
+          "name": "clear_tier",
+          "doc": "Clear all entries for a specific tier."
         },
         {
           "name": "_hit_for_tier",
@@ -510,6 +400,24 @@
       "type": "function",
       "name": "_extract_path_from_key",
       "description": "Extract a file path from a cache key for mtime-based invalidation.",
+      "defined_in": "polaris/kernelone/context/cache_manager.py"
+    },
+    {
+      "type": "function",
+      "name": "_dispose_cache_manager",
+      "description": "Dispose of a cache manager by clearing in-memory tiers.",
+      "defined_in": "polaris/kernelone/context/cache_manager.py"
+    },
+    {
+      "type": "function",
+      "name": "get_cache_manager",
+      "description": "Get or create the canonical cache manager for a workspace.",
+      "defined_in": "polaris/kernelone/context/cache_manager.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_cache_manager",
+      "description": "Clear the cached manager instance for a workspace.",
       "defined_in": "polaris/kernelone/context/cache_manager.py"
     },
     {
@@ -1039,7 +947,7 @@
       "methods": [
         {
           "name": "from_task",
-          "doc": "Create identity from task data (backward compatible with Director)."
+          "doc": "Create identity from task data produced by PM/Director payloads."
         },
         {
           "name": "from_role_state",
@@ -1205,6 +1113,10 @@
       "description": "Protocol for compression strategies.",
       "defined_in": "polaris/kernelone/context/compressors/registry.py",
       "methods": [
+        {
+          "name": "compress",
+          "doc": "Compress content within the given budget."
+        },
         {
           "name": "estimate_cost",
           "doc": "Estimate the cost of compressing the given content."
@@ -2049,6 +1961,22 @@
           "doc": "Batch-release multiple refs."
         },
         {
+          "name": "write",
+          "doc": "Async-safe write content to store with key-based lookup."
+        },
+        {
+          "name": "read",
+          "doc": "Async-safe read content from store by key."
+        },
+        {
+          "name": "delete",
+          "doc": "Async-safe delete content from store."
+        },
+        {
+          "name": "update",
+          "doc": "Async-safe update content in store."
+        },
+        {
           "name": "export_content_map",
           "doc": "Export a subset of the store for serialization."
         },
@@ -2148,8 +2076,8 @@
     },
     {
       "type": "class",
-      "name": "BackwardCompatibilityTest",
-      "description": "Test that new implementations preserve default behavior.",
+      "name": "BehaviorParityTest",
+      "description": "Test that candidate implementations preserve baseline behavior.",
       "defined_in": "polaris/kernelone/context/context_os/contract_tests.py",
       "methods": [
         {
@@ -2158,7 +2086,7 @@
         },
         {
           "name": "test_default_behavior_preserved",
-          "doc": "Must be implemented to verify backward compatibility."
+          "doc": "Must be implemented to verify baseline behavior parity."
         }
       ]
     },
@@ -2928,8 +2856,26 @@
     },
     {
       "type": "function",
+      "name": "evaluate_attention_runtime_case",
+      "description": "Evaluate attention runtime quality for a conversation.",
+      "defined_in": "polaris/kernelone/context/context_os/evaluation.py"
+    },
+    {
+      "type": "function",
+      "name": "evaluate_attention_runtime_suite",
+      "description": "Evaluate a suite of attention runtime quality cases.",
+      "defined_in": "polaris/kernelone/context/context_os/evaluation.py"
+    },
+    {
+      "type": "function",
       "name": "load_attention_runtime_eval_suite",
       "description": "Load evaluation suite from JSON or YAML file.",
+      "defined_in": "polaris/kernelone/context/context_os/evaluation.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_attention_runtime_report",
+      "description": "Generate evaluation report from suite definition.",
       "defined_in": "polaris/kernelone/context/context_os/evaluation.py"
     },
     {
@@ -3099,7 +3045,20 @@
       "name": "LockTemplate",
       "description": "Protocol for lock-based operation templates.",
       "defined_in": "polaris/kernelone/context/context_os/lock_patterns.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "snapshot",
+          "doc": "Capture immutable snapshot under lock."
+        },
+        {
+          "name": "compute",
+          "doc": "Perform computation outside lock."
+        },
+        {
+          "name": "validate_and_commit",
+          "doc": "Validate and commit under lock."
+        }
+      ]
     },
     {
       "type": "class",
@@ -3123,6 +3082,18 @@
       "type": "function",
       "name": "decorator",
       "description": "",
+      "defined_in": "polaris/kernelone/context/context_os/lock_patterns.py"
+    },
+    {
+      "type": "function",
+      "name": "wrapper",
+      "description": "",
+      "defined_in": "polaris/kernelone/context/context_os/lock_patterns.py"
+    },
+    {
+      "type": "function",
+      "name": "_call_if_coro",
+      "description": "Call a function, awaiting it if it's a coroutine.",
       "defined_in": "polaris/kernelone/context/context_os/lock_patterns.py"
     },
     {
@@ -3911,18 +3882,6 @@
         {
           "name": "from_env",
           "doc": "Create a policy instance with environment variable overrides."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "SnapshotSummaryView",
-      "description": "Lightweight snapshot summary — avoids full to_dict() serialization.",
-      "defined_in": "polaris/kernelone/context/context_os/models.py",
-      "methods": [
-        {
-          "name": "from_snapshot",
-          "doc": ""
         }
       ]
     },
@@ -4996,122 +4955,6 @@
       "defined_in": "polaris/kernelone/context/context_os/policies.py",
       "methods": [
         {
-          "name": "model_context_window",
-          "doc": "Deprecated: Use policy.context_window.model_context_window."
-        },
-        {
-          "name": "default_history_window_messages",
-          "doc": "Deprecated: Use policy.context_window.default_history_window_messages."
-        },
-        {
-          "name": "max_active_window_messages",
-          "doc": "Deprecated: Use policy.context_window.max_active_window_messages."
-        },
-        {
-          "name": "min_recent_messages_pinned",
-          "doc": "Deprecated: Use policy.window_size.min_recent_messages_pinned."
-        },
-        {
-          "name": "min_recent_floor",
-          "doc": "Deprecated: Use policy.window_size.min_recent_floor."
-        },
-        {
-          "name": "artifact_char_threshold",
-          "doc": "Deprecated: Use policy.artifact.artifact_char_threshold."
-        },
-        {
-          "name": "artifact_token_threshold",
-          "doc": "Deprecated: Use policy.artifact.artifact_token_threshold."
-        },
-        {
-          "name": "max_artifact_stubs",
-          "doc": "Deprecated: Use policy.artifact.max_artifact_stubs."
-        },
-        {
-          "name": "max_episode_cards",
-          "doc": "Deprecated: Use policy.collection_limits.max_episode_cards."
-        },
-        {
-          "name": "max_open_loops",
-          "doc": "Deprecated: Use policy.collection_limits.max_open_loops."
-        },
-        {
-          "name": "max_stable_facts",
-          "doc": "Deprecated: Use policy.collection_limits.max_stable_facts."
-        },
-        {
-          "name": "max_decisions",
-          "doc": "Deprecated: Use policy.collection_limits.max_decisions."
-        },
-        {
-          "name": "output_reserve_ratio",
-          "doc": "Deprecated: Use policy.token_budget.output_reserve_ratio."
-        },
-        {
-          "name": "tool_reserve_ratio",
-          "doc": "Deprecated: Use policy.token_budget.tool_reserve_ratio."
-        },
-        {
-          "name": "safety_margin_ratio",
-          "doc": "Deprecated: Use policy.token_budget.safety_margin_ratio."
-        },
-        {
-          "name": "output_reserve_min",
-          "doc": "Deprecated: Use policy.token_budget.output_reserve_min."
-        },
-        {
-          "name": "tool_reserve_min",
-          "doc": "Deprecated: Use policy.token_budget.tool_reserve_min."
-        },
-        {
-          "name": "safety_margin_min",
-          "doc": "Deprecated: Use policy.token_budget.safety_margin_min."
-        },
-        {
-          "name": "retrieval_ratio",
-          "doc": "Deprecated: Use policy.token_budget.retrieval_ratio."
-        },
-        {
-          "name": "active_window_budget_ratio",
-          "doc": "Deprecated: Use policy.token_budget.active_window_budget_ratio."
-        },
-        {
-          "name": "p95_tool_result_tokens",
-          "doc": "Deprecated: Use policy.token_budget.p95_tool_result_tokens."
-        },
-        {
-          "name": "planned_retrieval_tokens",
-          "doc": "Deprecated: Use policy.token_budget.planned_retrieval_tokens."
-        },
-        {
-          "name": "max_messages",
-          "doc": "Deprecated: Use policy.input_validation.max_messages."
-        },
-        {
-          "name": "max_message_size",
-          "doc": "Deprecated: Use policy.input_validation.max_message_size."
-        },
-        {
-          "name": "max_total_input_size",
-          "doc": "Deprecated: Use policy.input_validation.max_total_input_size."
-        },
-        {
-          "name": "enable_dialog_act",
-          "doc": "Deprecated: Use policy.attention_runtime.enable_dialog_act."
-        },
-        {
-          "name": "prevent_seal_on_pending",
-          "doc": "Deprecated: Use policy.attention_runtime.prevent_seal_on_pending."
-        },
-        {
-          "name": "enable_attention_trace",
-          "doc": "Deprecated: Use policy.attention_runtime.enable_attention_trace."
-        },
-        {
-          "name": "enable_seal_guard",
-          "doc": "Deprecated: Use policy.attention_runtime.enable_seal_guard."
-        },
-        {
           "name": "from_env",
           "doc": "Create a policy instance with environment variable overrides."
         },
@@ -5493,6 +5336,14 @@
           "doc": "Create immutable snapshot for audit/replay and consistency measurement."
         },
         {
+          "name": "cleanup",
+          "doc": "Clean up resources, releasing DialogActClassifier and other held references."
+        },
+        {
+          "name": "close",
+          "doc": "Async close method, calls cleanup() to release resources."
+        },
+        {
           "name": "add_observer",
           "doc": "Add an observer to receive ContextOS lifecycle notifications."
         },
@@ -5515,6 +5366,10 @@
         {
           "name": "dialog_act_classifier",
           "doc": "Get or create dialog act classifier."
+        },
+        {
+          "name": "project",
+          "doc": ""
         },
         {
           "name": "get_last_projection_report",
@@ -5547,6 +5402,14 @@
         {
           "name": "_project_via_pipeline_sync",
           "doc": "Project context via the 7-stage pipeline architecture (pure function)."
+        },
+        {
+          "name": "reclassify_event",
+          "doc": ""
+        },
+        {
+          "name": "reopen_episode",
+          "doc": ""
         },
         {
           "name": "search_memory",
@@ -5764,8 +5627,16 @@
           "doc": "Synchronous save implementation (thread-safe)."
         },
         {
+          "name": "save_async",
+          "doc": "Save snapshot to disk asynchronously with idempotency check."
+        },
+        {
           "name": "_load_sync",
           "doc": "Synchronous load implementation (thread-safe)."
+        },
+        {
+          "name": "load_async",
+          "doc": "Load snapshot by timestamp asynchronously."
         },
         {
           "name": "load",
@@ -5774,6 +5645,10 @@
         {
           "name": "_verify_sync",
           "doc": "Synchronous verify implementation (thread-safe)."
+        },
+        {
+          "name": "verify_async",
+          "doc": "Verify snapshot integrity using SHA256 checksum asynchronously."
         },
         {
           "name": "verify",
@@ -5790,6 +5665,24 @@
       "name": "compute_hash",
       "description": "Compute SHA256 hash of data.",
       "defined_in": "polaris/kernelone/context/context_os/snapshot.py"
+    },
+    {
+      "type": "function",
+      "name": "verify_context_projection_consistency",
+      "description": "Verify Context projection consistency.",
+      "defined_in": "polaris/kernelone/context/context_os/snapshot.py"
+    },
+    {
+      "type": "class",
+      "name": "SnapshotSummaryView",
+      "description": "Lightweight snapshot summary that avoids full ``to_dict()`` serialization.",
+      "defined_in": "polaris/kernelone/context/context_os/snapshot_summary.py",
+      "methods": [
+        {
+          "name": "from_snapshot",
+          "doc": "Extract only the fields needed for LLM context injection."
+        }
+      ]
     },
     {
       "type": "class",
@@ -6012,7 +5905,16 @@
       "name": "SummarizerGatewayProtocol",
       "description": "Protocol for gateway used by SLMSummarizer.",
       "defined_in": "polaris/kernelone/context/context_os/summarizers/slm.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "is_slm_healthy",
+          "doc": "Check if SLM backend is healthy."
+        },
+        {
+          "name": "compress_text",
+          "doc": "Compress text using SLM."
+        }
+      ]
     },
     {
       "type": "class",
@@ -6039,6 +5941,10 @@
         {
           "name": "_fallback",
           "doc": "Simple truncation fallback when SLM is unavailable or times out."
+        },
+        {
+          "name": "_async_summarize",
+          "doc": "Async inner implementation: health check + SLM compression."
         },
         {
           "name": "summarize",
@@ -6302,14 +6208,36 @@
       "name": "ContextSessionProtocol",
       "description": "L4-L5 boundary protocol for ContextOS session operations.",
       "defined_in": "polaris/kernelone/context/contracts.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "add",
+          "doc": "Add an artifact to the session's working state."
+        },
+        {
+          "name": "remove",
+          "doc": "Remove an artifact from session (soft deletion)."
+        },
+        {
+          "name": "query",
+          "doc": "Query artifacts from session working state."
+        },
+        {
+          "name": "archive",
+          "doc": "Archive an artifact (hard deletion)."
+        }
+      ]
     },
     {
       "type": "class",
       "name": "ContextBuilderPort",
       "description": "Port for building LLM context from role-aware state.",
       "defined_in": "polaris/kernelone/context/contracts.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "build_context",
+          "doc": "Build LLM messages from role context, history, and budget."
+        }
+      ]
     },
     {
       "type": "function",
@@ -6658,6 +6586,10 @@
           "doc": "Summarize context for compression using LLM."
         },
         {
+          "name": "_call_llm",
+          "doc": ""
+        },
+        {
           "name": "_drop_low_priority",
           "doc": ""
         },
@@ -7001,6 +6933,18 @@
       "defined_in": "polaris/kernelone/context/exploration_policy.py",
       "methods": [
         {
+          "name": "should_expand",
+          "doc": "Decide whether to expand the working set with candidate."
+        },
+        {
+          "name": "select_next_tools",
+          "doc": "Return a ranked list of recommended tool invocations for the phase."
+        },
+        {
+          "name": "should_compact",
+          "doc": "Return True when compaction should be triggered."
+        },
+        {
           "name": "infer_phase",
           "doc": "Infer the current exploration phase from tool-call history."
         }
@@ -7015,6 +6959,18 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "should_expand",
+          "doc": "Decide whether to expand the working set with candidate."
+        },
+        {
+          "name": "select_next_tools",
+          "doc": "Return phase-appropriate tool recommendations."
+        },
+        {
+          "name": "should_compact",
+          "doc": "Return True when compaction should be triggered."
         },
         {
           "name": "infer_phase",
@@ -7057,12 +7013,28 @@
           "doc": ""
         },
         {
+          "name": "project",
+          "doc": "Project session continuity for the given request."
+        },
+        {
+          "name": "project_to_projection",
+          "doc": "Project session continuity and return the full projection object."
+        },
+        {
+          "name": "build_continuity_prompt_block",
+          "doc": "Render a prompt-facing continuity block from a continuity request."
+        },
+        {
           "name": "build_continuity_prompt_block_from_projection",
           "doc": "Render a prompt-facing continuity block from an existing projection."
         },
         {
           "name": "materialize",
           "doc": "Apply history materialization to messages and tool receipts."
+        },
+        {
+          "name": "build_pack",
+          "doc": "Build a continuity pack through the wrapped engine."
         },
         {
           "name": "policy",
@@ -7083,6 +7055,14 @@
         {
           "name": "materialize",
           "doc": "Apply unified history materialization."
+        },
+        {
+          "name": "get_continuity_pack",
+          "doc": "Generate continuity pack from a session continuity request."
+        },
+        {
+          "name": "get_continuity_prompt_block",
+          "doc": "Render a prompt-facing continuity block for continuity-aware consumers."
         },
         {
           "name": "session_strategy",
@@ -7215,6 +7195,10 @@
           "doc": "Initialize the intelligent compressor."
         },
         {
+          "name": "compress",
+          "doc": "Compress context using importance-based selection."
+        },
+        {
           "name": "_score_items",
           "doc": "Score a list of items using the importance scorer."
         },
@@ -7225,6 +7209,10 @@
         {
           "name": "_estimate_tokens",
           "doc": "Estimate token count for a text string."
+        },
+        {
+          "name": "_summarize_items",
+          "doc": "Summarize multiple low-priority items using LLM."
         },
         {
           "name": "_fallback_summarize",
@@ -7723,8 +7711,26 @@
     },
     {
       "type": "function",
+      "name": "tool_output_summary_payload",
+      "description": "Return a prompt-safe summary for oversized non-failure tool output.",
+      "defined_in": "polaris/kernelone/context/prompt_safety.py"
+    },
+    {
+      "type": "function",
+      "name": "format_tool_output_summary",
+      "description": "",
+      "defined_in": "polaris/kernelone/context/prompt_safety.py"
+    },
+    {
+      "type": "function",
       "name": "prompt_safe_tool_failure_summary",
       "description": "Return a compact failure summary when raw tool receipts would leak.",
+      "defined_in": "polaris/kernelone/context/prompt_safety.py"
+    },
+    {
+      "type": "function",
+      "name": "prompt_safe_tool_output_summary",
+      "description": "Return a compact summary for prompt-visible oversized tool receipts.",
       "defined_in": "polaris/kernelone/context/prompt_safety.py"
     },
     {
@@ -8478,6 +8484,14 @@
           "doc": ""
         },
         {
+          "name": "build_pack",
+          "doc": ""
+        },
+        {
+          "name": "project",
+          "doc": ""
+        },
+        {
           "name": "_build_context_os",
           "doc": ""
         },
@@ -8596,6 +8610,12 @@
     {
       "type": "function",
       "name": "_dedupe_preserve_order",
+      "description": "",
+      "defined_in": "polaris/kernelone/context/session_continuity.py"
+    },
+    {
+      "type": "function",
+      "name": "build_session_continuity_pack",
       "description": "",
       "defined_in": "polaris/kernelone/context/session_continuity.py"
     },
@@ -9316,6 +9336,14 @@
           "doc": "Add an entry to the keyword index synchronously."
         },
         {
+          "name": "add_entry",
+          "doc": "Add an entry to the semantic index."
+        },
+        {
+          "name": "search",
+          "doc": "Search the truth log with semantic similarity."
+        },
+        {
           "name": "_passes_filters",
           "doc": "Check if entry passes all filters."
         },
@@ -9360,6 +9388,10 @@
           "doc": ""
         },
         {
+          "name": "_index_entry_async",
+          "doc": "Index an entry in the semantic index (async)."
+        },
+        {
           "name": "_prune_pending_index_tasks_locked",
           "doc": ""
         },
@@ -9392,6 +9424,10 @@
           "doc": ""
         },
         {
+          "name": "append_async",
+          "doc": "Append an entry to the truth log (async version with proper indexing)."
+        },
+        {
           "name": "append_many",
           "doc": "Append multiple entries while preserving append-only ordering."
         },
@@ -9418,6 +9454,10 @@
         {
           "name": "replay_journal",
           "doc": "Return the durable append journal as a deep-copied replay list."
+        },
+        {
+          "name": "search",
+          "doc": "Search the truth log with semantic similarity."
         },
         {
           "name": "query_by_role",
@@ -9499,6 +9539,46 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "get_or_build_repo_map",
+          "doc": "Get repo map from cache, or build and cache it."
+        },
+        {
+          "name": "get_symbol_index",
+          "doc": "Get symbol index from cache for a file."
+        },
+        {
+          "name": "build_repo_map_with_intelligence",
+          "doc": "Build and inject repo intelligence map into the working set."
+        },
+        {
+          "name": "cache_symbol_index",
+          "doc": "Store symbol index in both Symbol Index and Hot Slice caches."
+        },
+        {
+          "name": "set_repo_map",
+          "doc": "Set (or replace) the repo-map snapshot."
+        },
+        {
+          "name": "add_slice",
+          "doc": "Add a code slice after policy gating."
+        },
+        {
+          "name": "add_symbol",
+          "doc": "Add a symbol candidate after policy gating."
+        },
+        {
+          "name": "expand_to_neighbors",
+          "doc": "Expand working set to files that reference or surround the anchor slice."
+        },
+        {
+          "name": "estimate_tokens",
+          "doc": "Estimate the total token cost of the current working set."
+        },
+        {
+          "name": "should_trigger_compaction",
+          "doc": "Return True when compaction should be triggered."
         },
         {
           "name": "get_context_dict",
@@ -9617,6 +9697,38 @@
         {
           "name": "init_schema",
           "doc": ""
+        },
+        {
+          "name": "get_execution",
+          "doc": ""
+        },
+        {
+          "name": "create_execution",
+          "doc": ""
+        },
+        {
+          "name": "append_event",
+          "doc": ""
+        },
+        {
+          "name": "update_execution",
+          "doc": ""
+        },
+        {
+          "name": "upsert_task_state",
+          "doc": ""
+        },
+        {
+          "name": "create_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "list_task_states",
+          "doc": ""
+        },
+        {
+          "name": "get_events",
+          "doc": ""
         }
       ]
     },
@@ -9660,6 +9772,14 @@
           "doc": "Return current UTC timestamp as ISO string."
         },
         {
+          "name": "start",
+          "doc": ""
+        },
+        {
+          "name": "stop",
+          "doc": ""
+        },
+        {
           "name": "_bootstrap_handlers",
           "doc": "Register all handlers from the injected HandlerRegistry."
         },
@@ -9669,6 +9789,18 @@
         },
         {
           "name": "register_activity",
+          "doc": ""
+        },
+        {
+          "name": "start_workflow",
+          "doc": ""
+        },
+        {
+          "name": "resume_workflow",
+          "doc": "Resume a workflow from a persisted checkpoint."
+        },
+        {
+          "name": "_run_workflow",
           "doc": ""
         },
         {
@@ -9682,6 +9814,30 @@
         {
           "name": "cache_workflow_snapshot",
           "doc": ""
+        },
+        {
+          "name": "_create_periodic_snapshot",
+          "doc": "Persist a checkpoint snapshot of the current workflow state."
+        },
+        {
+          "name": "_run_sequential",
+          "doc": ""
+        },
+        {
+          "name": "_run_dag",
+          "doc": ""
+        },
+        {
+          "name": "_execute_spec",
+          "doc": ""
+        },
+        {
+          "name": "_dispatch",
+          "doc": ""
+        },
+        {
+          "name": "_invoke_handler",
+          "doc": "Invoke handler with flexible signature support (delegated to shared utility)."
         },
         {
           "name": "_resolve_input",
@@ -9704,11 +9860,71 @@
           "doc": ""
         },
         {
+          "name": "_unwrap_outcome",
+          "doc": "Unwrap task outcome, handling cancellation gracefully (delegated to shared utility)."
+        },
+        {
+          "name": "_apply_outcome",
+          "doc": ""
+        },
+        {
+          "name": "_cancel_running",
+          "doc": "Cancel running tasks and wait for them to settle (delegated to shared utility)."
+        },
+        {
+          "name": "_mark_tasks",
+          "doc": ""
+        },
+        {
+          "name": "_enqueue_pending_to_dlq",
+          "doc": "Route pending tasks to the dead letter queue."
+        },
+        {
+          "name": "_persist_task_state",
+          "doc": ""
+        },
+        {
+          "name": "_apply_signals",
+          "doc": ""
+        },
+        {
           "name": "_resolve_status",
           "doc": ""
         },
         {
           "name": "_build_result",
+          "doc": ""
+        },
+        {
+          "name": "describe_workflow",
+          "doc": ""
+        },
+        {
+          "name": "wait_workflow_completion",
+          "doc": "Wait for the in-process workflow task to finish, without status polling."
+        },
+        {
+          "name": "query_workflow",
+          "doc": ""
+        },
+        {
+          "name": "cancel_workflow",
+          "doc": ""
+        },
+        {
+          "name": "signal_workflow",
+          "doc": ""
+        },
+        {
+          "name": "submit_activity",
+          "doc": ""
+        },
+        {
+          "name": "schedule_timer",
+          "doc": ""
+        },
+        {
+          "name": "_callback",
           "doc": ""
         },
         {

@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
+from typing import Any, Protocol, runtime_checkable
 
 
 def _require_non_empty(name: str, value: str) -> str:
@@ -33,6 +31,13 @@ def _normalize_workspace(value: str | Path) -> str:
     if not workspace_path.is_dir():
         raise ValueError(f"workspace is not a directory: {workspace_path}")
     return str(workspace_path)
+
+
+def _require_lower_sha256(name: str, value: str) -> str:
+    normalized = str(value).strip()
+    if len(normalized) != 64 or any(character not in "0123456789abcdef" for character in normalized):
+        raise ValueError(f"{name} must be a lowercase SHA-256 hex digest")
+    return normalized
 
 
 class ExecutionProcessStatusV1(Enum):
@@ -75,6 +80,100 @@ class ExecutionErrorCode(Enum):
 
     # Catch-all
     UNKNOWN_ERROR = "execution_broker.unknown_error"
+
+
+@runtime_checkable
+class ManagedProcessReceiptStorePortV1(Protocol):
+    """Consumer-owned view of the canonical managed-process receipt owner."""
+
+    def append_managed_process_receipt(
+        self,
+        command: AppendManagedProcessReceiptCommandV1,
+        /,
+    ) -> ManagedProcessReceiptAppendResultV1:
+        """Persist one canonical receipt idempotently by content hash."""
+
+    def get_managed_process_receipt(
+        self,
+        query: GetManagedProcessReceiptQueryV1,
+        /,
+    ) -> ManagedProcessReceiptRecordV1 | None:
+        """Read one canonical receipt by its content hash."""
+
+
+@dataclass(frozen=True, slots=True)
+class AppendManagedProcessReceiptCommandV1:
+    """Typed request for B2's future content-addressed receipt owner.
+
+    B1 defines only the consumer contract; it neither derives nor persists the
+    receipt hash.  B2's `audit.evidence` owner must verify that the hash binds
+    this immutable receipt body before returning the typed result.
+    """
+
+    workspace: str
+    receipt_hash: str
+    receipt: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _normalize_workspace(self.workspace))
+        object.__setattr__(self, "receipt_hash", _require_lower_sha256("receipt_hash", self.receipt_hash))
+        if not isinstance(self.receipt, Mapping) or not self.receipt:
+            raise TypeError("receipt must be a non-empty mapping")
+        object.__setattr__(self, "receipt", dict(self.receipt))
+
+
+@dataclass(frozen=True, slots=True)
+class GetManagedProcessReceiptQueryV1:
+    """Typed receipt lookup used only after a receipt reference is committed."""
+
+    workspace: str
+    receipt_hash: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _normalize_workspace(self.workspace))
+        object.__setattr__(self, "receipt_hash", _require_lower_sha256("receipt_hash", self.receipt_hash))
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedProcessReceiptAppendResultV1:
+    """Idempotent append result with durable receipt identity."""
+
+    receipt_ref: str
+    receipt_hash: str
+    already_present: bool
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "receipt_ref", _require_non_empty("receipt_ref", self.receipt_ref))
+        object.__setattr__(self, "receipt_hash", _require_lower_sha256("receipt_hash", self.receipt_hash))
+        if type(self.already_present) is not bool:
+            raise TypeError("already_present must be a bool")
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedProcessReceiptRecordV1:
+    """Immutable canonical receipt resolved by its content address."""
+
+    receipt_ref: str
+    receipt_hash: str
+    receipt: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "receipt_ref", _require_non_empty("receipt_ref", self.receipt_ref))
+        object.__setattr__(self, "receipt_hash", _require_lower_sha256("receipt_hash", self.receipt_hash))
+        if not isinstance(self.receipt, Mapping) or not self.receipt:
+            raise TypeError("receipt must be a non-empty mapping")
+        object.__setattr__(self, "receipt", dict(self.receipt))
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedProcessPortsV1:
+    """Bootstrap-composed managed-process receipt dependency."""
+
+    receipt_store: ManagedProcessReceiptStorePortV1
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.receipt_store, ManagedProcessReceiptStorePortV1):
+            raise TypeError("receipt_store must satisfy ManagedProcessReceiptStorePortV1")
 
 
 @dataclass(frozen=True)
@@ -182,6 +281,7 @@ class ExecutionBrokerError(RuntimeError):
 
 
 __all__ = [
+    "AppendManagedProcessReceiptCommandV1",
     "ExecutionBrokerError",
     "ExecutionErrorCode",
     "ExecutionProcessHandleV1",
@@ -189,5 +289,10 @@ __all__ = [
     "ExecutionProcessStatusV1",
     "ExecutionProcessWaitResultV1",
     "GetExecutionProcessStatusQueryV1",
+    "GetManagedProcessReceiptQueryV1",
     "LaunchExecutionProcessCommandV1",
+    "ManagedProcessPortsV1",
+    "ManagedProcessReceiptAppendResultV1",
+    "ManagedProcessReceiptRecordV1",
+    "ManagedProcessReceiptStorePortV1",
 ]

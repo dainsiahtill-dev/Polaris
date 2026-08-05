@@ -1,10 +1,22 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:10.670259Z",
-  "source_hash": "1d82ae60848dfc7f",
+  "generated_at": "2026-08-02T15:47:38.340992Z",
+  "source_hash": "f3ea5d42d892e257",
   "cell_id": "delivery.api_gateway",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "function",
+      "name": "_run_sync_cleanup_callbacks",
+      "description": "Run every synchronous cleanup callback without masking another failure.",
+      "defined_in": "polaris/delivery/http/app_factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_async_cleanup_callbacks",
+      "description": "Run every awaitable cleanup callback without masking another failure.",
+      "defined_in": "polaris/delivery/http/app_factory.py"
+    },
     {
       "type": "function",
       "name": "get_effective_token",
@@ -15,6 +27,18 @@
       "type": "function",
       "name": "is_auth_token_discovery_enabled",
       "description": "Return whether the public auth-token discovery endpoint may expose a token.",
+      "defined_in": "polaris/delivery/http/app_factory.py"
+    },
+    {
+      "type": "function",
+      "name": "lifespan",
+      "description": "Application lifespan manager.",
+      "defined_in": "polaris/delivery/http/app_factory.py"
+    },
+    {
+      "type": "function",
+      "name": "cleanup_startup_resources",
+      "description": "Release idempotent process resources after a failed startup stage.",
       "defined_in": "polaris/delivery/http/app_factory.py"
     },
     {
@@ -43,6 +67,36 @@
     },
     {
       "type": "function",
+      "name": "get_current_settings",
+      "description": "Get application settings.",
+      "defined_in": "polaris/delivery/http/dependencies.py"
+    },
+    {
+      "type": "function",
+      "name": "get_workspace",
+      "description": "Resolve active workspace path for request-scoped dependencies.",
+      "defined_in": "polaris/delivery/http/dependencies.py"
+    },
+    {
+      "type": "function",
+      "name": "get_pm_service",
+      "description": "Get PM service instance from DI container.",
+      "defined_in": "polaris/delivery/http/dependencies.py"
+    },
+    {
+      "type": "function",
+      "name": "get_director_service",
+      "description": "Get Director service instance from DI container.",
+      "defined_in": "polaris/delivery/http/dependencies.py"
+    },
+    {
+      "type": "function",
+      "name": "get_background_task_service",
+      "description": "Get background task service instance from DI container.",
+      "defined_in": "polaris/delivery/http/dependencies.py"
+    },
+    {
+      "type": "function",
       "name": "require_auth",
       "description": "Require bearer auth when backend token is configured.",
       "defined_in": "polaris/delivery/http/dependencies.py"
@@ -66,6 +120,180 @@
       "defined_in": "polaris/delivery/http/error_handlers.py"
     },
     {
+      "type": "function",
+      "name": "domain_exception_handler",
+      "description": "Handle all domain exceptions.",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "validation_exception_handler",
+      "description": "Handle FastAPI request validation errors (Pydantic / query param errors).",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "structured_http_exception_handler",
+      "description": "Handle StructuredHTTPException: return unified {code, message, details} format.",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "_generic_error_response",
+      "description": "Build the standard 500 JSONResponse for an unhandled exception.",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "runtime_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "value_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "type_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "attribute_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "key_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "index_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "not_implemented_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "assertion_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "os_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "import_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "module_not_found_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "zero_division_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "lookup_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "name_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "unbound_local_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "arithmetic_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "environment_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "io_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "reference_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "syntax_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "recursion_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "overflow_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "memory_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "system_error_handler",
+      "description": "",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "generic_exception_handler",
+      "description": "Fallback catch-all handler for any unhandled exception.",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
       "type": "class",
       "name": "AuditContextMiddleware",
       "description": "Middleware for establishing unified audit context from request headers.",
@@ -82,6 +310,10 @@
         {
           "name": "_extract_or_generate_ids",
           "doc": "Extract IDs from headers or generate if not present."
+        },
+        {
+          "name": "dispatch",
+          "doc": "Process request with audit context setup."
         }
       ]
     },
@@ -134,6 +366,10 @@
         {
           "name": "_format_log_entry",
           "doc": "Format structured log entry."
+        },
+        {
+          "name": "dispatch",
+          "doc": "Process request with logging."
         }
       ]
     },
@@ -202,6 +438,10 @@
         {
           "name": "_normalize_path",
           "doc": "Normalize path for metric labeling (remove IDs)."
+        },
+        {
+          "name": "dispatch",
+          "doc": "Process request with metrics collection."
         }
       ]
     },
@@ -215,6 +455,12 @@
       "type": "function",
       "name": "reset_metrics_for_testing",
       "description": "Reset global metrics collector for test isolation.",
+      "defined_in": "polaris/delivery/http/middleware/metrics.py"
+    },
+    {
+      "type": "function",
+      "name": "metrics_endpoint",
+      "description": "Prometheus metrics endpoint.",
       "defined_in": "polaris/delivery/http/middleware/metrics.py"
     },
     {
@@ -279,6 +525,10 @@
         {
           "name": "diagnostics_snapshot",
           "doc": "Return current middleware configuration and token bucket state."
+        },
+        {
+          "name": "dispatch",
+          "doc": "Process request with rate limiting."
         }
       ]
     },
@@ -566,6 +816,12 @@
       "type": "function",
       "name": "verify_event_signature",
       "description": "Verify HMAC signature of event.",
+      "defined_in": "polaris/delivery/http/routers/jetstream_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "publish_to_jetstream",
+      "description": "Publish event to NAT JetStream.",
       "defined_in": "polaris/delivery/http/routers/jetstream_utils.py"
     }
   ],

@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from datetime import datetime, timezone
+from threading import Lock
 from typing import Any
 
 from polaris.cells.audit.evidence.bundle_service import EvidenceBundleService, create_evidence_bundle_service
@@ -19,12 +21,17 @@ from polaris.cells.audit.evidence.internal.task_audit_llm_binding import (
     get_audit_role_descriptor,
 )
 from polaris.cells.audit.evidence.public.contracts import (
+    MANAGED_PROCESS_RECEIPT_LOGICAL_PATH_V1,
     AppendEvidenceEventCommandV1,
     EvidenceAppendedEventV1,
     EvidenceAuditError,
     EvidenceQueryResultV1,
     EvidenceVerificationResultV1,
+    ManagedProcessReceiptPersistResultV1,
+    ManagedProcessReceiptRecordV1,
+    PersistManagedProcessReceiptCommandV1,
     QueryEvidenceEventsV1,
+    ReadManagedProcessReceiptQueryV1,
     VerifyEvidenceChainV1,
 )
 from polaris.cells.audit.evidence.task_service import (
@@ -36,6 +43,8 @@ from polaris.cells.audit.evidence.task_service import (
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 
 _EVIDENCE_KIND_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+_MANAGED_PROCESS_RECEIPT_SCHEMA_V1 = "audit.evidence.managed_process_receipt.v1"
+_MANAGED_PROCESS_RECEIPT_LOCK = Lock()
 
 
 def _utc_now() -> str:
@@ -91,6 +100,133 @@ def _all_evidence_records(fs: Any) -> list[dict[str, Any]]:
     for logical_path in _evidence_logical_paths(fs):
         records.extend(_read_evidence_records(fs, logical_path))
     return sorted(records, key=_event_sort_key)
+
+
+def _plain_json_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _plain_json_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_plain_json_value(item) for item in value]
+    return value
+
+
+def _canonical_receipt_json(receipt: Mapping[str, Any]) -> str:
+    return json.dumps(
+        _plain_json_value(receipt),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
+def _managed_process_receipt_hash(receipt: Mapping[str, Any]) -> str:
+    canonical = _canonical_receipt_json(receipt)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _managed_process_receipt_ref(receipt_hash: str) -> str:
+    return f"{MANAGED_PROCESS_RECEIPT_LOGICAL_PATH_V1}#{receipt_hash}"
+
+
+def _read_managed_process_receipt_records(fs: Any) -> tuple[ManagedProcessReceiptRecordV1, ...]:
+    try:
+        content = fs.read_text(MANAGED_PROCESS_RECEIPT_LOGICAL_PATH_V1, encoding="utf-8")
+    except FileNotFoundError:
+        return ()
+    records: list[ManagedProcessReceiptRecordV1] = []
+    seen: set[tuple[str, str]] = set()
+    for line_number, line in enumerate(str(content or "").splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            payload = json.loads(stripped)
+            if not isinstance(payload, dict):
+                raise TypeError("record must be an object")
+            if payload.get("schema_version") != _MANAGED_PROCESS_RECEIPT_SCHEMA_V1:
+                raise ValueError("unexpected schema_version")
+            record = ManagedProcessReceiptRecordV1(
+                workspace=payload["workspace"],
+                receipt_ref=payload["receipt_ref"],
+                receipt_hash=payload["receipt_hash"],
+                receipt=payload["receipt"],
+            )
+            if _managed_process_receipt_hash(record.receipt) != record.receipt_hash:
+                raise ValueError("receipt_hash does not bind receipt")
+            identity = (record.workspace, record.receipt_hash)
+            if identity in seen:
+                raise ValueError("duplicate receipt identity")
+            seen.add(identity)
+            records.append(record)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise EvidenceAuditError(
+                f"invalid managed-process receipt at {MANAGED_PROCESS_RECEIPT_LOGICAL_PATH_V1}:{line_number}"
+            ) from exc
+    return tuple(records)
+
+
+def persist_managed_process_receipt(
+    command: PersistManagedProcessReceiptCommandV1,
+    *,
+    kernel_fs: Any | None = None,
+) -> ManagedProcessReceiptPersistResultV1:
+    """Persist one canonical full receipt idempotently through audit.evidence."""
+
+    if type(command) is not PersistManagedProcessReceiptCommandV1:
+        raise TypeError("command must be PersistManagedProcessReceiptCommandV1")
+    receipt_hash = _managed_process_receipt_hash(command.receipt)
+    if command.claimed_receipt_hash is not None and command.claimed_receipt_hash != receipt_hash:
+        raise EvidenceAuditError("claimed receipt hash does not match the canonical receipt body")
+    receipt_ref = _managed_process_receipt_ref(receipt_hash)
+    fs = kernel_fs or KernelFileSystem(command.workspace, get_default_adapter())
+    with _MANAGED_PROCESS_RECEIPT_LOCK:
+        records = _read_managed_process_receipt_records(fs)
+        for record in records:
+            if record.workspace != command.workspace or record.receipt_hash != receipt_hash:
+                continue
+            if _canonical_receipt_json(record.receipt) != _canonical_receipt_json(command.receipt):
+                raise EvidenceAuditError("managed-process receipt hash collision")
+            return ManagedProcessReceiptPersistResultV1(
+                workspace=command.workspace,
+                receipt_ref=record.receipt_ref,
+                receipt_hash=record.receipt_hash,
+                already_present=True,
+            )
+        fs.append_jsonl(
+            MANAGED_PROCESS_RECEIPT_LOGICAL_PATH_V1,
+            {
+                "schema_version": _MANAGED_PROCESS_RECEIPT_SCHEMA_V1,
+                "workspace": command.workspace,
+                "receipt_ref": receipt_ref,
+                "receipt_hash": receipt_hash,
+                "receipt": _plain_json_value(command.receipt),
+            },
+        )
+    return ManagedProcessReceiptPersistResultV1(
+        workspace=command.workspace,
+        receipt_ref=receipt_ref,
+        receipt_hash=receipt_hash,
+        already_present=False,
+    )
+
+
+def read_managed_process_receipt(
+    query: ReadManagedProcessReceiptQueryV1,
+    *,
+    kernel_fs: Any | None = None,
+) -> ManagedProcessReceiptRecordV1 | None:
+    """Read immutable receipt data by hash within one workspace boundary."""
+
+    if type(query) is not ReadManagedProcessReceiptQueryV1:
+        raise TypeError("query must be ReadManagedProcessReceiptQueryV1")
+    fs = kernel_fs or KernelFileSystem(query.workspace, get_default_adapter())
+    with _MANAGED_PROCESS_RECEIPT_LOCK:
+        records = _read_managed_process_receipt_records(fs)
+    for record in records:
+        if record.workspace == query.workspace and record.receipt_hash == query.receipt_hash:
+            return record
+    return None
 
 
 def append_evidence_event(
@@ -174,6 +310,10 @@ __all__ = [
     "EvidenceQueryResultV1",
     "EvidenceService",
     "EvidenceVerificationResultV1",
+    "ManagedProcessReceiptPersistResultV1",
+    "ManagedProcessReceiptRecordV1",
+    "PersistManagedProcessReceiptCommandV1",
+    "ReadManagedProcessReceiptQueryV1",
     "RoleSessionAuditService",
     "append_evidence_event",
     "bind_audit_llm_to_task_service",
@@ -183,6 +323,8 @@ __all__ = [
     "create_evidence_bundle_service",
     "detect_language",
     "get_audit_role_descriptor",
+    "persist_managed_process_receipt",
     "query_evidence_events",
+    "read_managed_process_receipt",
     "verify_evidence_chain",
 ]

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T06:42:12.638170Z",
-  "source_hash": "8e90199974b0c4b3",
+  "generated_at": "2026-08-02T15:47:47.386924Z",
+  "source_hash": "704c61698c2af6be",
   "cell_id": "roles.runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -327,6 +327,10 @@
         {
           "name": "poll",
           "doc": "Receive next message for receiver. Thread-safe."
+        },
+        {
+          "name": "poll_async",
+          "doc": "Receive next message for receiver using event-loop wakeups."
         },
         {
           "name": "_wake_async_waiters_locked",
@@ -1293,8 +1297,24 @@
           "doc": ""
         },
         {
+          "name": "_async_connect",
+          "doc": "Async NATS connection logic (runs in the event loop thread)."
+        },
+        {
           "name": "connect",
           "doc": "Connect to NATS synchronously."
+        },
+        {
+          "name": "_async_publish",
+          "doc": "Async publish to NATS subject."
+        },
+        {
+          "name": "_async_subscribe",
+          "doc": "Async subscribe to NATS subject, return subscription."
+        },
+        {
+          "name": "_async_close",
+          "doc": "Async close NATS connection."
         },
         {
           "name": "publish",
@@ -1327,6 +1347,10 @@
         {
           "name": "poll",
           "doc": "Poll next message for receiver."
+        },
+        {
+          "name": "poll_async",
+          "doc": "Poll next message for receiver using async-aware polling."
         },
         {
           "name": "ack",
@@ -1452,6 +1476,12 @@
     },
     {
       "type": "function",
+      "name": "_launch",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
       "name": "_publish_process_exit_status",
       "description": "",
       "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
@@ -1488,7 +1518,19 @@
     },
     {
       "type": "function",
+      "name": "_wait_for_completion",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
       "name": "terminate_process",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_terminate",
       "description": "",
       "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
     },
@@ -1678,7 +1720,7 @@
     {
       "type": "class",
       "name": "SequentialFailureClass",
-      "description": "失败类别（用于路由决策）",
+      "description": "Sequential-engine local routing categories, not Run Ledger failure taxonomy.",
       "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
       "methods": []
     },
@@ -1878,8 +1920,24 @@
           "doc": "设置依赖组件（延迟初始化）"
         },
         {
+          "name": "execute",
+          "doc": "执行 Sequential 循环"
+        },
+        {
+          "name": "_init_session",
+          "doc": "初始化会话"
+        },
+        {
+          "name": "_execute_step",
+          "doc": "执行单步"
+        },
+        {
           "name": "_build_step_prompt",
           "doc": ""
+        },
+        {
+          "name": "_invoke_llm",
+          "doc": "Invoke injected LLM caller with tolerant signature matching."
         },
         {
           "name": "_normalize_llm_payload",
@@ -1906,12 +1964,24 @@
           "doc": "记录步骤到状态"
         },
         {
+          "name": "_terminate",
+          "doc": "终止执行"
+        },
+        {
+          "name": "_terminate_with_error",
+          "doc": "因错误终止"
+        },
+        {
           "name": "_build_stats",
           "doc": "构建统计结果"
         },
         {
           "name": "_map_termination_to_action",
           "doc": "终止原因映射到外层动作"
+        },
+        {
+          "name": "recover",
+          "doc": "从保存的状态恢复"
         },
         {
           "name": "get_state",
@@ -1966,10 +2036,36 @@
           "doc": ""
         },
         {
+          "name": "persist",
+          "doc": "持久化 Artifact 列表，自动做增量 diff 和去重压缩触发。"
+        },
+        {
+          "name": "_save_full",
+          "doc": ""
+        },
+        {
+          "name": "_save_delta",
+          "doc": ""
+        },
+        {
+          "name": "_trigger_incremental_compress",
+          "doc": ""
+        },
+        {
           "name": "get_artifact_map",
           "doc": "返回当前已聚合的 artifact 元数据映射。"
+        },
+        {
+          "name": "store_structured_findings",
+          "doc": "存储结构化发现物作为派生记忆（derived memory）。"
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_async_write_text",
+      "description": "Persist ``content`` to ``path`` off the event loop, fail-closed.",
+      "defined_in": "polaris/cells/roles/runtime/internal/session_artifact_store.py"
     },
     {
       "type": "function",
@@ -2100,8 +2196,24 @@
           "doc": "Return True when the current session is a SUPER-mode Director materialize workflow."
         },
         {
+          "name": "_retrieve_bootstrapping_knowledge",
+          "doc": "Retrieve relevant historical knowledge for session bootstrapping."
+        },
+        {
+          "name": "close",
+          "doc": "优雅关闭编排器，取消后台预热任务并清理 Gateway 资源。"
+        },
+        {
+          "name": "execute_stream",
+          "doc": "流式执行多 Turn 会话编排。"
+        },
+        {
           "name": "_apply_read_only_termination_exemption",
           "doc": "Convert read-only auto-continue turns with visible output into final answers."
+        },
+        {
+          "name": "_checkpoint_session",
+          "doc": "持久化当前会话状态到本地 checkpoint 文件。"
         },
         {
           "name": "_build_continuation_prompt",
@@ -2144,12 +2256,20 @@
           "doc": "计算当前 artifacts 的指纹并追加到 recent_artifact_hashes。"
         },
         {
+          "name": "_noop_consume_speculation",
+          "doc": ""
+        },
+        {
           "name": "_try_load_checkpoint",
           "doc": "尝试从 checkpoint 文件恢复会话状态。"
         },
         {
           "name": "_load_checkpoint",
           "doc": "从 checkpoint JSON 文件恢复 OrchestratorSessionState。"
+        },
+        {
+          "name": "_yield_pre_warmed_events",
+          "doc": "产出 ShadowEngine 预热结果的事件流。骨架实现，待 ShadowEngine v2 扩展。"
         },
         {
           "name": "_predict_next_tools",
@@ -2169,43 +2289,40 @@
     },
     {
       "type": "class",
-      "name": "ReadyTaskLike",
-      "description": "",
-      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TaskBoardPort",
+      "name": "_TaskRuntimeFinalizationPort",
       "description": "",
       "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py",
       "methods": [
         {
-          "name": "complete",
-          "doc": ""
-        },
-        {
-          "name": "fail",
-          "doc": ""
-        },
-        {
-          "name": "list_ready",
-          "doc": ""
-        },
-        {
-          "name": "claim",
+          "name": "settle_execution_attempt",
           "doc": ""
         }
       ]
     },
     {
       "type": "class",
-      "name": "ReadyTaskNotifier",
+      "name": "TaskRuntimePort",
       "description": "",
       "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py",
       "methods": [
         {
-          "name": "add_ready_listener",
+          "name": "claim_next_execution",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_LegacyTaskRuntimePort",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py",
+      "methods": [
+        {
+          "name": "list_ready_task_rows",
+          "doc": ""
+        },
+        {
+          "name": "claim_execution",
           "doc": ""
         }
       ]
@@ -2316,6 +2433,26 @@
           "doc": ""
         },
         {
+          "name": "start",
+          "doc": "Start Async Worker"
+        },
+        {
+          "name": "stop",
+          "doc": "Stop Async Worker"
+        },
+        {
+          "name": "_wait_for_current_task",
+          "doc": "Wait for current task to complete."
+        },
+        {
+          "name": "submit_task",
+          "doc": "Submit task to Async Worker"
+        },
+        {
+          "name": "_run_loop",
+          "doc": "Main loop: wait for work events, execute, repeat."
+        },
+        {
           "name": "_wake",
           "doc": ""
         },
@@ -2334,6 +2471,18 @@
         {
           "name": "_claim_ready_task",
           "doc": ""
+        },
+        {
+          "name": "_next_task",
+          "doc": ""
+        },
+        {
+          "name": "_execute_worker_task",
+          "doc": ""
+        },
+        {
+          "name": "_execute_task_async",
+          "doc": "Execute task using execution_broker."
         },
         {
           "name": "_read_log",
@@ -2392,6 +2541,30 @@
           "doc": ""
         },
         {
+          "name": "_ensure_started",
+          "doc": "Ensure all workers are started."
+        },
+        {
+          "name": "spawn_worker",
+          "doc": "Create a new AsyncWorker"
+        },
+        {
+          "name": "shutdown_worker",
+          "doc": "Shutdown AsyncWorker"
+        },
+        {
+          "name": "submit_task",
+          "doc": "Submit task to AsyncWorker"
+        },
+        {
+          "name": "get_status",
+          "doc": "Get AsyncWorker pool status"
+        },
+        {
+          "name": "shutdown_all",
+          "doc": "Shutdown all AsyncWorkers"
+        },
+        {
           "name": "_on_worker_message",
           "doc": "Handle AsyncWorker message"
         },
@@ -2421,8 +2594,80 @@
     },
     {
       "type": "function",
+      "name": "_merge_task_runtime_finalization_result",
+      "description": "Apply TaskRuntime finalization failure evidence to a worker result.",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_row_task_id",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_row_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_execution_attempt_from_claim",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_worker_timeout",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_worker_task_from_runtime_row",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_claim_result_to_worker_task",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_legacy_ready_task",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_claim_next_runtime_task",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_claim_legacy_ready_task",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_claim_ready_runtime_task",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
+    },
+    {
+      "type": "function",
       "name": "create_worker_pool",
-      "description": "Create sync Worker pool (backward compatible)",
+      "description": "Create sync Worker pool.",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "create_async_worker_pool",
+      "description": "Create async Worker pool using execution_broker",
       "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
     },
     {
@@ -2567,6 +2812,12 @@
       "type": "function",
       "name": "_extract_failure_evidence",
       "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/aggregate_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_aggregate_plan_failure_evidence_payload",
+      "description": "Return the canonical aggregate failure-evidence projection for a plan.",
       "defined_in": "polaris/cells/roles/runtime/public/aggregate_chat.py"
     },
     {
@@ -2800,6 +3051,30 @@
         {
           "name": "stream_chat_turn",
           "doc": ""
+        },
+        {
+          "name": "build_aggregate_role_plan",
+          "doc": "Build a query-only plan for treating role composition as one model."
+        },
+        {
+          "name": "audit_aggregate_runtime_integrations",
+          "doc": "Return a machine-readable audit of aggregate runtime integrations."
+        },
+        {
+          "name": "_execute_aggregate_lobe_turn",
+          "doc": ""
+        },
+        {
+          "name": "_execute_aggregate_single_turn",
+          "doc": ""
+        },
+        {
+          "name": "_execute_aggregate_lobe_chain",
+          "doc": ""
+        },
+        {
+          "name": "chat_completions",
+          "doc": "Expose Polaris role composition behind a model-shaped interface."
         }
       ]
     },
@@ -3064,8 +3339,59 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "_bootstrap_fact_stream_workspace",
+          "doc": "Delegate formal role-CLI startup to the platform bootstrap service."
+        },
+        {
+          "name": "_claim_task_execution_attempt",
+          "doc": "Materialize and claim CLI task authority through TaskRuntime."
+        },
+        {
+          "name": "_settle_task_execution",
+          "doc": "Settle one CLI TaskRuntime claim without hiding settlement failures."
+        },
+        {
+          "name": "run_interactive",
+          "doc": "Interactive REPL loop for a role."
+        },
+        {
+          "name": "run_oneshot",
+          "doc": "Execute a single role goal and return structured result."
+        },
+        {
+          "name": "run_autonomous",
+          "doc": "Plan-and-execute loop for a role, up to max_iterations."
+        },
+        {
+          "name": "run_server",
+          "doc": "Run a FastAPI server for programmatic role access."
+        },
+        {
+          "name": "chat_endpoint",
+          "doc": ""
+        },
+        {
+          "name": "execute_endpoint",
+          "doc": ""
+        },
+        {
+          "name": "status_endpoint",
+          "doc": ""
+        },
+        {
+          "name": "execute_role",
+          "doc": "Execute a role task or session based on context parameters."
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "SQLAlchemyError",
+      "description": "Fallback marker when optional SQLAlchemy runtime support is absent.",
+      "defined_in": "polaris/cells/roles/runtime/public/cognitive_runtime_methods.py",
+      "methods": []
     },
     {
       "type": "class",
@@ -3083,6 +3409,18 @@
         },
         {
           "name": "_emit_cognitive_runtime_shadow_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_apply_cognitive_runtime_preflight",
+          "doc": ""
+        },
+        {
+          "name": "_prepare_task_request",
+          "doc": ""
+        },
+        {
+          "name": "_prepare_session_request",
           "doc": ""
         }
       ]
@@ -3486,6 +3824,34 @@
       "defined_in": "polaris/cells/roles/runtime/public/contracts/_execution_contracts.py",
       "methods": [
         {
+          "name": "execute_role_task",
+          "doc": "Execute one task command."
+        },
+        {
+          "name": "execute_role_session",
+          "doc": "Execute one session-turn command."
+        },
+        {
+          "name": "get_runtime_status",
+          "doc": "Return runtime status snapshot."
+        },
+        {
+          "name": "build_aggregate_role_plan",
+          "doc": "Return a query-only aggregate role/lobe composition plan."
+        },
+        {
+          "name": "audit_aggregate_runtime_integrations",
+          "doc": "Return runtime integration audit for aggregate-model technology."
+        },
+        {
+          "name": "chat_completions",
+          "doc": "Return a model-shaped aggregate chat completion."
+        },
+        {
+          "name": "execute_role",
+          "doc": "Compatibility method for pre-contract callsites."
+        },
+        {
           "name": "stream_chat_turn",
           "doc": "Stream role chat turn events as an async iterator."
         }
@@ -3814,7 +4180,7 @@
     },
     {
       "type": "function",
-      "name": "_is_legacy_task_market_task_ref",
+      "name": "_is_retired_task_market_task_ref",
       "description": "",
       "defined_in": "polaris/cells/roles/runtime/public/contracts/_validation.py"
     },
@@ -3873,6 +4239,13 @@
       "defined_in": "polaris/cells/roles/runtime/public/contracts/_validation.py"
     },
     {
+      "type": "class",
+      "name": "SQLAlchemyError",
+      "description": "Fallback marker when optional SQLAlchemy runtime support is absent.",
+      "defined_in": "polaris/cells/roles/runtime/public/persistence.py",
+      "methods": []
+    },
+    {
       "type": "function",
       "name": "_create_role_session_service",
       "description": "",
@@ -3886,13 +4259,61 @@
     },
     {
       "type": "function",
+      "name": "persist_session_turn_state",
+      "description": "Persist role session turn state to roles.session source-of-truth.",
+      "defined_in": "polaris/cells/roles/runtime/public/persistence.py"
+    },
+    {
+      "type": "function",
       "name": "emit_strategy_receipt",
       "description": "Persist a strategy run's receipt to `<metadata_dir>/runtime/strategy_runs/`.",
       "defined_in": "polaris/cells/roles/runtime/public/persistence.py"
     },
     {
       "type": "function",
+      "name": "project_host_history",
+      "description": "Project host history for session continuity.",
+      "defined_in": "polaris/cells/roles/runtime/public/persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "_native_tool_call_envelopes",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/result_mapping.py"
+    },
+    {
+      "type": "function",
+      "name": "_lifecycle_receipt_from_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/result_mapping.py"
+    },
+    {
+      "type": "function",
+      "name": "_lifecycle_failure_evidence_from_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/result_mapping.py"
+    },
+    {
+      "type": "function",
       "name": "_extract_tool_calls",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/result_mapping.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_tool_dispatch_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/result_mapping.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_dispatch_dropped_error",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/result_mapping.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_lifecycle_failure_error",
       "description": "",
       "defined_in": "polaris/cells/roles/runtime/public/result_mapping.py"
     },
@@ -3984,7 +4405,31 @@
           "doc": ""
         },
         {
+          "name": "_project_host_history",
+          "doc": "Project host history for session continuity."
+        },
+        {
+          "name": "_persist_session_turn_state",
+          "doc": "Persist role session turn state to roles.session source-of-truth."
+        },
+        {
           "name": "_build_task_request",
+          "doc": ""
+        },
+        {
+          "name": "_validate_task_execution_attempt",
+          "doc": "Fail closed unless the command matches a live TaskRuntime claim."
+        },
+        {
+          "name": "_directed_effect_guard_required",
+          "doc": ""
+        },
+        {
+          "name": "_validate_directed_effect_session_attempt",
+          "doc": "Validate one guarded session against its process-local TaskRuntime authority."
+        },
+        {
+          "name": "_require_directed_effect_session_attempt",
           "doc": ""
         },
         {
@@ -3992,8 +4437,48 @@
           "doc": ""
         },
         {
+          "name": "create_transaction_controller",
+          "doc": "Create a TurnTransactionController for session orchestrator integration."
+        },
+        {
+          "name": "execute_role_task",
+          "doc": ""
+        },
+        {
+          "name": "execute_role_session",
+          "doc": ""
+        },
+        {
+          "name": "get_runtime_status",
+          "doc": ""
+        },
+        {
+          "name": "stream_chat_turn",
+          "doc": "Stream role chat turns as an async iterator of events."
+        },
+        {
           "name": "_get_cli_runner",
           "doc": "Get CliRunner instance for CLI method forwarding."
+        },
+        {
+          "name": "run_interactive",
+          "doc": "Interactive REPL loop for a role. Delegates to CliRunner."
+        },
+        {
+          "name": "run_oneshot",
+          "doc": "Execute a single role goal. Delegates to CliRunner."
+        },
+        {
+          "name": "run_autonomous",
+          "doc": "Plan-and-execute loop for a role. Delegates to CliRunner."
+        },
+        {
+          "name": "run_server",
+          "doc": "Run a FastAPI server for programmatic role access. Delegates to CliRunner."
+        },
+        {
+          "name": "execute_role",
+          "doc": "Execute a role task or session. Delegates to CliRunner."
         }
       ]
     },
@@ -4007,6 +4492,48 @@
       "type": "function",
       "name": "reset_role_runtime_service",
       "description": "Reset the singleton RoleRuntimeService for test isolation.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_role_task_command",
+      "description": "Execute role task command via singleton runtime service.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_role_session_command",
+      "description": "Execute role session command via singleton runtime service.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "stream_role_session_command",
+      "description": "Stream role session events via singleton runtime service.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_role_runtime_status",
+      "description": "Query role runtime status via singleton runtime service.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_aggregate_role_plan",
+      "description": "Query aggregate role/lobe composition via singleton runtime service.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_aggregate_runtime_integrations",
+      "description": "Audit aggregate runtime integrations via singleton runtime service.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "aggregate_chat_completions",
+      "description": "Return aggregate chat completions via singleton runtime service.",
       "defined_in": "polaris/cells/roles/runtime/public/service.py"
     },
     {
@@ -4063,6 +4590,24 @@
     },
     {
       "type": "function",
+      "name": "role_chat_ping",
+      "description": "Health check for the role chat router.",
+      "defined_in": "polaris/delivery/http/routers/role_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_llm_test_index_async",
+      "description": "异步加载 LLM 测试索引（将同步文件 I/O 移到线程池）",
+      "defined_in": "polaris/delivery/http/routers/role_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_llm_config_async",
+      "description": "异步加载 LLM 配置（将同步文件 I/O 移到线程池）",
+      "defined_in": "polaris/delivery/http/routers/role_chat.py"
+    },
+    {
+      "type": "function",
       "name": "_workspace_value",
       "description": "Resolve the active desktop workspace from compatible settings fields.",
       "defined_in": "polaris/delivery/http/routers/role_chat.py"
@@ -4087,8 +4632,62 @@
     },
     {
       "type": "function",
+      "name": "role_chat_status",
+      "description": "Get LLM configuration readiness for a specific role.",
+      "defined_in": "polaris/delivery/http/routers/role_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "list_supported_roles",
+      "description": "List all registered LLM roles.",
+      "defined_in": "polaris/delivery/http/routers/role_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "get_role_llm_events",
+      "description": "Get LLM call events for a specific role.",
+      "defined_in": "polaris/delivery/http/routers/role_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "get_all_llm_events",
+      "description": "Get LLM call events across all roles.",
+      "defined_in": "polaris/delivery/http/routers/role_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "get_llm_cache_stats",
+      "description": "Get LLM cache statistics.",
+      "defined_in": "polaris/delivery/http/routers/role_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_llm_cache",
+      "description": "Clear the global LLM cache.",
+      "defined_in": "polaris/delivery/http/routers/role_chat.py"
+    },
+    {
+      "type": "function",
       "name": "_validate_role",
       "description": "Validate that the requested role is supported.",
+      "defined_in": "polaris/delivery/http/routers/role_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "role_chat",
+      "description": "Chat with a registered LLM role (non-streaming).",
+      "defined_in": "polaris/delivery/http/routers/role_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "role_chat_jetstream",
+      "description": "Start a role chat turn and stream chunks via NAT JetStream WebSocket.",
+      "defined_in": "polaris/delivery/http/routers/role_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_chat",
+      "description": "",
       "defined_in": "polaris/delivery/http/routers/role_chat.py"
     },
     {
@@ -4282,6 +4881,144 @@
       "type": "function",
       "name": "_role_session_service",
       "description": "Construct RoleSessionService bound to the active desktop workspace.",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "create_session",
+      "description": "创建新会话",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "list_sessions",
+      "description": "列出会话",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "get_session",
+      "description": "获取会话详情",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "update_session",
+      "description": "更新会话",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "delete_session",
+      "description": "删除会话",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "get_messages",
+      "description": "获取会话消息",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "send_message",
+      "description": "发送消息（非流式）",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "send_message_jetstream",
+      "description": "Start a RoleSession chat turn and publish chunks over Nats-JetStream.",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_role_session_jetstream_dialogue",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_and_persist",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "attach_session",
+      "description": "附着会话到工作流",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "detach_session",
+      "description": "解除会话的工作流附着",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "get_artifacts",
+      "description": "获取会话产物",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "get_audit",
+      "description": "获取会话审计日志",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "append_audit_event",
+      "description": "Append a role-session audit event without invoking a workflow.",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "export_audit_log",
+      "description": "Export a role-session audit log without starting a workflow.",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "search_session_memory",
+      "description": "Search persisted Context OS memory for one role session.",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "read_session_memory_artifact",
+      "description": "Read one persisted Context OS artifact for one role session.",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "read_session_memory_episode",
+      "description": "Read one persisted Context OS episode for one role session.",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "read_session_memory_state",
+      "description": "Read one persisted Context OS state entry for one role session.",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "export_session",
+      "description": "导出会话",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "export_to_workflow",
+      "description": "Export session to workflow",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "get_role_capabilities",
+      "description": "获取角色能力配置",
       "defined_in": "polaris/delivery/http/routers/role_session.py"
     }
   ],

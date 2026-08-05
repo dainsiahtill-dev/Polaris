@@ -1,6 +1,6 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T14:16:59.930701Z",
+  "generated_at": "2026-08-02T15:47:49.493396Z",
   "source_hash": "53dd7d7074e89d81",
   "cell_id": "factory.pipeline",
   "workspace": "/home/dains/Documents/polaris/src/backend",
@@ -1812,6 +1812,10 @@
         {
           "name": "snapshot",
           "doc": ""
+        },
+        {
+          "name": "wait_settled",
+          "doc": ""
         }
       ]
     },
@@ -2167,6 +2171,14 @@
           "doc": "Return the Factory loop that owns ``_run_lock``."
         },
         {
+          "name": "_run_on_authority_owner_loop",
+          "doc": "Execute a cutoff operation on the loop that owns the Factory lock."
+        },
+        {
+          "name": "invoke",
+          "doc": ""
+        },
+        {
           "name": "_stage_role_and_cap",
           "doc": ""
         },
@@ -2227,8 +2239,16 @@
           "doc": "Bind child run/freeze only after the stage claim has been revalidated."
         },
         {
+          "name": "acquire_cutoff",
+          "doc": ""
+        },
+        {
           "name": "_finalize_cutoff_after_resolve",
           "doc": "Claim + durable fragment/commit path; must run fully sync on one thread."
+        },
+        {
+          "name": "resolve_cutoff_proof",
+          "doc": "Strictly re-read one committed ACK locator into a detached proof."
         },
         {
           "name": "_proof_from_stored",
@@ -2698,6 +2718,18 @@
           "doc": ""
         },
         {
+          "name": "cancel_active_run",
+          "doc": ""
+        },
+        {
+          "name": "wait",
+          "doc": "Wait until the run has a canonical terminal projection."
+        },
+        {
+          "name": "_wait_role_lifecycle",
+          "doc": "Settle a non-materialization role call without granting verification."
+        },
+        {
           "name": "resolve_cancel_event",
           "doc": ""
         },
@@ -2754,7 +2786,12 @@
       "name": "FactoryStageExecutor",
       "description": "Execution adapter for concrete factory stages.",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_models.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "execute",
+          "doc": "Execute *stage* for *run* with *context*."
+        }
+      ]
     },
     {
       "type": "function",
@@ -2906,6 +2943,14 @@
           "doc": ""
         },
         {
+          "name": "_release_lifecycle_operation",
+          "doc": ""
+        },
+        {
+          "name": "_rollback_lifecycle_operation",
+          "doc": "Best-effort authority rollback while preserving the original error."
+        },
+        {
           "name": "_workspace_release_evidence",
           "doc": ""
         },
@@ -2926,11 +2971,35 @@
           "doc": "Capture one live stage claim into an A009B1-private authority port."
         },
         {
+          "name": "load_current_run",
+          "doc": ""
+        },
+        {
           "name": "_assert_no_factory_role_evidence_port_leak",
           "doc": "Fail before persistence if StageResult projections capture private authority."
         },
         {
+          "name": "_release_stage_execution",
+          "doc": ""
+        },
+        {
           "name": "_stage_result_releases_execution_claim",
+          "doc": ""
+        },
+        {
+          "name": "reconcile_stage_execution_for_reentry",
+          "doc": "Explicitly release a failed-stage claim only after settlement proof."
+        },
+        {
+          "name": "_reconcile_stage_execution_claim",
+          "doc": ""
+        },
+        {
+          "name": "_begin_terminal_drain",
+          "doc": ""
+        },
+        {
+          "name": "_record_drain_conflict",
           "doc": ""
         },
         {
@@ -2938,12 +3007,96 @@
           "doc": ""
         },
         {
+          "name": "_require_child_session_settlement_for_reentry",
+          "doc": ""
+        },
+        {
+          "name": "_finalize_terminal_drain",
+          "doc": ""
+        },
+        {
+          "name": "create_run",
+          "doc": "Create a new factory run with directory structure."
+        },
+        {
+          "name": "execute_stage",
+          "doc": "Execute a single stage with durable lifecycle updates."
+        },
+        {
+          "name": "_run_stage_heartbeat",
+          "doc": ""
+        },
+        {
+          "name": "_emit_stage_heartbeat",
+          "doc": ""
+        },
+        {
           "name": "_build_abort_checker",
+          "doc": ""
+        },
+        {
+          "name": "_checker",
           "doc": ""
         },
         {
           "name": "_resolve_heartbeat_interval_seconds",
           "doc": ""
+        },
+        {
+          "name": "recover_run",
+          "doc": "Recover a run from durable storage."
+        },
+        {
+          "name": "retry_run_from_stage",
+          "doc": "Move a run into recovery from a checkpoint or configured stage."
+        },
+        {
+          "name": "execute_pause",
+          "doc": "Pause a running factory run."
+        },
+        {
+          "name": "execute_resume",
+          "doc": "Resume a paused factory run."
+        },
+        {
+          "name": "update_run_metadata",
+          "doc": "Persist metadata updates for an existing factory run."
+        },
+        {
+          "name": "start_run",
+          "doc": "Start a run only after durable workspace admission succeeds."
+        },
+        {
+          "name": "cancel_run",
+          "doc": "Cancel a factory run and keep a distinct terminal status."
+        },
+        {
+          "name": "complete_run",
+          "doc": "Close the Factory orchestration session without granting verification."
+        },
+        {
+          "name": "settle_terminal_run",
+          "doc": "Explicitly settle a terminal run; observation APIs never call this."
+        },
+        {
+          "name": "recover_stale_workspace_owner",
+          "doc": "Explicitly fence expired child sessions and release one stale owner."
+        },
+        {
+          "name": "list_runs",
+          "doc": "List all factory runs with basic info."
+        },
+        {
+          "name": "get_run",
+          "doc": "Return one persisted run without mutation, cleanup, or events."
+        },
+        {
+          "name": "get_run_events",
+          "doc": "Get all events for a run."
+        },
+        {
+          "name": "assert_mutation_allowed",
+          "doc": "Fail closed unless the latest stage transaction is fully committed."
         },
         {
           "name": "automatic_router_mutation_guard_matrix",
@@ -2952,6 +3105,22 @@
         {
           "name": "_automatic_router_mutation_families",
           "doc": ""
+        },
+        {
+          "name": "assert_automatic_router_mutation_allowed",
+          "doc": "Service-owned read guard for service methods that do their own writes."
+        },
+        {
+          "name": "apply_automatic_router_mutation",
+          "doc": "Atomically guard, mutate, persist, and optionally append one router event."
+        },
+        {
+          "name": "_execute_stage_logic",
+          "doc": ""
+        },
+        {
+          "name": "_find_last_successful_stage",
+          "doc": "Find the last checkpoint-backed, commit-ACKed successful stage."
         },
         {
           "name": "_validate_checkpoint_ref_from_typed_run",
@@ -2963,6 +3132,46 @@
         },
         {
           "name": "_apply_stage_result_to_run",
+          "doc": ""
+        },
+        {
+          "name": "_build_stage_artifact_bindings",
+          "doc": ""
+        },
+        {
+          "name": "_strict_reread_stage_artifact_bindings",
+          "doc": "Re-prove every immutable binding snapshot immediately before fact append."
+        },
+        {
+          "name": "reread",
+          "doc": ""
+        },
+        {
+          "name": "_append_stage_quarantine",
+          "doc": ""
+        },
+        {
+          "name": "_preflight_stage_transaction",
+          "doc": "Prove 8 MiB capacity for both ordered transaction records."
+        },
+        {
+          "name": "_commit_stage_transaction",
+          "doc": ""
+        },
+        {
+          "name": "_mark_stage_started",
+          "doc": ""
+        },
+        {
+          "name": "_mark_stage_finished",
+          "doc": ""
+        },
+        {
+          "name": "_append_event",
+          "doc": ""
+        },
+        {
+          "name": "_publish_factory_event",
           "doc": ""
         },
         {
@@ -3091,7 +3300,16 @@
       "name": "FactoryRunSettlementPort",
       "description": "Mutation boundary implemented by a FactoryRunService adapter.",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "settle_terminal_run",
+          "doc": "Idempotently settle one terminal Factory run."
+        },
+        {
+          "name": "recover_stale_workspace_owner",
+          "doc": "Fence and release an expired owner under the expected token."
+        }
+      ]
     },
     {
       "type": "class",
@@ -3160,7 +3378,39 @@
           "doc": ""
         },
         {
+          "name": "start",
+          "doc": "Start idempotently and perform one crash-recovery replay."
+        },
+        {
+          "name": "replay",
+          "doc": "Perform one finite durable replay while running."
+        },
+        {
+          "name": "wake",
+          "doc": "Handle one wake signal by re-reading source facts and the barrier."
+        },
+        {
+          "name": "stop",
+          "doc": "Stop idempotently; no background task or timer requires cancellation."
+        },
+        {
           "name": "_require_running",
+          "doc": ""
+        },
+        {
+          "name": "_replay_locked",
+          "doc": ""
+        },
+        {
+          "name": "_process_source_event",
+          "doc": ""
+        },
+        {
+          "name": "_decide_and_apply",
+          "doc": ""
+        },
+        {
+          "name": "_apply_settlement",
           "doc": ""
         },
         {
@@ -3540,21 +3790,48 @@
       "name": "FactoryRunServicePort",
       "description": "Narrow Factory service surface required by settlement.",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "settle_terminal_run",
+          "doc": "Settle one terminal run."
+        },
+        {
+          "name": "recover_stale_workspace_owner",
+          "doc": "Recover one expired workspace owner."
+        }
+      ]
     },
     {
       "type": "class",
       "name": "SettlementWakeMessage",
       "description": "One JetStream delivery whose ACK follows durable FactStream progress.",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "ack",
+          "doc": "Acknowledge delivery after an ACK-safe settlement replay."
+        }
+      ]
     },
     {
       "type": "class",
       "name": "SettlementWakeSubscription",
       "description": "Manual-ACK JetStream subscription used by Factory settlement.",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "consumer_info",
+          "doc": "Return the server-authoritative configuration of this consumer."
+        },
+        {
+          "name": "next_msg",
+          "doc": "Wait for one persisted runtime wake."
+        },
+        {
+          "name": "unsubscribe",
+          "doc": "Stop delivery without deleting durable consumer state."
+        }
+      ]
     },
     {
       "type": "class",
@@ -3568,7 +3845,12 @@
       "name": "SettlementJetStreamContext",
       "description": "Minimal JetStream context required to establish a durable consumer.",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "subscribe",
+          "doc": "Create or bind the durable explicit-ACK subscription."
+        }
+      ]
     },
     {
       "type": "class",
@@ -3636,6 +3918,14 @@
           "doc": "Bind source authority and return current Factory fencing token."
         },
         {
+          "name": "settle_terminal_run",
+          "doc": ""
+        },
+        {
+          "name": "recover_stale_workspace_owner",
+          "doc": ""
+        },
+        {
           "name": "_assert_current_authority",
           "doc": ""
         }
@@ -3688,11 +3978,27 @@
           "doc": "Return whether the subscribed delivery task remains live."
         },
         {
+          "name": "start",
+          "doc": ""
+        },
+        {
           "name": "_consumer_config",
           "doc": "Build the versioned durable's complete server-side safety contract."
         },
         {
           "name": "_assert_consumer_config_matches",
+          "doc": ""
+        },
+        {
+          "name": "_abort_start",
+          "doc": "Release the local binding after a failed verification, never the durable."
+        },
+        {
+          "name": "stop",
+          "doc": ""
+        },
+        {
+          "name": "_consume_wakes",
           "doc": ""
         },
         {
@@ -3724,8 +4030,20 @@
           "doc": "Return false when the required durable transport has failed."
         },
         {
+          "name": "start",
+          "doc": "Start replay and close the replay-to-subscription race window."
+        },
+        {
+          "name": "wake",
+          "doc": "Replay unseen FactStream state; never trust the wake payload."
+        },
+        {
           "name": "_assert_wake_bridge_healthy",
           "doc": ""
+        },
+        {
+          "name": "stop",
+          "doc": "Stop delivery before stopping the durable consumer."
         }
       ]
     },
@@ -3762,6 +4080,22 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "start",
+          "doc": ""
+        },
+        {
+          "name": "wake",
+          "doc": ""
+        },
+        {
+          "name": "stop",
+          "doc": ""
+        },
+        {
+          "name": "stop_all",
+          "doc": ""
         }
       ]
     },
@@ -3797,8 +4131,50 @@
     },
     {
       "type": "function",
+      "name": "_get_default_wake_client",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py"
+    },
+    {
+      "type": "function",
       "name": "_wake_binding",
       "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "create_factory_settlement_runtime",
+      "description": "Assemble production settlement ports for one canonical workspace.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "start_factory_settlement_runtime",
+      "description": "Start one workspace singleton and run startup replay.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "configured_factory",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "wake_factory_settlement_runtime",
+      "description": "Wake the workspace singleton by replaying durable FactStream state.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "stop_factory_settlement_runtime",
+      "description": "Stop and remove one workspace singleton.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "stop_all_factory_settlement_runtimes",
+      "description": "Stop every registered runtime, primarily for process shutdown.",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py"
     },
     {
@@ -4227,8 +4603,16 @@
           "doc": ""
         },
         {
+          "name": "execute",
+          "doc": ""
+        },
+        {
           "name": "_factory_role_evidence_cutoff_port",
           "doc": ""
+        },
+        {
+          "name": "_call_with_factory_role_evidence_authority",
+          "doc": "Bind one role-task grant and revoke it if task creation raises."
         },
         {
           "name": "_artifact_path",
@@ -4583,6 +4967,10 @@
           "doc": "Return the bounded grace for dependency-unblock fact propagation."
         },
         {
+          "name": "_wait_for_claimable_director_tasks",
+          "doc": "Wait briefly for completion-triggered dependency facts to settle."
+        },
+        {
           "name": "_remaining_director_task_count",
           "doc": "Return unresolved PM task owners from the observable projection."
         },
@@ -4711,11 +5099,23 @@
           "doc": ""
         },
         {
+          "name": "_execute_director_binding_fanout",
+          "doc": ""
+        },
+        {
           "name": "_binding_key",
           "doc": ""
         },
         {
           "name": "_backend_failure_reason",
+          "doc": ""
+        },
+        {
+          "name": "_run_binding",
+          "doc": ""
+        },
+        {
+          "name": "_wait_submitted_binding",
           "doc": ""
         },
         {
@@ -4744,6 +5144,18 @@
         },
         {
           "name": "_llm_event_error_text",
+          "doc": ""
+        },
+        {
+          "name": "_execute_docs_generation",
+          "doc": ""
+        },
+        {
+          "name": "_execute_pm_planning",
+          "doc": ""
+        },
+        {
+          "name": "_run_pm_planning_deterministic_recovery",
           "doc": ""
         },
         {
@@ -4821,6 +5233,22 @@
         {
           "name": "_settle_chief_engineer_attempt_before_schema_repair",
           "doc": "Suspend the invalid primary CE attempt before claiming its repair task."
+        },
+        {
+          "name": "_run_chief_engineer_schema_repair",
+          "doc": "Run exactly one separately claimed, deadline-admitted CE schema repair."
+        },
+        {
+          "name": "_execute_chief_engineer_review",
+          "doc": "Run CE review under one claim-bound heartbeat and settlement scope."
+        },
+        {
+          "name": "_execute_chief_engineer_review_with_attempt_lease",
+          "doc": "Create one CE project portfolio and project task-level handoffs."
+        },
+        {
+          "name": "_execute_director_dispatch",
+          "doc": ""
         },
         {
           "name": "_bool_from_context_or_env",
@@ -4919,6 +5347,10 @@
           "doc": "Build DEO commit context with control-plane JobToken evidence (M06)."
         },
         {
+          "name": "_run_director_stage_materialization_quality_settle",
+          "doc": "Run materialization quality once at the end of director_dispatch (R165/M06)."
+        },
+        {
           "name": "_apply_workspace_quality_repairs",
           "doc": ""
         },
@@ -4959,6 +5391,10 @@
           "doc": ""
         },
         {
+          "name": "_apply_workspace_quality_llm_repairs",
+          "doc": ""
+        },
+        {
           "name": "_workspace_quality_repair_result_has_mutation",
           "doc": ""
         },
@@ -4983,6 +5419,10 @@
           "doc": ""
         },
         {
+          "name": "_run_workspace_quality_checks",
+          "doc": ""
+        },
+        {
           "name": "write_workspace_validation_failure",
           "doc": ""
         },
@@ -4992,6 +5432,10 @@
         },
         {
           "name": "workspace_quality_command_timeout_seconds",
+          "doc": ""
+        },
+        {
+          "name": "run_workspace_quality_command_with_deadline",
           "doc": ""
         },
         {
@@ -5019,6 +5463,10 @@
           "doc": ""
         },
         {
+          "name": "_quality_gate_abort_reason",
+          "doc": ""
+        },
+        {
           "name": "_build_quality_gate_failure_stage",
           "doc": ""
         },
@@ -5035,12 +5483,36 @@
           "doc": ""
         },
         {
+          "name": "_wait_for_canonical_quality_authority",
+          "doc": "Wait until the QA fact is visible behind the sequence barrier."
+        },
+        {
+          "name": "_execute_quality_gate",
+          "doc": ""
+        },
+        {
           "name": "_build_orchestration_service",
+          "doc": ""
+        },
+        {
+          "name": "_wait_run_completion",
           "doc": ""
         },
         {
           "name": "_inflight_director_run_ids",
           "doc": "Return child run ids that explicitly crossed the soft-timeout barrier."
+        },
+        {
+          "name": "_settle_inflight_director_result",
+          "doc": "Settle every child run named by a soft-timeout result before reuse."
+        },
+        {
+          "name": "_settle_inflight_director_run_after_timeout",
+          "doc": ""
+        },
+        {
+          "name": "_cancel_within_hard_deadline",
+          "doc": ""
         },
         {
           "name": "_active_director_execution_progress_marker",
@@ -5554,6 +6026,14 @@
           "doc": "Strictly re-read one expected immutable snapshot under its sole key."
         },
         {
+          "name": "save_run",
+          "doc": "Save run to disk atomically"
+        },
+        {
+          "name": "_write_file_atomic",
+          "doc": "异步文件写入 helper with Windows-safe replace retries."
+        },
+        {
           "name": "write_and_replace",
           "doc": ""
         },
@@ -5562,8 +6042,16 @@
           "doc": "同步文件写入（在线程池中执行）"
         },
         {
+          "name": "_replace_with_retry",
+          "doc": "异步替换文件，带重试逻辑"
+        },
+        {
           "name": "_replace_with_retry_sync",
           "doc": "Synchronously replace a file inside one lock-owning worker."
+        },
+        {
+          "name": "get_run",
+          "doc": "Get run from disk"
         },
         {
           "name": "_strict_json_object",
@@ -5582,8 +6070,24 @@
           "doc": ""
         },
         {
+          "name": "read_strict_run_snapshot",
+          "doc": "Strictly reread the current run snapshot under the 4 MiB bound."
+        },
+        {
+          "name": "read_strict_checkpoint_snapshot",
+          "doc": "Strictly reread one exact immutable checkpoint ref."
+        },
+        {
+          "name": "_read_file",
+          "doc": "异步文件读取 helper"
+        },
+        {
           "name": "_read_file_sync",
           "doc": "同步文件读取（在线程池中执行）"
+        },
+        {
+          "name": "checkpoint",
+          "doc": "Create a checkpoint"
         },
         {
           "name": "_persist_immutable_checkpoint_sync",
@@ -5592,6 +6096,10 @@
         {
           "name": "_write_file_sync",
           "doc": "同步文件写入 helper（在线程池中执行）"
+        },
+        {
+          "name": "append_event",
+          "doc": "Append event to audit log (JSONL format)"
         },
         {
           "name": "_authoritative_event_logical_path",
@@ -5630,6 +6138,14 @@
           "doc": "Prove the exact current chain has capacity for candidate records."
         },
         {
+          "name": "preflight_authoritative_events",
+          "doc": "Read-only 8 MiB preflight for an ordered event transaction."
+        },
+        {
+          "name": "append_authoritative_event",
+          "doc": "Strictly append and fsync one authoritative hash-chain record."
+        },
+        {
           "name": "_read_authoritative_events_sync",
           "doc": ""
         },
@@ -5638,12 +6154,32 @@
           "doc": ""
         },
         {
+          "name": "get_authoritative_events",
+          "doc": "Strict reader that never skips corruption or upgrades legacy JSONL."
+        },
+        {
           "name": "_read_authoritative_events_read_only_sync",
           "doc": "Descriptor-safe strict read without lock-authority enrollment or writes."
         },
         {
+          "name": "get_authoritative_events_read_only",
+          "doc": "Strictly read the owner event prefix without creating directories or lock state."
+        },
+        {
+          "name": "_append_file",
+          "doc": "异步文件追加 helper"
+        },
+        {
           "name": "_append_file_sync",
           "doc": "同步文件追加（在线程池中执行）"
+        },
+        {
+          "name": "get_events",
+          "doc": "Get all events for a run"
+        },
+        {
+          "name": "_read_lines",
+          "doc": "异步文件读取行 helper"
         },
         {
           "name": "_read_lines_sync",
@@ -5671,6 +6207,12 @@
       "type": "function",
       "name": "_run_locked_file_operation",
       "description": "Acquire, execute, and release one file operation in the same worker.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_file_operation",
+      "description": "Run one complete lock-protected operation without executor inversion.",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_store.py"
     },
     {
@@ -6263,6 +6805,12 @@
     },
     {
       "type": "function",
+      "name": "_run_with_timeout",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/projection_lab.py"
+    },
+    {
+      "type": "function",
       "name": "_runner",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/projection_lab.py"
@@ -6848,7 +7396,12 @@
       "name": "IFactoryPipeline",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "run_pipeline",
+          "doc": "Compatibility API kept for existing integrations."
+        }
+      ]
     },
     {
       "type": "class",
@@ -6919,6 +7472,14 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "get_run",
+          "doc": ""
+        },
+        {
+          "name": "get_authoritative_run_events",
+          "doc": ""
         }
       ]
     },
@@ -6956,6 +7517,18 @@
       "type": "function",
       "name": "_build_factory_chain_projection",
       "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_factory_chain_projection",
+      "description": "Return the typed, read-only Factory chain owner projection for one run.",
+      "defined_in": "polaris/cells/factory/pipeline/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "recover_stale_factory_workspace_owner",
+      "description": "Fence child sessions and release one explicitly identified stale owner.",
       "defined_in": "polaris/cells/factory/pipeline/public/service.py"
     },
     {
@@ -7219,6 +7792,12 @@
     {
       "type": "function",
       "name": "_resolve_retry_stage",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_save_service_run",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     },
@@ -7710,6 +8289,18 @@
     },
     {
       "type": "function",
+      "name": "_guard_automatic_router_mutation",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_persist_run_summary",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
       "name": "apply_summary",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
@@ -7728,7 +8319,25 @@
     },
     {
       "type": "function",
+      "name": "_execute_run_with_service",
+      "description": "Execute the configured PM→Chief Engineer→Director factory stages.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_quality_rework_request",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
       "name": "apply_quality_rework",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_execute_stage_sequence",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     },
@@ -7741,6 +8350,12 @@
     {
       "type": "function",
       "name": "_quality_rework_stage_names",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_execute_with_quality_rework",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     },
@@ -7770,8 +8385,152 @@
     },
     {
       "type": "function",
+      "name": "_list_factory_runs_core",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_start_factory_run_core",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_factory_run_for_http",
+      "description": "Keep snapshot contention distinct from a genuinely absent run.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_factory_run_status_core",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_factory_run_events_core",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_factory_run_audit_bundle_core",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_control_factory_run_core",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_recover_stale_factory_workspace_owner_core",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_factory_run_artifacts_core",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "list_factory_runs_v2",
+      "description": "List factory runs for the current workspace.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "start_factory_run_v2",
+      "description": "Create and start an unattended factory run.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "get_factory_run_status_v2",
+      "description": "Query run status.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "get_factory_run_events_v2",
+      "description": "Get append-only audit events for a run.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "get_factory_run_audit_bundle_v2",
+      "description": "Get a machine-readable audit bundle for a factory run.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "control_factory_run_v2",
+      "description": "Control a run. This phase only supports cancel.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "recover_stale_factory_workspace_owner_v2",
+      "description": "Explicitly fence and release one stale workspace owner.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "get_factory_run_artifacts_v2",
+      "description": "List artifact files for a run.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
       "name": "_bench_session_event_meta",
       "description": "Build the bench session fields every realtime bench event should carry.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_publish_factory_bench_event_to_jetstream",
+      "description": "Fan out a persisted factory-bench event on the unified runtime stream.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "start_factory_bench_session_v2",
+      "description": "Register a new bench session (typically called by the bench subprocess).",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "list_factory_bench_sessions_v2",
+      "description": "List recent bench sessions for the Factory panel UI.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "get_factory_bench_session_v2",
+      "description": "Read a bench session's status + a tail of its recent events.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "append_factory_bench_event_v2",
+      "description": "Append an event to a bench session's event log + fanout via NAT JetStream.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "complete_factory_bench_session_v2",
+      "description": "Mark a bench session complete (or failed).",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "update_factory_bench_progress_v2",
+      "description": "Update per-project counters so the front-end sees live ``X/Y 通过``.",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     }
   ],

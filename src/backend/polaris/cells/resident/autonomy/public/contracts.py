@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -25,6 +26,259 @@ def _to_non_empty_tuple(name: str, values: tuple[str, ...]) -> tuple[str, ...]:
     if not normalized:
         raise ValueError(f"{name} must include at least one non-empty string")
     return normalized
+
+
+def _require_exact_non_empty(name: str, value: object) -> str:
+    if type(value) is not str or not value.strip():
+        raise ResidentGoalLifecycleErrorV1(
+            "invalid_goal_attempt_contract",
+            f"{name} must be a non-empty exact string",
+        )
+    return value.strip()
+
+
+def _require_exact_non_negative_int(name: str, value: object) -> int:
+    if type(value) is not int or value < 0:
+        raise ResidentGoalLifecycleErrorV1(
+            "invalid_goal_attempt_contract",
+            f"{name} must be a non-negative exact int",
+        )
+    return value
+
+
+def _normalize_exact_tokens(name: str, values: object) -> tuple[str, ...]:
+    if type(values) is not tuple:
+        raise ResidentGoalLifecycleErrorV1(
+            "invalid_goal_attempt_contract",
+            f"{name} must be an exact tuple",
+        )
+    tokens: list[str] = []
+    for value in values:
+        tokens.append(_require_exact_non_empty(f"{name} item", value))
+    return tuple(sorted(set(tokens)))
+
+
+class ResidentGoalStateV1(StrEnum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    MATERIALIZED = "MATERIALIZED"
+    ARCHIVED = "ARCHIVED"
+
+
+class ResidentGoalExecutionStatusV1(StrEnum):
+    READY = "READY"
+    ACTIVE = "ACTIVE"
+    RETRY_ELIGIBLE = "RETRY_ELIGIBLE"
+    BLOCKED_NO_PROGRESS = "BLOCKED_NO_PROGRESS"
+    AWAITING_OUTCOME_BINDING = "AWAITING_OUTCOME_BINDING"
+    EXHAUSTED = "EXHAUSTED"
+    CANCELLED = "CANCELLED"
+
+
+class ResidentGoalAttemptStatusV1(StrEnum):
+    ACTIVE = "ACTIVE"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+    BLOCKED_NO_PROGRESS = "BLOCKED_NO_PROGRESS"
+
+
+class ResidentGoalLifecycleErrorV1(ValueError):  # noqa: N818 - mandated public contract name
+    """Typed fail-closed Goal/Attempt lifecycle error."""
+
+    def __init__(self, error_code: str, message: str) -> None:
+        self.error_code = str(error_code or "").strip() or "resident_goal_lifecycle_error"
+        super().__init__(message)
+
+
+@dataclass(frozen=True, slots=True)
+class StartResidentGoalAttemptCommandV1:
+    workspace: str
+    goal_id: str
+    idempotency_key: str
+    run_id: str
+    expected_revision: int
+    max_attempts: int = 3
+    no_progress_limit: int = 3
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_exact_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "goal_id", _require_exact_non_empty("goal_id", self.goal_id))
+        object.__setattr__(
+            self,
+            "idempotency_key",
+            _require_exact_non_empty("idempotency_key", self.idempotency_key),
+        )
+        object.__setattr__(self, "run_id", _require_exact_non_empty("run_id", self.run_id))
+        object.__setattr__(
+            self,
+            "expected_revision",
+            _require_exact_non_negative_int("expected_revision", self.expected_revision),
+        )
+        max_attempts = _require_exact_non_negative_int("max_attempts", self.max_attempts)
+        no_progress_limit = _require_exact_non_negative_int("no_progress_limit", self.no_progress_limit)
+        if max_attempts < 1 or no_progress_limit < 1:
+            raise ResidentGoalLifecycleErrorV1(
+                "invalid_goal_attempt_contract",
+                "max_attempts and no_progress_limit must be >= 1",
+            )
+        object.__setattr__(self, "evidence_refs", _normalize_exact_tokens("evidence_refs", self.evidence_refs))
+
+
+@dataclass(frozen=True, slots=True)
+class ObserveResidentGoalAttemptCommandV1:
+    workspace: str
+    goal_id: str
+    attempt_id: str
+    idempotency_key: str
+    expected_revision: int
+    progress_fingerprint: str
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        for name in ("workspace", "goal_id", "attempt_id", "idempotency_key", "progress_fingerprint"):
+            object.__setattr__(self, name, _require_exact_non_empty(name, getattr(self, name)))
+        object.__setattr__(
+            self,
+            "expected_revision",
+            _require_exact_non_negative_int("expected_revision", self.expected_revision),
+        )
+        object.__setattr__(self, "evidence_refs", _normalize_exact_tokens("evidence_refs", self.evidence_refs))
+
+
+@dataclass(frozen=True, slots=True)
+class SettleResidentGoalAttemptCommandV1:
+    workspace: str
+    goal_id: str
+    attempt_id: str
+    idempotency_key: str
+    expected_revision: int
+    status: ResidentGoalAttemptStatusV1
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+    error: str = ""
+
+    def __post_init__(self) -> None:
+        for name in ("workspace", "goal_id", "attempt_id", "idempotency_key"):
+            object.__setattr__(self, name, _require_exact_non_empty(name, getattr(self, name)))
+        object.__setattr__(
+            self,
+            "expected_revision",
+            _require_exact_non_negative_int("expected_revision", self.expected_revision),
+        )
+        if self.status == "COMPLETED_VERIFIED":
+            raise ResidentGoalLifecycleErrorV1(
+                "completed_verified_reserved",
+                "COMPLETED_VERIFIED is reserved and cannot be entered in GR2A",
+            )
+        if type(self.status) is not ResidentGoalAttemptStatusV1:
+            raise ResidentGoalLifecycleErrorV1(
+                "invalid_goal_attempt_status",
+                "status must be an exact ResidentGoalAttemptStatusV1 value",
+            )
+        if self.status is ResidentGoalAttemptStatusV1.ACTIVE:
+            raise ResidentGoalLifecycleErrorV1(
+                "invalid_goal_attempt_transition",
+                "settle status cannot remain ACTIVE",
+            )
+        object.__setattr__(self, "evidence_refs", _normalize_exact_tokens("evidence_refs", self.evidence_refs))
+        if type(self.error) is not str:
+            raise ResidentGoalLifecycleErrorV1(
+                "invalid_goal_attempt_contract",
+                "error must be an exact string",
+            )
+        object.__setattr__(self, "error", self.error.strip())
+
+
+@dataclass(frozen=True, slots=True)
+class QueryResidentGoalExecutionV1:
+    workspace: str
+    goal_id: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_exact_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "goal_id", _require_exact_non_empty("goal_id", self.goal_id))
+
+
+@dataclass(frozen=True, slots=True)
+class ResidentGoalAttemptReceiptV1:
+    receipt_id: str
+    workspace: str
+    goal_id: str
+    attempt_id: str
+    run_id: str
+    operation: str
+    status: ResidentGoalAttemptStatusV1
+    execution_status: ResidentGoalExecutionStatusV1
+    revision: int
+    attempt_number: int
+    max_attempts: int
+    no_progress_limit: int
+    no_progress_fingerprint: str
+    no_progress_streak: int
+    idempotency_key: str
+    semantic_hash: str
+    record_hash: str
+    recorded_at: str
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+    error: str = ""
+
+    def __post_init__(self) -> None:
+        for name in (
+            "receipt_id",
+            "workspace",
+            "goal_id",
+            "attempt_id",
+            "run_id",
+            "operation",
+            "idempotency_key",
+            "semantic_hash",
+            "recorded_at",
+        ):
+            object.__setattr__(self, name, _require_exact_non_empty(name, getattr(self, name)))
+        if type(self.status) is not ResidentGoalAttemptStatusV1:
+            raise ResidentGoalLifecycleErrorV1("invalid_goal_attempt_receipt", "invalid receipt attempt status")
+        if type(self.execution_status) is not ResidentGoalExecutionStatusV1:
+            raise ResidentGoalLifecycleErrorV1("invalid_goal_attempt_receipt", "invalid receipt execution status")
+        for name in ("revision", "attempt_number", "max_attempts", "no_progress_limit", "no_progress_streak"):
+            object.__setattr__(self, name, _require_exact_non_negative_int(name, getattr(self, name)))
+        if not self.record_hash or type(self.record_hash) is not str:
+            raise ResidentGoalLifecycleErrorV1("invalid_goal_attempt_receipt", "record_hash must be non-empty")
+        if type(self.no_progress_fingerprint) is not str or type(self.error) is not str:
+            raise ResidentGoalLifecycleErrorV1(
+                "invalid_goal_attempt_receipt", "receipt text fields must be exact strings"
+            )
+        object.__setattr__(self, "evidence_refs", _normalize_exact_tokens("evidence_refs", self.evidence_refs))
+
+
+@dataclass(frozen=True, slots=True)
+class ResidentGoalExecutionV1:
+    workspace: str
+    goal_id: str
+    status: ResidentGoalExecutionStatusV1
+    revision: int
+    attempt_count: int
+    max_attempts: int
+    no_progress_limit: int
+    no_progress_fingerprint: str
+    no_progress_streak: int
+    active_attempt_id: str
+    receipts: tuple[ResidentGoalAttemptReceiptV1, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_exact_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "goal_id", _require_exact_non_empty("goal_id", self.goal_id))
+        if type(self.status) is not ResidentGoalExecutionStatusV1:
+            raise ResidentGoalLifecycleErrorV1("invalid_goal_execution", "invalid execution status")
+        for name in ("revision", "attempt_count", "max_attempts", "no_progress_limit", "no_progress_streak"):
+            object.__setattr__(self, name, _require_exact_non_negative_int(name, getattr(self, name)))
+        if type(self.active_attempt_id) is not str or type(self.no_progress_fingerprint) is not str:
+            raise ResidentGoalLifecycleErrorV1("invalid_goal_execution", "execution text fields must be exact strings")
+        if type(self.receipts) is not tuple or any(
+            type(receipt) is not ResidentGoalAttemptReceiptV1 for receipt in self.receipts
+        ):
+            raise ResidentGoalLifecycleErrorV1("invalid_goal_execution", "receipts must be exact receipt tuple")
 
 
 @dataclass(frozen=True)
@@ -139,11 +393,18 @@ class ApproveResidentGoalCommandV1:
     workspace: str
     goal_id: str
     note: str = ""
+    expected_revision: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         object.__setattr__(self, "goal_id", _require_non_empty("goal_id", self.goal_id))
         object.__setattr__(self, "note", str(self.note or "").strip())
+        if self.expected_revision is not None:
+            object.__setattr__(
+                self,
+                "expected_revision",
+                _require_exact_non_negative_int("expected_revision", self.expected_revision),
+            )
 
 
 @dataclass(frozen=True)
@@ -151,11 +412,18 @@ class RejectResidentGoalCommandV1:
     workspace: str
     goal_id: str
     note: str = ""
+    expected_revision: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         object.__setattr__(self, "goal_id", _require_non_empty("goal_id", self.goal_id))
         object.__setattr__(self, "note", str(self.note or "").strip())
+        if self.expected_revision is not None:
+            object.__setattr__(
+                self,
+                "expected_revision",
+                _require_exact_non_negative_int("expected_revision", self.expected_revision),
+            )
 
 
 @dataclass(frozen=True)
@@ -620,10 +888,33 @@ class ResidentAgiDecisionHandoffV1:
 class MaterializeResidentGoalCommandV1:
     workspace: str
     goal_id: str
+    expected_revision: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         object.__setattr__(self, "goal_id", _require_non_empty("goal_id", self.goal_id))
+        if self.expected_revision is not None:
+            object.__setattr__(
+                self,
+                "expected_revision",
+                _require_exact_non_negative_int("expected_revision", self.expected_revision),
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveResidentGoalCommandV1:
+    workspace: str
+    goal_id: str
+    expected_revision: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_exact_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "goal_id", _require_exact_non_empty("goal_id", self.goal_id))
+        object.__setattr__(
+            self,
+            "expected_revision",
+            _require_exact_non_negative_int("expected_revision", self.expected_revision),
+        )
 
 
 @dataclass(frozen=True)
@@ -890,15 +1181,18 @@ class ResidentAutonomyError(RuntimeError):
 
 __all__ = [
     "ApproveResidentGoalCommandV1",
+    "ArchiveResidentGoalCommandV1",
     "BuildResidentAgiRepairAdvisoryOverlayCommandV1",
     "CreateResidentGoalCommandV1",
     "ExtractResidentSkillsCommandV1",
     "MaterializeResidentGoalCommandV1",
+    "ObserveResidentGoalAttemptCommandV1",
     "QueryResidentAgiAuditPackV1",
     "QueryResidentAgiEvidenceInterfacesV1",
     "QueryResidentAgiHandoffsV1",
     "QueryResidentAgiRepairAdvisoryOverlayV1",
     "QueryResidentCapabilitiesV1",
+    "QueryResidentGoalExecutionV1",
     "QueryResidentStatusV1",
     "RecordResidentDecisionCommandV1",
     "RecordResidentEvidenceCommandV1",
@@ -911,14 +1205,22 @@ __all__ = [
     "ResidentAutonomyError",
     "ResidentAutonomyResultV1",
     "ResidentCycleCompletedEventV1",
+    "ResidentGoalAttemptReceiptV1",
+    "ResidentGoalAttemptStatusV1",
+    "ResidentGoalExecutionStatusV1",
+    "ResidentGoalExecutionV1",
+    "ResidentGoalLifecycleErrorV1",
+    "ResidentGoalStateV1",
     "RunResidentAgiDecisionTurnCommandV1",
     "RunResidentCycleCommandV1",
     "RunResidentExperimentsCommandV1",
     "RunResidentGoalCommandV1",
     "RunResidentImprovementsCommandV1",
     "RunResidentTickCommandV1",
+    "SettleResidentGoalAttemptCommandV1",
     "StageResidentGoalCommandV1",
     "StartResidentCommandV1",
+    "StartResidentGoalAttemptCommandV1",
     "StopResidentCommandV1",
     "UpdateResidentAgiParticipationCommandV1",
     "UpdateResidentIdentityCommandV1",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -127,6 +127,22 @@ class ProjectOutcomeValidationV1Error(ValueError):
         super().__init__(message)
 
 
+class ProjectOutcomeOwnerObservationV1Error(ValueError):
+    """Typed fail-closed error for a direct owner observation query."""
+
+    def __init__(self, error_code: str, message: str) -> None:
+        self.error_code = str(error_code or "").strip() or "factory_chain_owner_observation_failed"
+        super().__init__(message)
+
+
+class DirectorStatusObservationV1Error(ValueError):
+    """Typed fail-closed error for Director status owner observation."""
+
+    def __init__(self, error_code: str, message: str) -> None:
+        self.error_code = str(error_code or "").strip() or "director_status_observation_failed"
+        super().__init__(message)
+
+
 def _normalize_token_tuple(values: object, field_name: str) -> tuple[str, ...]:
     """Validate, sort, and deduplicate string tokens deterministically."""
     if not isinstance(values, (tuple, list)):
@@ -206,6 +222,25 @@ class ProjectOutcomeEvidenceRefsV1:
             if not getattr(self, name):
                 empty.append(f"evidence_refs.{name}")
         return tuple(empty)
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectOutcomeNonFactoryEvidenceRefsV1:
+    """Caller claims for axes not owned by ``factory.pipeline``."""
+
+    delivery: tuple[str, ...] = field(default_factory=tuple)
+    qa: tuple[str, ...] = field(default_factory=tuple)
+    task_boundary: tuple[str, ...] = field(default_factory=tuple)
+    task_runtime: tuple[str, ...] = field(default_factory=tuple)
+    run_ledger: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        for name in ("delivery", "qa", "task_boundary", "task_runtime", "run_ledger"):
+            object.__setattr__(
+                self,
+                name,
+                _normalize_token_tuple(getattr(self, name), f"non_factory_evidence_refs_{name}"),
+            )
 
 
 @dataclass(frozen=True)
@@ -362,6 +397,244 @@ class ProjectOutcomeQueryV1:
         return RecommendedDispositionV1.BLOCKED_INCOMPLETE
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectOutcomeNonFactoryClaimsV1:
+    """Typed caller claims excluding the Factory-owned chain axis."""
+
+    delivery: DeliveryAxisV1
+    qa: QaAxisV1
+    task_boundary: TaskBoundaryAxisV1
+    task_runtime: TaskRuntimeAxisV1
+    run_ledger: RunLedgerAxisV1
+    evidence_refs: ProjectOutcomeNonFactoryEvidenceRefsV1 = field(
+        default_factory=ProjectOutcomeNonFactoryEvidenceRefsV1
+    )
+    missing_required_modalities: tuple[str, ...] = field(default_factory=tuple)
+    failed_required_modalities: tuple[str, ...] = field(default_factory=tuple)
+    reasons: tuple[str, ...] = field(default_factory=tuple)
+    task_count: int = 0
+    completed_task_count: int = 0
+
+    def __post_init__(self) -> None:
+        if type(self.evidence_refs) is not ProjectOutcomeNonFactoryEvidenceRefsV1:
+            raise ProjectOutcomeValidationV1Error(
+                "invalid_non_factory_evidence_refs_type",
+                "evidence_refs must be an exact ProjectOutcomeNonFactoryEvidenceRefsV1 instance",
+            )
+        probe = ProjectOutcomeQueryV1(
+            run_id="non-factory-claims-validation",
+            delivery=self.delivery,
+            chain=ChainAxisV1.NOT_STARTED,
+            qa=self.qa,
+            task_boundary=self.task_boundary,
+            task_runtime=self.task_runtime,
+            run_ledger=self.run_ledger,
+            evidence_refs=ProjectOutcomeEvidenceRefsV1(
+                delivery=self.evidence_refs.delivery,
+                qa=self.evidence_refs.qa,
+                task_boundary=self.evidence_refs.task_boundary,
+                task_runtime=self.evidence_refs.task_runtime,
+                run_ledger=self.evidence_refs.run_ledger,
+            ),
+            missing_required_modalities=self.missing_required_modalities,
+            failed_required_modalities=self.failed_required_modalities,
+            reasons=self.reasons,
+            task_count=self.task_count,
+            completed_task_count=self.completed_task_count,
+        )
+        object.__setattr__(self, "missing_required_modalities", probe.missing_required_modalities)
+        object.__setattr__(self, "failed_required_modalities", probe.failed_required_modalities)
+        object.__setattr__(self, "reasons", probe.reasons)
+        object.__setattr__(self, "task_count", probe.task_count)
+        object.__setattr__(self, "completed_task_count", probe.completed_task_count)
+
+
+@dataclass(frozen=True, slots=True)
+class FactoryChainOwnerObservationV1:
+    """Normalized immutable Factory chain facts consumed by projection."""
+
+    workspace: str
+    run_id: str
+    available: bool
+    status: str
+    chain_completed: bool
+    event_refs: tuple[str, ...]
+    completion_event_ref: str | None
+    projection_hash: str
+
+    def __post_init__(self) -> None:
+        for field_name in ("workspace", "run_id"):
+            value = getattr(self, field_name)
+            if type(value) is not str or not value.strip():
+                raise ProjectOutcomeOwnerObservationV1Error(
+                    f"invalid_factory_chain_owner_{field_name}",
+                    f"Factory chain owner {field_name} must be a non-empty exact string",
+                )
+            object.__setattr__(self, field_name, value.strip())
+        if type(self.available) is not bool or type(self.chain_completed) is not bool:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "invalid_factory_chain_owner_boolean",
+                "Factory chain owner availability and completion must be exact booleans",
+            )
+        if type(self.status) is not str:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "invalid_factory_chain_owner_status",
+                "Factory chain owner status must be an exact string",
+            )
+        status = self.status.strip()
+        if self.available is not bool(status):
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "invalid_factory_chain_owner_availability",
+                "Available Factory observations require status; unavailable observations forbid it",
+            )
+        if type(self.event_refs) is not tuple:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "invalid_factory_chain_owner_event_refs",
+                "Factory chain event_refs must be an exact tuple",
+            )
+        event_refs: list[str] = []
+        for item in self.event_refs:
+            if type(item) is not str or not item.strip():
+                raise ProjectOutcomeOwnerObservationV1Error(
+                    "invalid_factory_chain_owner_event_refs",
+                    "Factory chain event_refs must contain non-empty exact strings",
+                )
+            event_ref = item.strip()
+            if event_ref in event_refs:
+                raise ProjectOutcomeOwnerObservationV1Error(
+                    "invalid_factory_chain_owner_event_refs",
+                    "Factory chain event_refs must be unique",
+                )
+            event_refs.append(event_ref)
+        completion_event_ref = self.completion_event_ref
+        if completion_event_ref is not None:
+            if type(completion_event_ref) is not str or not completion_event_ref.strip():
+                raise ProjectOutcomeOwnerObservationV1Error(
+                    "invalid_factory_chain_owner_completion_event_ref",
+                    "Factory completion_event_ref must be null or a non-empty exact string",
+                )
+            completion_event_ref = completion_event_ref.strip()
+            if completion_event_ref not in event_refs:
+                raise ProjectOutcomeOwnerObservationV1Error(
+                    "invalid_factory_chain_owner_completion_event_ref",
+                    "Factory completion_event_ref must identify an event_ref",
+                )
+        if self.chain_completed is not (completion_event_ref is not None and status == "completed"):
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "invalid_factory_chain_owner_completion",
+                "Factory chain completion must bind completed status and completion evidence",
+            )
+        projection_hash = self.projection_hash
+        if (
+            type(projection_hash) is not str
+            or len(projection_hash) != 64
+            or any(character not in "0123456789abcdef" for character in projection_hash)
+        ):
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "invalid_factory_chain_projection_hash",
+                "Factory projection_hash must be a lowercase SHA-256 digest",
+            )
+        if not self.available and (event_refs or completion_event_ref is not None):
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "invalid_factory_chain_owner_unavailable_evidence",
+                "Unavailable Factory observations cannot carry event evidence",
+            )
+        object.__setattr__(self, "status", status)
+        object.__setattr__(self, "event_refs", tuple(event_refs))
+        object.__setattr__(self, "completion_event_ref", completion_event_ref)
+
+
+@runtime_checkable
+class FactoryChainOwnerObservationPortV1(Protocol):
+    """Bootstrap-bound read port for authoritative Factory chain observation."""
+
+    async def observe_factory_chain(
+        self,
+        *,
+        workspace: str,
+        run_id: str,
+    ) -> FactoryChainOwnerObservationV1:
+        """Return normalized immutable owner facts for one workspace run."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class DirectorStatusObservationV1:
+    """Exact projection-owned representation of Director status availability."""
+
+    workspace: str
+    available: bool
+    status: dict[str, Any] | None
+
+    def __post_init__(self) -> None:
+        if type(self.workspace) is not str or not self.workspace.strip():
+            raise DirectorStatusObservationV1Error(
+                "invalid_director_status_owner_workspace",
+                "Director status owner workspace must be a non-empty exact string",
+            )
+        if type(self.available) is not bool:
+            raise DirectorStatusObservationV1Error(
+                "invalid_director_status_owner_availability",
+                "Director status owner availability must be an exact boolean",
+            )
+        if self.available:
+            if type(self.status) is not dict:
+                raise DirectorStatusObservationV1Error(
+                    "invalid_director_status_owner_payload",
+                    "Available Director status observations require an exact dict payload",
+                )
+            state = self.status.get("state")
+            if type(state) is not str or not state.strip():
+                raise DirectorStatusObservationV1Error(
+                    "invalid_director_status_owner_state",
+                    "Available Director status observations require a non-empty exact state",
+                )
+            object.__setattr__(self, "status", dict(self.status))
+        elif self.status is not None:
+            raise DirectorStatusObservationV1Error(
+                "invalid_director_status_owner_availability",
+                "Unavailable Director status observations cannot carry a status payload",
+            )
+        object.__setattr__(self, "workspace", self.workspace.strip())
+
+
+@runtime_checkable
+class DirectorStatusObservationPortV1(Protocol):
+    """Bootstrap-bound read port for authoritative Director status observation."""
+
+    async def observe_director_status(
+        self,
+        *,
+        workspace: str,
+    ) -> DirectorStatusObservationV1:
+        """Return normalized Director status facts for one workspace."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectOutcomeFactoryOwnerQueryV1:
+    """Exact direct-owner query; intentionally has no Factory DTO field."""
+
+    workspace: str
+    run_id: str
+    claims: ProjectOutcomeNonFactoryClaimsV1
+
+    def __post_init__(self) -> None:
+        for field_name in ("workspace", "run_id"):
+            value = getattr(self, field_name)
+            if type(value) is not str or not value.strip():
+                raise ProjectOutcomeOwnerObservationV1Error(
+                    f"invalid_{field_name}",
+                    f"{field_name} must be a non-empty exact string",
+                )
+            object.__setattr__(self, field_name, value.strip())
+        if type(self.claims) is not ProjectOutcomeNonFactoryClaimsV1:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "invalid_non_factory_claims_type",
+                "claims must be an exact ProjectOutcomeNonFactoryClaimsV1 instance",
+            )
+
+
 @dataclass(frozen=True)
 class ProjectOutcomeV1:
     """Read-only multi-axis project outcome projection.
@@ -467,10 +740,83 @@ class ProjectOutcomeV1:
         object.__setattr__(self, "completed_task_count", candidate_query.completed_task_count)
 
 
+_GR1B_REMAINING_UNBOUND_OWNER_AXES: tuple[str, ...] = (
+    "delivery",
+    "qa",
+    "task_boundary",
+    "task_runtime",
+    "run_ledger",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectOutcomeFactoryOwnerBindingV1:
+    """Outcome plus evidence that Factory chain ownership was directly observed."""
+
+    outcome: ProjectOutcomeV1
+    factory_chain_owner_observed: bool
+    factory_chain_projection_hash: str
+    factory_chain_evidence_refs: tuple[str, ...]
+    remaining_unbound_owner_axes: tuple[str, ...] = _GR1B_REMAINING_UNBOUND_OWNER_AXES
+
+    def __post_init__(self) -> None:
+        if type(self.outcome) is not ProjectOutcomeV1:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "invalid_bound_outcome_type",
+                "outcome must be an exact ProjectOutcomeV1 instance",
+            )
+        if self.factory_chain_owner_observed is not True:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "factory_chain_owner_not_observed",
+                "factory_chain_owner_observed must be true",
+            )
+        if type(self.factory_chain_projection_hash) is not str or not self.factory_chain_projection_hash.strip():
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "invalid_factory_chain_projection_hash",
+                "factory_chain_projection_hash must be a non-empty exact string",
+            )
+        evidence_refs = _normalize_token_tuple(
+            self.factory_chain_evidence_refs,
+            "factory_chain_evidence_refs",
+        )
+        if not evidence_refs:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "missing_factory_chain_evidence_refs",
+                "factory_chain_evidence_refs must include direct owner evidence",
+            )
+        if evidence_refs != self.outcome.evidence_refs.chain:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "factory_chain_binding_evidence_mismatch",
+                "factory_chain_evidence_refs must exactly equal outcome.evidence_refs.chain",
+            )
+        if self.factory_chain_projection_hash.strip() not in evidence_refs:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "factory_chain_projection_hash_not_bound",
+                "factory_chain_projection_hash must be present in factory_chain_evidence_refs",
+            )
+        if self.remaining_unbound_owner_axes != _GR1B_REMAINING_UNBOUND_OWNER_AXES:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "invalid_remaining_unbound_owner_axes",
+                "remaining_unbound_owner_axes must list every non-Factory owner axis",
+            )
+        object.__setattr__(self, "factory_chain_projection_hash", self.factory_chain_projection_hash.strip())
+        object.__setattr__(self, "factory_chain_evidence_refs", evidence_refs)
+
+
 __all__ = [
     "ChainAxisV1",
     "DeliveryAxisV1",
+    "DirectorStatusObservationPortV1",
+    "DirectorStatusObservationV1",
+    "DirectorStatusObservationV1Error",
+    "FactoryChainOwnerObservationPortV1",
+    "FactoryChainOwnerObservationV1",
     "ProjectOutcomeEvidenceRefsV1",
+    "ProjectOutcomeFactoryOwnerBindingV1",
+    "ProjectOutcomeFactoryOwnerQueryV1",
+    "ProjectOutcomeNonFactoryClaimsV1",
+    "ProjectOutcomeNonFactoryEvidenceRefsV1",
+    "ProjectOutcomeOwnerObservationV1Error",
     "ProjectOutcomeQueryV1",
     "ProjectOutcomeV1",
     "ProjectOutcomeValidationV1Error",

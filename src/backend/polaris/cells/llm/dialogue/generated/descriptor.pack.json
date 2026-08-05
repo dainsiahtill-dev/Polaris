@@ -1,6 +1,6 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:18.060295Z",
+  "generated_at": "2026-08-02T15:47:47.900261Z",
   "source_hash": "485be5e9c2d5194a",
   "cell_id": "llm.dialogue",
   "workspace": "/home/dains/Documents/polaris/src/backend",
@@ -121,6 +121,18 @@
     },
     {
       "type": "function",
+      "name": "generate_dialogue_turn",
+      "description": "生成对话回合（非流式）",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_dialogue_turn_streaming",
+      "description": "生成对话回合（流式）",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_dialogue.py"
+    },
+    {
+      "type": "function",
       "name": "build_docs_prompt",
       "description": "构建文档生成提示词",
       "defined_in": "polaris/cells/llm/dialogue/internal/docs_suggest.py"
@@ -159,6 +171,24 @@
       "type": "function",
       "name": "_build_repair_prompt",
       "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_suggest.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_docs_fields",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_suggest.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_docs_fields",
+      "description": "生成文档字段建议",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_suggest.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_docs_fields_stream",
+      "description": "流式生成文档字段建议，实时返回thinking和结果",
       "defined_in": "polaris/cells/llm/dialogue/internal/docs_suggest.py"
     },
     {
@@ -289,6 +319,30 @@
     },
     {
       "type": "function",
+      "name": "generate_role_response",
+      "description": "生成角色回复（非流式）。",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "_generate_with_kernel",
+      "description": "Compatibility wrapper for old imports; delegates to RoleRuntimeService.",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "_generate_with_role_runtime",
+      "description": "Use RoleRuntimeService for role dialogue compatibility calls.",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_role_response_streaming",
+      "description": "生成角色回复（流式）",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
       "name": "_build_role_prompt",
       "description": "构建角色对话的prompt",
       "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
@@ -365,6 +419,14 @@
       "defined_in": "polaris/cells/llm/dialogue/public/contracts.py",
       "methods": [
         {
+          "name": "invoke_role_dialogue",
+          "doc": "Invoke role dialogue."
+        },
+        {
+          "name": "invoke_docs_dialogue",
+          "doc": "Invoke docs dialogue."
+        },
+        {
           "name": "validate_role_output",
           "doc": "Validate role output format."
         }
@@ -390,6 +452,14 @@
       "methods": [
         {
           "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "invoke_role_dialogue",
+          "doc": ""
+        },
+        {
+          "name": "invoke_docs_dialogue",
           "doc": ""
         },
         {

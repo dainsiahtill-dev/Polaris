@@ -1,10 +1,22 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:19.203976Z",
-  "source_hash": "7cce76a8ee4bdfcd",
+  "generated_at": "2026-08-02T19:10:13.011525Z",
+  "source_hash": "1d3f639faea6fd03",
   "cell_id": "runtime.execution_broker",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "function",
+      "name": "bind_managed_process_ports",
+      "description": "Bind one exact dependency bundle; only the public bootstrap may call this.",
+      "defined_in": "polaris/cells/runtime/execution_broker/internal/managed_process_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "get_managed_process_ports",
+      "description": "Return the bound bundle or fail closed before managed execution.",
+      "defined_in": "polaris/cells/runtime/execution_broker/internal/managed_process_ports.py"
+    },
     {
       "type": "class",
       "name": "_AsyncLineLog",
@@ -16,6 +28,10 @@
           "doc": ""
         },
         {
+          "name": "open",
+          "doc": "Open the log file off-loop (directory creation + ``open`` both run in a thread)."
+        },
+        {
           "name": "pending_lines",
           "doc": "Number of buffered lines awaiting the next flush."
         },
@@ -24,8 +40,16 @@
           "doc": "Buffer one already-newline-terminated line for the next flush (no I/O)."
         },
         {
+          "name": "flush",
+          "doc": "Offload the buffered writes and an explicit flush to a worker thread."
+        },
+        {
           "name": "_write_and_flush",
           "doc": ""
+        },
+        {
+          "name": "close",
+          "doc": "Flush any remaining buffered lines and close the handle off-loop."
         }
       ]
     },
@@ -52,6 +76,26 @@
           "doc": ""
         },
         {
+          "name": "submit_process_spec",
+          "doc": ""
+        },
+        {
+          "name": "launch_process",
+          "doc": ""
+        },
+        {
+          "name": "wait_process",
+          "doc": ""
+        },
+        {
+          "name": "terminate_process",
+          "doc": ""
+        },
+        {
+          "name": "cancel_execution",
+          "doc": ""
+        },
+        {
           "name": "get_process_status",
           "doc": ""
         },
@@ -60,12 +104,40 @@
           "doc": ""
         },
         {
+          "name": "resolve_process_handle",
+          "doc": "Resolve a process handle from ID or handle object (async, thread-safe)."
+        },
+        {
           "name": "resolve_process_handle_sync",
           "doc": "Synchronous version for non-async contexts (e.g., get_process_snapshot)."
         },
         {
           "name": "resolve_runtime_process",
           "doc": ""
+        },
+        {
+          "name": "list_active_processes",
+          "doc": "List active processes."
+        },
+        {
+          "name": "wait_many_processes",
+          "doc": ""
+        },
+        {
+          "name": "close",
+          "doc": ""
+        },
+        {
+          "name": "_register_log_drain",
+          "doc": "Register a background task to drain process output to log file (async, thread-safe)."
+        },
+        {
+          "name": "_drain_stream_to_log",
+          "doc": "Drain process output to log file until the process stream closes."
+        },
+        {
+          "name": "_await_log_drain",
+          "doc": "Await and remove a log drain task (async, thread-safe)."
         },
         {
           "name": "_normalize_stdin",
@@ -135,9 +207,27 @@
     },
     {
       "type": "function",
+      "name": "_wait_for_terminal_snapshot",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/internal/service.py"
+    },
+    {
+      "type": "function",
       "name": "get_execution_broker_service",
       "description": "",
       "defined_in": "polaris/cells/runtime/execution_broker/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_execution_broker_service",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "bind_managed_process_ports",
+      "description": "Bind managed-process ports exactly once during application bootstrap.",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/bootstrap.py"
     },
     {
       "type": "class",
@@ -150,6 +240,57 @@
       "type": "class",
       "name": "ExecutionErrorCode",
       "description": "Execution broker error codes for machine-parseable error classification.",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ManagedProcessReceiptStorePortV1",
+      "description": "Consumer-owned view of the canonical managed-process receipt owner.",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py",
+      "methods": [
+        {
+          "name": "append_managed_process_receipt",
+          "doc": "Persist one canonical receipt idempotently by content hash."
+        },
+        {
+          "name": "get_managed_process_receipt",
+          "doc": "Read one canonical receipt by its content hash."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AppendManagedProcessReceiptCommandV1",
+      "description": "Typed request for B2's future content-addressed receipt owner.",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetManagedProcessReceiptQueryV1",
+      "description": "Typed receipt lookup used only after a receipt reference is committed.",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ManagedProcessReceiptAppendResultV1",
+      "description": "Idempotent append result with durable receipt identity.",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ManagedProcessReceiptRecordV1",
+      "description": "Immutable canonical receipt resolved by its content address.",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ManagedProcessPortsV1",
+      "description": "Bootstrap-composed managed-process receipt dependency.",
       "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py",
       "methods": []
     },
@@ -215,6 +356,12 @@
     {
       "type": "function",
       "name": "_normalize_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_lower_sha256",
       "description": "",
       "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py"
     }

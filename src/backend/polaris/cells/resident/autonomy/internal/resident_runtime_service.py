@@ -269,23 +269,60 @@ class ResidentService:
             self._refresh_agenda_view()
             return goal
 
-    def approve_goal(self, goal_id: str, note: str = "") -> GoalProposal | None:
+    def approve_goal(
+        self,
+        goal_id: str,
+        note: str = "",
+        *,
+        expected_revision: int | None = None,
+    ) -> GoalProposal | None:
         with self._lock:
-            goal = self.goal_governor.approve_goal(goal_id, note=note)
+            goal = self.goal_governor.approve_goal(
+                goal_id,
+                note=note,
+                expected_revision=expected_revision,
+            )
             self._refresh_agenda_view()
             return goal
 
-    def reject_goal(self, goal_id: str, note: str = "") -> GoalProposal | None:
+    def reject_goal(
+        self,
+        goal_id: str,
+        note: str = "",
+        *,
+        expected_revision: int | None = None,
+    ) -> GoalProposal | None:
         with self._lock:
-            goal = self.goal_governor.reject_goal(goal_id, note=note)
+            goal = self.goal_governor.reject_goal(
+                goal_id,
+                note=note,
+                expected_revision=expected_revision,
+            )
             self._refresh_agenda_view()
             return goal
 
-    def materialize_goal(self, goal_id: str) -> dict[str, Any] | None:
+    def materialize_goal(
+        self,
+        goal_id: str,
+        *,
+        expected_revision: int | None = None,
+    ) -> dict[str, Any] | None:
         with self._lock:
-            contract = self.goal_governor.materialize_goal(goal_id)
+            contract = self.goal_governor.materialize_goal(
+                goal_id,
+                expected_revision=expected_revision,
+            )
             self._refresh_agenda_view()
             return contract
+
+    def archive_goal(self, goal_id: str, *, expected_revision: int) -> GoalProposal | None:
+        with self._lock:
+            goal = self.goal_governor.archive_goal(
+                goal_id,
+                expected_revision=expected_revision,
+            )
+            self._refresh_agenda_view()
+            return goal
 
     def stage_goal(
         self,
@@ -664,7 +701,10 @@ class ResidentService:
             contract,
             promote_to_pm_runtime=promote_to_pm_runtime,
         )
+        lifecycle_revision = goal.materialization_artifacts.get("goal_lifecycle_revision")
         goal.materialization_artifacts = dict(staged.get("artifacts") or {})
+        if lifecycle_revision is not None:
+            goal.materialization_artifacts["goal_lifecycle_revision"] = lifecycle_revision
         goal.materialization_artifacts["staged_at"] = str(staged.get("staged_at") or "")
         goal.materialization_artifacts["promoted_to_pm_runtime"] = bool(staged.get("promoted_to_pm_runtime"))
         goal.materialization_artifacts["pm_run"] = dict(staged.get("pm_run") or {})

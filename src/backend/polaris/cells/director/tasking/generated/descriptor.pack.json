@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:11.551434Z",
-  "source_hash": "7c934a22dd1c0c04",
+  "generated_at": "2026-08-02T15:47:39.381604Z",
+  "source_hash": "0fa89e2f4eb4b037",
   "cell_id": "director.tasking",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -44,19 +44,19 @@
     {
       "type": "function",
       "name": "get_python_bootstrap_files",
-      "description": "Legacy function for Python bootstrap - returns basic template.",
+      "description": "Return the compatibility Python bootstrap template set.",
       "defined_in": "polaris/cells/director/tasking/internal/bootstrap_template_catalog.py"
     },
     {
       "type": "function",
       "name": "get_typescript_bootstrap_files",
-      "description": "Legacy function for TypeScript bootstrap - returns basic template.",
+      "description": "Return the compatibility TypeScript bootstrap template set.",
       "defined_in": "polaris/cells/director/tasking/internal/bootstrap_template_catalog.py"
     },
     {
       "type": "function",
       "name": "get_generic_bootstrap_files",
-      "description": "Legacy function for generic bootstrap - returns basic template.",
+      "description": "Return the compatibility generic bootstrap template set.",
       "defined_in": "polaris/cells/director/tasking/internal/bootstrap_template_catalog.py"
     },
     {
@@ -94,7 +94,7 @@
         },
         {
           "name": "resolve_patch_retry_attempts",
-          "doc": "Resolve retry attempts for legacy call sites."
+          "doc": "Resolve retry attempts for compatibility call sites."
         },
         {
           "name": "_env_flag",
@@ -110,7 +110,7 @@
         },
         {
           "name": "resolve_spin_guard_repeat_limit",
-          "doc": "Resolve spin-guard limit for legacy call sites."
+          "doc": "Resolve spin-guard limit for compatibility call sites."
         },
         {
           "name": "is_low_signal_response",
@@ -201,6 +201,10 @@
           "doc": ""
         },
         {
+          "name": "_invoke_director_role_response",
+          "doc": "Invoke the canonical Director role runtime for one generation round."
+        },
+        {
           "name": "_normalize_proposal_prompt",
           "doc": "Ensure projected task prompts still carry the proposal/no-tools contract."
         },
@@ -279,6 +283,10 @@
         {
           "name": "build_patch_retry_prompt",
           "doc": "Blocked: patch prompt construction for code writing."
+        },
+        {
+          "name": "invoke_generation_with_retries",
+          "doc": "Generate code through the Director role runtime when explicitly enabled."
         }
       ]
     },
@@ -304,6 +312,12 @@
       "type": "function",
       "name": "generate_phase_aware_fallback_content",
       "description": "Blocked: phase-aware fallback code generation is forbidden.",
+      "defined_in": "polaris/cells/director/tasking/internal/code_generation_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_bootstrap_with_llm",
+      "description": "Blocked: bootstrap code generation via LLM is forbidden.",
       "defined_in": "polaris/cells/director/tasking/internal/code_generation_engine.py"
     },
     {
@@ -341,6 +355,12 @@
           "doc": "Return whether a target path is likely to produce expensive test/spec output."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "main",
+      "description": "Main entry point for Director standalone agent.",
+      "defined_in": "polaris/cells/director/tasking/internal/director_cli.py"
     },
     {
       "type": "function",
@@ -506,6 +526,30 @@
     },
     {
       "type": "function",
+      "name": "_is_config_manifest_path",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_config_manifest_boundary",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_source_materialization_path",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_fresh_source_materialization_boundary",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
+    },
+    {
+      "type": "function",
       "name": "_explicit_task_type",
       "description": "",
       "defined_in": "polaris/cells/director/tasking/internal/execution_profile.py"
@@ -608,6 +652,12 @@
     },
     {
       "type": "function",
+      "name": "_has_declared_dependencies",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/execution_strategy.py"
+    },
+    {
+      "type": "function",
       "name": "_evidence_requirements",
       "description": "",
       "defined_in": "polaris/cells/director/tasking/internal/execution_strategy.py"
@@ -692,7 +742,7 @@
         },
         {
           "name": "write_files",
-          "doc": "Write generated files to workspace with broadcast support."
+          "doc": "Fail closed for legacy direct file application."
         },
         {
           "name": "_validate_applied_files_against_director_policy",
@@ -705,10 +755,6 @@
         {
           "name": "_snapshot_files",
           "doc": "Snapshot existing file contents before applying a risky operation."
-        },
-        {
-          "name": "_restore_snapshots",
-          "doc": "Restore files after a post-apply validation failure."
         },
         {
           "name": "_protocol_paths",
@@ -728,7 +774,7 @@
         },
         {
           "name": "apply_response_operations",
-          "doc": "Apply patch/file operations from LLM response with pre-apply validation."
+          "doc": "Validate raw protocol evidence but never apply it physically."
         },
         {
           "name": "calculate_diff_stats",
@@ -933,7 +979,19 @@
     {
       "type": "function",
       "name": "_contract_language_from_text",
-      "description": "Return a language only from explicit contract fields or hard checks.",
+      "description": "Return a language from explicit contract fields or hard checks.",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_explicit_contract_language_from_text",
+      "description": "Return a language only from explicit contract language fields.",
+      "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
+    },
+    {
+      "type": "function",
+      "name": "_hard_check_language_from_text",
+      "description": "Return a language inferred from deterministic check names only.",
       "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
     },
     {
@@ -987,7 +1045,7 @@
     {
       "type": "function",
       "name": "get_language_guidance",
-      "description": "Get language-specific coding guidance for compatibility callers.",
+      "description": "Return language-specific coding guidance for prompt profile callers.",
       "defined_in": "polaris/cells/director/tasking/internal/language_guidance.py"
     },
     {
@@ -1065,26 +1123,8 @@
     },
     {
       "type": "function",
-      "name": "apply_operation",
-      "description": "Apply one operation through KernelOne's strict operation applier.",
-      "defined_in": "polaris/cells/director/tasking/internal/patch_protocol.py"
-    },
-    {
-      "type": "function",
-      "name": "apply_all_operations",
-      "description": "Parse and strictly apply all operations from response text.",
-      "defined_in": "polaris/cells/director/tasking/internal/patch_protocol.py"
-    },
-    {
-      "type": "function",
       "name": "validate_before_apply",
       "description": "Validate protocol output before applying file operations.",
-      "defined_in": "polaris/cells/director/tasking/internal/patch_protocol.py"
-    },
-    {
-      "type": "function",
-      "name": "apply_operations_strict",
-      "description": "Strictly apply protocol output and return the full KernelOne report.",
       "defined_in": "polaris/cells/director/tasking/internal/patch_protocol.py"
     },
     {
@@ -1292,6 +1332,14 @@
           "doc": "Determine if repair should be attempted."
         },
         {
+          "name": "run_repair",
+          "doc": "Execute a single repair iteration."
+        },
+        {
+          "name": "run_repair_loop",
+          "doc": "Run repair loop until success or exhaustion."
+        },
+        {
           "name": "_extract_missing_files",
           "doc": "Extract missing file references from QA output."
         },
@@ -1392,19 +1440,25 @@
     {
       "type": "function",
       "name": "classify_task",
-      "description": "Return legacy dispatch type from the canonical execution profile.",
+      "description": "Return the dispatch type from the canonical execution profile.",
       "defined_in": "polaris/cells/director/tasking/internal/task_classifier.py"
     },
     {
       "type": "function",
       "name": "extract_tech_stack",
-      "description": "Return legacy tech-stack shape from the canonical execution profile.",
+      "description": "Return the task tech-stack shape from the canonical execution profile.",
       "defined_in": "polaris/cells/director/tasking/internal/task_classifier.py"
     },
     {
       "type": "function",
       "name": "_configure_logging",
       "description": "Configure logging for subprocess execution.",
+      "defined_in": "polaris/cells/director/tasking/internal/task_execution_runner.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_task_execution",
+      "description": "Execute the task using WorkerExecutor.",
       "defined_in": "polaris/cells/director/tasking/internal/task_execution_runner.py"
     },
     {
@@ -1427,6 +1481,10 @@
       "defined_in": "polaris/cells/director/tasking/internal/task_lifecycle_service.py",
       "methods": [
         {
+          "name": "run_audit",
+          "doc": ""
+        },
+        {
           "name": "get_stats",
           "doc": ""
         }
@@ -1440,6 +1498,10 @@
       "methods": [
         {
           "name": "should_attempt_repair",
+          "doc": ""
+        },
+        {
+          "name": "run_repair_loop",
           "doc": ""
         }
       ]
@@ -1570,8 +1632,60 @@
           "doc": ""
         },
         {
+          "name": "_enqueue_task",
+          "doc": "入队任务，带超时和背压处理"
+        },
+        {
+          "name": "create_task",
+          "doc": "Create a new task."
+        },
+        {
+          "name": "get_task",
+          "doc": "Get a task by ID."
+        },
+        {
+          "name": "get_tasks",
+          "doc": "Get tasks with optional filtering."
+        },
+        {
+          "name": "cancel_task",
+          "doc": "Cancel a pending or ready task."
+        },
+        {
+          "name": "on_task_claimed",
+          "doc": "Mark task as claimed by a worker."
+        },
+        {
+          "name": "on_task_started",
+          "doc": "Mark task as started."
+        },
+        {
+          "name": "on_task_completed",
+          "doc": "Handle task completion."
+        },
+        {
+          "name": "on_task_failed",
+          "doc": "Handle task failure."
+        },
+        {
+          "name": "get_next_ready_task",
+          "doc": "Get the next ready task ID from the queue."
+        },
+        {
+          "name": "get_ready_task_count",
+          "doc": "Get number of tasks currently ready to execute."
+        },
+        {
+          "name": "get_dependency_graph",
+          "doc": "Get dependency graph for a task."
+        },
+        {
           "name": "get_task_info",
           "doc": ""
+        },
+        {
+          "name": "add_dependency",
+          "doc": "Add a dependency between tasks."
         },
         {
           "name": "on_task_complete",
@@ -1586,12 +1700,128 @@
           "doc": "Check if all dependencies are satisfied."
         },
         {
+          "name": "get_statistics",
+          "doc": "Get task statistics."
+        },
+        {
+          "name": "initialize_state_machine",
+          "doc": "Initialize state machine for a task."
+        },
+        {
+          "name": "execute_task_phase",
+          "doc": "Execute current phase of task state machine."
+        },
+        {
+          "name": "_update_task_from_phase",
+          "doc": "Update task status based on phase result."
+        },
+        {
+          "name": "get_task_state_machine",
+          "doc": "Get state machine for a task."
+        },
+        {
+          "name": "get_task_trajectory",
+          "doc": "Get execution trajectory for a task."
+        },
+        {
+          "name": "should_retry_task",
+          "doc": "Check if task should be retried based on verification."
+        },
+        {
+          "name": "verify_existence",
+          "doc": "Verify target files exist (Existence Gate)."
+        },
+        {
+          "name": "soft_verify",
+          "doc": "Run soft check verification."
+        },
+        {
+          "name": "validate_write_scope",
+          "doc": "Validate write scope (Write Gate)."
+        },
+        {
+          "name": "check_progress",
+          "doc": "Check progress to detect stalled execution."
+        },
+        {
+          "name": "analyze_impact",
+          "doc": "Analyze impact of file changes."
+        },
+        {
+          "name": "get_impact_recommendations",
+          "doc": "Get verification recommendations based on impact."
+        },
+        {
+          "name": "create_evidence_collector",
+          "doc": "Create evidence collector for a task."
+        },
+        {
+          "name": "get_evidence_package",
+          "doc": "Get evidence package for a task."
+        },
+        {
+          "name": "record_file_change",
+          "doc": "Record a file change in evidence."
+        },
+        {
+          "name": "save_evidence_to_file",
+          "doc": "Save evidence package to file for audit trail."
+        },
+        {
+          "name": "load_evidence_from_file",
+          "doc": "Load evidence package from file."
+        },
+        {
+          "name": "save_state_to_file",
+          "doc": "Save state machine state to file."
+        },
+        {
+          "name": "load_state_from_file",
+          "doc": "Load state machine state from file."
+        },
+        {
+          "name": "get_task_lifecycle",
+          "doc": "Get task lifecycle."
+        },
+        {
+          "name": "get_task_trajectory_from_store",
+          "doc": "Get task execution trajectory from state store."
+        },
+        {
+          "name": "write_task_log",
+          "doc": "Write to task log file."
+        },
+        {
+          "name": "export_evidence_for_role",
+          "doc": "Export evidence package for another role agent."
+        },
+        {
+          "name": "run_independent_audit",
+          "doc": "Run independent audit for a task."
+        },
+        {
           "name": "set_audit_llm_caller",
           "doc": "Set LLM caller for audit service."
         },
         {
+          "name": "get_audit_stats",
+          "doc": "Get audit statistics."
+        },
+        {
+          "name": "should_attempt_repair",
+          "doc": "Determine if repair should be attempted."
+        },
+        {
           "name": "set_repair_executor",
           "doc": "Set repair executor function."
+        },
+        {
+          "name": "run_repair_loop",
+          "doc": "Run repair loop until success or exhaustion."
+        },
+        {
+          "name": "execute_phase_with_verification",
+          "doc": "Execute phase with full verification pipeline."
         }
       ]
     },
@@ -1663,7 +1893,11 @@
         },
         {
           "name": "_raise_code_writing_forbidden",
-          "doc": "Fail closed when legacy code-writing helpers are invoked."
+          "doc": "Fail closed when forbidden code-writing helpers are invoked."
+        },
+        {
+          "name": "execute",
+          "doc": "Execute a task and return result."
         },
         {
           "name": "_classify_task",
@@ -1672,6 +1906,22 @@
         {
           "name": "_extract_tech_stack",
           "doc": "Extract technology stack from task metadata (set by PM)."
+        },
+        {
+          "name": "_execute_code_generation",
+          "doc": "Execute code generation task with LLM."
+        },
+        {
+          "name": "_execute_file_creation",
+          "doc": "Execute file creation through the audited code-generation path."
+        },
+        {
+          "name": "_execute_bootstrap",
+          "doc": "Execute bootstrap task with template or LLM generation."
+        },
+        {
+          "name": "_execute_generic",
+          "doc": "Execute generic task - delegate to code generation."
         },
         {
           "name": "_resolve_llm_call_timeout_hint",
@@ -1879,19 +2129,19 @@
         },
         {
           "name": "_fallback_code_files",
-          "doc": "Legacy entry point retained only to fail closed."
+          "doc": "Blocked compatibility entry point retained only to fail closed."
         },
         {
           "name": "_deterministic_repair_files",
-          "doc": "Legacy entry point retained only to fail closed."
+          "doc": "Blocked compatibility entry point retained only to fail closed."
         },
         {
           "name": "_invoke_generation_response",
-          "doc": "Legacy direct-generation entry point retained only to fail closed."
+          "doc": "Blocked direct-generation entry point retained only to fail closed."
         },
         {
           "name": "_fallback_code_content",
-          "doc": "Legacy entry point retained only to fail closed."
+          "doc": "Blocked compatibility entry point retained only to fail closed."
         },
         {
           "name": "_deterministic_repair_enabled",
@@ -1903,7 +2153,7 @@
         },
         {
           "name": "_invoke_ollama",
-          "doc": "Legacy Ollama entry point retained only to fail closed."
+          "doc": "Blocked Ollama entry point retained only to fail closed."
         },
         {
           "name": "_invoke_generation_with_retries",
@@ -1933,6 +2183,54 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "initialize",
+          "doc": "Initialize worker pool with minimum workers."
+        },
+        {
+          "name": "shutdown",
+          "doc": "Gracefully shutdown all workers."
+        },
+        {
+          "name": "spawn_worker",
+          "doc": "Spawn a new worker."
+        },
+        {
+          "name": "destroy_worker",
+          "doc": "Destroy a specific worker."
+        },
+        {
+          "name": "get_available_worker",
+          "doc": "Find an available worker that can handle the task."
+        },
+        {
+          "name": "get_workers",
+          "doc": "Get all workers, optionally filtered by status."
+        },
+        {
+          "name": "get_worker",
+          "doc": "Get a specific worker by ID."
+        },
+        {
+          "name": "update_heartbeat",
+          "doc": "Update worker heartbeat."
+        },
+        {
+          "name": "check_health",
+          "doc": "Check health of all workers."
+        },
+        {
+          "name": "handle_failed_workers",
+          "doc": "Check and handle failed workers."
+        },
+        {
+          "name": "auto_scale",
+          "doc": "Auto-scale worker pool based on pending tasks."
+        },
+        {
+          "name": "_worker_loop",
+          "doc": "Main loop for a worker."
         },
         {
           "name": "_cleanup_worker_task",

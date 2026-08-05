@@ -26,6 +26,11 @@ from polaris.kernelone.quality.step_verify import normalize_step_verify
 
 CE_BLUEPRINT_TASKS_SCHEMA_VERSION = "ce-blueprint-tasks/1"
 
+CE_CONSUMES_PROVIDER_MISSING = "ce_consumes_provider_missing"
+CE_CONSUMES_PROVIDER_NOT_CODE = "ce_consumes_provider_not_code"
+CE_CONSUMES_PROVIDER_PUBLIC_SYMBOLS_EMPTY = "ce_consumes_provider_public_symbols_empty"
+CE_CONSUMES_PROVIDER_DEPENDENCY_MISSING = "ce_consumes_provider_dependency_missing"
+
 _MAX_STEP_LINES = 120
 _MAX_STEPS_PER_TASK = 24
 _VERIFY_ARITHMETIC_CALL_RE = re.compile(
@@ -66,7 +71,7 @@ def normalize_construction_step(raw: Any, *, parent_pm_task: str, index: int) ->
     signatures = [str(item).strip() for item in (record.get("signatures") or []) if str(item).strip()]
     interface_names = [str(item).strip() for item in (record.get("interface_names") or []) if str(item).strip()]
     public_symbols = _string_list(
-        record.get("public_symbols") or record.get("exports") or record.get("provided_symbols") or interface_names
+        record.get("public_symbols") or record.get("exports") or record.get("provided_symbols")
     )
     consumes_symbols = _normalize_symbol_map(
         record.get("consumes_symbols") or record.get("required_imports") or record.get("imports_from")
@@ -106,7 +111,9 @@ def _string_list(value: Any) -> list[str]:
         return []
     result: list[str] = []
     for item in value:
-        stripped = str(item or "").strip()
+        if not isinstance(item, str):
+            continue
+        stripped = item.strip()
         if stripped and stripped not in result:
             result.append(stripped)
     return result
@@ -284,18 +291,36 @@ def validate_construction_steps(
             if shape_error := _target_file_shape_error(provider_target):
                 errors.append(f"{label}: consumes_symbols provider {shape_error}")
                 continue
-            provider_symbols = public_symbols_by_target.get(provider_target)
-            if provider_symbols is not None:
-                missing = [symbol for symbol in required_symbols if symbol not in provider_symbols]
-                if missing:
-                    errors.append(
-                        f"{label}: consumes_symbols references {provider_target} symbols not declared by provider: "
-                        + ", ".join(missing[:8])
-                    )
             provider_step_id = step_by_target.get(provider_target)
-            if provider_step_id and provider_step_id != step_id and provider_step_id not in (step.get("depends_on") or []):
+            if not provider_step_id:
                 errors.append(
-                    f"{label}: consumes_symbols from {provider_target} requires depends_on {provider_step_id!r}"
+                    f"{label}: error_code={CE_CONSUMES_PROVIDER_MISSING} "
+                    f"consumes_symbols provider {provider_target!r} does not exist"
+                )
+                continue
+            if not _target_requires_signatures(provider_target):
+                errors.append(
+                    f"{label}: error_code={CE_CONSUMES_PROVIDER_NOT_CODE} "
+                    f"consumes_symbols provider {provider_target!r} is not a code target"
+                )
+                continue
+            provider_symbols = public_symbols_by_target.get(provider_target) or set()
+            if not provider_symbols:
+                errors.append(
+                    f"{label}: error_code={CE_CONSUMES_PROVIDER_PUBLIC_SYMBOLS_EMPTY} "
+                    f"consumes_symbols provider {provider_target!r} declares no public_symbols"
+                )
+                continue
+            missing = [symbol for symbol in required_symbols if symbol not in provider_symbols]
+            if missing:
+                errors.append(
+                    f"{label}: consumes_symbols references {provider_target} symbols not declared by provider: "
+                    + ", ".join(missing[:8])
+                )
+            if provider_step_id != step_id and provider_step_id not in (step.get("depends_on") or []):
+                errors.append(
+                    f"{label}: error_code={CE_CONSUMES_PROVIDER_DEPENDENCY_MISSING} "
+                    f"consumes_symbols from {provider_target} requires depends_on {provider_step_id!r}"
                 )
         for dep in step.get("depends_on") or []:
             if dep not in known_ids:

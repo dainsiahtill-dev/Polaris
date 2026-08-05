@@ -1,3092 +1,697 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:11.002326Z",
-  "source_hash": "67a6a5e1b6c29bbd",
+  "generated_at": "2026-08-02T15:47:38.731769Z",
+  "source_hash": "bd558544956ff68a",
   "cell_id": "events.fact_stream",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
-      "name": "LogEnrichmentV1",
-      "description": "LLM enhancement results for a log event.",
-      "defined_in": "polaris/infrastructure/log_pipeline/canonical_event.py",
+      "name": "_PatchState",
+      "description": "封装单个 DebugTracer 实例的补丁状态。",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py",
       "methods": []
     },
     {
       "type": "class",
-      "name": "CanonicalLogEventV2",
-      "description": "Unified canonical log event schema.",
-      "defined_in": "polaris/infrastructure/log_pipeline/canonical_event.py",
-      "methods": [
-        {
-          "name": "compute_fingerprint",
-          "doc": "Compute deduplication fingerprint for this event."
-        },
-        {
-          "name": "to_legacy_projection",
-          "doc": "Project this event to legacy format for backward compatibility."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "normalize_legacy_event",
-      "description": "Normalize a legacy event to CanonicalLogEventV2.",
-      "defined_in": "polaris/infrastructure/log_pipeline/canonical_event.py"
-    },
-    {
-      "type": "class",
-      "name": "EnrichmentConfig",
-      "description": "Configuration for LLM enrichment.",
-      "defined_in": "polaris/infrastructure/log_pipeline/enrichment.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "LLMEnrichmentWorker",
-      "description": "Background worker for LLM-based log enrichment.",
-      "defined_in": "polaris/infrastructure/log_pipeline/enrichment.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": "Initialize the enrichment worker."
-        },
-        {
-          "name": "_load_processed_ids",
-          "doc": "Load already processed event IDs from enriched file."
-        },
-        {
-          "name": "_fetch_pending_events",
-          "doc": "Fetch events that need enrichment."
-        },
-        {
-          "name": "_batch_events",
-          "doc": "Batch events for processing."
-        },
-        {
-          "name": "_parse_enrichment_response",
-          "doc": "Parse LLM response into enrichment results."
-        },
-        {
-          "name": "_write_enrichment",
-          "doc": "Write enrichment result to enriched journal."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "EnrichmentWorkerPool",
-      "description": "Pool of enrichment workers for multiple runs.",
-      "defined_in": "polaris/infrastructure/log_pipeline/enrichment.py",
+      "name": "_LoggedStreamProxy",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py",
       "methods": [
         {
           "name": "__init__",
           "doc": ""
         },
         {
-          "name": "get_worker",
-          "doc": "Get or create worker for a run."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "get_enrichment_pool",
-      "description": "Get the global enrichment worker pool.",
-      "defined_in": "polaris/infrastructure/log_pipeline/enrichment.py"
-    },
-    {
-      "type": "class",
-      "name": "JetStreamPublishRequest",
-      "description": "One publish request enqueued after durable disk write.",
-      "defined_in": "polaris/infrastructure/log_pipeline/jetstream_publisher.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "JetStreamPublisher",
-      "description": "Background JetStream publisher with dedicated connection ownership.",
-      "defined_in": "polaris/infrastructure/log_pipeline/jetstream_publisher.py",
-      "methods": [
-        {
-          "name": "__init__",
+          "name": "_emit",
           "doc": ""
         },
         {
-          "name": "start",
-          "doc": "Start the background publisher thread lazily."
-        },
-        {
-          "name": "stop",
-          "doc": "Stop the background publisher and close the dedicated client."
-        },
-        {
-          "name": "publish",
-          "doc": "Queue an event for asynchronous publish."
-        },
-        {
-          "name": "_thread_main",
+          "name": "readline",
           "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_env_int",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/jetstream_publisher.py"
-    },
-    {
-      "type": "function",
-      "name": "_env_float",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/jetstream_publisher.py"
-    },
-    {
-      "type": "function",
-      "name": "_env_bool",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/jetstream_publisher.py"
-    },
-    {
-      "type": "function",
-      "name": "_nats_transport_enabled",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/jetstream_publisher.py"
-    },
-    {
-      "type": "function",
-      "name": "get_log_jetstream_publisher",
-      "description": "Return the process-wide canonical log JetStream publisher.",
-      "defined_in": "polaris/infrastructure/log_pipeline/jetstream_publisher.py"
-    },
-    {
-      "type": "function",
-      "name": "install_file_event_broadcaster_publisher",
-      "description": "Install the log pipeline publisher into the KernelOne file event port.",
-      "defined_in": "polaris/infrastructure/log_pipeline/jetstream_publisher.py"
-    },
-    {
-      "type": "function",
-      "name": "clear_file_event_broadcaster_publisher",
-      "description": "Clear the KernelOne file event publisher adapter.",
-      "defined_in": "polaris/infrastructure/log_pipeline/jetstream_publisher.py"
-    },
-    {
-      "type": "function",
-      "name": "shutdown_log_jetstream_publisher",
-      "description": "Stop the process-wide publisher if it has been created.",
-      "defined_in": "polaris/infrastructure/log_pipeline/jetstream_publisher.py"
-    },
-    {
-      "type": "class",
-      "name": "JournalSink",
-      "description": "Unified Event Pipeline consumer that writes to journal.{raw,norm,enriched}.jsonl.",
-      "defined_in": "polaris/infrastructure/log_pipeline/journal_sink.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": "Initialize sink."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_get_writer_for_run",
-      "description": "Lazy-resolve LogEventWriter for a workspace + run_id.",
-      "defined_in": "polaris/infrastructure/log_pipeline/journal_sink.py"
-    },
-    {
-      "type": "function",
-      "name": "_redact_raw_value",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/journal_sink.py"
-    },
-    {
-      "type": "function",
-      "name": "_redact_raw_payload",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/journal_sink.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_uep_payload",
-      "description": "Convert a UEP Message payload into a CanonicalLogEventV2.",
-      "defined_in": "polaris/infrastructure/log_pipeline/journal_sink.py"
-    },
-    {
-      "type": "class",
-      "name": "LogPipelineLLMRealtimeBridge",
-      "description": "Publish LLM lifecycle events through the canonical log pipeline.",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py",
-      "methods": [
-        {
-          "name": "publish",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_as_dict",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_token",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_coalesce_text",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_safe_json_compact",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_metadata_maps",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_tool_name",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_tool_args",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_result_payload",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_success",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_error_text",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_content_text",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_iteration",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_task_id",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_call_id",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_turn_id",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_context_snapshot_ref",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_model",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_provider",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_projection_event_type",
-      "description": "Build projection event type from raw event type and data.",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_event_kind",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_severity",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_message",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_refs",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_tags",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/llm_realtime_bridge.py"
-    },
-    {
-      "type": "class",
-      "name": "LogQuery",
-      "description": "Query parameters for log events.",
-      "defined_in": "polaris/infrastructure/log_pipeline/query.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "LogQueryResult",
-      "description": "Query result with events and pagination info.",
-      "defined_in": "polaris/infrastructure/log_pipeline/query.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "LogQueryService",
-      "description": "Service for querying log events.",
-      "defined_in": "polaris/infrastructure/log_pipeline/query.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": "Initialize the query service."
         },
         {
-          "name": "_resolve_run_dir",
-          "doc": "Resolve the run directory path."
-        },
-        {
-          "name": "_resolve_latest_run_dir",
-          "doc": "Resolve the latest run directory."
-        },
-        {
-          "name": "_iter_events",
-          "doc": "Iterate over events matching the query."
-        },
-        {
-          "name": "query",
-          "doc": "Execute a query and return results."
-        },
-        {
-          "name": "query_by_run",
-          "doc": "Query events for a specific run."
-        },
-        {
-          "name": "query_latest",
-          "doc": "Query events from the latest run."
-        },
-        {
-          "name": "get_channel_events",
-          "doc": "Get events for a specific channel."
-        },
-        {
-          "name": "get_event_by_id",
-          "doc": "Get a specific event by ID."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "get_query_service",
-      "description": "Get a LogQueryService instance.",
-      "defined_in": "polaris/infrastructure/log_pipeline/query.py"
-    },
-    {
-      "type": "class",
-      "name": "ActiveRunContext",
-      "description": "Represents the current active run context.",
-      "defined_in": "polaris/infrastructure/log_pipeline/run_context.py",
-      "methods": [
-        {
-          "name": "run_dir",
-          "doc": "Get the run directory path."
-        },
-        {
-          "name": "logs_dir",
-          "doc": "Get the logs directory path."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "RunContextManager",
-      "description": "Context manager for running within a specific run context.",
-      "defined_in": "polaris/infrastructure/log_pipeline/run_context.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": "Initialize the context manager."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "get_active_run_context",
-      "description": "Get the current active run context (thread-local).",
-      "defined_in": "polaris/infrastructure/log_pipeline/run_context.py"
-    },
-    {
-      "type": "function",
-      "name": "set_active_run_context",
-      "description": "Set the current active run context (thread-local).",
-      "defined_in": "polaris/infrastructure/log_pipeline/run_context.py"
-    },
-    {
-      "type": "function",
-      "name": "clear_active_run_context",
-      "description": "Clear the current active run context.",
-      "defined_in": "polaris/infrastructure/log_pipeline/run_context.py"
-    },
-    {
-      "type": "function",
-      "name": "get_global_run_context",
-      "description": "Get the global run context.",
-      "defined_in": "polaris/infrastructure/log_pipeline/run_context.py"
-    },
-    {
-      "type": "function",
-      "name": "set_global_run_context",
-      "description": "Set the global run context.",
-      "defined_in": "polaris/infrastructure/log_pipeline/run_context.py"
-    },
-    {
-      "type": "function",
-      "name": "resolve_current_run_id",
-      "description": "Resolve the current run_id from context.",
-      "defined_in": "polaris/infrastructure/log_pipeline/run_context.py"
-    },
-    {
-      "type": "function",
-      "name": "resolve_current_workspace",
-      "description": "Resolve the current workspace from context.",
-      "defined_in": "polaris/infrastructure/log_pipeline/run_context.py"
-    },
-    {
-      "type": "class",
-      "name": "LogEventWriter",
-      "description": "Unified writer for all log events.",
-      "defined_in": "polaris/infrastructure/log_pipeline/writer.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": "Initialize the writer."
-        },
-        {
-          "name": "_init_seq_from_files",
-          "doc": "Initialize sequence counter from existing files."
-        },
-        {
-          "name": "_write_jsonl",
-          "doc": "Write event to a JSONL file (thread-safe, append-only)."
-        },
-        {
-          "name": "_publish_realtime_event",
-          "doc": "Publish canonical realtime events only through Nats-JetStream."
-        },
-        {
-          "name": "_publish_to_jetstream",
-          "doc": "Publish event to JetStream with retry logic."
-        },
-        {
-          "name": "_extract_workspace_key",
-          "doc": "Extract workspace key from runtime_root path."
-        },
-        {
-          "name": "write_event",
-          "doc": "Write a log event to the pipeline."
-        },
-        {
-          "name": "write_from_legacy",
-          "doc": "Write an event from legacy format to the pipeline."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_ensure_jetstream_support",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/writer.py"
-    },
-    {
-      "type": "function",
-      "name": "_jetstream_publish_enabled",
-      "description": "",
-      "defined_in": "polaris/infrastructure/log_pipeline/writer.py"
-    },
-    {
-      "type": "function",
-      "name": "_channel_to_subject",
-      "description": "Map canonical channel to JetStream subject.",
-      "defined_in": "polaris/infrastructure/log_pipeline/writer.py"
-    },
-    {
-      "type": "function",
-      "name": "_report_publish_failure",
-      "description": "Report publish failure for metrics collection.",
-      "defined_in": "polaris/infrastructure/log_pipeline/writer.py"
-    },
-    {
-      "type": "function",
-      "name": "get_log_jetstream_publisher",
-      "description": "Return the shared JetStream publisher when support is available.",
-      "defined_in": "polaris/infrastructure/log_pipeline/writer.py"
-    },
-    {
-      "type": "function",
-      "name": "_fsync_enabled",
-      "description": "Check if fsync is enabled via shared fsync-mode helper.",
-      "defined_in": "polaris/infrastructure/log_pipeline/writer.py"
-    },
-    {
-      "type": "function",
-      "name": "_get_run_lock",
-      "description": "Get or create a lock for the given run_id.",
-      "defined_in": "polaris/infrastructure/log_pipeline/writer.py"
-    },
-    {
-      "type": "function",
-      "name": "_next_seq_for_run",
-      "description": "Get next sequence number for a run (thread-safe).",
-      "defined_in": "polaris/infrastructure/log_pipeline/writer.py"
-    },
-    {
-      "type": "function",
-      "name": "get_writer",
-      "description": "Get a LogEventWriter instance.",
-      "defined_in": "polaris/infrastructure/log_pipeline/writer.py"
-    },
-    {
-      "type": "function",
-      "name": "_init_module",
-      "description": "Module init is intentionally a no-op.",
-      "defined_in": "polaris/infrastructure/log_pipeline/writer.py"
-    },
-    {
-      "type": "class",
-      "name": "NATSConfig",
-      "description": "Configuration for NATS client connection.",
-      "defined_in": "polaris/infrastructure/messaging/nats/client.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ConnectionState",
-      "description": "NATS connection state enumeration.",
-      "defined_in": "polaris/infrastructure/messaging/nats/client.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "NATSClient",
-      "description": "Async NATS client with JetStream support.",
-      "defined_in": "polaris/infrastructure/messaging/nats/client.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": "Initialize NATS client."
-        },
-        {
-          "name": "is_connected",
-          "doc": "Check if client is connected."
-        },
-        {
-          "name": "is_disabled",
-          "doc": "Return whether NATS transport is explicitly disabled by configuration."
-        },
-        {
-          "name": "state",
-          "doc": "Get current connection state."
-        },
-        {
-          "name": "add_state_callback",
-          "doc": "Add callback for connection state changes."
-        },
-        {
-          "name": "_set_state",
-          "doc": "Update connection state and notify callbacks."
-        },
-        {
-          "name": "jetstream",
-          "doc": "Get JetStream context."
-        },
-        {
-          "name": "get_server_info",
-          "doc": "Get connected server information."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_sanitize_server_url",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/client.py"
-    },
-    {
-      "type": "function",
-      "name": "_ensure_nats_imported",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/client.py"
-    },
-    {
-      "type": "function",
-      "name": "_env_nats_servers",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/client.py"
-    },
-    {
-      "type": "function",
-      "name": "_env_float",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/client.py"
-    },
-    {
-      "type": "function",
-      "name": "_env_int",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/client.py"
-    },
-    {
-      "type": "function",
-      "name": "_env_bool",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/client.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_runtime_stream_config",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/client.py"
-    },
-    {
-      "type": "function",
-      "name": "get_default_client_snapshot",
-      "description": "Return current default NATS client state without opening a connection.",
-      "defined_in": "polaris/infrastructure/messaging/nats/client.py"
-    },
-    {
-      "type": "class",
-      "name": "JetStreamAdminConfig",
-      "description": "Configuration for JetStream administration.",
-      "defined_in": "polaris/infrastructure/messaging/nats/jetstream_admin.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "StreamManager",
-      "description": "JetStream Stream management with idempotent creation.",
-      "defined_in": "polaris/infrastructure/messaging/nats/jetstream_admin.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": "Initialize Stream manager."
-        },
-        {
-          "name": "_create_stream_config",
-          "doc": "Create Stream configuration."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "_StreamConfigFallback",
-      "description": "Fallback stream config when nats-py types unavailable.",
-      "defined_in": "polaris/infrastructure/messaging/nats/jetstream_admin.py",
-      "methods": [
-        {
-          "name": "__init__",
+          "name": "read",
           "doc": ""
         }
       ]
     },
     {
       "type": "class",
-      "name": "ConsumerManager",
-      "description": "JetStream Consumer management with durable consumers.",
-      "defined_in": "polaris/infrastructure/messaging/nats/jetstream_admin.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": "Initialize Consumer manager."
-        },
-        {
-          "name": "_create_consumer_config",
-          "doc": "Create Consumer configuration."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "_ConsumerConfigFallback",
-      "description": "Fallback consumer config when nats-py types unavailable.",
-      "defined_in": "polaris/infrastructure/messaging/nats/jetstream_admin.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "JetStreamAdmin",
-      "description": "Combined JetStream administration interface.",
-      "defined_in": "polaris/infrastructure/messaging/nats/jetstream_admin.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": "Initialize JetStream admin."
-        },
-        {
-          "name": "stream_manager",
-          "doc": "Get Stream manager."
-        },
-        {
-          "name": "get_consumer_manager",
-          "doc": "Get Consumer manager for stream."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "JetStreamConstants",
-      "description": "JetStream resource naming and configuration constants.",
-      "defined_in": "polaris/infrastructure/messaging/nats/nats_types.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "RuntimeEventEnvelope",
-      "description": "Envelope for runtime events published to JetStream.",
-      "defined_in": "polaris/infrastructure/messaging/nats/nats_types.py",
-      "methods": [
-        {
-          "name": "to_dict",
-          "doc": "Convert envelope to dictionary for serialization."
-        },
-        {
-          "name": "from_dict",
-          "doc": "Create envelope from dictionary."
-        },
-        {
-          "name": "with_cursor",
-          "doc": "Create a copy with updated cursor."
-        },
-        {
-          "name": "with_trace_id",
-          "doc": "Create a copy with trace ID for distributed tracing."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_require_event_string",
+      "name": "TracedPopen",
       "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/nats_types.py"
-    },
-    {
-      "type": "function",
-      "name": "_require_event_timestamp",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/nats_types.py"
-    },
-    {
-      "type": "function",
-      "name": "_optional_event_cursor",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/nats_types.py"
-    },
-    {
-      "type": "function",
-      "name": "_optional_event_mapping",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/nats_types.py"
-    },
-    {
-      "type": "function",
-      "name": "create_runtime_event",
-      "description": "Factory function to create a RuntimeEventEnvelope.",
-      "defined_in": "polaris/infrastructure/messaging/nats/nats_types.py"
-    },
-    {
-      "type": "class",
-      "name": "ManagedNATSServer",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/server_runtime.py",
-      "methods": []
-    },
-    {
-      "type": "function",
-      "name": "_first_nats_server_url",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/server_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "_parse_local_nats_endpoint",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/server_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "_sanitize_nats_url",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/server_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "should_manage_local_nats",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/server_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "resolve_managed_nats_storage_root",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/server_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "resolve_nats_server_executable",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/server_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "_can_accept_tcp",
-      "description": "",
-      "defined_in": "polaris/infrastructure/messaging/nats/server_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "get_managed_nats_runtime_snapshot",
-      "description": "Return a side-effect-free snapshot of managed local NATS runtime state.",
-      "defined_in": "polaris/infrastructure/messaging/nats/server_runtime.py"
-    },
-    {
-      "type": "class",
-      "name": "JetStreamConsumerManager",
-      "description": "Manage JetStream consumer lifecycle for one WebSocket connection.",
-      "defined_in": "polaris/infrastructure/messaging/nats/ws_consumer_manager.py",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py",
       "methods": [
         {
           "name": "__init__",
           "doc": ""
         },
         {
-          "name": "is_connected",
+          "name": "_emit_exit",
           "doc": ""
         },
         {
-          "name": "resync_required",
+          "name": "wait",
           "doc": ""
         },
         {
-          "name": "consume_dropped",
-          "doc": "Consume and reset queue-overflow drop count for this connection."
+          "name": "poll",
+          "doc": ""
         },
         {
-          "name": "get_current_cursor",
-          "doc": "Get current cursor position."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_normalize_channel_filter",
-      "description": "Normalize client-facing channel tokens to envelope channel names.",
-      "defined_in": "polaris/infrastructure/messaging/nats/ws_consumer_manager.py"
-    },
-    {
-      "type": "function",
-      "name": "_channel_matches_filter",
-      "description": "Return whether a runtime envelope channel satisfies one client filter.",
-      "defined_in": "polaris/infrastructure/messaging/nats/ws_consumer_manager.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_durable_token",
-      "description": "Return a NATS durable-name-safe token with a deterministic fallback.",
-      "defined_in": "polaris/infrastructure/messaging/nats/ws_consumer_manager.py"
-    },
-    {
-      "type": "function",
-      "name": "_log_throttled",
-      "description": "Log helper with cooldown to avoid repeated noisy errors.",
-      "defined_in": "polaris/infrastructure/messaging/nats/ws_consumer_manager.py"
-    },
-    {
-      "type": "class",
-      "name": "EventType",
-      "description": "Event types for context operations.",
-      "defined_in": "polaris/kernelone/events/context_events.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ContextEvent",
-      "description": "Event record for context operations.",
-      "defined_in": "polaris/kernelone/events/context_events.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Create a new ContextEvent with current trace ID and timestamp."
+          "name": "communicate",
+          "doc": ""
         }
       ]
     },
     {
       "type": "class",
-      "name": "EventWriter",
-      "description": "Unified event writer for context events.",
-      "defined_in": "polaris/kernelone/events/context_events.py",
+      "name": "DebugTracer",
+      "description": "可卸载的调试追踪器。",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py",
       "methods": [
         {
           "name": "__init__",
           "doc": ""
         },
         {
-          "name": "write",
-          "doc": "Write an event to the event log."
+          "name": "is_enabled",
+          "doc": ""
         },
         {
           "name": "set_enabled",
-          "doc": "Enable or disable event writing."
+          "doc": "启用/禁用事件输出（不影响补丁状态）。"
+        },
+        {
+          "name": "is_installed",
+          "doc": "检查是否已安装补丁。"
+        },
+        {
+          "name": "install",
+          "doc": "安装全局调试钩子（幂等）。"
+        },
+        {
+          "name": "uninstall",
+          "doc": "卸载全局调试钩子，恢复原始函数。"
+        },
+        {
+          "name": "configure",
+          "doc": "安装钩子并根据环境或参数启用追踪。"
+        },
+        {
+          "name": "emit_event",
+          "doc": "输出调试事件（仅在 enabled=True 时生效）。"
+        },
+        {
+          "name": "log_stream_token",
+          "doc": "记录流式 token。"
+        },
+        {
+          "name": "_patch_requests",
+          "doc": ""
+        },
+        {
+          "name": "traced_request",
+          "doc": ""
+        },
+        {
+          "name": "_patch_aiohttp",
+          "doc": ""
+        },
+        {
+          "name": "traced_request",
+          "doc": ""
+        },
+        {
+          "name": "_patch_urllib",
+          "doc": ""
+        },
+        {
+          "name": "traced_urlopen",
+          "doc": ""
+        },
+        {
+          "name": "_patch_subprocess",
+          "doc": ""
+        },
+        {
+          "name": "traced_run",
+          "doc": ""
+        },
+        {
+          "name": "_unpatch_all",
+          "doc": "恢复所有被补丁替换的原始函数（必须在 self._state.lock 持有时调用）。"
         }
       ]
     },
     {
       "type": "function",
-      "name": "get_event_writer",
-      "description": "Get the default global EventWriter instance.",
-      "defined_in": "polaris/kernelone/events/context_events.py"
+      "name": "_now_utc",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "_truthy_env",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "_trace_id",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "_elapsed_ms",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_sensitive_key",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "_truncate_text",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_json_text",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "_mask_text",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "_redacted_payload_summary",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_preview",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "_sanitize_headers",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_cmd",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "is_debug_tracing_enabled",
+      "description": "检查默认追踪器是否已启用。",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "set_debug_tracing_enabled",
+      "description": "启用/禁用默认追踪器的事件输出。",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "configure_debug_tracing",
+      "description": "配置默认追踪器（安装钩子并设置启用状态）。",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "emit_debug_event",
+      "description": "通过默认追踪器输出调试事件。",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "install_global_debug_hooks",
+      "description": "安装默认追踪器的全局调试钩子。",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "uninstall_global_debug_hooks",
+      "description": "卸载默认追踪器的全局调试钩子（新增，用于测试清理）。",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "log_stream_token",
+      "description": "通过默认追踪器记录流式 token。",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "create_debug_tracer",
+      "description": "工厂函数：创建一个新的 DebugTracer 实例。",
+      "defined_in": "polaris/cells/events/fact_stream/internal/debug_trace.py"
+    },
+    {
+      "type": "function",
+      "name": "fact_stream_bootstrap_streams",
+      "description": "Return the immutable static stream enrollment set for one backend startup.",
+      "defined_in": "polaris/cells/events/fact_stream/public/catalog.py"
     },
     {
       "type": "class",
-      "name": "EmitResult",
-      "description": "Result of a dual-write emit operation.",
-      "defined_in": "polaris/kernelone/events/emit_result.py",
-      "methods": [
-        {
-          "name": "is_full_success",
-          "doc": "True if all enabled sides succeeded."
-        },
-        {
-          "name": "failed_sides",
-          "doc": "List of sides that failed."
-        },
-        {
-          "name": "to_dict",
-          "doc": "Serialize to a JSON-compatible dictionary."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "emit_fact_event",
-      "description": "Emit a fact event to the audit chain.",
-      "defined_in": "polaris/kernelone/events/fact_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_resolve_fact_event_path",
-      "description": "Resolve the fact event log path for a workspace.",
-      "defined_in": "polaris/kernelone/events/fact_events.py"
-    },
-    {
-      "type": "class",
-      "name": "FileEditEventPublisher",
-      "description": "Synchronous publisher port for durable runtime file-edit events.",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py",
-      "methods": [
-        {
-          "name": "publish",
-          "doc": "Publish one runtime event envelope."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "configure_file_edit_event_publisher",
-      "description": "Install or clear the process-wide file edit publisher adapter.",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "_get_file_edit_event_publisher",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "_jetstream_publish_enabled",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "_get_fs_adapter",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "_get_message_bus_imports",
-      "description": "延迟导入避免循环依赖",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "_track_broadcast_task",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "_cleanup",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "shutdown_broadcast_tasks",
-      "description": "Cancel and clear all pending broadcast tasks.",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "calculate_patch",
-      "description": "计算 unified diff 格式的 patch",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "_calculate_line_stats",
-      "description": "Compute added/deleted/modified line counts from unified diff text.",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_file_written_payload",
-      "description": "Build the canonical payload shared by realtime and durable event sinks.",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "_append_durable_file_edit_event",
-      "description": "Persist FILE_WRITTEN evidence for snapshot/UI fallback and audits.",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "_publish_file_edit_to_jetstream",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "broadcast_file_written",
-      "description": "广播文件写入事件到前端",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_workspace_fs",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_relative_path",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "write_file_with_broadcast",
-      "description": "带广播的文件写入",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "append_file_with_broadcast",
-      "description": "带广播的文件追加",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "replace_in_file_with_broadcast",
-      "description": "带广播的文本替换",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "apply_patch_with_broadcast",
-      "description": "带广播的 patch 应用",
-      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
-    },
-    {
-      "type": "function",
-      "name": "_as_mapping",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/final_request_evidence.py"
-    },
-    {
-      "type": "function",
-      "name": "_text",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/final_request_evidence.py"
-    },
-    {
-      "type": "function",
-      "name": "_first_text",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/final_request_evidence.py"
-    },
-    {
-      "type": "function",
-      "name": "_first_mapping",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/final_request_evidence.py"
-    },
-    {
-      "type": "function",
-      "name": "normalize_context_snapshot_ref",
-      "description": "Return the canonical ContextStore snapshot hash for final-request refs.",
-      "defined_in": "polaris/kernelone/events/final_request_evidence.py"
-    },
-    {
-      "type": "function",
-      "name": "_string_list",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/final_request_evidence.py"
-    },
-    {
-      "type": "function",
-      "name": "_list_value",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/final_request_evidence.py"
-    },
-    {
-      "type": "function",
-      "name": "_bool_or_none",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/final_request_evidence.py"
-    },
-    {
-      "type": "function",
-      "name": "_stable_hash",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/final_request_evidence.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_final_request_evidence_authority",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/final_request_evidence.py"
-    },
-    {
-      "type": "function",
-      "name": "build_final_request_evidence",
-      "description": "Return the canonical lightweight projection for final-request audit evidence.",
-      "defined_in": "polaris/kernelone/events/final_request_evidence.py"
-    },
-    {
-      "type": "function",
-      "name": "attach_final_request_evidence",
-      "description": "Attach final-request audit refs to a durable or realtime LLM event payload.",
-      "defined_in": "polaris/kernelone/events/final_request_evidence.py"
-    },
-    {
-      "type": "function",
-      "name": "_infer_workspace_for_path",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_workspace_from_llm_event_data",
-      "description": "Return a validated workspace path carried by an LLM event payload.",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_redacted_llm_event_value",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_sanitize_llm_event_data",
-      "description": "Redact prompt/completion payloads before durable or realtime LLM emission.",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_sanitize",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_append_jsonl_direct",
-      "description": "Append a JSONL record directly to *path* using the default adapter.",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_append_jsonl_via_kernel",
-      "description": "通过 KernelFileSystem 追加 JSONL。",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_publish_llm_event_to_realtime_bridge",
-      "description": "Best-effort bridge from KFS-backed LLM events to realtime pipeline.",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "set_dialogue_seq",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "set_event_seq",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_next_dialogue_seq",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_next_event_seq",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "get_event_seq",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_new_event_id",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_event_payload",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_runtime_event_fingerprint",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_cleanup_stale_events",
-      "description": "清理过期的去重记录。",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_should_suppress_runtime_event",
-      "description": "检查是否应该抑制重复事件。",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_llm_event_data",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_llm_event_fingerprint",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_cleanup_stale_llm_events",
-      "description": "清理过期的 LLM 事件去重记录。",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_should_suppress_llm_event",
-      "description": "检查是否应该抑制重复的 LLM 事件。",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "utc_iso_now",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_publish_runtime_event_to_bus",
-      "description": "Publish runtime event to MessageBus for downstream subscribers.",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_safe_publish_sync",
-      "description": "Safely publish message to MessageBus synchronously without raising.",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "emit_dialogue",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "emit_event",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "function",
-      "name": "emit_llm_event",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/io_events.py"
-    },
-    {
-      "type": "class",
-      "name": "MessageType",
-      "description": "Types of messages that can be sent.",
-      "defined_in": "polaris/kernelone/events/message_bus.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "Message",
-      "description": "A message sent between actors.",
-      "defined_in": "polaris/kernelone/events/message_bus.py",
-      "methods": [
-        {
-          "name": "to_dict",
-          "doc": "Convert message to dictionary."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "DeadLetterMessage",
-      "description": "Dead letter message for undeliverable messages.",
-      "defined_in": "polaris/kernelone/events/message_bus.py",
-      "methods": [
-        {
-          "name": "to_dict",
-          "doc": "Convert dead letter to dictionary for inspection."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "SyncMessageHandlerAdapter",
-      "description": "Adapt synchronous handlers for use with the async message bus.",
-      "defined_in": "polaris/kernelone/events/message_bus.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "_create_async_wrapper",
-          "doc": "Create an async wrapper for the sync handler."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "MessageBus",
-      "description": "Message bus for actor communication.",
-      "defined_in": "polaris/kernelone/events/message_bus.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": "Initialize the message bus."
-        },
-        {
-          "name": "_get_lock",
-          "doc": "Return a loop-local lock to avoid cross-loop binding issues."
-        },
-        {
-          "name": "subscribers",
-          "doc": "Read-only view for diagnostics/tests."
-        },
-        {
-          "name": "dropped_messages",
-          "doc": "Total recipient queue drops observed by this bus (backward compatible)."
-        },
-        {
-          "name": "dropped_messages_count",
-          "doc": "Total number of dropped messages."
-        },
-        {
-          "name": "_record_dead_letter",
-          "doc": "Record a dead letter for an undeliverable message."
-        },
-        {
-          "name": "dead_letter_count",
-          "doc": "Current number of dead letters stored."
-        },
-        {
-          "name": "clear_dead_letters",
-          "doc": "Clear all dead letters."
-        },
-        {
-          "name": "subscriber_count",
-          "doc": "Get the number of subscribers."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "Actor",
-      "description": "Base class for actors in the system.",
-      "defined_in": "polaris/kernelone/events/message_bus.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": "Initialize the actor."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "LLMRealtimeEvent",
-      "description": "Kernel-level contract for publishing LLM lifecycle events.",
-      "defined_in": "polaris/kernelone/events/realtime_bridge.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "LLMRealtimeEventBridge",
-      "description": "Port for bridging LLM lifecycle events into the realtime plane.",
-      "defined_in": "polaris/kernelone/events/realtime_bridge.py",
-      "methods": [
-        {
-          "name": "publish",
-          "doc": "Publish one realtime LLM event."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "set_llm_realtime_bridge",
-      "description": "Inject the default LLM realtime bridge.",
-      "defined_in": "polaris/kernelone/events/realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "get_llm_realtime_bridge",
-      "description": "Return the injected LLM realtime bridge.",
-      "defined_in": "polaris/kernelone/events/realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "publish_llm_realtime_event",
-      "description": "Best-effort publish through the injected bridge.",
-      "defined_in": "polaris/kernelone/events/realtime_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "set_global_bus",
-      "description": "Set the global message bus.",
-      "defined_in": "polaris/kernelone/events/registry.py"
-    },
-    {
-      "type": "function",
-      "name": "get_global_bus",
-      "description": "Get the global message bus.",
-      "defined_in": "polaris/kernelone/events/registry.py"
-    },
-    {
-      "type": "function",
-      "name": "reset_global_bus",
-      "description": "Reset the global message bus.",
-      "defined_in": "polaris/kernelone/events/registry.py"
-    },
-    {
-      "type": "class",
-      "name": "EventRef",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/schema.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "Truncation",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/schema.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "EventBase",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/schema.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ActionEvent",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/schema.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ObservationEvent",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/schema.py",
-      "methods": []
-    },
-    {
-      "type": "function",
-      "name": "emit_session_event",
-      "description": "Emit a session event to the audit chain.",
-      "defined_in": "polaris/kernelone/events/session_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_resolve_session_event_path",
-      "description": "Resolve the session event log path for a workspace.",
-      "defined_in": "polaris/kernelone/events/session_events.py"
-    },
-    {
-      "type": "class",
-      "name": "JsonlEventStore",
-      "description": "Append-only file-backed event store.",
-      "defined_in": "polaris/kernelone/events/sourcing/file_store.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "workspace",
-          "doc": ""
-        },
-        {
-          "name": "stream_logical_path",
-          "doc": ""
-        },
-        {
-          "name": "append",
-          "doc": ""
-        },
-        {
-          "name": "query",
-          "doc": ""
-        },
-        {
-          "name": "_next_seq",
-          "doc": ""
-        },
-        {
-          "name": "_parse_records",
-          "doc": ""
-        },
-        {
-          "name": "_matches",
-          "doc": ""
-        },
-        {
-          "name": "_normalize_root",
-          "doc": ""
-        },
-        {
-          "name": "_normalize_stream",
-          "doc": ""
-        },
-        {
-          "name": "_normalize_optional",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "query_stream_events",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/sourcing/file_store.py"
-    },
-    {
-      "type": "class",
-      "name": "EventEnvelope",
-      "description": "Canonical versioned event envelope.",
-      "defined_in": "polaris/kernelone/events/sourcing/models.py",
+      "name": "FactStreamProvenanceV1",
+      "description": "Typed identity for one durable role-transition fact.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
       "methods": [
         {
           "name": "to_record",
-          "doc": ""
-        },
-        {
-          "name": "from_record",
-          "doc": ""
+          "doc": "Return a detached JSON-serializable provenance record."
         }
       ]
     },
     {
       "type": "class",
-      "name": "EventQueryResult",
-      "description": "Query result for an event stream slice.",
-      "defined_in": "polaris/kernelone/events/sourcing/models.py",
+      "name": "AppendFactEventCommandV1",
+      "description": "Append one FactStream event with optional strictness and durability.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
       "methods": []
     },
     {
       "type": "class",
-      "name": "EventSourcingError",
-      "description": "Raised when event sourcing operations fail.",
-      "defined_in": "polaris/kernelone/events/sourcing/models.py",
+      "name": "QueryFactEventsV1",
+      "description": "Read FactStream events; strict reads fail closed on ambiguity.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
       "methods": []
     },
     {
-      "type": "function",
-      "name": "_require_token",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/sourcing/models.py"
-    },
-    {
-      "type": "function",
-      "name": "_require_optional_token",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/sourcing/models.py"
-    },
-    {
-      "type": "function",
-      "name": "_require_positive",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/sourcing/models.py"
-    },
-    {
-      "type": "function",
-      "name": "utc_now_iso",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/sourcing/models.py"
-    },
-    {
-      "type": "function",
-      "name": "new_event_id",
-      "description": "",
-      "defined_in": "polaris/kernelone/events/sourcing/models.py"
-    },
-    {
-      "type": "function",
-      "name": "set_container_port",
-      "description": "Register the DI container port for message bus resolution.",
-      "defined_in": "polaris/kernelone/events/task_trace_events.py"
-    },
-    {
-      "type": "function",
-      "name": "reset_container_port",
-      "description": "Clear the injected container port (for test isolation).",
-      "defined_in": "polaris/kernelone/events/task_trace_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_sanitize_step_detail",
-      "description": "清理步骤详情，处理 UTF-8 并截断.",
-      "defined_in": "polaris/kernelone/events/task_trace_events.py"
-    },
-    {
-      "type": "function",
-      "name": "_next_seq_for_task",
-      "description": "获取下一个 task trace 序列号",
-      "defined_in": "polaris/kernelone/events/task_trace_events.py"
+      "type": "class",
+      "name": "QueryFactStreamHeadV1",
+      "description": "Read-only query for one stream's durable CAS cursor.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
     },
     {
       "type": "class",
-      "name": "TypedEventBusAdapter",
-      "description": "Bridge between TypedEvent system and legacy MessageBus.",
-      "defined_in": "polaris/kernelone/events/typed/bus_adapter.py",
+      "name": "EnsureSegmentedFactLedgerCommandV1",
+      "description": "Enroll and validate one dynamic segmented authority ledger.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AppendSegmentedFactEventCommandV1",
+      "description": "Append one fsync fact to a previously ensured segmented ledger.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QuerySegmentedFactLedgerHeadV1",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QuerySegmentedFactEventsV1",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SegmentedFactLedgerHeadV1",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SegmentedFactLedgerReadyV1",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SegmentedFactEventAppendedV1",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SegmentedFactQueryResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProvisionFactStreamLockAuthorityCommandV1",
+      "description": "Explicitly provision FactStream's platform lock authority.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EnrollFactStreamStreamsCommandV1",
+      "description": "Explicitly enroll existing authority keys for canonical FactStream streams.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "BootstrapFactStreamWorkspaceCommandV1",
+      "description": "Bootstrap one workspace authority and its declared static stream catalog.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactStreamLockIdentityV1",
+      "description": "Immutable physical identity projected from a KernelOne maintenance proof.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactStreamLockKeyEvidenceV1",
+      "description": "Canonical stream-lock-key evidence from maintenance final validation.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactStreamMaintenanceProofV1",
+      "description": "Complete public projection of one KernelOne authority maintenance proof.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactStreamMaintenanceReceiptV1",
+      "description": "Non-authoritative DTO recording one maintenance operation's evidence.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactStreamHeadV1",
+      "description": "Immutable head projection used to derive optimistic expected_seq.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactEventAppendedV1",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactStreamQueryResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactStreamError",
+      "description": "Raised when `events.fact_stream` contract processing fails.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
       "methods": [
         {
           "name": "__init__",
-          "doc": "Initialize the adapter."
-        },
-        {
-          "name": "events_converted",
-          "doc": "Number of events successfully converted."
-        },
-        {
-          "name": "conversion_errors",
-          "doc": "Number of conversion errors."
-        },
-        {
-          "name": "register_event_type",
-          "doc": "Register a mapping between TypedEvent and MessageType."
-        },
-        {
-          "name": "register_default_mappings",
-          "doc": "Register all default event type mappings."
-        },
-        {
-          "name": "subscribe_to_registry",
-          "doc": "Subscribe to TypedEvent registry and emit to MessageBus."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "get_default_adapter",
-      "description": "Get the default adapter instance.",
-      "defined_in": "polaris/kernelone/events/typed/bus_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "init_default_adapter",
-      "description": "Initialize the default global adapter.",
-      "defined_in": "polaris/kernelone/events/typed/bus_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "reset_default_adapter",
-      "description": "Reset the default adapter.",
-      "defined_in": "polaris/kernelone/events/typed/bus_adapter.py"
-    },
-    {
-      "type": "class",
-      "name": "EventPattern",
-      "description": "Pattern for wildcard event subscription.",
-      "defined_in": "polaris/kernelone/events/typed/registry.py",
-      "methods": [
-        {
-          "name": "matches",
-          "doc": "Check if this pattern matches the given event name."
-        },
-        {
-          "name": "from_string",
-          "doc": "Create an EventPattern from a string."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "Subscription",
-      "description": "A single event subscription.",
-      "defined_in": "polaris/kernelone/events/typed/registry.py",
-      "methods": [
-        {
-          "name": "unsubscribe",
-          "doc": "Mark this subscription as inactive."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "EventRegistry",
-      "description": "Registry for typed events with wildcard subscription support.",
-      "defined_in": "polaris/kernelone/events/typed/registry.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": "Initialize the EventRegistry."
-        },
-        {
-          "name": "_get_lock",
-          "doc": "Return a lock for thread-safe operations."
-        },
-        {
-          "name": "subscribe",
-          "doc": "Subscribe to events matching a pattern."
-        },
-        {
-          "name": "subscribe_once",
-          "doc": "Subscribe for a single event, then auto-unsubscribe."
-        },
-        {
-          "name": "auto_unsubscribe",
           "doc": ""
-        },
-        {
-          "name": "unsubscribe",
-          "doc": "Unsubscribe by subscription ID."
-        },
-        {
-          "name": "unsubscribe_all",
-          "doc": "Unsubscribe all active subscriptions."
-        },
-        {
-          "name": "_get_matching_subscriptions",
-          "doc": "Get all subscriptions that match the event name."
-        },
-        {
-          "name": "_get_matching_subscriptions_locked",
-          "doc": "Get matching subscriptions. Caller must hold _get_lock()."
-        },
-        {
-          "name": "subscription_count",
-          "doc": "Get the number of active subscriptions."
-        },
-        {
-          "name": "emit_count",
-          "doc": "Get the total number of events emitted."
-        },
-        {
-          "name": "handler_invocation_count",
-          "doc": "Get the total number of handler invocations."
-        },
-        {
-          "name": "get_subscription",
-          "doc": "Get subscription by ID."
-        },
-        {
-          "name": "get_active_subscriptions",
-          "doc": "Get all active subscriptions."
-        },
-        {
-          "name": "_is_wildcard_pattern",
-          "doc": "Check if a pattern contains wildcards."
         }
       ]
     },
     {
       "type": "function",
-      "name": "get_default_registry",
-      "description": "Get the default global EventRegistry instance.",
-      "defined_in": "polaris/kernelone/events/typed/registry.py"
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py"
     },
     {
       "type": "function",
-      "name": "reset_default_registry",
-      "description": "Reset the default global EventRegistry.",
-      "defined_in": "polaris/kernelone/events/typed/registry.py"
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py"
     },
     {
       "type": "function",
-      "name": "subscribe",
-      "description": "Subscribe to events on the default registry.",
-      "defined_in": "polaris/kernelone/events/typed/registry.py"
+      "name": "_detach_error_detail_value",
+      "description": "Return a recursively detached JSON-compatible public error value.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py"
     },
     {
       "type": "function",
-      "name": "subscribe_once",
-      "description": "Subscribe once to an event on the default registry.",
-      "defined_in": "polaris/kernelone/events/typed/registry.py"
+      "name": "_detach_error_details",
+      "description": "Detach details according to the public JSON serialization policy.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py"
     },
     {
       "type": "function",
-      "name": "unsubscribe",
-      "description": "Unsubscribe from the default registry.",
-      "defined_in": "polaris/kernelone/events/typed/registry.py"
+      "name": "_optional_text",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py"
     },
     {
       "type": "function",
-      "name": "_event_discriminator",
-      "description": "Discriminator function for event union.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/__init__.py"
+      "name": "_require_sha256_hex",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py"
     },
     {
       "type": "function",
-      "name": "get_event_type",
-      "description": "Get event class by event name.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/__init__.py"
+      "name": "_require_int",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py"
     },
     {
       "type": "function",
-      "name": "get_all_event_names",
-      "description": "Get all registered event names.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/__init__.py"
+      "name": "_require_exact_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py"
     },
     {
       "type": "function",
-      "name": "get_events_by_category",
-      "description": "Get all event types in a category.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/__init__.py"
-    },
-    {
-      "type": "class",
-      "name": "EventCategory",
-      "description": "Event categories for wildcard subscription patterns.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_base.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "EventPayload",
-      "description": "Base class for all event payloads.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_base.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "EventBase",
-      "description": "Base class for all typed events.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_base.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ToolErrorKind",
-      "description": "Classification of tool errors.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_base.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ThinkingPhasePayload",
-      "description": "Payload for thinking phase event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ThinkingPhaseEvent",
-      "description": "Thinking phase event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a ThinkingPhaseEvent."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ReflectionPayload",
-      "description": "Payload for reflection event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ReflectionEvent",
-      "description": "Reflection event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a ReflectionEvent."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "EvolutionPayload",
-      "description": "Payload for evolution event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "EvolutionEvent",
-      "description": "Evolution event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create an EvolutionEvent."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "BeliefChangePayload",
-      "description": "Payload for belief change event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "BeliefChangeEvent",
-      "description": "Belief change event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a BeliefChangeEvent."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ConfidenceCalibrationPayload",
-      "description": "Payload for confidence calibration event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ConfidenceCalibrationEvent",
-      "description": "Confidence calibration event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a ConfidenceCalibrationEvent."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "PerceptionCompletedPayload",
-      "description": "Payload for perception completed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "PerceptionCompletedEvent",
-      "description": "Perception completed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a PerceptionCompletedEvent."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ReasoningCompletedPayload",
-      "description": "Payload for reasoning completed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ReasoningCompletedEvent",
-      "description": "Reasoning completed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a ReasoningCompletedEvent."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "IntentDetectedPayload",
-      "description": "Payload for intent detected event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "IntentDetectedEvent",
-      "description": "Intent detected event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create an IntentDetectedEvent."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "CriticalThinkingPayload",
-      "description": "Payload for critical thinking event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "CriticalThinkingEvent",
-      "description": "Critical thinking event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a CriticalThinkingEvent."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "CautiousExecutionPayload",
-      "description": "Payload for cautious execution event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "CautiousExecutionEvent",
-      "description": "Cautious execution event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a CautiousExecutionEvent."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ValueAlignmentPayload",
-      "description": "Payload for value alignment event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ValueAlignmentEvent",
-      "description": "Value alignment event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_cognitive.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a ValueAlignmentEvent."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "DirectorStartedPayload",
-      "description": "Payload for director started event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "DirectorStarted",
-      "description": "Director started event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a DirectorStarted event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "DirectorStoppedPayload",
-      "description": "Payload for director stopped event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "DirectorStopped",
-      "description": "Director stopped event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a DirectorStopped event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TaskSubmittedPayload",
-      "description": "Payload for task submitted event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TaskSubmitted",
-      "description": "Task submitted event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a TaskSubmitted event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TaskStartedPayload",
-      "description": "Payload for task started event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TaskStarted",
-      "description": "Task started event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a TaskStarted event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TaskCompletedPayload",
-      "description": "Payload for task completed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TaskCompleted",
-      "description": "Task completed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a TaskCompleted event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TaskFailedPayload",
-      "description": "Payload for task failed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TaskFailed",
-      "description": "Task failed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a TaskFailed event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "WorkerSpawnedPayload",
-      "description": "Payload for worker spawned event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "WorkerSpawned",
-      "description": "Worker spawned event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a WorkerSpawned event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "WorkerStoppedPayload",
-      "description": "Payload for worker stopped event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "WorkerStopped",
-      "description": "Worker stopped event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a WorkerStopped event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "NagReminderPayload",
-      "description": "Payload for nag reminder event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "NagReminder",
-      "description": "Nag reminder event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a NagReminder event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "BudgetExceededPayload",
-      "description": "Payload for budget exceeded event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "BudgetExceeded",
-      "description": "Budget exceeded event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a BudgetExceeded event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "WorkerReadyPayload",
-      "description": "Payload for worker ready event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "WorkerReady",
-      "description": "Worker ready event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a WorkerReady event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "WorkerBusyPayload",
-      "description": "Payload for worker busy event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "WorkerBusy",
-      "description": "Worker busy event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a WorkerBusy event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "WorkerStoppingPayload",
-      "description": "Payload for worker stopping event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "WorkerStopping",
-      "description": "Worker stopping event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a WorkerStopping event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "DirectorPausedPayload",
-      "description": "Payload for director paused event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "DirectorPaused",
-      "description": "Director paused event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a DirectorPaused event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "DirectorResumedPayload",
-      "description": "Payload for director resumed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "DirectorResumed",
-      "description": "Director resumed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a DirectorResumed event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TaskClaimedPayload",
-      "description": "Payload for task claimed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TaskClaimed",
-      "description": "Task claimed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a TaskClaimed event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TaskCancelledPayload",
-      "description": "Payload for task cancelled event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TaskCancelled",
-      "description": "Task cancelled event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a TaskCancelled event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TaskRetryPayload",
-      "description": "Payload for task retry event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TaskRetry",
-      "description": "Task retry event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a TaskRetry event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TaskProgressPayload",
-      "description": "Payload for task progress event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TaskProgress",
-      "description": "Task progress event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_director_task_worker.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a TaskProgress event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "InstanceStartedPayload",
-      "description": "Payload for instance started event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "InstanceStarted",
-      "description": "Instance started event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create an InstanceStarted event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "InstanceDisposedPayload",
-      "description": "Payload for instance disposed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "InstanceDisposed",
-      "description": "Instance disposed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create an InstanceDisposed event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ToolInvokedPayload",
-      "description": "Payload for tool invoked event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ToolInvoked",
-      "description": "Tool invoked event (ToolState: pending -> running).",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a ToolInvoked event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ToolCompletedPayload",
-      "description": "Payload for tool completed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ToolCompleted",
-      "description": "Tool completed event (ToolState: running -> completed).",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a ToolCompleted event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ToolErrorPayload",
-      "description": "Payload for tool error event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ToolError",
-      "description": "Tool error event (ToolState: running -> error).",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a ToolError event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ToolBlockedPayload",
-      "description": "Payload for tool blocked event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ToolBlocked",
-      "description": "Tool blocked event (ToolState: blocked by policy).",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a ToolBlocked event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ToolTimeoutPayload",
-      "description": "Payload for tool timeout event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ToolTimeout",
-      "description": "Tool timeout event (ToolState: running -> timeout).",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a ToolTimeout event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TurnStartedPayload",
-      "description": "Payload for turn started event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TurnStarted",
-      "description": "Turn started event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a TurnStarted event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TurnCompletedPayload",
-      "description": "Payload for turn completed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TurnCompleted",
-      "description": "Turn completed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a TurnCompleted event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TurnFailedPayload",
-      "description": "Payload for turn failed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TurnFailed",
-      "description": "Turn failed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_lifecycle_tool_turn.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a TurnFailed event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "SystemErrorPayload",
-      "description": "Payload for system error event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "SystemError",
-      "description": "System error event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a SystemError event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "SettingsChangedPayload",
-      "description": "Payload for settings changed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "SettingsChanged",
-      "description": "Settings changed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a SettingsChanged event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "AuditCompletedPayload",
-      "description": "Payload for audit completed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "AuditCompleted",
-      "description": "Audit completed event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create an AuditCompleted event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "LLMInteractionPayload",
-      "description": "Payload for LLM interaction audit events.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "LLMInteractionEvent",
-      "description": "Audit event for LLM interactions.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create an LLMInteractionEvent."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ToolExecutionPayload",
-      "description": "Payload for tool execution audit events.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ToolExecutionEvent",
-      "description": "Audit event for tool executions.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a ToolExecutionEvent."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TaskOrchestrationPayload",
-      "description": "Payload for task orchestration audit events.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TaskOrchestrationEvent",
-      "description": "Audit event for task DAG orchestration.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a TaskOrchestrationEvent."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "AgentCommunicationPayload",
-      "description": "Payload for agent/role communication audit events.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "AgentCommunicationEvent",
-      "description": "Audit event for multi-agent communication.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create an AgentCommunicationEvent."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ContextManagementPayload",
-      "description": "Payload for context management audit events.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ContextManagementEvent",
-      "description": "Audit event for context assembly and management.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a ContextManagementEvent."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "BudgetAuditPayload",
-      "description": "Payload for budget consumption audit events.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "BudgetAuditEvent",
-      "description": "Audit event for budget consumption tracking.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a BudgetAuditEvent."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "PlanCreatedPayload",
-      "description": "Payload for plan created event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "PlanCreated",
-      "description": "Plan created event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a PlanCreated event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FileWrittenPayload",
-      "description": "Payload for file written event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "FileWritten",
-      "description": "File written event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a FileWritten event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "CompactRequestedPayload",
-      "description": "Payload for compact requested event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "CompactRequested",
-      "description": "Compact requested event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a CompactRequested event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ContextWindowStatusPayload",
-      "description": "Payload for context window status event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ContextWindowStatus",
-      "description": "Context window status event.",
-      "defined_in": "polaris/kernelone/events/typed/schemas/_system_audit_context.py",
-      "methods": [
-        {
-          "name": "create",
-          "doc": "Factory method to create a ContextWindowStatus event."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "UEPStreamEventPayload",
-      "description": "Payload for a stream event (chunk, tool_call, complete, error).",
-      "defined_in": "polaris/kernelone/events/uep_contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "UEPLifecycleEventPayload",
-      "description": "Payload for an LLM lifecycle event (call_start, call_end, call_error, call_retry).",
-      "defined_in": "polaris/kernelone/events/uep_contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "UEPFingerprintEventPayload",
-      "description": "Payload for a strategy fingerprint event.",
-      "defined_in": "polaris/kernelone/events/uep_contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "UEPAuditEventPayload",
-      "description": "Payload for an audit event requiring HMAC chain persistence.",
-      "defined_in": "polaris/kernelone/events/uep_contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "UEPEventPublisher",
-      "description": "Unified Event Pipeline publisher.",
-      "defined_in": "polaris/kernelone/events/uep_publisher.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": "Initialize publisher."
-        },
-        {
-          "name": "_get_bus",
-          "doc": ""
-        },
-        {
-          "name": "_get_adapter",
-          "doc": "Get the TypedEventBusAdapter singleton."
-        },
-        {
-          "name": "_utc_now",
-          "doc": ""
-        },
-        {
-          "name": "_emit_stream_event_to_disk_fallback",
-          "doc": "Write stream event directly to journal JSONL when MessageBus is unavailable."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "UEPToTypedEventConverter",
-      "description": "Converts UEP v2.0 payloads to TypedEvent instances.",
-      "defined_in": "polaris/kernelone/events/uep_typed_converter.py",
-      "methods": [
-        {
-          "name": "convert",
-          "doc": "Convert any UEP payload to TypedEvent."
-        },
-        {
-          "name": "convert_stream_event",
-          "doc": "Convert UEP stream event to TypedEvent."
-        },
-        {
-          "name": "convert_llm_event",
-          "doc": "Convert UEP LLM lifecycle event to TypedEvent."
-        },
-        {
-          "name": "convert_fingerprint_event",
-          "doc": "Convert UEP fingerprint event to TypedEvent."
-        },
-        {
-          "name": "convert_audit_event",
-          "doc": "Convert UEP audit event to TypedEvent."
-        },
-        {
-          "name": "_create_typed_event",
-          "doc": "Factory method to create TypedEvent from UEP payload."
-        },
-        {
-          "name": "_extract_duration_ms",
-          "doc": "Extract duration_ms from event data."
-        },
-        {
-          "name": "_estimate_output_size",
-          "doc": "Estimate output size in bytes."
-        },
-        {
-          "name": "_classify_tool_error",
-          "doc": "Classify tool error into ToolErrorKind."
-        }
-      ]
+      "name": "_require_exact_sha256_hex",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_exact_int",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_optional_exact_text",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "provision_fact_stream_lock_authority",
+      "description": "Provision one immutable FactStream lock authority for maintenance.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "enroll_fact_stream_streams",
+      "description": "Enroll stream lock keys without provisioning or repairing authority.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_maintenance_proof",
+      "description": "Project immutable KernelOne maintenance evidence into the Cell contract.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_maintenance_store",
+      "description": "Resolve immutable authority inputs for one explicit maintenance call.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_maintenance_failure",
+      "description": "Preserve exact KernelOne maintenance evidence at the public boundary.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "read_guarded_fact_snapshot",
+      "description": "Prepare a strict immutable two-stream witness through FactStream.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "append_if_guarded_snapshot",
+      "description": "Commit one fsync target fact only when its proof still matches.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "append_fact_event",
+      "description": "Append an immutable fact event to the canonical runtime stream.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_find_existing_idempotent_event",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_fact_events",
+      "description": "Query canonical fact events with pagination and optional filters.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_fact_stream_head",
+      "description": "Return the durable stream cursor through the FactStream boundary.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_segmented_authority_store",
+      "description": "Build a segmented store with an authority-grade lock acquisition budget.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "ensure_segmented_fact_ledger",
+      "description": "Enroll one dynamic logical lock under existing workspace authority.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "append_segmented_fact_event",
+      "description": "Append one strict fsync fact through the segmented authority API.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_segmented_fact_ledger_head",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_segmented_fact_events",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_segmented_head",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_segmented_authority_stream",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_segmented_authority_stream",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_reject_ordinary_segmented_stream",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_reject_ordinary_segmented_streams",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_segmented_failure",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_compact_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_fact_stream_failure_code",
+      "description": "Map KernelOne strict evidence to stable FactStream failure codes.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_guarded_failure_code",
+      "description": "Project guarded strict failures without operation-specific generic codes.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_guarded_failure_details",
+      "description": "Preserve strict parser evidence beneath the stable public category.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_failure_details",
+      "description": "Detach KernelOne typed evidence for a FactStream public failure.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_add_provenance_metadata",
+      "description": "Attach already-validated transition provenance.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_provenance_envelope",
+      "description": "Resolve one run/task envelope and reject contradictory provenance.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_event_to_dict",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "bootstrap_fact_stream_workspace",
+      "description": "Provision one workspace authority and enroll its declared static catalog.",
+      "defined_in": "polaris/cells/events/fact_stream/public/workspace_bootstrap.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

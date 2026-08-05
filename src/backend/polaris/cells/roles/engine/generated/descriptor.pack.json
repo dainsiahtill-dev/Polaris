@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:15.264358Z",
-  "source_hash": "670344765e337090",
+  "generated_at": "2026-08-02T15:47:43.959414Z",
+  "source_hash": "884ab3d5dfbf8311",
   "cell_id": "roles.engine",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -98,6 +98,14 @@
           "doc": "当前步骤索引"
         },
         {
+          "name": "execute",
+          "doc": "执行推理任务（子类必须实现）"
+        },
+        {
+          "name": "step",
+          "doc": "执行单步推理（子类必须实现）"
+        },
+        {
           "name": "can_continue",
           "doc": "检查是否继续执行"
         },
@@ -112,6 +120,10 @@
         {
           "name": "_update_progress",
           "doc": "更新进度跟踪状态"
+        },
+        {
+          "name": "_call_llm",
+          "doc": "调用 LLM 获取响应。"
         },
         {
           "name": "_create_result",
@@ -184,6 +196,14 @@
           "doc": "注册默认引擎"
         },
         {
+          "name": "run",
+          "doc": "运行混合引擎"
+        },
+        {
+          "name": "run_with_switching",
+          "doc": "运行混合引擎，支持动态策略切换"
+        },
+        {
           "name": "_select_strategy",
           "doc": "选择策略"
         },
@@ -194,6 +214,10 @@
         {
           "name": "_should_switch",
           "doc": "判断是否需要切换策略"
+        },
+        {
+          "name": "_switch_and_execute",
+          "doc": "切换策略并重新执行"
         },
         {
           "name": "_get_alternative_strategies",
@@ -238,8 +262,28 @@
           "doc": ""
         },
         {
+          "name": "execute",
+          "doc": "执行 Plan-Solve 推理"
+        },
+        {
+          "name": "step",
+          "doc": "执行单步 Plan-Solve"
+        },
+        {
+          "name": "_planning_step",
+          "doc": "计划阶段的步骤"
+        },
+        {
+          "name": "_executing_step",
+          "doc": "执行阶段的步骤"
+        },
+        {
           "name": "can_continue",
           "doc": "检查是否继续执行"
+        },
+        {
+          "name": "_create_plan",
+          "doc": "创建执行计划"
         },
         {
           "name": "_validate_plan",
@@ -266,6 +310,10 @@
           "doc": "找到匹配的括号位置"
         },
         {
+          "name": "_execute_tool",
+          "doc": "执行工具调用"
+        },
+        {
           "name": "_build_partial_answer",
           "doc": "构建部分答案"
         }
@@ -284,6 +332,14 @@
         {
           "name": "strategy",
           "doc": ""
+        },
+        {
+          "name": "execute",
+          "doc": "执行 ReAct 推理"
+        },
+        {
+          "name": "step",
+          "doc": "执行单步 ReAct 推理"
         },
         {
           "name": "can_continue",
@@ -308,6 +364,10 @@
         {
           "name": "_find_matching_bracket",
           "doc": "找到匹配的括号位置"
+        },
+        {
+          "name": "_execute_tool",
+          "doc": "执行工具调用"
         },
         {
           "name": "_format_observation",
@@ -396,6 +456,14 @@
           "doc": ""
         },
         {
+          "name": "execute",
+          "doc": "Execute the sequential single-shot path."
+        },
+        {
+          "name": "step",
+          "doc": "Return the current no-op step state for this single-shot strategy."
+        },
+        {
           "name": "can_continue",
           "doc": "Continue while the current budget allows it."
         }
@@ -441,12 +509,40 @@
           "doc": ""
         },
         {
+          "name": "execute",
+          "doc": "执行 ToT 推理"
+        },
+        {
+          "name": "step",
+          "doc": "执行单步 ToT"
+        },
+        {
           "name": "can_continue",
           "doc": "检查是否继续执行"
         },
         {
+          "name": "_initialize_root",
+          "doc": "初始化根节点"
+        },
+        {
+          "name": "_expand_branches",
+          "doc": "扩展分支"
+        },
+        {
+          "name": "_generate_thoughts",
+          "doc": "生成新思考"
+        },
+        {
+          "name": "_evaluate_branches",
+          "doc": "评估分支"
+        },
+        {
           "name": "_prune_branches",
           "doc": "剪枝低分分支"
+        },
+        {
+          "name": "_finish",
+          "doc": "完成推理，选择最佳分支"
         },
         {
           "name": "_get_branch_path",

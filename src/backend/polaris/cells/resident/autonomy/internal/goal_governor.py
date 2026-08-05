@@ -6,6 +6,11 @@ import hashlib
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.resident.autonomy.internal.goal_attempt_ledger import transition_goal_state
+from polaris.cells.resident.autonomy.public.contracts import (
+    ResidentGoalLifecycleErrorV1,
+    ResidentGoalStateV1,
+)
 from polaris.domain.models.resident import (
     CapabilityGraphSnapshot,
     GoalProposal,
@@ -228,54 +233,117 @@ class GoalGovernor:
             self._storage.save_goals(goals)
         return new_goals
 
-    def approve_goal(self, goal_id: str, note: str = "") -> GoalProposal | None:
-        goals = self._storage.load_goals()
-        updated: GoalProposal | None = None
-        for goal in goals:
-            if goal.goal_id != goal_id:
-                continue
-            goal.status = GoalStatus.APPROVED
-            goal.approval_note = str(note or "").strip()
-            goal.updated_at = utc_now_iso()
-            goal.pm_contract_outline = self._build_pm_contract(goal)
-            updated = goal
-            break
-        if updated is not None:
-            self._storage.save_goals(goals)
-        return updated
+    @staticmethod
+    def _revision(goal: GoalProposal) -> int:
+        value = goal.materialization_artifacts.get("goal_lifecycle_revision", 0)
+        if type(value) is not int or value < 0:
+            raise ResidentGoalLifecycleErrorV1(
+                "goal_lifecycle_state_corrupt",
+                "goal_lifecycle_revision must be a non-negative exact int",
+            )
+        return value
 
-    def reject_goal(self, goal_id: str, note: str = "") -> GoalProposal | None:
-        goals = self._storage.load_goals()
-        updated: GoalProposal | None = None
-        for goal in goals:
-            if goal.goal_id != goal_id:
-                continue
-            goal.status = GoalStatus.REJECTED
-            goal.approval_note = str(note or "").strip()
-            goal.updated_at = utc_now_iso()
-            updated = goal
-            break
-        if updated is not None:
-            self._storage.save_goals(goals)
-        return updated
+    @staticmethod
+    def _transition(
+        goal: GoalProposal,
+        target: ResidentGoalStateV1,
+        expected_revision: int | None,
+    ) -> bool:
+        current = ResidentGoalStateV1(goal.status.value.upper())
+        revision = GoalGovernor._revision(goal)
+        expected = revision if expected_revision is None else expected_revision
+        target_state, next_revision, changed = transition_goal_state(
+            current,
+            target,
+            current_revision=revision,
+            expected_revision=expected,
+        )
+        if not changed:
+            return False
+        goal.status = GoalStatus(target_state.value.lower())
+        goal.materialization_artifacts = dict(goal.materialization_artifacts)
+        goal.materialization_artifacts["goal_lifecycle_revision"] = next_revision
+        goal.updated_at = utc_now_iso()
+        return True
 
-    def materialize_goal(self, goal_id: str) -> dict[str, Any] | None:
-        goals = self._storage.load_goals()
-        contract: dict[str, Any] | None = None
-        for goal in goals:
-            if goal.goal_id != goal_id:
-                continue
-            if goal.status not in {GoalStatus.APPROVED, GoalStatus.MATERIALIZED}:
-                raise ValueError("goal must be approved before materialization")
-            if not goal.pm_contract_outline:
-                goal.pm_contract_outline = self._build_pm_contract(goal)
-            goal.status = GoalStatus.MATERIALIZED
-            goal.updated_at = utc_now_iso()
-            contract = dict(goal.pm_contract_outline)
-            break
-        if contract is not None:
-            self._storage.save_goals(goals)
-        return contract
+    def approve_goal(
+        self,
+        goal_id: str,
+        note: str = "",
+        *,
+        expected_revision: int | None = None,
+    ) -> GoalProposal | None:
+        def mutate(goals: list[GoalProposal]) -> tuple[GoalProposal | None, bool]:
+            for goal in goals:
+                if goal.goal_id != goal_id:
+                    continue
+                changed = self._transition(goal, ResidentGoalStateV1.APPROVED, expected_revision)
+                if changed:
+                    goal.approval_note = str(note or "").strip()
+                    goal.pm_contract_outline = self._build_pm_contract(goal)
+                return goal, changed
+            return None, False
+
+        return self._storage.mutate_goals(mutate)
+
+    def reject_goal(
+        self,
+        goal_id: str,
+        note: str = "",
+        *,
+        expected_revision: int | None = None,
+    ) -> GoalProposal | None:
+        def mutate(goals: list[GoalProposal]) -> tuple[GoalProposal | None, bool]:
+            for goal in goals:
+                if goal.goal_id != goal_id:
+                    continue
+                changed = self._transition(goal, ResidentGoalStateV1.REJECTED, expected_revision)
+                if changed:
+                    goal.approval_note = str(note or "").strip()
+                return goal, changed
+            return None, False
+
+        return self._storage.mutate_goals(mutate)
+
+    def materialize_goal(
+        self,
+        goal_id: str,
+        *,
+        expected_revision: int | None = None,
+    ) -> dict[str, Any] | None:
+        def mutate(goals: list[GoalProposal]) -> tuple[dict[str, Any] | None, bool]:
+            for goal in goals:
+                if goal.goal_id != goal_id:
+                    continue
+                if goal.status not in {GoalStatus.APPROVED, GoalStatus.MATERIALIZED}:
+                    raise ResidentGoalLifecycleErrorV1(
+                        "invalid_goal_transition",
+                        "goal must be approved before materialization",
+                    )
+                changed = self._transition(goal, ResidentGoalStateV1.MATERIALIZED, expected_revision)
+                if not goal.pm_contract_outline:
+                    goal.pm_contract_outline = self._build_pm_contract(goal)
+                    changed = True
+                return dict(goal.pm_contract_outline), changed
+            return None, False
+
+        return self._storage.mutate_goals(mutate)
+
+    def archive_goal(
+        self,
+        goal_id: str,
+        *,
+        expected_revision: int | None = None,
+    ) -> GoalProposal | None:
+        def mutate(goals: list[GoalProposal]) -> tuple[GoalProposal | None, bool]:
+            for goal in goals:
+                if goal.goal_id != goal_id:
+                    continue
+                changed = self._transition(goal, ResidentGoalStateV1.ARCHIVED, expected_revision)
+                return goal, changed
+            return None, False
+
+        return self._storage.mutate_goals(mutate)
 
     def _title_from_insight(self, insight: MetaInsight) -> str:
         if insight.insight_type == "strategy_strength":

@@ -1,12 +1,17 @@
 """Public boundary for `audit.evidence` cell."""
 
 from polaris.cells.audit.evidence.public.contracts import (
+    MANAGED_PROCESS_RECEIPT_LOGICAL_PATH_V1,
     AppendEvidenceEventCommandV1,
     EvidenceAppendedEventV1,
     EvidenceAuditError,
     EvidenceQueryResultV1,
     EvidenceVerificationResultV1,
+    ManagedProcessReceiptPersistResultV1,
+    ManagedProcessReceiptRecordV1,
+    PersistManagedProcessReceiptCommandV1,
     QueryEvidenceEventsV1,
+    ReadManagedProcessReceiptQueryV1,
     VerifyEvidenceChainV1,
 )
 from polaris.cells.audit.evidence.public.service import (
@@ -22,11 +27,14 @@ from polaris.cells.audit.evidence.public.service import (
     create_evidence_bundle_service,
     detect_language,
     get_audit_role_descriptor,
+    persist_managed_process_receipt,
     query_evidence_events,
+    read_managed_process_receipt,
     verify_evidence_chain,
 )
 
 __all__ = [
+    "MANAGED_PROCESS_RECEIPT_LOGICAL_PATH_V1",
     "AppendEvidenceEventCommandV1",
     "AuditLLMBindingConfig",
     "EvidenceAppendedEventV1",
@@ -35,7 +43,11 @@ __all__ = [
     "EvidenceQueryResultV1",
     "EvidenceService",
     "EvidenceVerificationResultV1",
+    "ManagedProcessReceiptPersistResultV1",
+    "ManagedProcessReceiptRecordV1",
+    "PersistManagedProcessReceiptCommandV1",
     "QueryEvidenceEventsV1",
+    "ReadManagedProcessReceiptQueryV1",
     "RoleSessionAuditService",
     "VerifyEvidenceChainV1",
     "append_evidence_event",
@@ -46,6 +58,8 @@ __all__ = [
     "create_evidence_bundle_service",
     "detect_language",
     "get_audit_role_descriptor",
+    "persist_managed_process_receipt",
     "query_evidence_events",
+    "read_managed_process_receipt",
     "verify_evidence_chain",
 ]

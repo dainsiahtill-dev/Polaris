@@ -10,6 +10,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public import stable_hash
 from polaris.cells.roles.adapters.public import (
     create_director_directed_effect_mutation_port,
     create_director_effect_policy_snapshot_port,
@@ -30,6 +31,11 @@ _CAPABILITY_TOKEN_KEYS: tuple[str, ...] = (
     "job_token",
     "control_plane_job_token",
     "capability_token",
+)
+_EXECUTION_ENVELOPE_KEYS: tuple[str, ...] = (
+    "execution_envelope",
+    "director_execution_envelope",
+    "task_execution_envelope",
 )
 
 
@@ -60,94 +66,117 @@ def _is_lower_sha256(value: Any) -> bool:
 def _capability_token_from_context(context: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(context, Mapping):
         return None
+    root_token_hash = str(context.get("capability_token_hash") or "").strip()
+    if not _is_lower_sha256(root_token_hash):
+        return None
     containers: list[Mapping[str, Any]] = [context]
-    metadata = _mapping(context.get("metadata"))
-    if metadata is not None:
-        containers.append(metadata)
-    override = _mapping(context.get("context_override"))
-    if override is not None:
-        containers.append(override)
+    for container_key in ("metadata", "context_override"):
+        if container_key not in context:
+            continue
+        nested = _mapping(context.get(container_key))
+        if nested is None:
+            return None
+        containers.append(nested)
+
+    reserved_keys = (*_CAPABILITY_TOKEN_KEYS, *_EXECUTION_ENVELOPE_KEYS)
+    for container in containers:
+        if any(key in container and _mapping(container.get(key)) is None for key in reserved_keys):
+            return None
+
+    for nested in containers[1:]:
+        nested_declares_authority = any(key in nested for key in reserved_keys)
+        raw_nested_hash = nested.get("capability_token_hash")
+        if raw_nested_hash is None and nested_declares_authority:
+            return None
+        if raw_nested_hash is not None:
+            nested_hash = str(raw_nested_hash or "").strip()
+            if not _is_lower_sha256(nested_hash) or nested_hash != root_token_hash:
+                return None
 
     tokens: list[dict[str, Any]] = []
+    declared_token_hashes: list[str] = []
     for container in containers:
-        for key in _CAPABILITY_TOKEN_KEYS:
-            token = _mapping(container.get(key))
-            if token is not None and str(token.get("token_id") or "").strip():
-                tokens.append(dict(token))
+        aliases = [_mapping(container.get(key)) for key in _CAPABILITY_TOKEN_KEYS]
+        if not any(alias is not None for alias in aliases):
+            continue
+        if any(alias is None for alias in aliases):
+            return None
+        alias_tokens = [dict(alias) for alias in aliases if alias is not None]
+        if any(alias != alias_tokens[0] for alias in alias_tokens[1:]):
+            return None
+        declared_hash = str(container.get("capability_token_hash") or "").strip()
+        if not _is_lower_sha256(declared_hash):
+            return None
+        tokens.append(alias_tokens[0])
+        declared_token_hashes.append(declared_hash)
     if not tokens:
         return None
-    token_ids = {str(token.get("token_id") or "").strip() for token in tokens}
-    if len(token_ids) != 1:
+    if any(token != tokens[0] for token in tokens[1:]):
         return None
     token = tokens[0]
-    token_id = next(iter(token_ids))
+    token_id = str(token.get("token_id") or "").strip()
+    if not token_id:
+        return None
+    token_hash = stable_hash(token)
+    if root_token_hash != token_hash or any(declared_hash != token_hash for declared_hash in declared_token_hashes):
+        return None
+    if token.get("schema_version") != 1 or isinstance(token.get("schema_version"), bool):
+        return None
+    capability_audit = _mapping(token.get("capability_audit"))
+    if capability_audit is None or capability_audit.get("ok") is not True or list(capability_audit.get("issues") or []):
+        return None
+    allowed_write_paths = token.get("allowed_write_paths")
+    if type(allowed_write_paths) is not list or not allowed_write_paths:
+        return None
+    allowed_read_paths = token.get("allowed_read_paths")
+    if type(allowed_read_paths) is not list or not allowed_read_paths:
+        return None
+    if any(not isinstance(path, str) or not path.strip() for path in [*allowed_write_paths, *allowed_read_paths]):
+        return None
+    if len(set(allowed_write_paths)) != len(allowed_write_paths) or len(set(allowed_read_paths)) != len(
+        allowed_read_paths
+    ):
+        return None
+    if not set(allowed_write_paths).issubset(allowed_read_paths):
+        return None
 
     envelopes: list[Mapping[str, Any]] = []
     for container in containers:
-        for key in (
-            "execution_envelope",
-            "director_execution_envelope",
-            "task_execution_envelope",
-        ):
+        for key in _EXECUTION_ENVELOPE_KEYS:
             envelope = _mapping(container.get(key))
             if envelope is not None:
                 envelopes.append(envelope)
 
     embedded_hash = str(token.get("execution_envelope_hash") or "").strip()
-    if embedded_hash:
-        if not _is_lower_sha256(embedded_hash):
-            return None
-        for envelope in envelopes:
-            envelope_hash = str(envelope.get("envelope_hash") or "").strip()
-            authorization = _mapping(envelope.get("authorization"))
-            if (
-                not _is_lower_sha256(envelope_hash)
-                or envelope_hash != embedded_hash
-                or authorization is None
-                or str(authorization.get("capability_token_ref") or "").strip() != token_id
-            ):
-                return None
-        return token
-
+    if embedded_hash and not _is_lower_sha256(embedded_hash):
+        return None
+    if not envelopes:
+        return None
     for envelope in envelopes:
         envelope_hash = str(envelope.get("envelope_hash") or "").strip()
         authorization = _mapping(envelope.get("authorization"))
-        if (
-            _is_lower_sha256(envelope_hash)
-            and authorization is not None
-            and str(authorization.get("capability_token_ref") or "").strip() == token_id
-        ):
-            merged = dict(token)
-            merged["execution_envelope_hash"] = envelope_hash
-            return merged
-    return None
+        if not _is_lower_sha256(envelope_hash) or (embedded_hash and envelope_hash != embedded_hash):
+            return None
+        if authorization is None:
+            return None
+        if str(authorization.get("capability_token_ref") or "").strip() != token_id:
+            return None
+        if str(authorization.get("capability_token_hash") or "").strip() != token_hash:
+            return None
+        if list(authorization.get("allowed_write_paths") or []) != allowed_write_paths:
+            return None
+    merged = dict(token)
+    merged["execution_envelope_hash"] = str(envelopes[0].get("envelope_hash") or "").strip()
+    return merged
 
 
 def _capability_scope_from_context(context: Mapping[str, Any] | None) -> tuple[str, ...]:
-    if not isinstance(context, Mapping):
+    token = _capability_token_from_context(context)
+    if token is None:
         return ()
-    candidates: list[str] = []
-    containers: list[Mapping[str, Any]] = [context]
-    metadata = _mapping(context.get("metadata"))
-    if metadata is not None:
-        containers.append(metadata)
-    for container in containers:
-        for key in (
-            "allowed_paths",
-            "allowed_write_paths",
-            "target_files",
-            "scope_paths",
-            "capability_scope",
-        ):
-            raw = container.get(key)
-            if isinstance(raw, (list, tuple)):
-                candidates.extend(str(item) for item in raw if str(item or "").strip())
-        token = _capability_token_from_context(container)
-        if token:
-            for key in ("allowed_paths", "allowed_write_paths", "target_files", "allowed_scope"):
-                raw = token.get(key)
-                if isinstance(raw, (list, tuple)):
-                    candidates.extend(str(item) for item in raw if str(item or "").strip())
+    candidates = token.get("allowed_write_paths")
+    if not isinstance(candidates, list):
+        return ()
     cleaned: list[str] = []
     seen: set[str] = set()
     for item in candidates:
@@ -193,6 +222,11 @@ async def commit_materialization_deferred_repairs(
     workspace_token = str(workspace or "").strip()
     if not workspace_token:
         return []
+    capability_token = _capability_token_from_context(context)
+    capability_scope = _capability_scope_from_context(context)
+    if capability_token is None or not capability_scope:
+        logger.info("Skipping deferred materialization commit: authoritative write capability missing")
+        return []
 
     try:
         policy_port = create_director_effect_policy_snapshot_port(workspace_token)
@@ -214,8 +248,8 @@ async def commit_materialization_deferred_repairs(
             execution_attempt_authority=execution_attempt_authority,
             directed_effect_runtime=directed_effect_runtime,
             turn_id=turn_id,
-            capability_scope=_capability_scope_from_context(context),
-            capability_token=_capability_token_from_context(context),
+            capability_scope=capability_scope,
+            capability_token=capability_token,
         )
     except Exception as exc:  # noqa: BLE001 - materialization commit is best-effort fail-closed
         logger.error(

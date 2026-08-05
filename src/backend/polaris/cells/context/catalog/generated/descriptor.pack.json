@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:13.574439Z",
-  "source_hash": "65f5e49fd9aa6924",
+  "generated_at": "2026-08-02T15:47:41.959953Z",
+  "source_hash": "be227af39148c8f3",
   "cell_id": "context.catalog",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -52,8 +52,16 @@
           "doc": ""
         },
         {
+          "name": "_visit_callable",
+          "doc": ""
+        },
+        {
           "name": "visit_FunctionDef",
           "doc": ""
+        },
+        {
+          "name": "visit_AsyncFunctionDef",
+          "doc": "Expose async public functions just like synchronous functions."
         }
       ]
     },
@@ -107,8 +115,26 @@
     },
     {
       "type": "function",
+      "name": "generate_pack",
+      "description": "Generate descriptor pack for a cell.",
+      "defined_in": "polaris/cells/context/catalog/internal/descriptor_pack_generator.py"
+    },
+    {
+      "type": "function",
       "name": "_verify_recall_if_applicable",
       "description": "Verify Recall@10 if ground truth data is available.",
+      "defined_in": "polaris/cells/context/catalog/internal/descriptor_pack_generator.py"
+    },
+    {
+      "type": "function",
+      "name": "run_all",
+      "description": "Run generation for all cells with bounded concurrency.",
+      "defined_in": "polaris/cells/context/catalog/internal/descriptor_pack_generator.py"
+    },
+    {
+      "type": "function",
+      "name": "_generate_with_limit",
+      "description": "Generate pack with concurrency limit.",
       "defined_in": "polaris/cells/context/catalog/internal/descriptor_pack_generator.py"
     },
     {
@@ -130,6 +156,10 @@
         {
           "name": "_check_llm_availability",
           "doc": "Check if LLM infrastructure is configured."
+        },
+        {
+          "name": "get_evolution_insights",
+          "doc": "Call PM/Director agents to get evolution insights."
         }
       ]
     },

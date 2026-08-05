@@ -79,6 +79,12 @@ from polaris.cells.resident.autonomy.internal.execution_projection import (
     ExecutionProjectionService,
     get_execution_projection_service,
 )
+from polaris.cells.resident.autonomy.internal.goal_attempt_ledger import (
+    observe_goal_attempt,
+    query_goal_execution,
+    settle_goal_attempt,
+    start_goal_attempt,
+)
 from polaris.cells.resident.autonomy.internal.goal_governor import GoalGovernor
 from polaris.cells.resident.autonomy.internal.meta_cognition import StrategyInsightEngine
 from polaris.cells.resident.autonomy.internal.pm_bridge import ResidentPMBridge
@@ -93,17 +99,20 @@ from polaris.cells.resident.autonomy.internal.self_improvement_lab import SelfIm
 from polaris.cells.resident.autonomy.internal.skill_foundry import SkillFoundry
 from polaris.cells.resident.autonomy.public.contracts import (
     ApproveResidentGoalCommandV1,
+    ArchiveResidentGoalCommandV1,
     BuildResidentAgiRepairAdvisoryOverlayCommandV1,
     CreateResidentGoalCommandV1,
     ExecuteResidentAgiTacticalActionCommandV1,
     ExtractResidentSkillsCommandV1,
     MaterializeResidentGoalCommandV1,
+    ObserveResidentGoalAttemptCommandV1,
     QueryResidentAgiAuditPackV1,
     QueryResidentAgiEvidenceInterfacesV1,
     QueryResidentAgiHandoffsV1,
     QueryResidentAgiRepairAdvisoryOverlayV1,
     QueryResidentAgiTacticalChatV1,
     QueryResidentCapabilitiesV1,
+    QueryResidentGoalExecutionV1,
     QueryResidentStatusV1,
     RecordResidentDecisionCommandV1,
     RecordResidentEvidenceCommandV1,
@@ -115,14 +124,19 @@ from polaris.cells.resident.autonomy.public.contracts import (
     ResidentAutonomyError,
     ResidentAutonomyResultV1,
     ResidentCycleCompletedEventV1,
+    ResidentGoalAttemptReceiptV1,
+    ResidentGoalExecutionV1,
+    ResidentGoalLifecycleErrorV1,
     RunResidentAgiDecisionTurnCommandV1,
     RunResidentCycleCommandV1,
     RunResidentExperimentsCommandV1,
     RunResidentGoalCommandV1,
     RunResidentImprovementsCommandV1,
     RunResidentTickCommandV1,
+    SettleResidentGoalAttemptCommandV1,
     StageResidentGoalCommandV1,
     StartResidentCommandV1,
+    StartResidentGoalAttemptCommandV1,
     StopResidentCommandV1,
     UpdateResidentAgiParticipationCommandV1,
     UpdateResidentIdentityCommandV1,
@@ -244,6 +258,37 @@ _CYCLE_ACTIONS: tuple[str, ...] = (
 def query_resident_status(query: QueryResidentStatusV1, *, include_details: bool = False) -> dict[str, Any]:
     """Handle :class:`QueryResidentStatusV1` → resident status snapshot."""
     return get_resident_service(query.workspace).get_status(include_details=include_details)
+
+
+def start_resident_goal_attempt(
+    command: StartResidentGoalAttemptCommandV1,
+) -> ResidentGoalAttemptReceiptV1:
+    if type(command) is not StartResidentGoalAttemptCommandV1:
+        raise ResidentGoalLifecycleErrorV1("invalid_goal_attempt_command", "invalid start command type")
+    return start_goal_attempt(command)
+
+
+def observe_resident_goal_attempt(
+    command: ObserveResidentGoalAttemptCommandV1,
+) -> ResidentGoalAttemptReceiptV1:
+    if type(command) is not ObserveResidentGoalAttemptCommandV1:
+        raise ResidentGoalLifecycleErrorV1("invalid_goal_attempt_command", "invalid observe command type")
+    return observe_goal_attempt(command)
+
+
+def settle_resident_goal_attempt(
+    command: SettleResidentGoalAttemptCommandV1,
+) -> ResidentGoalAttemptReceiptV1:
+    if type(command) is not SettleResidentGoalAttemptCommandV1:
+        raise ResidentGoalLifecycleErrorV1("invalid_goal_attempt_command", "invalid settle command type")
+    return settle_goal_attempt(command)
+
+
+def query_resident_goal_execution(query: QueryResidentGoalExecutionV1) -> ResidentGoalExecutionV1:
+    """Zero-write durable execution query; does not construct ResidentService."""
+    if type(query) is not QueryResidentGoalExecutionV1:
+        raise ResidentGoalLifecycleErrorV1("invalid_goal_execution_query", "invalid execution query type")
+    return query_goal_execution(query)
 
 
 def query_resident_capabilities(query: QueryResidentCapabilitiesV1) -> dict[str, Any]:
@@ -4081,7 +4126,11 @@ def create_resident_goal(command: CreateResidentGoalCommandV1) -> dict[str, Any]
 def approve_resident_goal(command: ApproveResidentGoalCommandV1) -> dict[str, Any] | None:
     """Handle :class:`ApproveResidentGoalCommandV1` → approve a governed goal."""
 
-    goal = get_resident_service(command.workspace).approve_goal(command.goal_id, note=command.note)
+    goal = get_resident_service(command.workspace).approve_goal(
+        command.goal_id,
+        note=command.note,
+        expected_revision=command.expected_revision,
+    )
     if goal is None:
         return None
     result = goal.to_dict()
@@ -4096,7 +4145,11 @@ def approve_resident_goal(command: ApproveResidentGoalCommandV1) -> dict[str, An
 def reject_resident_goal(command: RejectResidentGoalCommandV1) -> dict[str, Any] | None:
     """Handle :class:`RejectResidentGoalCommandV1` → reject a governed goal."""
 
-    goal = get_resident_service(command.workspace).reject_goal(command.goal_id, note=command.note)
+    goal = get_resident_service(command.workspace).reject_goal(
+        command.goal_id,
+        note=command.note,
+        expected_revision=command.expected_revision,
+    )
     if goal is None:
         return None
     result = goal.to_dict()
@@ -4112,7 +4165,10 @@ def materialize_resident_goal(command: MaterializeResidentGoalCommandV1) -> dict
     """Handle :class:`MaterializeResidentGoalCommandV1` through the Resident goal bridge."""
 
     service = get_resident_service(command.workspace)
-    contract = service.materialize_goal(command.goal_id)
+    contract = service.materialize_goal(
+        command.goal_id,
+        expected_revision=command.expected_revision,
+    )
     if contract is not None:
         publish_resident_status_update(
             workspace=command.workspace,
@@ -4121,6 +4177,21 @@ def materialize_resident_goal(command: MaterializeResidentGoalCommandV1) -> dict
             detail={"goal_id": command.goal_id},
         )
     return contract
+
+
+def archive_resident_goal(command: ArchiveResidentGoalCommandV1) -> dict[str, Any] | None:
+    """Archive a rejected or materialized Goal through strict CAS."""
+    service = get_resident_service(command.workspace)
+    goal = service.archive_goal(command.goal_id, expected_revision=command.expected_revision)
+    if goal is None:
+        return None
+    result = goal.to_dict()
+    publish_resident_status_update(
+        workspace=command.workspace,
+        action="goal_archived",
+        detail={"goal_id": command.goal_id},
+    )
+    return result
 
 
 def stage_resident_goal(command: StageResidentGoalCommandV1) -> dict[str, Any] | None:
@@ -4383,6 +4454,7 @@ __all__ = [
     "UpdateResidentAgiParticipationCommandV1",
     "UpdateResidentIdentityCommandV1",
     "approve_resident_goal",
+    "archive_resident_goal",
     "build_resident_agi_authority_matrix",
     "build_resident_agi_capability_access_registry",
     "build_resident_agi_capability_surface",
@@ -4398,12 +4470,14 @@ __all__ = [
     "get_execution_projection_service",
     "get_resident_service",
     "materialize_resident_goal",
+    "observe_resident_goal_attempt",
     "publish_resident_status_update",
     "query_resident_agi_audit_pack",
     "query_resident_agi_evidence_interfaces",
     "query_resident_agi_handoffs",
     "query_resident_agi_repair_advisory_overlay",
     "query_resident_capabilities",
+    "query_resident_goal_execution",
     "query_resident_status",
     "record_resident_decision",
     "record_resident_decision_entry",
@@ -4417,8 +4491,10 @@ __all__ = [
     "run_resident_goal",
     "run_resident_improvements",
     "run_resident_tick",
+    "settle_resident_goal_attempt",
     "stage_resident_goal",
     "start_resident",
+    "start_resident_goal_attempt",
     "stop_resident",
     "update_resident_agi_participation",
     "update_resident_identity",

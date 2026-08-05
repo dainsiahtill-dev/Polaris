@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
+from polaris.cells.resident.autonomy.public.contracts import ResidentGoalLifecycleErrorV1
 from polaris.domain.models.resident import (
     CapabilityGraphSnapshot,
     DecisionRecord,
     ExperimentRecord,
     GoalProposal,
+    GoalStatus,
     ImprovementProposal,
     MetaInsight,
     ResidentAgenda,
@@ -29,7 +32,9 @@ from polaris.kernelone.storage import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
+
+_GoalMutationResultT = TypeVar("_GoalMutationResultT")
 
 
 @dataclass(frozen=True)
@@ -166,11 +171,104 @@ class ResidentStorage:
     def save_runtime_state(self, state: ResidentRuntimeState) -> None:
         self.write_json(self.paths.runtime_state_path, state.to_dict())
 
+    def _load_goals_unlocked(self) -> list[GoalProposal]:
+        path = self.paths.goals_path
+        if not path or not os.path.isfile(path):
+            return []
+        try:
+            with open(path, encoding="utf-8", errors="strict") as handle:
+                payload = json.load(handle)
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ResidentGoalLifecycleErrorV1(
+                "goal_lifecycle_state_corrupt",
+                f"Goal lifecycle state cannot be decoded: {exc}",
+            ) from exc
+        if isinstance(payload, dict) and type(payload.get("items")) is list:
+            items = payload["items"]
+        elif type(payload) is list:
+            items = payload
+        else:
+            raise ResidentGoalLifecycleErrorV1(
+                "goal_lifecycle_state_corrupt",
+                "Goal lifecycle state must be a list or an object containing an items list",
+            )
+        goals: list[GoalProposal] = []
+        known_statuses = {status.value for status in GoalStatus}
+        for item in items:
+            if type(item) is not dict:
+                raise ResidentGoalLifecycleErrorV1(
+                    "goal_lifecycle_state_corrupt",
+                    "Goal lifecycle item must be an object",
+                )
+            status = item.get("status", GoalStatus.PENDING.value)
+            if type(status) is not str or status not in known_statuses:
+                raise ResidentGoalLifecycleErrorV1(
+                    "unknown_persisted_goal_state",
+                    f"unknown persisted Goal state: {status!r}",
+                )
+            goals.append(GoalProposal.from_dict(item))
+        return goals
+
     def load_goals(self) -> list[GoalProposal]:
-        return [GoalProposal.from_dict(item) for item in self._load_items_container(self.paths.goals_path)]
+        return self._load_goals_unlocked()
+
+    def _write_goals_unlocked(self, goals: Sequence[GoalProposal]) -> None:
+        write_json_atomic(
+            self.paths.goals_path,
+            {"items": [goal.to_dict() for goal in goals]},
+            lock_timeout_sec=None,
+        )
+
+    def mutate_goals(
+        self,
+        mutation: Callable[[list[GoalProposal]], tuple[_GoalMutationResultT, bool]],
+    ) -> _GoalMutationResultT:
+        """Run strict Goal read/mutate/atomic-write under one process-shared lock."""
+        lock_path = Path(f"{self.paths.goals_path}.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with lock_path.open("a+b") as lock_handle:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+                goals = self._load_goals_unlocked()
+                result, changed = mutation(goals)
+                if changed:
+                    self._write_goals_unlocked(goals)
+                    os.fsync(lock_handle.fileno())
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                return result
+        except ResidentGoalLifecycleErrorV1:
+            raise
+        except OSError as exc:
+            raise ResidentGoalLifecycleErrorV1(
+                "goal_lifecycle_state_write_failed",
+                f"Goal lifecycle transaction failed: {exc}",
+            ) from exc
 
     def save_goals(self, goals: Sequence[GoalProposal]) -> None:
-        self.save_items(self.paths.goals_path, goals)
+        incoming = list(goals)
+
+        def replace(current: list[GoalProposal]) -> tuple[None, bool]:
+            current_by_id = {goal.goal_id: goal for goal in current}
+            for goal in incoming:
+                persisted = current_by_id.get(goal.goal_id)
+                if persisted is None:
+                    continue
+                persisted_revision = persisted.materialization_artifacts.get("goal_lifecycle_revision", 0)
+                incoming_revision = goal.materialization_artifacts.get("goal_lifecycle_revision", 0)
+                if type(persisted_revision) is not int or type(incoming_revision) is not int:
+                    raise ResidentGoalLifecycleErrorV1(
+                        "goal_lifecycle_state_corrupt",
+                        "goal_lifecycle_revision must be an exact int",
+                    )
+                if incoming_revision < persisted_revision:
+                    raise ResidentGoalLifecycleErrorV1(
+                        "goal_revision_conflict",
+                        "stale Goal snapshot cannot overwrite a newer lifecycle revision",
+                    )
+            current[:] = incoming
+            return None, True
+
+        self.mutate_goals(replace)
 
     def load_insights(self) -> list[MetaInsight]:
         return [MetaInsight.from_dict(item) for item in self._load_items_container(self.paths.insights_path)]

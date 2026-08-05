@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:53:53.748287Z",
-  "source_hash": "ddc6857a594b5d33",
+  "generated_at": "2026-08-02T15:47:48.180121Z",
+  "source_hash": "14ce41c4b4145b91",
   "cell_id": "llm.evaluation",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -85,8 +85,20 @@
     },
     {
       "type": "function",
+      "name": "_collect_case_observation",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/agentic_benchmark.py"
+    },
+    {
+      "type": "function",
       "name": "_artifact_path",
       "description": "Compute the artifact file path for a benchmark report.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/agentic_benchmark.py"
+    },
+    {
+      "type": "function",
+      "name": "run_agentic_benchmark_suite",
+      "description": "Run deterministic role benchmark cases against roles.runtime.",
       "defined_in": "polaris/cells/llm/evaluation/internal/agentic_benchmark.py"
     },
     {
@@ -478,6 +490,12 @@
       "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
     },
     {
+      "type": "function",
+      "name": "run_context_projection_matrix_suite",
+      "description": "运行 ProjectionEngine 确定性评测矩阵.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
       "type": "class",
       "name": "KernelFsReportsPort",
       "description": "Port for listing report JSON files in a directory.",
@@ -735,6 +753,18 @@
       "type": "function",
       "name": "save_interview_report",
       "description": "Persist an interactive interview report and mirror its verdict to readiness.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_interview_answer",
+      "description": "生成面试答案（非流式）",
+      "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_interview_answer_streaming",
+      "description": "生成面试答案（流式）",
       "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
     },
     {
@@ -1382,6 +1412,24 @@
     },
     {
       "type": "function",
+      "name": "_score_once",
+      "description": "跑一遍流式 turn 并用 judge 打分（0..1）。失败返回 0。",
+      "defined_in": "polaris/cells/llm/evaluation/internal/projection_adaptive_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_evaluate_case",
+      "description": "A/B：同 case 跑自适应 ON 与 OFF 各 ``repeats`` 次，比较 judge 得分（带 CI）。",
+      "defined_in": "polaris/cells/llm/evaluation/internal/projection_adaptive_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "run_projection_adaptive_matrix_suite",
+      "description": "运行自适应排序 A/B 矩阵（ON vs OFF，真实 LLM，judge 打分）.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/projection_adaptive_matrix.py"
+    },
+    {
+      "type": "function",
       "name": "readiness_max_age_seconds",
       "description": "Return the readiness max age in seconds.",
       "defined_in": "polaris/cells/llm/evaluation/internal/readiness_freshness.py"
@@ -1420,6 +1468,18 @@
       "type": "function",
       "name": "_report_to_legacy",
       "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/readiness_tests.py"
+    },
+    {
+      "type": "function",
+      "name": "run_readiness_tests",
+      "description": "运行就绪性测试并返回兼容 legacy 的报告结构。",
+      "defined_in": "polaris/cells/llm/evaluation/internal/readiness_tests.py"
+    },
+    {
+      "type": "function",
+      "name": "run_readiness_tests_streaming",
+      "description": "流式运行就绪性测试（兼容事件格式）。",
       "defined_in": "polaris/cells/llm/evaluation/internal/readiness_tests.py"
     },
     {
@@ -1517,6 +1577,22 @@
           "doc": ""
         },
         {
+          "name": "_run_suite",
+          "doc": ""
+        },
+        {
+          "name": "_run_suite_with_timeout",
+          "doc": "Run suite with optional timeout protection."
+        },
+        {
+          "name": "run",
+          "doc": "运行评测（非流式）"
+        },
+        {
+          "name": "run_streaming",
+          "doc": "运行评测（流式）"
+        },
+        {
           "name": "_save_report",
           "doc": "保存报告到文件"
         }
@@ -1562,6 +1638,12 @@
       "type": "function",
       "name": "_build_sampled_matrix",
       "description": "Anti-jitter level x dimension scorecard from sample-aggregated cases.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/scout_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "run_scout_matrix_suite",
+      "description": "Run the Scout capability matrix through the agentic-eval engine — ONE sample.",
       "defined_in": "polaris/cells/llm/evaluation/internal/scout_matrix.py"
     },
     {
@@ -1611,6 +1693,10 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "execute_stream",
+          "doc": "Yield events for the current turn."
         }
       ]
     },
@@ -1636,6 +1722,12 @@
       "type": "function",
       "name": "_materialize_workspace",
       "description": "Create an isolated workspace sandbox for a case.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_session_workflow_case",
+      "description": "Execute a single session workflow case and produce verdict.",
       "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
     },
     {
@@ -1699,6 +1791,12 @@
       "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
     },
     {
+      "type": "function",
+      "name": "run_session_workflow_suite",
+      "description": "Run session workflow matrix suite.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
+    },
+    {
       "type": "class",
       "name": "_SpeculationCollector",
       "description": "订阅 speculation 事件，聚合本次运行窗口内的所有 per-turn 汇总.",
@@ -1742,6 +1840,12 @@
     },
     {
       "type": "function",
+      "name": "_run_session",
+      "description": "跑一遍流式 role session，采集工具调用、工具结果与最终输出/错误.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/speculation_matrix.py"
+    },
+    {
+      "type": "function",
       "name": "_build_command",
       "description": "",
       "defined_in": "polaris/cells/llm/evaluation/internal/speculation_matrix.py"
@@ -1750,6 +1854,18 @@
       "type": "function",
       "name": "_parity_intersection",
       "description": "比较 ON/OFF 在共同工具调用上的结果一致性（信息性，model 非确定性容忍）.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/speculation_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_evaluate_case",
+      "description": "对单个 case 跑 ON（审计）与 OFF 两遍并裁决.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/speculation_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "run_speculation_matrix_suite",
+      "description": "运行 speculation 差分评测矩阵（ON-audit vs OFF）.",
       "defined_in": "polaris/cells/llm/evaluation/internal/speculation_matrix.py"
     },
     {
@@ -1778,8 +1894,44 @@
     },
     {
       "type": "function",
+      "name": "_invoke_interview_with_empty_output_retry",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/suites.py"
+    },
+    {
+      "type": "function",
+      "name": "run_connectivity_suite",
+      "description": "运行连接性测试套件",
+      "defined_in": "polaris/cells/llm/evaluation/internal/suites.py"
+    },
+    {
+      "type": "function",
       "name": "run_connectivity_suite_sync",
       "description": "同步运行连接性测试套件",
+      "defined_in": "polaris/cells/llm/evaluation/internal/suites.py"
+    },
+    {
+      "type": "function",
+      "name": "run_response_suite",
+      "description": "运行响应测试套件",
+      "defined_in": "polaris/cells/llm/evaluation/internal/suites.py"
+    },
+    {
+      "type": "function",
+      "name": "run_thinking_suite",
+      "description": "运行思考能力测试套件",
+      "defined_in": "polaris/cells/llm/evaluation/internal/suites.py"
+    },
+    {
+      "type": "function",
+      "name": "run_qualification_suite",
+      "description": "运行资质测试套件",
+      "defined_in": "polaris/cells/llm/evaluation/internal/suites.py"
+    },
+    {
+      "type": "function",
+      "name": "run_interview_suite",
+      "description": "运行面试测试套件",
       "defined_in": "polaris/cells/llm/evaluation/internal/suites.py"
     },
     {
@@ -1804,6 +1956,18 @@
       "description": "Result of a timeout-protected operation.",
       "defined_in": "polaris/cells/llm/evaluation/internal/timeout.py",
       "methods": []
+    },
+    {
+      "type": "function",
+      "name": "run_with_timeout",
+      "description": "Run a coroutine with timeout protection.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/timeout.py"
+    },
+    {
+      "type": "function",
+      "name": "run_with_timeout_optional",
+      "description": "Run a coroutine with optional timeout protection.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/timeout.py"
     },
     {
       "type": "class",
@@ -1866,6 +2030,10 @@
         {
           "name": "stream_session",
           "doc": "Stream role session events."
+        },
+        {
+          "name": "run_session",
+          "doc": "Execute one role session command in non-stream mode."
         }
       ]
     },
@@ -2046,6 +2214,10 @@
         {
           "name": "stream_session",
           "doc": "Stream role session events via roles.runtime."
+        },
+        {
+          "name": "run_session",
+          "doc": ""
         }
       ]
     },
@@ -2061,6 +2233,10 @@
         },
         {
           "name": "stream_session",
+          "doc": ""
+        },
+        {
+          "name": "run_session",
           "doc": ""
         }
       ]
@@ -2085,8 +2261,26 @@
     },
     {
       "type": "function",
+      "name": "_collect_stream_observation",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix/_runner.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_non_stream_observation",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix/_runner.py"
+    },
+    {
+      "type": "function",
       "name": "_artifact_path",
       "description": "Compute the artifact file path for a matrix report.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix/_runner.py"
+    },
+    {
+      "type": "function",
+      "name": "run_tool_calling_matrix_suite",
+      "description": "Run deterministic tool-calling matrix suite.",
       "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix/_runner.py"
     },
     {
@@ -2206,7 +2400,16 @@
       "name": "ILlmEvaluationService",
       "description": "",
       "defined_in": "polaris/cells/llm/evaluation/public/contracts.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "run_evaluation",
+          "doc": "Run evaluation suite(s)."
+        },
+        {
+          "name": "query_index",
+          "doc": "Query persisted evaluation index."
+        }
+      ]
     },
     {
       "type": "function",
@@ -2236,6 +2439,24 @@
       "type": "function",
       "name": "_convert_result_to_public_report",
       "description": "Convert a unified benchmark result into the stable public report.",
+      "defined_in": "polaris/cells/llm/evaluation/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "run_agentic_benchmark_suite",
+      "description": "Run deterministic role benchmark cases via unified_runner.",
+      "defined_in": "polaris/cells/llm/evaluation/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "run_context_benchmark_suite",
+      "description": "Run Context Benchmark suite.",
+      "defined_in": "polaris/cells/llm/evaluation/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "run_strategy_benchmark_suite",
+      "description": "Run Strategy Benchmark suite.",
       "defined_in": "polaris/cells/llm/evaluation/public/service.py"
     },
     {

@@ -1,10 +1,1175 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:19.438737Z",
-  "source_hash": "df7d14cd34879404",
+  "generated_at": "2026-08-02T15:47:50.698612Z",
+  "source_hash": "78adffca6c8ed9a0",
   "cell_id": "runtime.task_runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "class",
+      "name": "_CloseDirectedEffectByParentCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_CloseDirectedEffectByParentForBatchCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_StreamRead",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_RegistryAdmission",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_SealedDirectedEffectInventory",
+      "description": "One immutable inventory seal reconstructed from registry facts.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_ReadyDirectedEffectInventory",
+      "description": "One immutable readiness fact reserved for the admission-finalize slice.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_InventoryOperationProjection",
+      "description": "Strict operation-stream classification relative to one sealed inventory.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_StrictInventoryConfirmation",
+      "description": "Strict registry seal plus operation classification from one dual snapshot.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_ParentRegistry",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_CommittedTransition",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_NormalizedDirectedEffectReplayDescriptorV1",
+      "description": "Schema-neutral command semantics excluding CAS and storage volatility.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_NormalizedDirectedEffectTransitionV1",
+      "description": "Schema-neutral persisted transition used for replay and idempotency.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_Aggregate",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_DirectedEffectRecoveryRepositorySweep",
+      "description": "Bounded repository result including the number of sealed members read.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_DirectedEffectRecoverySweepPreparation",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_DirectedEffectRecoveryCursor",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_ParentSettlementPreparation",
+      "description": "Immutable facts required to close receipt-backed children and parent.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_ParentSettlementGuardedClose",
+      "description": "One dual-stream snapshot prepared for the guarded parent close.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_OperationStreamReduction",
+      "description": "Immutable facts reconstructed from one bounded strict operation stream.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_StrictOperationProjection",
+      "description": "One strict durable binding and child-stream reconstruction.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_ReadyOperationContext",
+      "description": "Registry-owned readiness and sealed member used by claim or abort.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectSettlementPreBarrierVerdictV1",
+      "description": "Strict registry verdict consumed while TaskRuntime holds session locks.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectOperationRepository",
+      "description": "Strict registry and child-operation aggregate repository.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py",
+      "methods": [
+        {
+          "name": "attempt_validation_failure_result",
+          "doc": "Map a locked TaskRuntime validation refusal to the DEO taxonomy."
+        },
+        {
+          "name": "validate_attempt",
+          "doc": "Validate current durable execution authority with typed evidence."
+        },
+        {
+          "name": "_guarded_attempt_failure",
+          "doc": "Revalidate complete authority at every guarded iteration boundary."
+        },
+        {
+          "name": "enroll_parent_registry_stream",
+          "doc": "Enroll only the registry stream derived from a validated full attempt."
+        },
+        {
+          "name": "_after_guarded_prepare",
+          "doc": "Scheduling seam for deterministic tests; production intentionally does nothing."
+        },
+        {
+          "name": "_after_guarded_commit",
+          "doc": "Post-durability test seam; production preserves the exact receipt."
+        },
+        {
+          "name": "_after_guarded_drift",
+          "doc": "Reprepare-boundary seam used only for deterministic authority races."
+        },
+        {
+          "name": "_after_settlement_child_close",
+          "doc": "Deterministic crash seam after one durable child close."
+        },
+        {
+          "name": "_after_settlement_parent_close",
+          "doc": "Deterministic crash seam after the outcome-bound parent close."
+        },
+        {
+          "name": "_prepare_guarded_snapshot",
+          "doc": "Prepare immutable child-target and parent-registry snapshots without domain locks."
+        },
+        {
+          "name": "_validated_parent_binding_from_registry",
+          "doc": "Validate a command binding using the exact registry facts from one prepare."
+        },
+        {
+          "name": "enroll_operation_stream",
+          "doc": "Enroll only an operation stream attested by strict durable registry facts."
+        },
+        {
+          "name": "settlement_pre_barrier",
+          "doc": "Strictly classify the attempt registry before an inactive write."
+        },
+        {
+          "name": "settle_parent_for_terminal_intent",
+          "doc": "Close receipt-backed children then their parent under exact stream guards."
+        },
+        {
+          "name": "preflight_parent_for_terminal_intent",
+          "doc": "Validate exact terminal eligibility without mutating either stream."
+        },
+        {
+          "name": "_settle_parent_for_terminal_intent",
+          "doc": "Validate and optionally close one receipt-backed parent."
+        },
+        {
+          "name": "_parent_settlement_verdict",
+          "doc": ""
+        },
+        {
+          "name": "_prepare_parent_settlement",
+          "doc": ""
+        },
+        {
+          "name": "_classify_parent_settlement_registry",
+          "doc": ""
+        },
+        {
+          "name": "_prepare_parent_settlement_operations",
+          "doc": ""
+        },
+        {
+          "name": "_classify_parent_settlement_aggregates",
+          "doc": ""
+        },
+        {
+          "name": "_classify_receipt_backed_settlement_aggregate",
+          "doc": ""
+        },
+        {
+          "name": "_parent_settlement_preflight",
+          "doc": ""
+        },
+        {
+          "name": "_close_parent_settlement_children",
+          "doc": ""
+        },
+        {
+          "name": "_prepare_parent_settlement_guarded_close",
+          "doc": ""
+        },
+        {
+          "name": "_classify_existing_parent_close",
+          "doc": ""
+        },
+        {
+          "name": "_append_parent_settlement_close",
+          "doc": ""
+        },
+        {
+          "name": "_parent_settlement_close_command",
+          "doc": ""
+        },
+        {
+          "name": "_reconcile_parent_settlement_append_error",
+          "doc": ""
+        },
+        {
+          "name": "_after_batch_rollover_parent_close",
+          "doc": "Deterministic crash seam after durable close and before successor admission."
+        },
+        {
+          "name": "_after_batch_rollover_child_close",
+          "doc": "Deterministic crash seam between durable child-close appends."
+        },
+        {
+          "name": "admit_parent_batch_with_validated_authority",
+          "doc": "Close one completed predecessor batch and admit its canonical successor."
+        },
+        {
+          "name": "_close_parent_for_batch_rollover",
+          "doc": ""
+        },
+        {
+          "name": "_terminalize_open_parent_residuals_for_batch_rollover",
+          "doc": "Abort unclaimed siblings and dead-letter recovery residuals for rollover."
+        },
+        {
+          "name": "_close_parent_batch_children",
+          "doc": ""
+        },
+        {
+          "name": "_append_parent_batch_rollover_close",
+          "doc": ""
+        },
+        {
+          "name": "_prepare_parent_batch_guarded_close",
+          "doc": ""
+        },
+        {
+          "name": "admit_parent_with_validated_authority",
+          "doc": "Append one registry fact for a caller-validated, lock-held attempt."
+        },
+        {
+          "name": "get_parent_registry",
+          "doc": ""
+        },
+        {
+          "name": "seal_inventory",
+          "doc": "Persist one registry-owned inventory under an empty operation-stream guard."
+        },
+        {
+          "name": "finalize_inventory",
+          "doc": "Persist readiness only for an exact sealed version-one intent set."
+        },
+        {
+          "name": "get_inventory",
+          "doc": "Return one strict current inventory projection without mutation."
+        },
+        {
+          "name": "admit",
+          "doc": ""
+        },
+        {
+          "name": "claim",
+          "doc": ""
+        },
+        {
+          "name": "abort",
+          "doc": ""
+        },
+        {
+          "name": "commit_receipt",
+          "doc": ""
+        },
+        {
+          "name": "mark_recovery_pending",
+          "doc": ""
+        },
+        {
+          "name": "dead_letter",
+          "doc": ""
+        },
+        {
+          "name": "_close_by_parent",
+          "doc": ""
+        },
+        {
+          "name": "reconcile_ambiguous_started_operations",
+          "doc": "Converge ambiguous operations without re-executing any effect."
+        },
+        {
+          "name": "_prepare_ambiguous_recovery_sweep",
+          "doc": ""
+        },
+        {
+          "name": "_reconcile_ambiguous_recovery_member",
+          "doc": ""
+        },
+        {
+          "name": "_recover_started_or_pending_operation",
+          "doc": ""
+        },
+        {
+          "name": "_project_recovery_facts_with_deadline",
+          "doc": ""
+        },
+        {
+          "name": "_recovery_cursor",
+          "doc": ""
+        },
+        {
+          "name": "_commit_restart_recovery_pending",
+          "doc": ""
+        },
+        {
+          "name": "_commit_restart_dead_letter",
+          "doc": ""
+        },
+        {
+          "name": "_recovery_sweep_hit_deadline",
+          "doc": ""
+        },
+        {
+          "name": "_recovery_deadline_sweep",
+          "doc": ""
+        },
+        {
+          "name": "_recovery_fact_projection_results",
+          "doc": "Rehydrate durable recovery facts as an idempotent projection outbox."
+        },
+        {
+          "name": "get",
+          "doc": ""
+        },
+        {
+          "name": "get_parent_readiness",
+          "doc": "Rebuild one parent operation stream as a non-authoritative diagnostic."
+        },
+        {
+          "name": "_mutate",
+          "doc": ""
+        },
+        {
+          "name": "_admit_inventory_member_failure",
+          "doc": ""
+        },
+        {
+          "name": "_operation_gate_failure",
+          "doc": ""
+        },
+        {
+          "name": "_ready_operation_context",
+          "doc": "Authorize claim or abort only from the exact durable ready prefix."
+        },
+        {
+          "name": "_prepare_inventory_guarded_snapshot",
+          "doc": "Prepare registry target facts guarded by the exact operation stream."
+        },
+        {
+          "name": "_inventory_seal_payload",
+          "doc": ""
+        },
+        {
+          "name": "_inventory_ready_payload",
+          "doc": ""
+        },
+        {
+          "name": "_confirm_inventory_append",
+          "doc": ""
+        },
+        {
+          "name": "_reconcile_inventory_append",
+          "doc": "Resolve an ambiguous append only from a fresh strict two-stream snapshot."
+        },
+        {
+          "name": "_strict_inventory_confirmation",
+          "doc": "Rebuild both streams and bind one exact seal to its operation facts."
+        },
+        {
+          "name": "_inventory_operation_projection",
+          "doc": ""
+        },
+        {
+          "name": "_validate_exact_inventory_admission",
+          "doc": ""
+        },
+        {
+          "name": "_ready_current_inventory_failure",
+          "doc": ""
+        },
+        {
+          "name": "_validate_ready_inventory_prefix",
+          "doc": ""
+        },
+        {
+          "name": "_confirm_inventory_ready_append",
+          "doc": ""
+        },
+        {
+          "name": "_confirmed_inventory_result",
+          "doc": ""
+        },
+        {
+          "name": "_with_inventory_reconciliation_evidence",
+          "doc": ""
+        },
+        {
+          "name": "_inventory_success",
+          "doc": ""
+        },
+        {
+          "name": "_inventory_failure",
+          "doc": ""
+        },
+        {
+          "name": "_inventory_failure_from_operation",
+          "doc": ""
+        },
+        {
+          "name": "_load_registry",
+          "doc": ""
+        },
+        {
+          "name": "_reduce_registry_from_read",
+          "doc": "Strictly rebuild one registry aggregate from already-read immutable facts."
+        },
+        {
+          "name": "_apply_registry_event",
+          "doc": ""
+        },
+        {
+          "name": "_apply_parent_admitted",
+          "doc": ""
+        },
+        {
+          "name": "_apply_parent_closed",
+          "doc": ""
+        },
+        {
+          "name": "_apply_parent_inventory_sealed",
+          "doc": "Strictly reduce one immutable parent inventory seal fact."
+        },
+        {
+          "name": "_apply_parent_inventory_ready",
+          "doc": "Strictly reduce one registry-owned admission-readiness proof."
+        },
+        {
+          "name": "_parent_event_canonical",
+          "doc": ""
+        },
+        {
+          "name": "_parent_event_canonical_from_binding",
+          "doc": ""
+        },
+        {
+          "name": "_binding_hash",
+          "doc": ""
+        },
+        {
+          "name": "_parent_request_descriptor",
+          "doc": ""
+        },
+        {
+          "name": "_parent_request_descriptor_from_binding",
+          "doc": ""
+        },
+        {
+          "name": "_parent_replay_result",
+          "doc": ""
+        },
+        {
+          "name": "_reconcile_parent_append",
+          "doc": "Resolve a registry append while the caller still holds authority locks."
+        },
+        {
+          "name": "_validated_parent_binding",
+          "doc": ""
+        },
+        {
+          "name": "_read_stream",
+          "doc": ""
+        },
+        {
+          "name": "_reduce_operation",
+          "doc": ""
+        },
+        {
+          "name": "_reduce_operation_stream",
+          "doc": "Parse each durable transition once into immutable per-operation facts."
+        },
+        {
+          "name": "_operation_stream_failure",
+          "doc": ""
+        },
+        {
+          "name": "_parse_operation_transition",
+          "doc": ""
+        },
+        {
+          "name": "_validate_persisted_descriptor",
+          "doc": ""
+        },
+        {
+          "name": "_strict_operation_projection",
+          "doc": "Atomically rebuild the durable registry guard and child partition."
+        },
+        {
+          "name": "_matching_transitions",
+          "doc": "Locate exact schema-neutral semantics with canonical event continuity."
+        },
+        {
+          "name": "_claim_grant",
+          "doc": ""
+        },
+        {
+          "name": "_confirmed_mutation_result",
+          "doc": "Return success only after all receipt and strict projection proofs agree."
+        },
+        {
+          "name": "_guarded_receipt_event_evidence",
+          "doc": "Project the canonical event identity used by success evidence."
+        },
+        {
+          "name": "_guarded_receipt_proof_drift",
+          "doc": "Return every public receipt field that differs from exact replay proof."
+        },
+        {
+          "name": "_guarded_receipt_record",
+          "doc": "Project every public guarded receipt field without reinterpretation."
+        },
+        {
+          "name": "_guarded_receipt_failure",
+          "doc": ""
+        },
+        {
+          "name": "_confirm_guarded_append",
+          "doc": "Strictly confirm one ambiguous guarded commit or exact replay receipt."
+        },
+        {
+          "name": "_reconcile_operation_append",
+          "doc": "Reconcile a non-drift error that may have crossed durability."
+        },
+        {
+          "name": "_claim_exact_replay_result",
+          "doc": "Rehydrate a grant-bearing claim success from a durable EFFECT_STARTED."
+        },
+        {
+          "name": "_replay_result",
+          "doc": ""
+        },
+        {
+          "name": "_canonical_receipt_for_durable_transition",
+          "doc": "Prefer public exact-replay receipt; fall back to original when durable."
+        },
+        {
+          "name": "_transition_descriptor_evidence",
+          "doc": "Project only durable receipt/recovery/settlement binding fields."
+        },
+        {
+          "name": "_transition_for_kind",
+          "doc": ""
+        },
+        {
+          "name": "_semantic_continuity_failure",
+          "doc": ""
+        },
+        {
+          "name": "_descriptor_semantic",
+          "doc": ""
+        },
+        {
+          "name": "_operation_descriptor",
+          "doc": ""
+        },
+        {
+          "name": "_operation_event_canonical",
+          "doc": ""
+        },
+        {
+          "name": "_normalized_replay_descriptor",
+          "doc": "Strip schema, timestamp, and CAS volatility from replay semantics."
+        },
+        {
+          "name": "_normalized_transition",
+          "doc": "Build the schema-neutral idempotency and exact-replay identity."
+        },
+        {
+          "name": "_derive_operation",
+          "doc": ""
+        },
+        {
+          "name": "_registry_projection",
+          "doc": ""
+        },
+        {
+          "name": "_command_identity_failure",
+          "doc": ""
+        },
+        {
+          "name": "_registry_identity_mismatch_code",
+          "doc": ""
+        },
+        {
+          "name": "_binding_mismatch_result",
+          "doc": ""
+        },
+        {
+          "name": "_legal_transition",
+          "doc": ""
+        },
+        {
+          "name": "_operation_identity_mismatch_code",
+          "doc": ""
+        },
+        {
+          "name": "_fact_failure_code",
+          "doc": ""
+        },
+        {
+          "name": "_fact_failure_result",
+          "doc": ""
+        },
+        {
+          "name": "_maintenance_receipt_record",
+          "doc": "Detach FactStream maintenance evidence without elevating its authority."
+        },
+        {
+          "name": "_enrollment_failure",
+          "doc": ""
+        },
+        {
+          "name": "_enrollment_fact_failure",
+          "doc": ""
+        },
+        {
+          "name": "_with_reconciliation_evidence",
+          "doc": ""
+        },
+        {
+          "name": "_with_guarded_reconciliation_evidence",
+          "doc": "Attach the original non-drift error to one strict reconciliation verdict."
+        },
+        {
+          "name": "_parent_open_conflict",
+          "doc": ""
+        },
+        {
+          "name": "_parent_registry_conflict",
+          "doc": ""
+        },
+        {
+          "name": "_parent_registry_failure",
+          "doc": ""
+        },
+        {
+          "name": "_parent_failure",
+          "doc": ""
+        },
+        {
+          "name": "_operation_failure",
+          "doc": ""
+        },
+        {
+          "name": "_registry_query_failure",
+          "doc": ""
+        },
+        {
+          "name": "_project_snapshot",
+          "doc": "Project one strict-rebuilt aggregate in memory without persistence."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_canonical_json",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py"
+    },
+    {
+      "type": "function",
+      "name": "_hash_token",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py"
+    },
+    {
+      "type": "function",
+      "name": "_new_append_attempt_nonce",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_canonical_sha256",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_timezone_aware_timestamp",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py"
+    },
+    {
+      "type": "function",
+      "name": "_registry_stream_token",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py"
+    },
+    {
+      "type": "function",
+      "name": "_binding_id",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py"
+    },
+    {
+      "type": "function",
+      "name": "_operation_stream_token",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py"
+    },
+    {
+      "type": "function",
+      "name": "_registry_fact_idempotency_key",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py"
+    },
+    {
+      "type": "function",
+      "name": "_operation_id",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py"
+    },
+    {
+      "type": "function",
+      "name": "_inventory_effect_id",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py"
+    },
+    {
+      "type": "function",
+      "name": "_inventory_member",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py"
+    },
+    {
+      "type": "function",
+      "name": "_inventory_hash",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py"
+    },
+    {
+      "type": "function",
+      "name": "_admission_set_hash",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py"
+    },
+    {
+      "type": "function",
+      "name": "_operation_event_type",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py"
+    },
+    {
+      "type": "class",
+      "name": "_TaskRuntimeExecutionProjectionEvidence",
+      "description": "Stable evidence for a failed realtime execution-event projection.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskExecutionSession",
+      "description": "Persisted execution session for a runtime task.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py",
+      "methods": [
+        {
+          "name": "create",
+          "doc": "Create a fresh active session."
+        },
+        {
+          "name": "from_dict",
+          "doc": "Hydrate a session from storage."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Serialize the session."
+        },
+        {
+          "name": "is_expired",
+          "doc": "Return whether the lease has expired."
+        },
+        {
+          "name": "renew",
+          "doc": "Renew the active lease."
+        },
+        {
+          "name": "ensure_terminal_transition_id",
+          "doc": "Return the durable identity for this settled session transition."
+        },
+        {
+          "name": "mark_completed",
+          "doc": "Mark the session as completed."
+        },
+        {
+          "name": "mark_failed",
+          "doc": "Mark the session as failed."
+        },
+        {
+          "name": "mark_suspended",
+          "doc": "Mark the session as suspended and optionally resumable."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskExecutionSessionWriteReceipt",
+      "description": "In-memory anchor for the most recent successful session write.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return a JSON-safe projection suitable for internal evidence."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "utc_now",
+      "description": "Return the current UTC timestamp.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "utc_now_iso",
+      "description": "Return the current UTC timestamp in ISO-8601 format.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "parse_utc_iso",
+      "description": "Parse an ISO-8601 UTC timestamp.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "sanitize_summary",
+      "description": "Normalize short human-readable summary text.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_positive_int",
+      "description": "Convert arbitrary input into a bounded positive integer.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_json_compatible_copy",
+      "description": "Return a JSON-compatible recursive copy for event payload snapshots.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_workspace_lease_fencing_token",
+      "description": "Return a positive Factory fencing token without fabricating authority.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_factory_workspace_run_lease_fact_projection",
+      "description": "Project Factory lease provenance carried by task metadata.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "build_task_row_snapshot",
+      "description": "Return the complete task-row snapshot stored in execution events.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "is_running_execution_status",
+      "description": "Return whether a task-runtime execution status represents active work.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "project_task_row_from_execution_fact_payload",
+      "description": "Project one task-runtime execution fact payload into a task row.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "require_non_empty_field",
+      "description": "Return a required non-empty persisted session field.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "require_positive_int_field",
+      "description": "Return a required positive integer persisted session field.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_session_status",
+      "description": "Return a required persisted session status.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "terminal_task_status_value_for_session_status",
+      "description": "Return the task-row status value implied by a terminal session status.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "is_terminal_session_status",
+      "description": "Return whether a session status carries a terminal task-row verdict.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "is_terminal_task_row_status",
+      "description": "Return whether a task-row status is terminal in runtime projections.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "terminal_session_timestamp",
+      "description": "Return the best terminal timestamp carried by a persisted session.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "task_row_status_counts",
+      "description": "Project task-row status counts for runtime read models.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "build_task_runtime_execution_event_payload",
+      "description": "Project a task row/session pair into a task-runtime execution event.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_fact_event_seq",
+      "description": "Coerce int-like input into a positive fact-stream seq number.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "build_task_runtime_execution_event_append_result",
+      "description": "Project fact-stream append evidence for a task-runtime execution event.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_with_execution_event_projection",
+      "description": "Return a copy of ``payload`` with optional execution-event evidence.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_execution_event_append_failed",
+      "description": "Return True when a state-transition event failed to reach the fact stream.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "project_task_row_execution_event",
+      "description": "Return a task-row projection with optional execution-event evidence.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_task_execution_result",
+      "description": "Project common TaskRuntime execution result fields.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "build_task_execution_claim_result",
+      "description": "Project a claim attempt into the stable TaskRuntime claim-result shape.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "build_task_execution_claim_attempt",
+      "description": "Project one candidate claim attempt into the claim-next shape.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "build_task_execution_claim_next_result",
+      "description": "Project atomic claim-next aggregation into its stable result shape.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "build_task_execution_heartbeat_result",
+      "description": "Project a heartbeat attempt into the stable TaskRuntime result shape.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "build_task_execution_transition_result",
+      "description": "Project completed, failed, and suspended execution transitions.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "build_task_execution_bulk_suspend_result",
+      "description": "Project run-scoped bulk suspension into its stable result shape.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "build_task_runtime_metadata",
+      "description": "Project execution-session state into a task-row metadata payload.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "project_task_row_runtime_state",
+      "description": "Project a task row and optional execution session into runtime state.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "class",
+      "name": "TaskExecutionSessionWriteConflictError",
+      "description": "Raised when an execution-session file changes before replacement.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_LockedSessionSuspendResult",
+      "description": "Result of a locked per-session bulk suspend attempt.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_DirectedEffectRecoverySessionSweep",
+      "description": "One session's recovery facts while both session locks remain held.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_DirectedEffectRecoveryTaskCatalog",
+      "description": "Bounded task/session discovery facts for one recovery lease.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_PreparedTerminalSettlement",
+      "description": "Durable terminal intent and its TaskRuntime-owned parent authority.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_DependencySatisfactionDecision",
+      "description": "TaskRuntime-owned proof that a failed task may release dependents.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_ExecutionEventFailureEvidence",
+      "description": "Detached, source-aware append failure evidence owned by TaskRuntime.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_ExecutionEventProjectionEvidence",
+      "description": "Detached evidence for a durable fact lacking its realtime projection.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py",
+      "methods": []
+    },
     {
       "type": "class",
       "name": "TaskRuntimeService",
@@ -12,19 +1177,295 @@
       "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py",
       "methods": [
         {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "workspace",
+          "doc": ""
+        },
+        {
+          "name": "_after_directed_effect_linearization_lock",
+          "doc": "Deterministic test seam after the cooperative session lock is held."
+        },
+        {
+          "name": "_after_directed_effect_recovery_lease_acquired",
+          "doc": "Deterministic test seam after durable startup authority is acquired."
+        },
+        {
+          "name": "_directed_effect_recovery_deadline_result",
+          "doc": "Return one typed hard-deadline failure without hiding prior facts."
+        },
+        {
+          "name": "admit_directed_effect_parent_batch",
+          "doc": "Atomically roll over one completed batch and admit its successor."
+        },
+        {
+          "name": "admit_directed_effect_parent",
+          "doc": "Linearize parent admission against every inactive session writer."
+        },
+        {
+          "name": "_admit_directed_effect_parent_locked",
+          "doc": "Validate the locked session and invoke the registry-only repository."
+        },
+        {
+          "name": "_admit_directed_effect_parent_batch_locked",
+          "doc": "Validate the locked session and invoke TaskRuntime-owned rollover."
+        },
+        {
+          "name": "_directed_effect_active_attempt_failure_locked",
+          "doc": "Return a typed refusal unless the caller-held session is the active attempt."
+        },
+        {
+          "name": "_directed_effect_attempt_validation_failure",
+          "doc": ""
+        },
+        {
+          "name": "_directed_effect_inactive_pre_barrier_locked",
+          "doc": "Strictly check one session while both session locks are held."
+        },
+        {
+          "name": "_fulfilled_terminal_intent_pre_barrier_locked",
+          "doc": "Accept a preserved terminal intent only with its exact durable close proof."
+        },
+        {
+          "name": "conflict",
+          "doc": ""
+        },
+        {
+          "name": "_pending_terminal_intent",
+          "doc": "Return the persisted terminal fence, preserving malformed evidence."
+        },
+        {
+          "name": "_has_pending_terminal_intent",
+          "doc": "Return whether any terminal intent marker, valid or malformed, exists."
+        },
+        {
+          "name": "_build_pending_terminal_intent",
+          "doc": "Build the exact durable intent that fences heartbeat and stale reclaim."
+        },
+        {
+          "name": "_after_terminal_intent_write",
+          "doc": "Deterministic crash seam after the durable intent write."
+        },
+        {
+          "name": "_after_terminal_session_write",
+          "doc": "Deterministic crash seam after the durable terminal session write."
+        },
+        {
+          "name": "_directed_effect_inactive_block_record",
+          "doc": "Return typed refusal evidence without projecting an inactive row."
+        },
+        {
+          "name": "last_session_write_receipt",
+          "doc": "Return the last successful execution-session write receipt anchor."
+        },
+        {
+          "name": "_owner_rework_execution_result",
+          "doc": "Build the public result without coupling module import initialization."
+        },
+        {
+          "name": "prepare_owner_rework_execution",
+          "doc": "Prepare one claimed owner/requester rework task for adapter execution."
+        },
+        {
+          "name": "_list_file_task_entities",
+          "doc": "Return raw file-backed ``TaskBoard`` entities for owner-cell use."
+        },
+        {
+          "name": "_reset_authority_conflicts",
+          "doc": "Return Factory authority conflicts from observable row projections."
+        },
+        {
+          "name": "_session_factory_run_id",
+          "doc": "Resolve Factory authority from the locked session, then exact row identity."
+        },
+        {
+          "name": "reconcile_ambiguous_directed_effects",
+          "doc": "Recover ambiguous effects under a TaskRuntime-minted durable lease."
+        },
+        {
+          "name": "_reconcile_ambiguous_directed_effect_session_locked",
+          "doc": "Recover one session while its local and cooperative file locks are held."
+        },
+        {
+          "name": "_after_directed_effect_recovery_session_read",
+          "doc": "Test seam reached while both session authorities remain held."
+        },
+        {
+          "name": "_read_directed_effect_recovery_session_locked",
+          "doc": "Read one recovery candidate while the caller holds both session locks."
+        },
+        {
+          "name": "_after_directed_effect_recovery_session_file_lock_acquired",
+          "doc": "Test seam reached before recovery starts session I/O."
+        },
+        {
+          "name": "_directed_effect_recovery_deadline_reached",
+          "doc": "Return whether the repository-owned recovery deadline has elapsed."
+        },
+        {
+          "name": "_directed_effect_recovery_session_is_expired",
+          "doc": "Evaluate active-session recovery eligibility without changing attempt identity."
+        },
+        {
+          "name": "_reconcile_ambiguous_directed_effects_under_lease",
+          "doc": "Run one recovery sweep while the durable maintenance lock is held."
+        },
+        {
+          "name": "_discover_directed_effect_recovery_tasks",
+          "doc": ""
+        },
+        {
+          "name": "_scan_directed_effect_recovery_session_catalog",
+          "doc": ""
+        },
+        {
+          "name": "_reconcile_directed_effect_recovery_task",
+          "doc": ""
+        },
+        {
+          "name": "_reconcile_directed_effect_recovery_task_file_locked",
+          "doc": ""
+        },
+        {
+          "name": "_recovery_result_needs_deadline_failure",
+          "doc": ""
+        },
+        {
+          "name": "fence_expired_factory_run_sessions",
+          "doc": "Fence expired active sessions under explicit Factory authority."
+        },
+        {
+          "name": "query_factory_run_settlement",
+          "doc": "Return stable TaskRuntime evidence for Factory child settlement."
+        },
+        {
+          "name": "_reset_conflict_result",
+          "doc": ""
+        },
+        {
+          "name": "reset_records",
+          "doc": "Clear canonical taskboard rows and execution sessions."
+        },
+        {
+          "name": "_reset_records_authorized",
+          "doc": "Commit one preflight-approved reset while the stable reset lock is held."
+        },
+        {
+          "name": "reset_task_rows_for_reexecution",
+          "doc": "Reset current task rows to a clean pre-execution state."
+        },
+        {
+          "name": "import_task_rows_for_reexecution",
+          "doc": "Import existing task rows for retry/resume preparation."
+        },
+        {
+          "name": "inspect_reexecution_source_task_rows",
+          "doc": "Read source task-row payloads for controlled reexecution import."
+        },
+        {
+          "name": "normalize_task_id",
+          "doc": ""
+        },
+        {
+          "name": "_task_entity_for_transition",
+          "doc": "Resolve the raw task entity required by execution transitions."
+        },
+        {
+          "name": "_task_entity_for_claim_execution",
+          "doc": "Resolve raw owner-cell task entity for claim/lease execution."
+        },
+        {
+          "name": "_task_entity_for_owner_terminal_transition",
+          "doc": "Resolve raw owner-cell task entity for row-only terminal transitions."
+        },
+        {
+          "name": "_task_entity_for_dependency_side_effect",
+          "doc": "Resolve raw owner-cell entity for dependency fan-out side effects."
+        },
+        {
+          "name": "_task_row_payload_for_reexecution",
+          "doc": ""
+        },
+        {
+          "name": "_replace_task_row_for_reexecution",
+          "doc": ""
+        },
+        {
+          "name": "_delete_session_file",
+          "doc": ""
+        },
+        {
+          "name": "_project_reexecution_prepare_result",
+          "doc": ""
+        },
+        {
+          "name": "task_exists",
+          "doc": "Return whether a task row exists in the observable read model."
+        },
+        {
+          "name": "_metadata_matches_external_task_id",
+          "doc": ""
+        },
+        {
+          "name": "_get_task_by_external_task_id",
+          "doc": ""
+        },
+        {
+          "name": "_execution_fact_factory_run_id",
+          "doc": "Return Factory run identity recorded by the latest execution fact."
+        },
+        {
+          "name": "create",
+          "doc": ""
+        },
+        {
           "name": "create_task_row",
           "doc": "Create a task and return the runtime row projection with event evidence."
+        },
+        {
+          "name": "_create_with_execution_event",
+          "doc": ""
         },
         {
           "name": "ensure_task_row",
           "doc": "Materialize a legacy/orchestration task into the canonical taskboard."
         },
         {
+          "name": "bind_task_to_factory_run",
+          "doc": "Bind an existing task row to one Factory run with fact evidence."
+        },
+        {
+          "name": "get",
+          "doc": ""
+        },
+        {
+          "name": "get_task",
+          "doc": "Return the task-runtime observable read model for a single task row."
+        },
+        {
+          "name": "_resolve_observable_task_row",
+          "doc": "Resolve one task row from the observable read model."
+        },
+        {
+          "name": "update",
+          "doc": ""
+        },
+        {
           "name": "update_task_row",
           "doc": "Update a task and return the runtime row projection with event evidence."
         },
         {
-          "name": "get_task",
+          "name": "_update_with_execution_event",
+          "doc": ""
+        },
+        {
+          "name": "update_task",
+          "doc": ""
+        },
+        {
+          "name": "reopen",
           "doc": ""
         },
         {
@@ -32,12 +1473,148 @@
           "doc": "Reopen a task and return the runtime row projection with event evidence."
         },
         {
+          "name": "fail_task_row_after_rework_exhausted",
+          "doc": "Fail a terminal task after sanctioned rework retries are exhausted."
+        },
+        {
+          "name": "cancel_task_row_for_deduplication",
+          "doc": "Cancel a duplicate task row through the task-runtime owner."
+        },
+        {
+          "name": "cancel_task_row_for_factory_abort",
+          "doc": "Cancel one open task because its Factory orchestration run aborted."
+        },
+        {
+          "name": "force_fail_active_session_for_factory_abort",
+          "doc": "Force-fail one still-active TaskRuntime session for factory closeout."
+        },
+        {
+          "name": "terminalize_open_tasks_for_factory_abort",
+          "doc": "Cancel all open TaskRuntime rows owned by a terminal Factory run."
+        },
+        {
+          "name": "fail_task_row_from_role_adapter",
+          "doc": "Fail a task row because its owning role adapter failed."
+        },
+        {
+          "name": "_reopen_with_execution_event",
+          "doc": ""
+        },
+        {
+          "name": "list_all",
+          "doc": ""
+        },
+        {
+          "name": "list_task_rows",
+          "doc": "Return task rows through the execution compatibility path."
+        },
+        {
+          "name": "_list_file_task_rows",
+          "doc": "Return file-backed task rows without triggering ``refresh_dependency_unblocks``."
+        },
+        {
+          "name": "_transitional_task_row_read_model_rows",
+          "doc": "Load transitional task-row read-model rows."
+        },
+        {
+          "name": "_fact_only_task_row_read_model_rows",
+          "doc": "Load fact-only task-row read-model rows."
+        },
+        {
+          "name": "task_row_read_model_fallback_coverage",
+          "doc": "Return structured read-only coverage for the transitional fallback."
+        },
+        {
+          "name": "task_row_read_model_projection_parity_coverage",
+          "doc": "Return observable row parity coverage for fact-only cutover."
+        },
+        {
+          "name": "projected_runtime_execution_session_fallback_coverage",
+          "doc": "Return structured coverage for projected runtime-execution sessions."
+        },
+        {
+          "name": "task_row_read_model_cutover_readiness",
+          "doc": "Return read-only readiness for future fact-only task-row cutover."
+        },
+        {
+          "name": "_dependency_status_read_model_rows",
+          "doc": "Load transitional dependency-status read-model rows."
+        },
+        {
+          "name": "_fact_overlaid_dependency_status_rows",
+          "doc": "Return ``task_id -> TaskStatus`` using the fact-overlay-aware read model."
+        },
+        {
+          "name": "_project_execution_fact_event_row",
+          "doc": "Project one FactStream event into the task-runtime row read model."
+        },
+        {
+          "name": "_query_execution_fact_events",
+          "doc": "Query the task-runtime execution FactStream through one local gateway."
+        },
+        {
+          "name": "list_task_rows_from_execution_facts",
+          "doc": "Return latest task-row read models from ``task_runtime.execution`` facts."
+        },
+        {
+          "name": "_find_latest_execution_fact_row_for_task",
+          "doc": "Return the latest fact-derived row for one ``task_id`` via exact paging."
+        },
+        {
           "name": "list_observable_task_rows",
           "doc": "Return task rows for read-only runtime projections."
         },
         {
+          "name": "query_observable_task_rows_projection",
+          "doc": "Return observable rows together with their authority provenance."
+        },
+        {
+          "name": "_project_observable_task_rows",
+          "doc": "Merge file-backed rows with execution facts without I/O or writes."
+        },
+        {
+          "name": "_observable_row_task_id",
+          "doc": ""
+        },
+        {
+          "name": "_task_row_read_model_task_id",
+          "doc": ""
+        },
+        {
+          "name": "_task_row_read_model_task_id_set",
+          "doc": ""
+        },
+        {
+          "name": "_task_row_read_model_rows_by_task_id",
+          "doc": "Return task rows keyed by normalized read-model task id."
+        },
+        {
+          "name": "_task_row_read_model_rows_equal",
+          "doc": "Return full row-dict equality for observable projection parity."
+        },
+        {
+          "name": "_task_row_read_model_task_id_sort_key",
+          "doc": ""
+        },
+        {
+          "name": "_overlay_execution_fact_rows",
+          "doc": "Project facts as authority and retain files only for uncovered tasks."
+        },
+        {
+          "name": "select_next_task",
+          "doc": "Return the next claimable task row, preferring resumable work."
+        },
+        {
+          "name": "_candidate_key",
+          "doc": ""
+        },
+        {
           "name": "claim_next_execution",
           "doc": "Atomically select and claim the next executable task."
+        },
+        {
+          "name": "_candidate_key",
+          "doc": ""
         },
         {
           "name": "claim_execution",
@@ -48,30 +1625,838 @@
           "doc": "Renew an existing task lease."
         },
         {
-          "name": "complete_execution",
-          "doc": "Finalize a claimed task as completed."
+          "name": "heartbeat_execution_attempt",
+          "doc": "Atomically renew one identity-fenced execution attempt within a deadline."
         },
         {
-          "name": "fail_execution",
-          "doc": "Finalize a claimed task as failed."
+          "name": "_heartbeat_execution_attempt_locked",
+          "doc": "Renew one attempt while both session locks are already held."
         },
         {
-          "name": "suspend_execution",
-          "doc": "Suspend a claimed task so it can be resumed later."
+          "name": "_execution_attempt_heartbeat_verdict",
+          "doc": "Build one detached typed heartbeat outcome at the owner boundary."
+        },
+        {
+          "name": "_execution_attempt_mismatch_code",
+          "doc": "Return the first stable identity mismatch for a locked session."
+        },
+        {
+          "name": "settle_execution_attempt",
+          "doc": "Settle one attempt through a session commit then lock-free projection."
+        },
+        {
+          "name": "_settle_execution_attempt_locked",
+          "doc": "Select and persist the winner without projection or external I/O."
+        },
+        {
+          "name": "_load_settlement_session_locked",
+          "doc": ""
+        },
+        {
+          "name": "_settle_active_execution_attempt_locked",
+          "doc": ""
+        },
+        {
+          "name": "_prepare_terminal_settlement_intent_locked",
+          "doc": ""
+        },
+        {
+          "name": "_apply_terminal_settlement_to_session",
+          "doc": ""
+        },
+        {
+          "name": "_settle_replayed_execution_attempt_locked",
+          "doc": ""
+        },
+        {
+          "name": "_project_settled_execution_attempt",
+          "doc": "Apply winner-only, replay-safe TaskBoard and fact projections."
+        },
+        {
+          "name": "_failed_materialization_dependency_satisfaction",
+          "doc": "Prove that a failed Director task still committed usable capability."
+        },
+        {
+          "name": "_proof_count",
+          "doc": ""
+        },
+        {
+          "name": "_relative_path",
+          "doc": ""
+        },
+        {
+          "name": "_declared_or_reported_paths",
+          "doc": ""
+        },
+        {
+          "name": "_stored_dependency_satisfaction",
+          "doc": "Return a replay-safe stored satisfaction receipt or an empty mapping."
+        },
+        {
+          "name": "_dependency_satisfaction_receipt_for_status_projection",
+          "doc": "Validate failed-materialization evidence for dependency decisions."
+        },
+        {
+          "name": "_evidence_int",
+          "doc": ""
+        },
+        {
+          "name": "_project_settled_execution_attempt_locked",
+          "doc": "Project one settled snapshot while the independent projection lock is held."
+        },
+        {
+          "name": "_settlement_projection_receipt",
+          "doc": "Return the detached terminal-projection receipt stored on a task row."
+        },
+        {
+          "name": "_settlement_projection_receipt_matches",
+          "doc": "Return whether a durable receipt proves this winner was fully projected."
+        },
+        {
+          "name": "_execution_attempt_settlement_result",
+          "doc": ""
         },
         {
           "name": "suspend_active_executions_for_run",
           "doc": "Suspend every active task lease owned by an orchestration run."
         },
         {
-          "name": "list_ready_task_rows",
+          "name": "_suspend_active_session_for_run_locked",
+          "doc": "Suspend one active run-owned session while caller holds session locks."
+        },
+        {
+          "name": "_terminal_projection_can_restore_pending_intent_locked",
+          "doc": "Authorize compatibility restore only for one exact, already-settled attempt."
+        },
+        {
+          "name": "list_ready",
           "doc": ""
         },
         {
+          "name": "wait_ready",
+          "doc": ""
+        },
+        {
+          "name": "add_ready_listener",
+          "doc": ""
+        },
+        {
+          "name": "list_ready_task_rows",
+          "doc": "Return ready rows after the compatibility dependency refresh."
+        },
+        {
+          "name": "get_ready_tasks",
+          "doc": ""
+        },
+        {
+          "name": "get_observable_task_row_stats",
+          "doc": "Return status counts from the task-runtime-owned observable rows."
+        },
+        {
           "name": "get_task_row_stats",
+          "doc": "Compatibility entrypoint for observable task-row status counts."
+        },
+        {
+          "name": "get_stats",
+          "doc": ""
+        },
+        {
+          "name": "refresh_dependency_unblocks",
+          "doc": "Normalize stale BLOCKED rows whose dependencies are now complete."
+        },
+        {
+          "name": "_active_dependency_ids",
+          "doc": ""
+        },
+        {
+          "name": "_metadata_dependency_task_ids",
+          "doc": ""
+        },
+        {
+          "name": "_row_sort_key",
+          "doc": ""
+        },
+        {
+          "name": "_is_row_claimable",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_next_attempt",
+          "doc": ""
+        },
+        {
+          "name": "_task_has_unresolved_dependencies",
+          "doc": "Return whether ``task`` still has a dependency that is not completed."
+        },
+        {
+          "name": "_get_session_lock",
+          "doc": "Return the per-task session lock, creating it on demand."
+        },
+        {
+          "name": "_get_settlement_projection_lock",
+          "doc": "Return the per-task lock for effects after session winner selection."
+        },
+        {
+          "name": "_session_file_lock_path",
+          "doc": "Return the cooperative cross-process lock path for one session file."
+        },
+        {
+          "name": "_directed_effect_recovery_lease_file_lock_path",
+          "doc": "Return the single cross-process recovery authority lock for this workspace."
+        },
+        {
+          "name": "_directed_effect_recovery_lease_record",
+          "doc": ""
+        },
+        {
+          "name": "_read_directed_effect_recovery_lease_locked",
+          "doc": ""
+        },
+        {
+          "name": "_claim_directed_effect_recovery_lease_locked",
+          "doc": ""
+        },
+        {
+          "name": "_release_directed_effect_recovery_lease_locked",
+          "doc": ""
+        },
+        {
+          "name": "_settlement_projection_file_lock_path",
+          "doc": "Return the independent cooperative lock for settlement projections."
+        },
+        {
+          "name": "_session_logical_path",
+          "doc": ""
+        },
+        {
+          "name": "_execution_attempt_identity_from_session",
+          "doc": "Project the canonical execution-attempt identity from a session."
+        },
+        {
+          "name": "_claim_result_with_execution_attempt",
+          "doc": "Add a stable typed attempt projection without changing claim semantics."
+        },
+        {
+          "name": "_execution_attempt_validation_verdict",
+          "doc": "Build a detached, fail-closed execution-attempt verdict."
+        },
+        {
+          "name": "validate_execution_attempt",
+          "doc": "Validate one persisted execution attempt without renewing or writing it."
+        },
+        {
+          "name": "open_execution_attempt_authority",
+          "doc": "Open a non-durable authority only while validation locks are held."
+        },
+        {
+          "name": "_execution_attempt_authority_open_infrastructure_failure",
+          "doc": "Return a detached, typed refusal for authority-open infrastructure failures."
+        },
+        {
+          "name": "_execution_attempt_authority_open_verdict",
+          "doc": "Map a locked validation result to a detached, fail-closed open verdict."
+        },
+        {
+          "name": "_create_execution_attempt_authority_locked",
+          "doc": "Construct the process-local capability after the durable check passes."
+        },
+        {
+          "name": "_validate_execution_attempt_locked",
+          "doc": "Validate one attempt while its local and cooperative locks are held."
+        },
+        {
+          "name": "_session_payload_text",
+          "doc": "Return the exact UTF-8 JSON text used by ``write_json_atomic``."
+        },
+        {
+          "name": "_session_payload_hash",
+          "doc": "Return the write-format UTF-8 JSON payload hash for session receipts."
+        },
+        {
+          "name": "_read_current_session_payload_hash",
+          "doc": "Return the current UTF-8 session file hash, or empty string when absent."
+        },
+        {
+          "name": "_assert_session_payload_unchanged",
+          "doc": "Fail closed if a session JSON file changed before atomic replacement."
+        },
+        {
+          "name": "_record_session_write_receipt",
+          "doc": ""
+        },
+        {
+          "name": "_read_session",
+          "doc": "Read a session under the per-task local and cooperative file locks."
+        },
+        {
+          "name": "_read_session_locked",
+          "doc": "Read a session while the caller holds both per-task session locks."
+        },
+        {
+          "name": "_write_session",
+          "doc": ""
+        },
+        {
+          "name": "_write_session_locked",
+          "doc": ""
+        },
+        {
+          "name": "_find_terminal_session_snapshot_locked",
+          "doc": "Find a terminal snapshot while the caller holds session locks."
+        },
+        {
+          "name": "_find_terminal_session_snapshot",
+          "doc": "Find a terminal snapshot from session JSON or row projections."
+        },
+        {
+          "name": "_find_projected_runtime_execution_session",
+          "doc": "Return ``metadata.runtime_execution`` from read-model projections only."
+        },
+        {
+          "name": "_find_projected_runtime_execution_session_locked",
+          "doc": "Return projected runtime metadata without session row augmentation."
+        },
+        {
+          "name": "_projected_runtime_execution_session_file_fallback_allowed",
+          "doc": "Gate the migration-period file fallback without reading file rows directly."
+        },
+        {
+          "name": "_find_projected_runtime_execution_session_from_file_rows",
+          "doc": "Return legacy file-row ``metadata.runtime_execution`` projection."
+        },
+        {
+          "name": "_runtime_execution_session_from_projected_row",
+          "doc": ""
+        },
+        {
+          "name": "_same_terminal_session",
+          "doc": ""
+        },
+        {
+          "name": "_copy_session_state",
+          "doc": ""
+        },
+        {
+          "name": "_reconcile_terminal_task_row",
+          "doc": ""
+        },
+        {
+          "name": "_task_entity_for_terminal_session_reconcile",
+          "doc": "Resolve raw owner-cell task entity for terminal-session reconcile."
+        },
+        {
+          "name": "_apply_terminal_session_reconcile",
+          "doc": "Project a terminal session onto its task row without ever raising."
+        },
+        {
+          "name": "_row_authorizes_retry_over_terminal_session",
+          "doc": "Return True when a non-terminal row supersedes a terminal session."
+        },
+        {
+          "name": "_row_mapping_authorizes_retry_over_terminal_session",
+          "doc": "Return True when a non-terminal read-model row supersedes a terminal session."
+        },
+        {
+          "name": "_rotate_terminal_session_for_retry",
+          "doc": "Rotate a superseded terminal session via the explicit downgrade path."
+        },
+        {
+          "name": "_rotate_terminal_session_for_retry_locked",
+          "doc": "Rotate a terminal session while the caller owns both session locks."
+        },
+        {
+          "name": "_dependent_rows_blocked_by",
+          "doc": "Return task-row snapshots that currently depend on ``task_id``."
+        },
+        {
+          "name": "_row_blocker_ids",
+          "doc": ""
+        },
+        {
+          "name": "_row_blocks_ids",
+          "doc": ""
+        },
+        {
+          "name": "_apply_reverse_dependency_links",
+          "doc": "Link a newly created dependent task into each blocker row."
+        },
+        {
+          "name": "_apply_reopen_downstream_reblocks",
+          "doc": "Re-block direct dependents after a prerequisite task is reopened."
+        },
+        {
+          "name": "_apply_dependency_completion_side_effects",
+          "doc": "Apply and record dependent-row changes caused by satisfied capability."
+        },
+        {
+          "name": "_build_terminal_execution_transition_result",
+          "doc": "Project terminal transitions through the shared execution result builder."
+        },
+        {
+          "name": "_with_dependency_execution_events",
+          "doc": ""
+        },
+        {
+          "name": "_append_execution_event",
+          "doc": ""
+        },
+        {
+          "name": "_execution_transition_identity",
+          "doc": "Return one event identity and an optional stable transition time."
+        },
+        {
+          "name": "_row_write_receipt_details_for_task",
+          "doc": "Return row-write receipt details for this task row identity."
+        },
+        {
+          "name": "_session_write_receipt_for_session",
+          "doc": "Return the latest successful session-write receipt for one session identity."
+        },
+        {
+          "name": "_session_write_receipt_details_for_session",
+          "doc": "Return session-write receipt details for this session identity."
+        },
+        {
+          "name": "_append_execution_fact",
+          "doc": "Append through the TaskRuntime CAS boundary."
+        },
+        {
+          "name": "_next_execution_fact_expected_seq",
+          "doc": "Return the next canonical sequence for the execution fact stream."
+        },
+        {
+          "name": "_append_execution_fact_with_cas",
+          "doc": "Append an execution fact with optimistic CAS and bounded retry."
+        },
+        {
+          "name": "_publish_factory_execution_event",
+          "doc": ""
+        },
+        {
+          "name": "_augment_task_row",
+          "doc": ""
+        },
+        {
+          "name": "_augment_task_row_with_session",
+          "doc": "Project a row from a caller-owned session snapshot without locking."
+        },
+        {
+          "name": "_build_runtime_metadata",
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_canonical_sha256",
+      "description": "Hash one JSON value using the stable UTF-8 representation.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_execution_event_failure_evidence",
+      "description": "Project append failure evidence without classifying generic errors as FactStream failures.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_execution_event_projection_evidence",
+      "description": "Build detached evidence for a durable fact whose realtime wakeup was declined.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_owner_rework_handoff_record",
+      "description": "Validate TaskMarket's serialized handoff at the TaskRuntime boundary.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "required_text",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_factory_run_binding_result",
+      "description": "Build the public binding result without importing contracts at module load.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_raise_retired_entity_api",
+      "description": "Fail closed when callers try to use retired Task entity APIs.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_terminal_task_status_for_session",
+      "description": "Adapt canonical session-terminal projection values to TaskBoard enums.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_terminal_task_row_update_status",
+      "description": "Return whether a public row update is attempting to write a terminal state.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_execution_task_row_update_status",
+      "description": "Return whether a public row update is attempting to write execution state.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_runtime_task_records",
+      "description": "Clear runtime taskboard state through the owning cell service.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py"
+    },
+    {
+      "type": "class",
+      "name": "TaskStatus",
+      "description": "Task lifecycle states used by the Polaris TaskBoard.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py",
+      "methods": [
+        {
+          "name": "is_terminal",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskPriority",
+      "description": "Compatibility priority labels (string-valued for JSON serialisation).",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py",
+      "methods": [
+        {
+          "name": "numeric_value",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "InvalidTaskStateTransitionError",
+      "description": "Raised when a task status transition is not allowed.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskBoardRowWriteConflictError",
+      "description": "Raised when a task row changed before an atomic replace.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskBoardFileLockTimeoutError",
+      "description": "Raised when a cooperative TaskBoard file lock cannot be acquired in time.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskFactoryRunBindingConflictError",
+      "description": "Raised when a task row is already bound to another Factory run.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskFactoryRunBindingMutation",
+      "description": "Atomic TaskBoard compare-and-set outcome for Factory run identity.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "Task",
+      "description": "A task with dependency tracking for the Polaris TaskBoard.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py",
+      "methods": [
+        {
+          "name": "is_terminal",
+          "doc": ""
+        },
+        {
+          "name": "is_blocked",
+          "doc": ""
+        },
+        {
+          "name": "priority_label",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskBoardRowWriteReceipt",
+      "description": "In-memory anchor for the most recent successful TaskBoard row replace.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return a JSON-safe projection suitable for fact event details."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskBoard",
+      "description": "File-backed task board with dependency graph.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_logical_path",
+          "doc": ""
+        },
+        {
+          "name": "transaction",
+          "doc": "Board-level transaction lock for atomic cache+filesystem updates."
+        },
+        {
+          "name": "_is_ready_task",
+          "doc": ""
+        },
+        {
+          "name": "_has_ready_task_locked",
+          "doc": ""
+        },
+        {
+          "name": "_notify_ready_tasks",
+          "doc": ""
+        },
+        {
+          "name": "notify_ready_tasks",
+          "doc": "Notify waiters/listeners when at least one row is ready."
+        },
+        {
+          "name": "wait_ready",
+          "doc": "Block until at least one task is ready, without interval polling."
+        },
+        {
+          "name": "add_ready_listener",
+          "doc": "Register a callback fired when a ready task becomes available."
+        },
+        {
+          "name": "_unsubscribe",
+          "doc": ""
+        },
+        {
+          "name": "_load_all",
+          "doc": "Load all tasks from disk into in-memory cache."
+        },
+        {
+          "name": "_load_task_snapshot_from_disk",
+          "doc": "Load one durable task row and hash the exact decoded UTF-8 payload."
+        },
+        {
+          "name": "_load_task_from_disk",
+          "doc": ""
+        },
+        {
+          "name": "last_row_write_receipt",
+          "doc": "Return the last successful TaskBoard row-write receipt anchor."
+        },
+        {
+          "name": "row_write_receipt_for_task",
+          "doc": "Return the latest successful row-write receipt for one normalized task id."
+        },
+        {
+          "name": "_read_current_task_file_hash",
+          "doc": "Return the current UTF-8 content hash, or empty string when absent."
+        },
+        {
+          "name": "_assert_task_row_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "_task_row_lock_path",
+          "doc": "Return the stable per-row lock path for one TaskBoard row."
+        },
+        {
+          "name": "_save_task",
+          "doc": "Commit one task row through the sole durable row-write boundary."
+        },
+        {
+          "name": "_replace_task_file",
+          "doc": "Replace task JSON with short retry for transient file locks."
+        },
+        {
+          "name": "_load_max_id",
+          "doc": ""
+        },
+        {
+          "name": "_save_max_id",
+          "doc": ""
+        },
+        {
+          "name": "_file_lock",
+          "doc": "Acquire a cross-platform exclusive file lock with an optional deadline."
+        },
+        {
+          "name": "_get_next_id",
+          "doc": "Get next task ID with cross-process file locking."
+        },
+        {
+          "name": "create",
+          "doc": "Create a new task."
+        },
+        {
+          "name": "get",
+          "doc": "Get a task by numeric ID. Returns a deep copy."
+        },
+        {
+          "name": "get_task",
+          "doc": "Compatibility helper: get task as dict, supports 'task-N' tokens."
+        },
+        {
+          "name": "bind_factory_run_id",
+          "doc": "Atomically bind one task row to a Factory portfolio run."
+        },
+        {
+          "name": "_validate_transition",
+          "doc": ""
+        },
+        {
+          "name": "update_status",
+          "doc": "Update task status with state machine validation."
+        },
+        {
+          "name": "_append_terminal_event",
+          "doc": "Append one compatibility projection through FactStream CAS."
+        },
+        {
+          "name": "_next_terminal_event_expected_seq",
+          "doc": "Return the optimistic next sequence for terminal compatibility facts."
+        },
+        {
+          "name": "_write_terminal_event",
+          "doc": "Write a compatibility terminal event outside the board transaction."
+        },
+        {
+          "name": "update",
+          "doc": "Compatibility update API (delegates to update_status)."
+        },
+        {
+          "name": "update_blocks",
+          "doc": "Replace the reverse dependency list for one task row."
+        },
+        {
+          "name": "assign",
+          "doc": "Assign task owner without changing execution status."
+        },
+        {
+          "name": "claim",
+          "doc": ""
+        },
+        {
+          "name": "complete",
+          "doc": ""
+        },
+        {
+          "name": "fail",
+          "doc": ""
+        },
+        {
+          "name": "reopen",
+          "doc": "Reopen a terminal task for another implementation round."
+        },
+        {
+          "name": "reconcile_terminal_status",
+          "doc": "Force a row to a terminal status backed by execution evidence."
+        },
+        {
+          "name": "get_ready_tasks",
+          "doc": "Get all tasks that are pending, unblocked, and unclaimed."
+        },
+        {
+          "name": "list_ready",
+          "doc": "Compatibility alias for role-agent worker polling."
+        },
+        {
+          "name": "list_my_tasks",
+          "doc": "List all tasks assigned to a specific worker."
+        },
+        {
+          "name": "get_blocked_tasks",
+          "doc": "Get all tasks that are currently blocked by dependencies."
+        },
+        {
+          "name": "get_dependency_graph",
+          "doc": "Get full dependency graph for a task (upstream + downstream)."
+        },
+        {
+          "name": "get_upstream",
+          "doc": ""
+        },
+        {
+          "name": "get_downstream",
+          "doc": ""
+        },
+        {
+          "name": "list_all",
+          "doc": "List tasks with optional filtering, sorted by priority desc then created_at asc."
+        },
+        {
+          "name": "get_critical_path",
+          "doc": "Estimate the critical path — longest chain of dependencies."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get board statistics."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_normalize_priority",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_status",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_task_id",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_task_id_list",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py"
+    },
+    {
+      "type": "function",
+      "name": "_sha256_text",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py"
     },
     {
       "type": "class",
@@ -89,10 +2474,74 @@
     },
     {
       "type": "class",
+      "name": "FenceExpiredFactoryRunSessionsCommandV1",
+      "description": "Fence expired active sessions before Factory stale-owner recovery.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExpiredFactoryRunSessionFenceResultV1",
+      "description": "Typed, observation-safe result of expired-session fencing.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": "Return a detached UTF-8 JSON-compatible control-plane record."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "BindRuntimeTaskToFactoryRunCommandV1",
+      "description": "Bind one canonical TaskRuntime row to one Factory portfolio run.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeTaskFactoryRunBindingResultV1",
+      "description": "Typed outcome for write-once Factory portfolio-run binding.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": "Return a detached JSON-serializable control-plane record."
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "ReopenRuntimeTaskCommandV1",
       "description": "",
       "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
       "methods": []
+    },
+    {
+      "type": "class",
+      "name": "OwnerReworkExecutionAuthorizationV1",
+      "description": "Claim-scoped authority for one TaskMarket owner-rework execution.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PrepareOwnerReworkExecutionCommandV1",
+      "description": "Request TaskRuntime preparation after TaskMarket has granted a claim.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "OwnerReworkExecutionPreparationResultV1",
+      "description": "Typed outcome of TaskRuntime's owner-rework execution preparation.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": "Return an observation-safe, JSON-serializable result projection."
+        }
+      ]
     },
     {
       "type": "class",
@@ -110,6 +2559,50 @@
     },
     {
       "type": "class",
+      "name": "ObservableTaskRowsProjectionV1",
+      "description": "Observable TaskRuntime rows with explicit authority provenance.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return a detached transport projection for HTTP and audit consumers."
+        },
+        {
+          "name": "rows_for_factory_run",
+          "doc": "Return detached rows bound exactly to one Factory portfolio run."
+        },
+        {
+          "name": "to_authority_dict",
+          "doc": "Return the compact authority surface used by control-plane gates."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeExecutionFactV1",
+      "description": "Immutable typed projection for one ``task_runtime.execution`` fact.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "from_payload",
+          "doc": "Validate and detach the service-layer execution projection."
+        },
+        {
+          "name": "terminal",
+          "doc": "Return whether this fact carries a terminal execution verdict."
+        },
+        {
+          "name": "idempotency_key",
+          "doc": "Return the stable FactStream key for this event projection."
+        },
+        {
+          "name": "to_record",
+          "doc": "Return the backward-compatible flat fact payload."
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "RuntimeTaskLifecycleEventV1",
       "description": "",
       "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
@@ -124,6 +2617,133 @@
     },
     {
       "type": "class",
+      "name": "TaskRuntimeExecutionAttemptIdentityV1",
+      "description": "Canonical persisted identity for one active TaskRuntime execution attempt.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": "Return a detached, JSON-serializable persisted-attempt projection."
+        },
+        {
+          "name": "from_record",
+          "doc": "Parse exactly one canonical persisted-attempt record, fail-closed."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SettleTaskRuntimeExecutionAttemptCommandV1",
+      "description": "Request the one canonical terminal settlement for a claimed attempt.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeExecutionAttemptSettlementVerdictV1",
+      "description": "Typed result for a one-winner execution-attempt settlement.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "HeartbeatTaskRuntimeExecutionAttemptCommandV1",
+      "description": "Request one bounded, identity-fenced TaskRuntime lease renewal.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": "Return a detached, JSON-serializable heartbeat command record."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeExecutionAttemptHeartbeatVerdictV1",
+      "description": "Typed outcome for one bounded TaskRuntime execution-attempt heartbeat.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "reason",
+          "doc": "Expose the stable failure/success reason expected by consumers."
+        },
+        {
+          "name": "to_record",
+          "doc": "Return a detached, JSON-serializable heartbeat verdict record."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeExecutionAttemptAuthoritySnapshotV1",
+      "description": "Bounded process-local snapshot of a public attempt authority handle.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeExecutionAttemptAuthorityHeartbeatVerdictV1",
+      "description": "Typed handle-level heartbeat verdict with exact TaskRuntime evidence.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeExecutionAttemptAuthoritySettlementVerdictV1",
+      "description": "Typed handle-level settlement verdict for one terminal attempt outcome.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ValidateTaskRuntimeExecutionAttemptQueryV1",
+      "description": "Request a read-only validation of a persisted execution attempt.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "OpenTaskRuntimeExecutionAttemptAuthorityCommandV1",
+      "description": "Request read-only opening of a process-local authority for one attempt.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": "Return a detached UTF-8 JSON-compatible open request record."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeExecutionAttemptValidationVerdictV1",
+      "description": "Fail-closed, read-only authority verdict for one execution attempt.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": "Return a detached, JSON-serializable validation result."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1",
+      "description": "Typed, non-durable authority-open result for a validated attempt.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": "Return UTF-8 JSON-compatible evidence without serializing authority."
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "RuntimeTaskRuntimeError",
       "description": "Raised when `runtime.task_runtime` contract processing fails.",
       "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
@@ -133,6 +2753,672 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectInventoryIntentV1",
+      "description": "One immutable, execution-grade member of a sealed effect inventory.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": "Return the exact canonical persisted intent projection."
+        },
+        {
+          "name": "from_record",
+          "doc": "Parse one exact canonical inventory intent, failing closed on drift."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectInventoryMemberV1",
+      "description": "One canonical sealed member with server-derived effect identities.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": "Return the exact canonical persisted member projection."
+        },
+        {
+          "name": "from_record",
+          "doc": "Parse one exact canonical inventory member, failing closed on drift."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ParentCorrelationV1",
+      "description": "Non-authoritative caller correlation attached to one parent admission.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectParentRegistryIdentityV1",
+      "description": "Lease-independent identity for one execution-attempt parent registry.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "from_execution_attempt",
+          "doc": ""
+        },
+        {
+          "name": "execution_attempt_id",
+          "doc": ""
+        },
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectParentBindingV1",
+      "description": "Restart-safe reference to one authoritative registry admission fact.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "workspace",
+          "doc": ""
+        },
+        {
+          "name": "task_id",
+          "doc": ""
+        },
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SealDirectedEffectInventoryCommandV1",
+      "description": "Seal the complete immutable inventory before any child effect claim.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FinalizeDirectedEffectInventoryAdmissionCommandV1",
+      "description": "Request exact sealed/admitted inventory equality before effect claims.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetDirectedEffectInventoryQueryV1",
+      "description": "Read the inventory bound to one exact attempt and parent admission.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectInventoryProjectionV1",
+      "description": "Immutable diagnostic projection of one sealed parent inventory.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "_validated_operation_ids",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectInventoryResultV1",
+      "description": "Typed inventory command/query result with immutable diagnostic evidence.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectOperationIdentityV1",
+      "description": "Canonical TaskRuntime identity for one child directed effect.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectClaimGrantV1",
+      "description": "One hash-bound claim capability returned only by the original claim.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "_unsigned_record",
+          "doc": ""
+        },
+        {
+          "name": "_canonical_grant_hash",
+          "doc": ""
+        },
+        {
+          "name": "to_record",
+          "doc": "Return the canonical signed grant record."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectOperationSnapshotV1",
+      "description": "Rebuildable, non-authoritative cached projection of a DEO aggregate.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectParentRegistryProjectionV1",
+      "description": "Read-only strict reconstruction of one attempt-scoped parent registry.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AdmitDirectedEffectParentCommandV1",
+      "description": "CAS admission request for one attempt-scoped parent registry.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AdmitDirectedEffectParentBatchCommandV1",
+      "description": "Admit one canonical batch, rolling over only a receipt-complete predecessor.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetDirectedEffectParentRegistryQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EnrollDirectedEffectParentRegistryStreamCommandV1",
+      "description": "Explicitly enroll the parent-registry stream for one validated attempt.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EnrollDirectedEffectOperationStreamCommandV1",
+      "description": "Explicitly enroll one durable parent binding's operation stream.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectStreamEnrollmentResultV1",
+      "description": "Typed result for explicit DEO dynamic-stream maintenance enrollment.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_DirectedEffectOperationCommandBaseV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AdmitDirectedEffectOperationCommandV1",
+      "description": "Admit the one legal ``ABSENT -> INTENT_COMMITTED`` transition.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ClaimDirectedEffectCommandV1",
+      "description": "Claim the one legal ``INTENT_COMMITTED -> EFFECT_STARTED`` transition.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AbortDirectedEffectOperationCommandV1",
+      "description": "Abort the one legal ``INTENT_COMMITTED -> ABORTED`` transition.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CommitDirectedEffectReceiptCommandV1",
+      "description": "Commit one durable physical-effect receipt to an ``EFFECT_STARTED`` operation.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "MarkDirectedEffectRecoveryPendingCommandV1",
+      "description": "Move ``EFFECT_STARTED`` to finite, evidence-bound recovery.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DeadLetterDirectedEffectOperationCommandV1",
+      "description": "Resolve ``RECOVERY_PENDING`` to an evidence-bound terminal dead letter.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetDirectedEffectOperationQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetDirectedEffectParentReadinessQueryV1",
+      "description": "Read one parent-bound operation-stream diagnostic without authority effects.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectParentReadinessStateCountV1",
+      "description": "One immutable final-state count from a strict parent operation scan.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectParentReadinessProjectionV1",
+      "description": "Immutable, non-authoritative diagnostic aggregate for one parent.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectParentReadinessResultV1",
+      "description": "Typed outcome for the read-only parent operation-stream diagnostic.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectOperationResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ReconcileAmbiguousDirectedEffectsCommandV1",
+      "description": "Request one bounded Factory-startup recovery sweep without effect replay.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectRecoverySweepItemV1",
+      "description": "One TaskRuntime recovery/dead-letter fact exposed to read-only sinks.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectRecoverySweepResultV1",
+      "description": "Bounded startup/stale-owner recovery report.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectParentRegistryResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_detached_dict",
+      "description": "Copy nested evidence so a verdict cannot retain caller-owned state.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_readiness_evidence_key",
+      "description": "Require stable string keys while preserving typed failure diagnostics.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_freeze_readiness_evidence",
+      "description": "Detach and recursively freeze one readiness-evidence value.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_immutable_evidence",
+      "description": "Return deeply detached, immutable readiness evidence.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_row_fact",
+      "description": "Return detached execution-fact metadata from a projected task row.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_workflow_run_id_from_task_row",
+      "description": "Return canonical workflow run identity from a projected task row.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_factory_run_id_from_task_row",
+      "description": "Return canonical Factory portfolio-run identity from a task row.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_directed_effect_token",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_directed_effect_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_directed_effect_non_negative_int",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_directed_effect_inventory_token",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_directed_effect_inventory_digest",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_directed_effect_inventory_identity",
+      "description": "Validate and return one exact canonical inventory parent identity.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "task_row_execution_event_failure",
+      "description": "Return failed TaskRuntime execution-event evidence from a row projection.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/evidence.py"
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeExecutionAttemptAuthorityV1",
+      "description": "Process-local, non-durable authority handle for one TaskRuntime attempt.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_timeout",
+          "doc": ""
+        },
+        {
+          "name": "_same_attempt_binding",
+          "doc": ""
+        },
+        {
+          "name": "snapshot",
+          "doc": "Return the current identity under the handle's bounded lock."
+        },
+        {
+          "name": "heartbeat",
+          "doc": "Renew and atomically replace the current identity when TaskRuntime accepts it."
+        },
+        {
+          "name": "settle",
+          "doc": "Settle the current identity, then close this handle after terminal success."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_directed_effect_authority_failure",
+      "description": "Validate the persisted attempt before any aggregate read or mutation.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_inventory_failure",
+      "description": "Copy one typed authority refusal without manufacturing a projection.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "admit_directed_effect_parent",
+      "description": "Persist one immutable TaskRuntime registry-owned parent binding.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "admit_directed_effect_parent_batch",
+      "description": "Admit one parent batch after TaskRuntime safely closes its predecessor.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_directed_effect_parent_registry",
+      "description": "Strictly rebuild one attempt-scoped parent registry projection.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "enroll_directed_effect_parent_registry_stream",
+      "description": "Explicitly maintenance-enroll one attempt-derived parent registry stream.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "enroll_directed_effect_operation_stream",
+      "description": "Explicitly maintenance-enroll one strict-revalidated operation stream.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "seal_directed_effect_inventory",
+      "description": "Seal one complete immutable parent inventory before child admission.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "finalize_directed_effect_inventory_admission",
+      "description": "Finalize exact sealed inventory admission under a guarded snapshot.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_directed_effect_inventory",
+      "description": "Read one strict current sealed inventory projection.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "admit_directed_effect_operation",
+      "description": "Authorize and persist ``ABSENT -> INTENT_COMMITTED`` for one effect.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "claim_directed_effect",
+      "description": "Authorize and persist ``INTENT_COMMITTED -> EFFECT_STARTED``.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "abort_directed_effect_operation",
+      "description": "Authorize and persist ``INTENT_COMMITTED -> ABORTED``.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "commit_directed_effect_receipt",
+      "description": "Durably bind one physical-effect receipt to its started operation.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "mark_directed_effect_recovery_pending",
+      "description": "Persist finite recovery evidence after an ambiguous started effect.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "dead_letter_directed_effect_operation",
+      "description": "Durably end an unrecoverable operation without re-running its effect.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_directed_effect_operation",
+      "description": "Return one strict-stream rebuilt, non-authoritative DEO projection.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "reconcile_ambiguous_directed_effects",
+      "description": "Run one bounded TaskRuntime-owned recovery sweep without effect replay.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_directed_effect_parent_readiness",
+      "description": "Read a strict, non-authoritative parent operation-stream diagnostic.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "heartbeat_task_runtime_execution_attempt",
+      "description": "Renew one canonical execution attempt through TaskRuntime's bounded owner path.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "settle_task_runtime_execution_attempt",
+      "description": "Settle one claim through TaskRuntime's canonical identity fence.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "settle_task_runtime_execution_attempt_typed",
+      "description": "Settle one attempt and normalize TaskRuntime's legacy mapping to a verdict.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "create_task_runtime_execution_attempt_authority",
+      "description": "Create the non-durable public authority handle for a validated attempt.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "open_task_runtime_execution_attempt_authority",
+      "description": "Open a read-only validated process-local authority through TaskRuntime.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "fence_expired_factory_run_sessions",
+      "description": "Irrevocably fence expired sessions owned by one Factory run.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_observable_task_rows",
+      "description": "Return TaskRuntime rows with explicit fact-authority provenance.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_factory_run_settlement",
+      "description": "Return TaskRuntime-owned settlement evidence for one Factory run.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_task_runtime_execution_attempt",
+      "description": "Validate persisted TaskRuntime execution authority without mutation.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "bind_runtime_task_to_factory_run",
+      "description": "Bind one existing TaskRuntime row to a Factory portfolio run.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "prepare_owner_rework_execution",
+      "description": "Prepare one already-claimed TaskMarket owner-rework task for execution.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/service.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

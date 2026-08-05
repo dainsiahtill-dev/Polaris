@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:15.176482Z",
-  "source_hash": "488c49518a0bcc44",
+  "generated_at": "2026-08-02T15:47:43.808433Z",
+  "source_hash": "4ccd66899c7e7d8d",
   "cell_id": "orchestration.pm_dispatch",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -584,8 +584,8 @@
     },
     {
       "type": "function",
-      "name": "_shadow_publish_dispatch_tasks_to_task_market",
-      "description": "Compatibility helper that now publishes only governed design work.",
+      "name": "_publish_dispatch_tasks_to_governed_design_queue",
+      "description": "Publish PM dispatch tasks to the governed design queue.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
     },
     {
@@ -700,6 +700,10 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "execute",
+          "doc": "Execute a coroutine with retry logic."
         }
       ]
     },
@@ -808,6 +812,22 @@
           "doc": "Initialize the command service."
         },
         {
+          "name": "execute_pm_run",
+          "doc": "Execute PM run - unified entry point for PM orchestration."
+        },
+        {
+          "name": "execute_director_run",
+          "doc": "Execute Director run - unified entry point for Director orchestration."
+        },
+        {
+          "name": "execute_qa_run",
+          "doc": "Execute QA run - unified entry point for QA orchestration."
+        },
+        {
+          "name": "execute_factory_run",
+          "doc": "Execute Factory run - unified entry point for Factory orchestration."
+        },
+        {
           "name": "_generate_run_id",
           "doc": "Generate unique run ID."
         },
@@ -826,6 +846,10 @@
         {
           "name": "_build_task_status_counts",
           "doc": ""
+        },
+        {
+          "name": "query_run_status",
+          "doc": "Query orchestration snapshot for authoritative run status."
         },
         {
           "name": "list_active_runs",
@@ -949,6 +973,24 @@
       "type": "function",
       "name": "_build_pm_task_contract_section",
       "description": "Build structured PM task contract section for Director prompt context (D-09).",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_pm_command",
+      "description": "Convenience function to execute PM command without instantiating service.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_director_command",
+      "description": "Convenience function to execute Director command without instantiating service.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_factory_command",
+      "description": "Convenience function to execute Factory command without instantiating service.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
     },
     {
@@ -1155,6 +1197,42 @@
       "description": "编排快照响应",
       "defined_in": "polaris/delivery/http/v2/orchestration.py",
       "methods": []
+    },
+    {
+      "type": "function",
+      "name": "create_run",
+      "description": "创建编排运行",
+      "defined_in": "polaris/delivery/http/v2/orchestration.py"
+    },
+    {
+      "type": "function",
+      "name": "get_run",
+      "description": "查询运行状态",
+      "defined_in": "polaris/delivery/http/v2/orchestration.py"
+    },
+    {
+      "type": "function",
+      "name": "get_run_tasks",
+      "description": "查询运行任务列表",
+      "defined_in": "polaris/delivery/http/v2/orchestration.py"
+    },
+    {
+      "type": "function",
+      "name": "signal_run",
+      "description": "发送控制信号",
+      "defined_in": "polaris/delivery/http/v2/orchestration.py"
+    },
+    {
+      "type": "function",
+      "name": "cancel_run",
+      "description": "取消运行",
+      "defined_in": "polaris/delivery/http/v2/orchestration.py"
+    },
+    {
+      "type": "function",
+      "name": "list_runs",
+      "description": "列出编排运行",
+      "defined_in": "polaris/delivery/http/v2/orchestration.py"
     },
     {
       "type": "function",

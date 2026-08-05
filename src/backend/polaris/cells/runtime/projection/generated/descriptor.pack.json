@@ -1,21 +1,51 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T12:44:06.427806Z",
-  "source_hash": "cc91d8b9b7c3de3e",
+  "generated_at": "2026-08-02T17:10:20.445120Z",
+  "source_hash": "7f8c12f4bea27aad",
   "cell_id": "runtime.projection",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "function",
       "name": "_read_director_service_status_sync",
-      "description": "Read DirectorService status in sync context.",
+      "description": "Read Director status through the bootstrap-bound observation port.",
       "defined_in": "polaris/cells/runtime/projection/internal/director_runtime_status.py"
     },
     {
       "type": "function",
       "name": "build_director_runtime_status",
-      "description": "Build Director runtime status from DirectorService only.",
+      "description": "Build Director runtime status from the bound owner observation only.",
       "defined_in": "polaris/cells/runtime/projection/internal/director_runtime_status.py"
+    },
+    {
+      "type": "function",
+      "name": "bind_director_status_observation_port",
+      "description": "Bind the process-wide Director observation port during bootstrap only.",
+      "defined_in": "polaris/cells/runtime/projection/internal/director_status_owner.py"
+    },
+    {
+      "type": "function",
+      "name": "_bound_director_status_observation_port",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/director_status_owner.py"
+    },
+    {
+      "type": "function",
+      "name": "observe_director_status_owner",
+      "description": "Read and validate one exact Director status owner observation.",
+      "defined_in": "polaris/cells/runtime/projection/internal/director_status_owner.py"
+    },
+    {
+      "type": "function",
+      "name": "observe_director_status_owner_sync",
+      "description": "Run the observation query safely from synchronous projection call sites.",
+      "defined_in": "polaris/cells/runtime/projection/internal/director_status_owner.py"
+    },
+    {
+      "type": "function",
+      "name": "_run",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/director_status_owner.py"
     },
     {
       "type": "function",
@@ -401,6 +431,10 @@
           "doc": ""
         },
         {
+          "name": "get_state",
+          "doc": "获取 PM 当前状态"
+        },
+        {
           "name": "_convert_tasks",
           "doc": "将 Workflow 任务转换为 PM 任务节点"
         },
@@ -416,9 +450,39 @@
     },
     {
       "type": "function",
+      "name": "build_pm_realtime_state",
+      "description": "构建 PM 实时状态的字典格式",
+      "defined_in": "polaris/cells/runtime/projection/internal/pm_realtime_state.py"
+    },
+    {
+      "type": "function",
       "name": "reduce_project_outcome",
       "description": "Reduce typed project facts into ProjectOutcomeV1.",
       "defined_in": "polaris/cells/runtime/projection/internal/project_outcome.py"
+    },
+    {
+      "type": "function",
+      "name": "bind_factory_chain_owner_observation_port",
+      "description": "Bind process-wide owner observation port during bootstrap only.",
+      "defined_in": "polaris/cells/runtime/projection/internal/project_outcome_factory_owner.py"
+    },
+    {
+      "type": "function",
+      "name": "_bound_factory_chain_owner_observation_port",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/project_outcome_factory_owner.py"
+    },
+    {
+      "type": "function",
+      "name": "_chain_axis",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/project_outcome_factory_owner.py"
+    },
+    {
+      "type": "function",
+      "name": "observe_factory_chain_owner",
+      "description": "Combine bootstrap-observed Factory facts with non-Factory claims.",
+      "defined_in": "polaris/cells/runtime/projection/internal/project_outcome_factory_owner.py"
     },
     {
       "type": "class",
@@ -438,6 +502,10 @@
           "doc": ""
         },
         {
+          "name": "get_state",
+          "doc": "获取 QA 当前状态"
+        },
+        {
           "name": "_load_audit_summary",
           "doc": "从状态文件加载审计摘要"
         },
@@ -450,6 +518,12 @@
           "doc": "解析日期时间"
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "build_qa_realtime_state",
+      "description": "构建 QA 实时状态的字典格式",
+      "defined_in": "polaris/cells/runtime/projection/internal/qa_realtime_state.py"
     },
     {
       "type": "class",
@@ -502,6 +576,10 @@
         {
           "name": "build",
           "doc": "Build runtime projection synchronously."
+        },
+        {
+          "name": "build_async",
+          "doc": "Build runtime projection in async call sites without sync bridging."
         }
       ]
     },
@@ -615,8 +693,26 @@
     },
     {
       "type": "function",
+      "name": "get_pm_local_status",
+      "description": "Get PM status from PMService (authoritative source).",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_director_local_status",
+      "description": "Get Director status from the bootstrap-bound owner observation port.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
       "name": "get_workflow_director_status_sync",
       "description": "Get Director status from workflow archive (sync version).",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_workflow_director_status",
+      "description": "Get Director status from workflow archive (async version).",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
     },
     {
@@ -671,6 +767,18 @@
       "type": "function",
       "name": "_orchestration_task_rows",
       "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_list_recent_orchestration_runs",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_active_director_orchestration_status",
+      "description": "Return active Director run state from the unified orchestration service.",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
     },
     {
@@ -773,6 +881,12 @@
       "type": "function",
       "name": "invalidate_projection_cache",
       "description": "Invalidate projection cache for workspace.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_runtime_projection",
+      "description": "Build unified runtime projection from all sources.",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
     },
     {
@@ -1022,6 +1136,18 @@
       "type": "function",
       "name": "run_in_loop",
       "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/status_snapshot_builder.py"
+    },
+    {
+      "type": "function",
+      "name": "build_pm_status_async",
+      "description": "Build PM status from PMService (the authoritative source).",
+      "defined_in": "polaris/cells/runtime/projection/internal/status_snapshot_builder.py"
+    },
+    {
+      "type": "function",
+      "name": "build_director_status",
+      "description": "Build Director status from the current local/workflow sources only.",
       "defined_in": "polaris/cells/runtime/projection/internal/status_snapshot_builder.py"
     },
     {
@@ -1398,6 +1524,18 @@
       "defined_in": "polaris/cells/runtime/projection/internal/workspace_runtime_context.py"
     },
     {
+      "type": "function",
+      "name": "bind_factory_chain_owner_observation_port",
+      "description": "Bind the process composition adapter; only bootstrap may call this API.",
+      "defined_in": "polaris/cells/runtime/projection/public/bootstrap.py"
+    },
+    {
+      "type": "function",
+      "name": "bind_director_status_observation_port",
+      "description": "Bind the Director status adapter; only bootstrap may call this API.",
+      "defined_in": "polaris/cells/runtime/projection/public/bootstrap.py"
+    },
+    {
       "type": "class",
       "name": "RuntimeProjectionQueryV1",
       "description": "",
@@ -1502,6 +1640,30 @@
     },
     {
       "type": "class",
+      "name": "ProjectOutcomeOwnerObservationV1Error",
+      "description": "Typed fail-closed error for a direct owner observation query.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorStatusObservationV1Error",
+      "description": "Typed fail-closed error for Director status owner observation.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "ProjectOutcomeEvidenceRefsV1",
       "description": "Per-axis evidence reference tuples for ProjectOutcome completion.",
       "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
@@ -1511,6 +1673,13 @@
           "doc": "Return stable blocking axis names for empty per-axis evidence refs."
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectOutcomeNonFactoryEvidenceRefsV1",
+      "description": "Caller claims for axes not owned by ``factory.pipeline``.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
     },
     {
       "type": "class",
@@ -1530,8 +1699,67 @@
     },
     {
       "type": "class",
+      "name": "ProjectOutcomeNonFactoryClaimsV1",
+      "description": "Typed caller claims excluding the Factory-owned chain axis.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryChainOwnerObservationV1",
+      "description": "Normalized immutable Factory chain facts consumed by projection.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryChainOwnerObservationPortV1",
+      "description": "Bootstrap-bound read port for authoritative Factory chain observation.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": [
+        {
+          "name": "observe_factory_chain",
+          "doc": "Return normalized immutable owner facts for one workspace run."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorStatusObservationV1",
+      "description": "Exact projection-owned representation of Director status availability.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorStatusObservationPortV1",
+      "description": "Bootstrap-bound read port for authoritative Director status observation.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": [
+        {
+          "name": "observe_director_status",
+          "doc": "Return normalized Director status facts for one workspace."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectOutcomeFactoryOwnerQueryV1",
+      "description": "Exact direct-owner query; intentionally has no Factory DTO field.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "ProjectOutcomeV1",
       "description": "Read-only multi-axis project outcome projection.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectOutcomeFactoryOwnerBindingV1",
+      "description": "Outcome plus evidence that Factory chain ownership was directly observed.",
       "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
       "methods": []
     },
@@ -1574,6 +1802,12 @@
       "description": "Canonical Chief Engineer blueprint detail response.",
       "defined_in": "polaris/cells/runtime/projection/public/role_contracts.py",
       "methods": []
+    },
+    {
+      "type": "function",
+      "name": "query_project_outcome_with_factory_owner",
+      "description": "Observe Factory chain ownership without accepting caller Factory facts.",
+      "defined_in": "polaris/cells/runtime/projection/public/service.py"
     },
     {
       "type": "function",
@@ -1622,8 +1856,32 @@
     },
     {
       "type": "function",
+      "name": "v2_runtime_storage_layout",
+      "description": "Get workspace storage layout, roots, and environment.",
+      "defined_in": "polaris/delivery/http/routers/runtime.py"
+    },
+    {
+      "type": "function",
       "name": "_runtime_clear_core",
       "description": "",
+      "defined_in": "polaris/delivery/http/routers/runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_runtime_clear",
+      "description": "Clear runtime scope (pm, director, dialogue, or all).",
+      "defined_in": "polaris/delivery/http/routers/runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_runtime_fact_stream_probe",
+      "description": "E2E-only probe for the events.fact_stream public writer path.",
+      "defined_in": "polaris/delivery/http/routers/runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_runtime_traceability_probe",
+      "description": "E2E-only probe for non-empty KernelOne traceability matrices.",
       "defined_in": "polaris/delivery/http/routers/runtime.py"
     },
     {
@@ -1631,6 +1889,30 @@
       "name": "_runtime_migration_status_core",
       "description": "Get migration status for storage layout v2.",
       "defined_in": "polaris/delivery/http/routers/runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_runtime_migration_status",
+      "description": "Get storage layout migration status and archive counts.",
+      "defined_in": "polaris/delivery/http/routers/runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_reset_tasks_core",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_runtime_reset_tasks",
+      "description": "Stop PM/Director and reset runtime task records.",
+      "defined_in": "polaris/delivery/http/routers/runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "handle_event_query",
+      "description": "",
+      "defined_in": "polaris/delivery/ws/runtime_event_query.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

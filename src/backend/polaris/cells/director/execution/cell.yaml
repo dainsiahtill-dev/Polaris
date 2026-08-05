@@ -41,7 +41,6 @@ depends_on:
 - chief_engineer.blueprint
 - director.planning
 - director.tasking
-- factory.pipeline
 - factory.cognitive_runtime
 - policy.permission
 - policy.workspace_guard

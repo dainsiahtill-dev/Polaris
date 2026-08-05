@@ -39,6 +39,9 @@ from polaris.cells.runtime.projection.internal.io_helpers import (
 from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
 from polaris.cells.runtime.projection.internal.memos_query_service import list_memos
 from polaris.cells.runtime.projection.internal.project_outcome import reduce_project_outcome
+from polaris.cells.runtime.projection.internal.project_outcome_factory_owner import (
+    observe_factory_chain_owner,
+)
 from polaris.cells.runtime.projection.internal.runtime_projection_service import (
     RuntimeProjection,
     RuntimeProjectionService,
@@ -99,10 +102,25 @@ from polaris.cells.runtime.projection.internal.workspace_runtime_context import 
     resolve_workspace_runtime_context,
 )
 from polaris.cells.runtime.projection.public.contracts import (
+    ProjectOutcomeFactoryOwnerBindingV1,
+    ProjectOutcomeFactoryOwnerQueryV1,
+    ProjectOutcomeOwnerObservationV1Error,
     ProjectOutcomeQueryV1,
     ProjectOutcomeV1,
     ProjectOutcomeValidationV1Error,
 )
+
+
+async def query_project_outcome_with_factory_owner(
+    query: ProjectOutcomeFactoryOwnerQueryV1,
+) -> ProjectOutcomeFactoryOwnerBindingV1:
+    """Observe Factory chain ownership without accepting caller Factory facts."""
+    if type(query) is not ProjectOutcomeFactoryOwnerQueryV1:
+        raise ProjectOutcomeOwnerObservationV1Error(
+            "invalid_factory_owner_query_type",
+            "query must be an exact ProjectOutcomeFactoryOwnerQueryV1 instance",
+        )
+    return await observe_factory_chain_owner(query)
 
 
 def query_project_outcome(query: ProjectOutcomeQueryV1) -> ProjectOutcomeV1:
@@ -192,6 +210,7 @@ __all__ = [
     "load_runtime_task_rows",
     "merge_director_status",
     "query_project_outcome",
+    "query_project_outcome_with_factory_owner",
     "read_file_head",
     "read_file_tail",
     "read_incremental",

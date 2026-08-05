@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:11.323816Z",
-  "source_hash": "190386530d03d1ef",
+  "generated_at": "2026-08-02T15:47:39.141530Z",
+  "source_hash": "0c08ef7e88514aa3",
   "cell_id": "director.delivery",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -19,6 +19,24 @@
     },
     {
       "type": "function",
+      "name": "run_director_console",
+      "description": "Run director in console mode.",
+      "defined_in": "polaris/delivery/cli/director/cli_entrypoint.py"
+    },
+    {
+      "type": "function",
+      "name": "run_director_server",
+      "description": "Run director in server mode.",
+      "defined_in": "polaris/delivery/cli/director/cli_entrypoint.py"
+    },
+    {
+      "type": "function",
+      "name": "create_task",
+      "description": "Create a new task via director.",
+      "defined_in": "polaris/delivery/cli/director/cli_entrypoint.py"
+    },
+    {
+      "type": "function",
       "name": "main",
       "description": "",
       "defined_in": "polaris/delivery/cli/director/cli_entrypoint.py"
@@ -31,8 +49,32 @@
     },
     {
       "type": "function",
+      "name": "_bootstrap_director_fact_stream",
+      "description": "Delegate one formal Director entrypoint to FactStream bootstrap.",
+      "defined_in": "polaris/delivery/cli/director/cli_thin.py"
+    },
+    {
+      "type": "function",
       "name": "create_parser",
       "description": "Create thin argument parser.",
+      "defined_in": "polaris/delivery/cli/director/cli_thin.py"
+    },
+    {
+      "type": "function",
+      "name": "run_director_console",
+      "description": "Run director in console mode.",
+      "defined_in": "polaris/delivery/cli/director/cli_thin.py"
+    },
+    {
+      "type": "function",
+      "name": "run_director_server",
+      "description": "Run director in server mode.",
+      "defined_in": "polaris/delivery/cli/director/cli_thin.py"
+    },
+    {
+      "type": "function",
+      "name": "create_task",
+      "description": "Create a new task via director.",
       "defined_in": "polaris/delivery/cli/director/cli_thin.py"
     },
     {
@@ -162,6 +204,10 @@
           "doc": ""
         },
         {
+          "name": "_project_session_continuity",
+          "doc": ""
+        },
+        {
           "name": "_build_runtime_history",
           "doc": ""
         },
@@ -214,11 +260,19 @@
           "doc": ""
         },
         {
+          "name": "stream_turn",
+          "doc": ""
+        },
+        {
           "name": "_persist_user_message_once",
           "doc": ""
         },
         {
           "name": "_drain_debug_events",
+          "doc": ""
+        },
+        {
+          "name": "turn",
           "doc": ""
         },
         {
@@ -653,6 +707,10 @@
           "doc": ""
         },
         {
+          "name": "invoke_with_tools",
+          "doc": "调用 LLM，支持工具调用."
+        },
+        {
           "name": "_invoke_plain",
           "doc": "Fail closed: this frozen compatibility module must not invoke LLMs."
         },
@@ -671,6 +729,14 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "implement_task_with_tools",
+          "doc": "使用工具实现任务."
+        },
+        {
+          "name": "analyze_code_with_tools",
+          "doc": "使用工具分析代码."
         }
       ]
     },
@@ -737,16 +803,24 @@
           "doc": ""
         },
         {
-          "name": "_get_task_board",
+          "name": "_get_task_runtime",
           "doc": ""
         },
         {
+          "name": "run_iteration",
+          "doc": "运行 Director 迭代。"
+        },
+        {
           "name": "_get_ready_tasks",
-          "doc": "Return ready task rows through the runtime TaskBoard public contract."
+          "doc": "Return runnable rows through the runtime observable projection."
         },
         {
           "name": "_normalize_task_id",
           "doc": ""
+        },
+        {
+          "name": "_execute_task",
+          "doc": "Execute one task through ``director.execution`` public contract."
         },
         {
           "name": "_build_execution_metadata",
@@ -776,6 +850,12 @@
       "type": "function",
       "name": "create_parser",
       "description": "创建参数解析器",
+      "defined_in": "polaris/delivery/cli/director/director_service.py"
+    },
+    {
+      "type": "function",
+      "name": "main",
+      "description": "服务入口",
       "defined_in": "polaris/delivery/cli/director/director_service.py"
     },
     {
@@ -1051,6 +1131,10 @@
         {
           "name": "project_stream",
           "doc": "Render a batch of events, returning all WidgetUpdates."
+        },
+        {
+          "name": "render_batch",
+          "doc": "Render events from an async stream, optionally throttling updates."
         }
       ]
     },

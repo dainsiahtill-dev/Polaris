@@ -219,7 +219,7 @@ class FunctionalAnalyzer(ast.NodeVisitor):
         self.classes.append(cls_info)
         self._current_class = old_class
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+    def _visit_callable(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         doc = ast.get_docstring(node) or ""
         func_name = node.name
 
@@ -235,6 +235,13 @@ class FunctionalAnalyzer(ast.NodeVisitor):
             # Top-level function
             self.functions.append({"name": func_name, "doc": doc.split("\n")[0] if doc else ""})
         self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_callable(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        """Expose async public functions just like synchronous functions."""
+        self._visit_callable(node)
 
 
 def _should_analyze_source_file(path: Path) -> bool:

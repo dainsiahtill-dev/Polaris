@@ -33,12 +33,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from polaris.kernelone._runtime_config import (
-    get_workspace_metadata_dir_default,
-    get_workspace_metadata_dir_name,
-    resolve_env_bool,
-    resolve_env_str,
-)
+from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name, resolve_env_bool, resolve_env_str
 
 
 class StorageLayer(Enum):
@@ -734,7 +729,14 @@ def _resolve_storage_roots_impl(workspace: str, ramdisk_root: str | None = None)
     with _business_roots_resolver_lock:
         resolver = _business_roots_resolver
 
-    if resolver is not None and get_workspace_metadata_dir_name() != get_workspace_metadata_dir_default():
+    # Explicit registration is the product bootstrap's authority boundary.
+    # The Polaris default metadata directory is also ``.polaris``; requiring
+    # it to differ from the default made a successfully registered resolver
+    # unreachable in the normal deployment, silently returning generic
+    # ``project_local`` roots instead.  Delegate whenever a resolver is
+    # registered.  A resolver that does not own a workspace returns ``None``
+    # and the generic fallback below remains the only fallback path.
+    if resolver is not None:
         try:
             business_roots = resolver(normalized_workspace, ramdisk_root)
             if business_roots is not None:

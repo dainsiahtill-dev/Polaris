@@ -10,9 +10,12 @@ purpose: 'Provide long-running resident autonomy capability including goal gover
   '
 current_modules:
 - polaris.cells.resident.autonomy.public.contracts
+- polaris.cells.resident.autonomy.public.service
+- polaris.cells.resident.autonomy.internal.goal_attempt_ledger
 tags: []
 owned_paths:
 - polaris/cells/resident/autonomy/internal/**
+- polaris/cells/resident/autonomy/public/**
 - polaris/delivery/http/v2/resident.py
 public_contracts:
   modules:
@@ -20,14 +23,22 @@ public_contracts:
   commands:
   - RunResidentCycleCommandV1
   - RecordResidentEvidenceCommandV1
+  - StartResidentGoalAttemptCommandV1
+  - ObserveResidentGoalAttemptCommandV1
+  - SettleResidentGoalAttemptCommandV1
+  - ArchiveResidentGoalCommandV1
   queries:
   - QueryResidentStatusV1
+  - QueryResidentGoalExecutionV1
   events:
   - ResidentCycleCompletedEventV1
   results:
   - ResidentAutonomyResultV1
+  - ResidentGoalAttemptReceiptV1
+  - ResidentGoalExecutionV1
   errors:
-  - ResidentAutonomyErrorV1
+  - ResidentAutonomyError
+  - ResidentGoalLifecycleErrorV1
 depends_on:
 - context.catalog
 - context.engine
@@ -54,21 +65,27 @@ subgraphs: []
 state_owners:
 - runtime/state/resident/*
 - runtime/resident/*
+- workspace/meta/resident/**
 effects_allowed:
 - fs.read:workspace/**
 - fs.read:runtime/**
 - fs.write:runtime/state/resident/*
 - fs.write:runtime/events/runtime.events.jsonl
+- fs.write:workspace/meta/resident/**
 - process.spawn:resident/*
 - ws.outbound:resident/*
 verification:
   tests:
-  - tests/test_resident_api.py
-  - tests/test_resident_service.py
-  - tests/test_resident_evidence_integration.py
-  - tests/test_resident_pm_bridge.py
+  - polaris/tests/test_resident_api.py
+  - polaris/tests/test_resident_service.py
+  - polaris/tests/test_resident_evidence_integration.py
+  - polaris/tests/test_resident_pm_bridge.py
+  - polaris/cells/resident/autonomy/public/tests/test_goal_attempt_ledger.py
+  - polaris/cells/resident/autonomy/public/tests/test_goal_lifecycle_persistence.py
   gaps:
   - Resident capability graph and autonomous loop policies are still being tuned for
     production hardening.
   smoke_commands: []
-generated_artifacts: []
+generated_artifacts:
+- generated/descriptor.pack.json
+- context.pack.json

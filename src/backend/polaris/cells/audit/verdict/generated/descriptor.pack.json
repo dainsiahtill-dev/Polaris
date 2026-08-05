@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T04:27:28.961558Z",
-  "source_hash": "4c08bcbc8ac9a523",
+  "generated_at": "2026-08-02T15:47:41.124233Z",
+  "source_hash": "eeee800f40c0113d",
   "cell_id": "audit.verdict",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -421,6 +421,10 @@
           "doc": "Initialize the audit service."
         },
         {
+          "name": "run_audit",
+          "doc": "Run independent audit review."
+        },
+        {
           "name": "_build_audit_prompt",
           "doc": "Build the audit prompt."
         },
@@ -602,7 +606,16 @@
       "name": "IAuditVerdictService",
       "description": "",
       "defined_in": "polaris/cells/audit/verdict/public/contracts.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "run_verdict",
+          "doc": "Run one verdict flow."
+        },
+        {
+          "name": "query_verdict",
+          "doc": "Query verdict state/details."
+        }
+      ]
     },
     {
       "type": "function",

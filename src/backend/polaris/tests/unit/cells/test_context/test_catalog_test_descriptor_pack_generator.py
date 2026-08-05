@@ -330,6 +330,23 @@ def bar():
         assert visitor.functions[1]["name"] == "bar"
         assert visitor.functions[1]["doc"] == ""
 
+    def test_extracts_async_functions_and_methods(self) -> None:
+        code = '''
+async def fetch():
+    """Fetch a result."""
+    return 1
+
+class Worker:
+    async def execute(self):
+        """Execute work."""
+        return None
+'''
+        visitor = FunctionalAnalyzer()
+        visitor.visit(ast.parse(code))
+
+        assert visitor.functions == [{"name": "fetch", "doc": "Fetch a result."}]
+        assert visitor.classes[0]["methods"] == [{"name": "execute", "doc": "Execute work."}]
+
     def test_nested_classes(self) -> None:
         code = """
 class Outer:

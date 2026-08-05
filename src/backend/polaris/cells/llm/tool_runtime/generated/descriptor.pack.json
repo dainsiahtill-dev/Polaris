@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:17.911332Z",
-  "source_hash": "a8af370f21ad7e52",
+  "generated_at": "2026-08-02T15:47:47.662919Z",
+  "source_hash": "2d213bb86f18aeaa",
   "cell_id": "llm.tool_runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -57,6 +57,10 @@
         {
           "name": "build_tool_results_prompt",
           "doc": "构建工具结果提示，发送给 LLM."
+        },
+        {
+          "name": "generate_with_tools",
+          "doc": "生成回复，支持多轮工具调用."
         }
       ]
     },
@@ -201,13 +205,21 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "chat",
+          "doc": "支持工具调用的聊天."
+        },
+        {
+          "name": "_call_base_client",
+          "doc": "调用基础客户端."
         }
       ]
     },
     {
       "type": "function",
       "name": "_disabled_text_tool_protocol_result",
-      "description": "Fail closed for legacy text tool protocols.",
+      "description": "Fail closed for text-wrapped tool protocols.",
       "defined_in": "polaris/cells/llm/tool_runtime/internal/role_integrations.py"
     },
     {

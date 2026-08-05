@@ -1,7 +1,7 @@
 """Tests: runtime.projection silent-exception observability.
 
 Verifies that:
-1. Exceptions in DirectorService path are logged (not silently swallowed).
+1. Exceptions in the Director status owner port are logged (not silently swallowed).
 2. A projection failure propagates a structured degraded state instead of
    fake-normal empty dicts.
 3. Workflow archive read failures are logged at warning level.
@@ -346,31 +346,28 @@ class TestEngineStatusOrphanRecovery:
 
 
 class TestDirectorRuntimeStatusObservability:
-    """_read_director_service_status_sync must log and return None on failure."""
+    """Sync owner failures must project explicit unavailable evidence."""
 
-    def test_import_error_returns_none_silently(self):
-        """ImportError on DirectorService import path returns None without raising."""
+    def test_unavailable_owner_projects_explicit_error(self):
+        """A missing owner must not be indistinguishable from an idle Director."""
         from polaris.cells.runtime.projection.internal import director_runtime_status as drs
 
-        # Patch only _read_director_service_status_sync itself to return None
-        # (the internal ImportError path is already tested by the fact that source="none")
+        # A legacy/mocked ``None`` is invalid owner evidence and must surface.
         with patch.object(drs, "_read_director_service_status_sync", return_value=None):
             result = drs.build_director_runtime_status(_make_minimal_state(), "/tmp/ws", "/tmp/cache")
 
         assert result["source"] == "none"
         assert result["running"] is False
+        assert result["projection_error"].startswith("invalid_director_status_owner_payload:")
 
     def test_director_service_runtime_error_logs_warning(self, caplog):
         """RuntimeError from DirectorService.get_status must log at WARNING."""
         from polaris.cells.runtime.projection.internal import director_runtime_status as drs
 
-        async def _raise():
-            raise RuntimeError("DI container not ready")
-
         with (
             patch(
                 "polaris.cells.runtime.projection.internal.director_runtime_status._read_director_service_status_sync",
-                return_value=None,
+                side_effect=RuntimeError("DI container not ready"),
             ),
             caplog.at_level(
                 logging.WARNING, logger="polaris.cells.runtime.projection.internal.director_runtime_status"
@@ -378,9 +375,10 @@ class TestDirectorRuntimeStatusObservability:
         ):
             result = drs.build_director_runtime_status(_make_minimal_state(), "/tmp/ws", "/tmp/cache")
 
-        # When _read returns None, source must be "none" not "v2_service"
+        # Owner query failures remain unavailable, never an idle v2 service.
         assert result["source"] == "none"
         assert result["running"] is False
+        assert result["projection_error"].startswith("director_status_owner_query_failed:")
 
     def test_sync_bridge_exception_logs_warning(self, caplog):
         """Exception escaping the thread pool bridge must be logged at WARNING."""
@@ -424,66 +422,68 @@ class TestGetDirectorLocalStatusObservability:
         """An unexpected exception must appear in logs and in the returned dict."""
         from polaris.cells.runtime.projection.internal import runtime_projection_service as rps
 
-        # get_container is a lazy import inside get_director_local_status; patch at source.
-        async def _bad_container():
-            raise RuntimeError("container exploded")
+        async def _bad_owner(_workspace: str):
+            raise RuntimeError("owner exploded")
 
         with (
             patch(
-                "polaris.infrastructure.di.container.get_container",
-                new=_bad_container,
+                "polaris.cells.runtime.projection.internal.director_status_owner.observe_director_status_owner",
+                new=_bad_owner,
             ),
             caplog.at_level(logging.WARNING, logger=rps.__name__),
         ):
-            result = await rps.get_director_local_status()
+            result = await rps.get_director_local_status("/tmp/ws")
 
         # Must carry a projection_error key so callers can distinguish degraded from clean
         assert "projection_error" in result
         assert result["source"] == "none"
         assert result["running"] is False
-        assert any("DirectorService unavailable" in r.message for r in caplog.records)
+        assert any("Director status owner unavailable" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_import_error_logs_warning_and_returns_projection_error_key(self, caplog):
-        """ImportError in DirectorService import path must degrade instead of raising."""
-        import sys
-        import types
-
+        """An unavailable bound owner must degrade instead of implying readiness."""
         from polaris.cells.runtime.projection.internal import runtime_projection_service as rps
+        from polaris.cells.runtime.projection.public import DirectorStatusObservationV1Error
 
-        fake_module = types.ModuleType("polaris.cells.director.execution.service")
+        async def _unavailable(_workspace: str):
+            raise DirectorStatusObservationV1Error(
+                "director_status_port_unbound",
+                "owner unavailable",
+            )
 
         with (
-            patch.dict(
-                sys.modules,
-                {"polaris.cells.director.execution.service": fake_module},
+            patch(
+                "polaris.cells.runtime.projection.internal.director_status_owner.observe_director_status_owner",
+                new=_unavailable,
             ),
             caplog.at_level(logging.WARNING, logger=rps.__name__),
         ):
-            result = await rps.get_director_local_status()
+            result = await rps.get_director_local_status("/tmp/ws")
 
         assert "projection_error" in result
         assert result["source"] == "none"
         assert result["running"] is False
-        assert any("DirectorService unavailable" in r.message for r in caplog.records)
+        assert any("Director status owner unavailable" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_success_does_not_add_projection_error_key(self):
         """On success the projection_error key must NOT appear."""
         from polaris.cells.runtime.projection.internal import runtime_projection_service as rps
+        from polaris.cells.runtime.projection.public import DirectorStatusObservationV1
 
-        fake_service = AsyncMock()
-        fake_service.get_status = AsyncMock(return_value={"state": "RUNNING"})
+        async def _observe(_workspace: str) -> DirectorStatusObservationV1:
+            return DirectorStatusObservationV1(
+                workspace="/tmp/ws",
+                available=True,
+                status={"state": "RUNNING", "workspace": "/tmp/ws"},
+            )
 
-        fake_container = AsyncMock()
-        fake_container.resolve_async = AsyncMock(return_value=fake_service)
-
-        async def _get_container():
-            return fake_container
-
-        # Patch at the source module (lazy import target)
-        with patch("polaris.infrastructure.di.container.get_container", new=_get_container):
-            result = await rps.get_director_local_status()
+        with patch(
+            "polaris.cells.runtime.projection.internal.director_status_owner.observe_director_status_owner",
+            new=_observe,
+        ):
+            result = await rps.get_director_local_status("/tmp/ws")
 
         assert "projection_error" not in result
         assert result["running"] is True
@@ -528,16 +528,16 @@ class TestWorkflowDirectorStatusObservability:
 
 
 # ---------------------------------------------------------------------------
-# build_runtime_projection - workflow_task_rows failure path
+# build_runtime_projection - task-row selection failure path
 # ---------------------------------------------------------------------------
 
 
 class TestBuildRuntimeProjectionTaskRowsObservability:
-    """build_workflow_task_rows failures inside build_runtime_projection must be logged."""
+    """Live task-row selection failures must remain observable and non-fatal."""
 
     @pytest.mark.asyncio
     async def test_task_rows_exception_logs_warning(self, caplog):
-        """Exception in build_workflow_task_rows must log at WARNING level."""
+        """Malformed execution-control data must log a warning, not fail the projection."""
         from polaris.cells.runtime.projection.internal import runtime_projection_service as rps
 
         state = _make_minimal_state()
@@ -556,7 +556,7 @@ class TestBuildRuntimeProjectionTaskRowsObservability:
             ),
             patch.object(
                 rps,
-                "build_workflow_task_rows",
+                "select_task_rows",
                 side_effect=ValueError("corrupt task data"),
             ),
             patch(
@@ -585,7 +585,7 @@ class TestBuildRuntimeProjectionTaskRowsObservability:
             )
 
         assert projection.task_rows == []
-        assert any("build_workflow_task_rows failed" in r.message for r in caplog.records)
+        assert any("select_task_rows failed" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

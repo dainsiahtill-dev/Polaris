@@ -286,7 +286,90 @@ class TestGate:
 
         errors = validate_construction_steps(steps, parent_pm_task="PM-1")
 
+        assert any("error_code=ce_consumes_provider_dependency_missing" in e for e in errors)
         assert any("requires depends_on 'PM-1-S1'" in e for e in errors)
+
+    def test_cross_file_consumed_symbol_requires_existing_provider(self) -> None:
+        steps = [
+            _step(
+                step_id="PM-1-S2",
+                target_file="src/engine/forecast.py",
+                signatures=["def build_forecast()"],
+                consumes_symbols={"src/models/weather.py": ["WeatherReport"]},
+                verify="python -m py_compile src/engine/forecast.py",
+            )
+        ]
+
+        errors = validate_construction_steps(steps, parent_pm_task="PM-1")
+
+        assert any("error_code=ce_consumes_provider_missing" in error for error in errors)
+
+    def test_cross_file_consumed_symbol_requires_nonempty_provider_public_symbols(self) -> None:
+        steps = [
+            _step(
+                step_id="PM-1-S1",
+                target_file="src/models/weather.py",
+                signatures=["class WeatherReport"],
+                public_symbols=[],
+                verify="python -m py_compile src/models/weather.py",
+            ),
+            _step(
+                step_id="PM-1-S2",
+                target_file="src/engine/forecast.py",
+                signatures=["def build_forecast()"],
+                consumes_symbols={"src/models/weather.py": ["WeatherReport"]},
+                depends_on=["PM-1-S1"],
+                verify="python -m py_compile src/engine/forecast.py",
+            ),
+        ]
+
+        errors = validate_construction_steps(steps, parent_pm_task="PM-1")
+
+        assert any("error_code=ce_consumes_provider_public_symbols_empty" in error for error in errors)
+
+    def test_cross_file_consumed_symbol_requires_code_provider(self) -> None:
+        steps = [
+            _step(
+                step_id="PM-1-S1",
+                target_file="docs/weather.md",
+                signatures=[],
+                public_symbols=["WeatherReport"],
+                verify="test -f docs/weather.md",
+            ),
+            _step(
+                step_id="PM-1-S2",
+                target_file="src/engine/forecast.py",
+                signatures=["def build_forecast()"],
+                consumes_symbols={"docs/weather.md": ["WeatherReport"]},
+                depends_on=["PM-1-S1"],
+                verify="python -m py_compile src/engine/forecast.py",
+            ),
+        ]
+
+        errors = validate_construction_steps(steps, parent_pm_task="PM-1")
+
+        assert any("error_code=ce_consumes_provider_not_code" in error for error in errors)
+
+    def test_valid_cross_file_symbol_contract_still_passes(self) -> None:
+        steps = [
+            _step(
+                step_id="PM-1-S1",
+                target_file="src/models/weather.py",
+                signatures=["class WeatherReport"],
+                public_symbols=["WeatherReport"],
+                verify="python -m py_compile src/models/weather.py",
+            ),
+            _step(
+                step_id="PM-1-S2",
+                target_file="src/engine/forecast.py",
+                signatures=["def build_forecast()"],
+                consumes_symbols={"src/models/weather.py": ["WeatherReport"]},
+                depends_on=["PM-1-S1"],
+                verify="python -m py_compile src/engine/forecast.py",
+            ),
+        ]
+
+        assert validate_construction_steps(steps, parent_pm_task="PM-1") == []
 
 
 class TestRefinements:

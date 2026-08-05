@@ -199,7 +199,7 @@ def _resolve_runtime_artifact_candidates(workspace: str, runtime_roots: list[str
 
 def _read_first_json_candidate(paths: list[str]) -> dict[str, Any]:
     for path in paths:
-        payload = read_json(path)
+        payload = read_json(str(path))
         if isinstance(payload, dict):
             return dict(payload)
     return {}
@@ -251,7 +251,7 @@ def _read_factory_blueprints_by_task(workspace: str) -> dict[str, dict[str, Any]
 
     by_task: dict[str, dict[str, Any]] = {}
     for path in paths:
-        payload = read_json(path)
+        payload = read_json(str(path))
         if not isinstance(payload, dict):
             continue
         task_id = str(payload.get("task_id") or payload.get("taskId") or "").strip()
@@ -454,19 +454,21 @@ async def get_pm_local_status() -> dict[str, Any]:
 # =============================================================================
 
 
-async def get_director_local_status() -> dict[str, Any]:
-    """Get Director status from DirectorService (authoritative local source).
+async def get_director_local_status(workspace: str = DEFAULT_WORKSPACE) -> dict[str, Any]:
+    """Get Director status from the bootstrap-bound owner observation port.
 
     Returns:
         Dict with keys: running, pid, mode, started_at, log_path, source, status
     """
     try:
-        from polaris.cells.director.execution.service import DirectorService
-        from polaris.infrastructure.di.container import get_container
+        from polaris.cells.runtime.projection.internal.director_status_owner import (
+            observe_director_status_owner,
+        )
 
-        container = await get_container()
-        di_service = await container.resolve_async(DirectorService)
-        v2_status = await di_service.get_status()
+        observation = await observe_director_status_owner(workspace)
+        v2_status = observation.status if observation.available else None
+        if not isinstance(v2_status, dict):
+            raise ValueError("Director status owner explicitly unavailable")
 
         state = str(v2_status.get("state") or "").strip().upper()
         running = state == "RUNNING"
@@ -482,7 +484,7 @@ async def get_director_local_status() -> dict[str, Any]:
         }
     except (ImportError, RuntimeError, ValueError) as exc:
         logger.warning(
-            "get_director_local_status: DirectorService unavailable during projection: %s",
+            "get_director_local_status: Director status owner unavailable during projection: %s",
             exc,
             exc_info=True,
         )
@@ -494,7 +496,7 @@ async def get_director_local_status() -> dict[str, Any]:
             "log_path": "",
             "source": "none",
             "status": None,
-            "projection_error": str(exc),
+            "projection_error": (f"{exc.error_code}: {exc}" if hasattr(exc, "error_code") else str(exc)),
         }
 
 
@@ -1441,7 +1443,7 @@ async def build_runtime_projection(
     pm_status = await get_pm_local_status()
 
     # Step 2: Get Director local status (authoritative for local) - fast (< 10ms)
-    director_local_status = await get_director_local_status()
+    director_local_status = await get_director_local_status(workspace)
 
     # Step 3: Get workflow status (fallback) - potentially slow during Factory execution
     # Use timeout to prevent blocking during high-load scenarios
@@ -1505,11 +1507,21 @@ async def build_runtime_projection(
         run_ledger_projection,
     )
 
-    # Step 6: Select task rows (二选一规则)
-    task_rows, task_source = select_task_rows(
-        runtime_projection_rows if isinstance(runtime_projection_rows, list) else None,
-        director_local_status,
-    )
+    # Step 6: Select task rows (二选一规则).  TaskRuntime/workflow payloads
+    # are external read-model data; malformed rows must not take down the
+    # whole runtime projection or silently become live tasks.
+    try:
+        task_rows, task_source = select_task_rows(
+            runtime_projection_rows if isinstance(runtime_projection_rows, list) else None,
+            director_local_status,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        logger.warning(
+            "build_runtime_projection: select_task_rows failed for workspace=%r: %s",
+            workspace,
+            exc,
+        )
+        task_rows, task_source = [], TaskSource.NONE
     task_rows = _apply_run_ledger_task_rows_overlay(task_rows, run_ledger_projection)
 
     # Step 7: Build engine status (fallback only)

@@ -1,0 +1,61 @@
+{
+  "schema_version": "polaris.platform_defect_manifest.v1",
+  "defect_id": "GR5B-P0-leaf-authority-widening",
+  "status": "closed",
+  "module_id": "chief_engineer.blueprint.leaf_authority",
+  "primary_residual": "leaf capability can exceed parent authority or turn declared read scope into deferred-repair write scope",
+  "symptom": {
+    "component": "CE leaf fission and deferred Director repair commit",
+    "observed_by": "independent architecture audit",
+    "bench_or_provider_calls": 0
+  },
+  "evidence": {
+    "audit_reports": [
+      "/tmp/polaris-subagent-gr5b-r1.json",
+      "/tmp/polaris-subagent-gr5b-r2.json",
+      "/tmp/polaris-subagent-gr5b-r3.json",
+      "/tmp/polaris-subagent-gr5b-r4.json",
+      "/tmp/polaris-subagent-gr5b-r5.json",
+      "/tmp/polaris-subagent-gr5b-r6.json"
+    ],
+    "leaf_derivation": "chief_engineer.blueprint.internal.ce_consumer._derive_leaf_job_token",
+    "physical_scope_consumer": "roles.adapters.internal.director.deferred_repair_commit_bridge._capability_scope_from_context",
+    "findings": [
+      "initial leaf scope widening and read-to-write promotion were corrected and independently re-audited",
+      "single alias, optional schema, absent token hash, and envelope token-hash gaps were corrected and independently re-audited",
+      "when all token aliases lived in metadata or context_override, a missing or bad root capability_token_hash could still be ignored despite a valid nested hash",
+      "reserved authority or envelope keys with non-Mapping values could be silently ignored at nested or root projection layers"
+    ]
+  },
+  "root_cause_class": "control_plane_capability_scope_widening",
+  "required_remediation": [
+    "retain parent JobToken subset proof, full prevalidation, and parent content binding",
+    "require all three leaf-token aliases to be byte-equal at deferred repair",
+    "require a root canonical schema_version=1, clean audit, and stable_hash-matching capability_token_hash; nested copies must be present and exactly match it",
+    "require each execution-envelope authorization to bind token reference, token hash, and exact write scope",
+    "derive deferred-repair physical mutation scope from bound token allowed_write_paths only"
+  ],
+  "forbidden_fixes": [
+    "widening parent or leaf scopes",
+    "treating read scope as write scope",
+    "bypassing DEO or writing target project files",
+    "marking GR5B accepted before adversarial regression evidence"
+  ],
+  "acceptance_gates": [
+    "parent scope escape, audit drift, and later invalid leaf fail before publication",
+    "deferred repair cannot write a read-only dependency",
+    "single alias, missing schema, bad token hash, envelope hash drift, and malformed root or nested reserved keys cannot reach a physical effect",
+    "focused CE, adapter, Role Kernel, mypy, ruff, format, and diff gates pass",
+    "independent re-review returns CLEAR"
+  ],
+  "resolution": {
+    "closed_by": "GR5B-R6 independent audit",
+    "evidence": [
+      "180 focused CE, adapter, and Role Kernel consumer tests passed",
+      "mypy, Ruff, format, and scoped diff checks passed",
+      "six actual deferred-commit negative paths prove no physical port construction, zero receipts, and no target-byte mutation"
+    ],
+    "residual_risk": "Compatibility callers with malformed or partial authority projections are intentionally fail-closed; GR4 verifier-policy immutability remains a separate future bucket."
+  },
+  "stop_condition": "if a future change requires Role Kernel or DEO semantic widening, reopen this manifest and split a new owner bucket"
+}

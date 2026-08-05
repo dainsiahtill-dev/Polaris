@@ -1,6 +1,6 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:10.609692Z",
+  "generated_at": "2026-08-02T15:47:38.258230Z",
   "source_hash": "fb30797dc0ef3da4",
   "cell_id": "delivery.cli",
   "workspace": "/home/dains/Documents/polaris/src/backend",
@@ -156,6 +156,30 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "execute_command",
+          "doc": "Execute a CLI command and return a structured result."
+        },
+        {
+          "name": "execute_command_sync",
+          "doc": "Execute a CLI command and return the exit code."
+        },
+        {
+          "name": "get_status",
+          "doc": "Return a status snapshot for the CLI subsystem."
+        },
+        {
+          "name": "_execute_management",
+          "doc": "Execute a management command via registered handler."
+        },
+        {
+          "name": "_execute_role",
+          "doc": "Execute a role-execution command via RoleRuntimeService facade."
+        },
+        {
+          "name": "_execute_daemon",
+          "doc": "Execute a daemon-mode command (runs in background)."
         },
         {
           "name": "_build_role_message",

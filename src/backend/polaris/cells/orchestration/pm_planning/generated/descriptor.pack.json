@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:14.692520Z",
-  "source_hash": "c748e14fa10eb23c",
+  "generated_at": "2026-08-02T15:47:43.207183Z",
+  "source_hash": "388d90e35f0163ae",
   "cell_id": "orchestration.pm_planning",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -566,6 +566,12 @@
     },
     {
       "type": "function",
+      "name": "_run_with_timeout",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
       "name": "_runner",
       "description": "",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
@@ -799,7 +805,7 @@
           "doc": ""
         },
         {
-          "name": "taskboard",
+          "name": "task_runtime",
           "doc": "Get unified task runtime service for long-term task management."
         },
         {
@@ -1533,6 +1539,24 @@
     {
       "type": "function",
       "name": "_is_domain_split_repair_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_factory_bench_level",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalized_factory_bench_level",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_lightweight_bench_task_can_stay_single_boundary",
       "description": "",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
     },
@@ -2609,6 +2633,24 @@
     },
     {
       "type": "function",
+      "name": "pm_run_once",
+      "description": "Run PM once.",
+      "defined_in": "polaris/delivery/http/v2/pm.py"
+    },
+    {
+      "type": "function",
+      "name": "pm_start",
+      "description": "Start PM in loop mode.",
+      "defined_in": "polaris/delivery/http/v2/pm.py"
+    },
+    {
+      "type": "function",
+      "name": "pm_stop",
+      "description": "Stop PM process with graceful shutdown support.",
+      "defined_in": "polaris/delivery/http/v2/pm.py"
+    },
+    {
+      "type": "function",
       "name": "pm_status",
       "description": "Get PM process status with the workspace used by desktop evidence.",
       "defined_in": "polaris/delivery/http/v2/pm.py"
@@ -2617,6 +2659,48 @@
       "type": "function",
       "name": "pm_diagnostics",
       "description": "Return side-effect-free PM startup diagnostics for the desktop modal.",
+      "defined_in": "polaris/delivery/http/v2/pm.py"
+    },
+    {
+      "type": "function",
+      "name": "pm_run_orchestration",
+      "description": "Execute PM run - unified entry point",
+      "defined_in": "polaris/delivery/http/v2/pm.py"
+    },
+    {
+      "type": "function",
+      "name": "pm_get_orchestration",
+      "description": "查询 PM 编排运行状态",
+      "defined_in": "polaris/delivery/http/v2/pm.py"
+    },
+    {
+      "type": "function",
+      "name": "pm_cancel_orchestration",
+      "description": "Cancel a PM orchestration run and return the resulting snapshot.",
+      "defined_in": "polaris/delivery/http/v2/pm.py"
+    },
+    {
+      "type": "function",
+      "name": "get_pm_llm_events",
+      "description": "获取 PM 的 LLM 调用事件历史",
+      "defined_in": "polaris/delivery/http/v2/pm.py"
+    },
+    {
+      "type": "function",
+      "name": "get_cache_stats",
+      "description": "获取 LLM 缓存统计信息",
+      "defined_in": "polaris/delivery/http/v2/pm.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_cache",
+      "description": "清空 LLM 缓存",
+      "defined_in": "polaris/delivery/http/v2/pm.py"
+    },
+    {
+      "type": "function",
+      "name": "get_token_budget_stats",
+      "description": "获取 Token 预算统计信息",
       "defined_in": "polaris/delivery/http/v2/pm.py"
     }
   ],

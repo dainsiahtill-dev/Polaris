@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:12.806491Z",
-  "source_hash": "dea7e1b57b1c3d92",
+  "generated_at": "2026-08-02T15:47:41.018919Z",
+  "source_hash": "1d716f340d3a7ec1",
   "cell_id": "workspace.integrity",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -285,7 +285,7 @@
     {
       "type": "function",
       "name": "build_docs_templates",
-      "description": "Build docs-init template map for product and legacy paths.",
+      "description": "Build canonical docs-init templates under ``docs/product``.",
       "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
     },
     {

@@ -1,0 +1,45 @@
+verification_card:
+  id: vc-20260802-GR1B-runtime-projection-factory-owner-binding
+  status: accepted
+  refactor_state: gr1c_and_gr1d_b1_accepted
+  scope: GR1C Factory owner port plus GR1D-B1 Director status owner-port and stale-edge cut
+  authority_boundary:
+    owner: factory.pipeline
+    consumer: runtime.projection
+    composition_root: polaris.bootstrap
+    public_call: get_factory_chain_projection
+    caller_factory_dto_allowed: false
+  invariants:
+    - direct Factory result alone controls the chain axis
+    - CONTROL_PLANE_FAILED is never guessed
+    - ProjectOutcomeV1 remains authority_bound false and completed_verified false
+    - delivery and chain evidence remain independent
+    - runtime.projection imports no factory Cell module
+    - unbound or conflicting observation-port binding fails closed
+    - runtime.projection imports no director.execution module
+    - unbound Director observation projects explicit unavailable state, never readiness
+    - director.execution retains factory.cognitive_runtime and declares no stale factory.pipeline edge
+  prior_evidence:
+    - GR1B focused projection/context tests: 116 passed
+    - GR1B independent re-review: CLEAR
+  closure: gr1c_factory_port_and_gr1d_b1_director_port_accepted
+  evidence:
+    - projection, Factory chain, and bootstrap focused tests: 173 passed
+    - app bootstrap, descriptor, and catalog reconciliation tests: 31 passed
+    - static dependency regression proves no runtime.projection Factory import or graph edge
+    - Ruff, format, Mypy, and descriptor gates passed
+    - catalog audit-only exited 0 with 0 new issues and 0 manifest/catalog mismatches
+    - CodeGraph confirms bootstrap adapter is the cross-Cell owner-query composition path
+    - GR1D-B1 Director port/bootstrap/edge regression: 15 passed
+    - GR1D-B1 projection, Factory chain, and bootstrap suite: 188 passed
+    - GR1D-B1 runtime status compatibility suite: 10 passed
+    - sync unavailable/query-failure/timeout versus valid IDLE regression: 35 passed
+    - independent GR1D-B1 R2 review: CLEAR
+    - Ruff, format, Mypy, UTF-8/YAML/JSON parsing, and scoped diff check passed
+    - catalog audit-only exit 0 with 0 new issues and 0 manifest/catalog mismatches
+  evidence_pending:
+    - GR1D-wide SCC remediation waves beyond B1
+  residual_boundary:
+    - non-Factory owner axes remain explicitly unbound
+    - this bucket cannot assert COMPLETED_VERIFIED
+    - GR1D remains active: this card does not claim the global 49-Cell SCC is removed

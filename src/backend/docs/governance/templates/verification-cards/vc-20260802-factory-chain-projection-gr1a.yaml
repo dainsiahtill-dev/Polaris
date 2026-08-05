@@ -1,6 +1,6 @@
 card_id: vc-20260802-factory-chain-projection-gr1a
 classification: factory_pipeline_owner_query
-status: implemented
+status: accepted
 bench_status: not_schedulable
 defect:
   symptom: project_outcome_cannot_bind_factory_chain_owner_facts
@@ -60,5 +60,5 @@ review_checklist:
   deterministic_normalization: required
   projection_hash_bound: required
   no_runtime_projection_gr0_edits: required
-closure: gr1a_implemented
+closure: gr1a_closed_independently_verified
 next_action: gr1b_project_outcome_owner_binding

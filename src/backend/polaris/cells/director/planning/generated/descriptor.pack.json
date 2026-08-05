@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:11.158453Z",
-  "source_hash": "70c94dca536450f4",
+  "generated_at": "2026-08-02T15:47:38.934746Z",
+  "source_hash": "539626b50c5411bf",
   "cell_id": "director.planning",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -160,7 +160,7 @@
           "doc": "Get Worker pool for parallel execution."
         },
         {
-          "name": "taskboard",
+          "name": "task_runtime",
           "doc": "Get unified task runtime service for task coordination."
         },
         {
@@ -209,11 +209,11 @@
         },
         {
           "name": "_tool_apply_patch",
-          "doc": "Apply a code patch with broadcast support."
+          "doc": "Reject planning-time patches; planning owns no physical effect."
         },
         {
           "name": "_tool_run_command",
-          "doc": "Run a validated command without shell expansion."
+          "doc": "Reject planning-time commands; planning owns no physical effect."
         },
         {
           "name": "_tool_spawn_worker",
@@ -244,12 +244,6 @@
           "doc": "Save current state as snapshot."
         }
       ]
-    },
-    {
-      "type": "function",
-      "name": "write_gate_check",
-      "description": "Simplified write gate check for cell logic.",
-      "defined_in": "polaris/cells/director/planning/internal/director_logic.py"
     },
     {
       "type": "function",

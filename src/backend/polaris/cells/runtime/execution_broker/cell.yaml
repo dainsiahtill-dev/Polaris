@@ -10,7 +10,9 @@ purpose: 'Provide a unified cell-level execution facade for subprocess, async ta
 
   '
 current_modules:
+- polaris.cells.runtime.execution_broker.public.bootstrap
 - polaris.cells.runtime.execution_broker.public.service
+- polaris.cells.runtime.execution_broker.internal.managed_process_ports
 - polaris.cells.runtime.execution_broker.internal.service
 - polaris.kernelone.runtime.execution_facade
 tags: []
@@ -20,13 +22,17 @@ public_contracts:
   modules:
   - polaris.cells.runtime.execution_broker.public.contracts
   commands:
+  - AppendManagedProcessReceiptCommandV1
   - LaunchExecutionProcessCommandV1
   queries:
   - GetExecutionProcessStatusQueryV1
+  - GetManagedProcessReceiptQueryV1
   events: []
   results:
   - ExecutionProcessLaunchResultV1
   - ExecutionProcessWaitResultV1
+  - ManagedProcessReceiptAppendResultV1
+  - ManagedProcessReceiptRecordV1
   errors:
   - ExecutionBrokerError
 depends_on:
@@ -43,6 +49,7 @@ effects_allowed:
 - ws.outbound:runtime/*
 verification:
   tests:
+  - polaris/cells/runtime/execution_broker/tests/test_managed_process_ports.py
   - polaris/cells/runtime/execution_broker/tests/test_service.py
   gaps:
   - Legacy sync process callers still need full call-site migration to async-first

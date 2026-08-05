@@ -1,6 +1,6 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:15.201125Z",
+  "generated_at": "2026-08-02T15:47:43.854217Z",
   "source_hash": "aa3125cac6374aed",
   "cell_id": "architect.design",
   "workspace": "/home/dains/Documents/polaris/src/backend",
@@ -102,6 +102,12 @@
       ]
     },
     {
+      "type": "function",
+      "name": "main",
+      "description": "Main entry point for Architect role agent.",
+      "defined_in": "polaris/cells/architect/design/internal/architect_cli.py"
+    },
+    {
       "type": "class",
       "name": "ArchitectConfig",
       "description": "Configuration for Architect Service.",
@@ -126,8 +132,48 @@
           "doc": ""
         },
         {
+          "name": "start",
+          "doc": "Start Architect Service."
+        },
+        {
+          "name": "stop",
+          "doc": "Stop Architect Service."
+        },
+        {
+          "name": "create_requirements_doc",
+          "doc": "Create requirements document."
+        },
+        {
+          "name": "create_adr",
+          "doc": "Create Architecture Decision Record."
+        },
+        {
+          "name": "create_interface_contract",
+          "doc": "Create interface contract/API specification."
+        },
+        {
+          "name": "create_implementation_plan",
+          "doc": "Create implementation plan."
+        },
+        {
+          "name": "_generate_requirements_content",
+          "doc": "Generate requirements document content using LLM."
+        },
+        {
+          "name": "_write_doc_to_file",
+          "doc": "Write document to file in workspace."
+        },
+        {
           "name": "_sync_write_file",
           "doc": "Synchronous file write helper."
+        },
+        {
+          "name": "_main_loop",
+          "doc": "Main processing loop."
+        },
+        {
+          "name": "_on_plan_created",
+          "doc": "Handle plan creation notifications."
         },
         {
           "name": "get_status",

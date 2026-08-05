@@ -50,7 +50,17 @@ def _make_goal(goal_id: str = "g1", status: GoalStatus = GoalStatus.PENDING, **k
 
 @pytest.fixture
 def storage() -> MagicMock:
-    return MagicMock(spec=["load_goals", "save_goals"])
+    storage = MagicMock(spec=["load_goals", "save_goals", "mutate_goals"])
+
+    def mutate_goals(mutation):
+        goals = storage.load_goals()
+        result, changed = mutation(goals)
+        if changed:
+            storage.save_goals(goals)
+        return result
+
+    storage.mutate_goals.side_effect = mutate_goals
+    return storage
 
 
 @pytest.fixture

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:18.324863Z",
-  "source_hash": "7065d1d339706cfa",
+  "generated_at": "2026-08-02T15:47:48.235889Z",
+  "source_hash": "dede80b4ed567dd9",
   "cell_id": "llm.provider_runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -39,6 +39,14 @@
         {
           "name": "_build_context",
           "doc": ""
+        },
+        {
+          "name": "invoke",
+          "doc": "Invoke the LLM (non-streaming)."
+        },
+        {
+          "name": "invoke_stream",
+          "doc": "Invoke the LLM (streaming)."
         }
       ]
     },
@@ -230,7 +238,16 @@
       "name": "ILlmProviderRuntimeService",
       "description": "",
       "defined_in": "polaris/cells/llm/provider_runtime/public/contracts.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "invoke_provider_action",
+          "doc": "Run provider action."
+        },
+        {
+          "name": "invoke_role_provider",
+          "doc": "Invoke runtime provider for role."
+        }
+      ]
     },
     {
       "type": "function",
@@ -249,7 +266,16 @@
       "name": "LlmProviderRuntimeService",
       "description": "Contract-first provider runtime facade.",
       "defined_in": "polaris/cells/llm/provider_runtime/public/service.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "invoke_provider_action",
+          "doc": ""
+        },
+        {
+          "name": "invoke_role_provider",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "function",

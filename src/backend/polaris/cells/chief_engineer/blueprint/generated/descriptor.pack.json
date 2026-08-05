@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T05:01:38.621863Z",
-  "source_hash": "6fb7ac403a7b3779",
+  "generated_at": "2026-08-02T15:47:41.884019Z",
+  "source_hash": "234307561f1f7700",
   "cell_id": "chief_engineer.blueprint",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -408,7 +408,7 @@
     {
       "type": "function",
       "name": "_normalize_owned_target",
-      "description": "Match file_ownership_ledger._normalize_target so publish-time lookups hit.",
+      "description": "Return the file-ownership ledger key used by publish-time lookups.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
     },
     {
@@ -515,7 +515,25 @@
     },
     {
       "type": "function",
+      "name": "run_once",
+      "description": "Run a single poll cycle and exit.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer_cli.py"
+    },
+    {
+      "type": "function",
+      "name": "run_continuous",
+      "description": "Run the consumer continuously until interrupted.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer_cli.py"
+    },
+    {
+      "type": "function",
       "name": "run_consumer",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer_cli.py"
+    },
+    {
+      "type": "function",
+      "name": "main",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer_cli.py"
     },
@@ -634,6 +652,12 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "main",
+      "description": "Main entry point for Chief Engineer role agent.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_cli.py"
     },
     {
       "type": "class",
@@ -837,176 +861,6 @@
       "name": "_safe_payload_digest",
       "description": "Generate a safe digest from payload for caching/logging.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
-    },
-    {
-      "type": "class",
-      "name": "DirectorPoolConflictError",
-      "description": "Raised when a task cannot be assigned without file conflicts.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "DirectorPhase",
-      "description": "Lifecycle phases of a single Director task execution.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "DirectorStatus",
-      "description": "Real-time snapshot of one Director's state.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "DirectorPoolStatus",
-      "description": "Aggregate snapshot of the entire Director pool.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "RecoveryDecision",
-      "description": "Recovery action chosen after a Director failure.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ScopeConflictDetector",
-      "description": "Pool-level global file conflict detector.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "detect",
-          "doc": "Return files that conflict with another active Director."
-        },
-        {
-          "name": "acquire",
-          "doc": "Register file ownership for a Director."
-        },
-        {
-          "name": "release",
-          "doc": "Release all file ownerships held by a Director."
-        },
-        {
-          "name": "active_snapshot",
-          "doc": "Return a copy of active files for read-only access."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "DirectorPool",
-      "description": "Chief Engineer's directly-managed Director instance pool.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "initialize_directors",
-          "doc": "Initialize the Director pool. If all initializations fail,"
-        },
-        {
-          "name": "get_live_dashboard",
-          "doc": "Return a real-time snapshot of the pool."
-        },
-        {
-          "name": "get_director_for_task",
-          "doc": "Return the Director ID currently assigned to a task."
-        },
-        {
-          "name": "handle_failure",
-          "doc": "Decide how to recover when a Director fails a task."
-        },
-        {
-          "name": "mark_completed",
-          "doc": "Release a Director after task completion."
-        },
-        {
-          "name": "update_progress",
-          "doc": "Update the progress of an active Director."
-        },
-        {
-          "name": "event_bus",
-          "doc": "Return the internal event bus for external subscribers."
-        },
-        {
-          "name": "_select_best_director",
-          "doc": "Choose the best Director according to the assignment policy."
-        },
-        {
-          "name": "_find_conflict_free_director",
-          "doc": ""
-        },
-        {
-          "name": "_find_idle_director",
-          "doc": ""
-        },
-        {
-          "name": "_current_global_conflicts",
-          "doc": ""
-        },
-        {
-          "name": "_estimate_remaining_time",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_now_epoch_ms",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_id",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_files",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_title",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_goal",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_payload",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_run_id",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py"
     },
     {
       "type": "class",
@@ -1285,6 +1139,14 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "snapshot_for_director",
+          "doc": "Read each file and store original content in memory."
+        },
+        {
+          "name": "rollback_director",
+          "doc": "Restore each file to its snapshot content."
         },
         {
           "name": "discard_snapshot",
@@ -1829,8 +1691,74 @@
     },
     {
       "type": "class",
+      "name": "ChiefEngineerPortfolioTaskV1",
+      "description": "Authoritative PM task facts supplied to a project-level CE portfolio.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return the normalized PM-authoritative task projection."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "BuildChiefEngineerBlueprintPortfolioCommandV1",
+      "description": "Build one advisory CE portfolio for a set of authoritative PM tasks.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerProjectInterfaceContractV1",
+      "description": "Shared task/file ownership and advisory project interface declarations.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_reference",
+          "doc": "Return the stable shared interface-contract identity."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Return the canonical shared project interface contract."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerBlueprintPortfolioV1",
+      "description": "Immutable project-level CE advice with task-scoped canonical overlays.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_reference",
+          "doc": "Return the durable identity needed by downstream projections."
+        },
+        {
+          "name": "reference",
+          "doc": "Return a fresh immutable-portfolio reference mapping."
+        },
+        {
+          "name": "to_task_blueprint_context",
+          "doc": "Return canonical evidence fields for ``generate_task_blueprint`` context."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Return the canonical JSON payload persisted by the public service."
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "GetBlueprintStatusQueryV1",
       "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryBlueprintProvenanceV1",
+      "description": "Validate one already-captured blueprint mapping without storage access.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
       "methods": []
     },
@@ -1863,6 +1791,18 @@
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
       "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskBlueprintProvenanceSnapshotV1",
+      "description": "Pure provenance verdict for one exact Chief Engineer blueprint payload.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "class",
@@ -2180,6 +2120,48 @@
     },
     {
       "type": "function",
+      "name": "_require_exact_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_provenance_text",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_provenance_identity",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_provenance_blueprint_id",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_provenance_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_provenance_sha256",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_strict_provenance_target_paths",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+    },
+    {
+      "type": "function",
       "name": "_to_dict_copy",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
@@ -2192,9 +2174,40 @@
     },
     {
       "type": "function",
+      "name": "_strict_unique_string_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_relative_portfolio_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_safe_filename_token",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_relative_path_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+    },
+    {
+      "type": "function",
       "name": "_json_safe_mapping",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "_PortfolioLlmBlueprint",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py",
+      "methods": []
     },
     {
       "type": "function",
@@ -2224,6 +2237,30 @@
       "type": "function",
       "name": "_blueprint_hash",
       "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_provenance_text",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_blueprint_provenance",
+      "description": "Validate one strict-parsed immutable blueprint mapping without I/O.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_hashable_portfolio_payload",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_portfolio_hash",
+      "description": "Hash canonical portfolio content without self-referential hash fields.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
     },
     {
@@ -2516,6 +2553,156 @@
     },
     {
       "type": "function",
+      "name": "_portfolio_contract_error",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_portfolio_array",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_portfolio_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_portfolio_advisory_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_scope_entry_text",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_scope_suggestions",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_scope_paths",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_scope_rejections",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_plan_path_suggestions",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_readable_portfolio_value",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_portfolio_risk_flag",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_portfolio_risk_flags",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_risk_flags",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_portfolio_construction_plan",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_interface_declarations",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_portfolio_llm_blueprint",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_plan_components",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_scope_advisory_for_task",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_deterministic_portfolio_plan",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_interface_seed",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_bind_portfolio_task_overlays",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_persist_immutable_blueprint_portfolio",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_chief_engineer_blueprint_portfolio",
+      "description": "Build and immutably persist one advisory portfolio for PM tasks.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "project_chief_engineer_task_blueprint",
+      "description": "Project one portfolio task into ``generate_task_blueprint`` LLM shape.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_blueprint_portfolio_context",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
       "name": "generate_task_blueprint",
       "description": "Generate and persist a task-level Chief Engineer blueprint.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
@@ -2745,7 +2932,7 @@
     {
       "type": "function",
       "name": "attach_governance_to_blueprint",
-      "description": "Compute and *persist* governance for a blueprint.",
+      "description": "Compute governance and optionally persist it for a blueprint.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
     },
     {
@@ -3150,6 +3337,30 @@
       "type": "function",
       "name": "get_chief_engineer_diagnostics",
       "description": "Return side-effect-free Chief Engineer desktop readiness diagnostics.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "get_chief_engineer_llm_events",
+      "description": "Return Chief Engineer LLM event history from the shared roles kernel.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "get_chief_engineer_cache_stats",
+      "description": "Return shared LLM cache statistics for Chief Engineer desktop evidence.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_chief_engineer_cache",
+      "description": "Clear the shared LLM cache through the Chief Engineer role surface.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "get_chief_engineer_token_budget_stats",
+      "description": "Return shared token-budget statistics for Chief Engineer desktop evidence.",
       "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
     },
     {

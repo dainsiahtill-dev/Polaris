@@ -250,6 +250,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings is None:
         settings = get_settings()
 
+    from polaris.bootstrap.runtime_projection_director_status import (
+        configure_runtime_projection_director_status,
+    )
+    from polaris.bootstrap.runtime_projection_factory_owner import (
+        configure_runtime_projection_factory_owner,
+    )
+
+    configure_runtime_projection_factory_owner()
+    configure_runtime_projection_director_status()
+
     # Ensure KERNELONE_TOKEN is always set. When started via bootstrap the
     # token is auto-generated, but direct uvicorn invocation may skip that
     # step, leaving Auth("") which rejects *every* request with 401.

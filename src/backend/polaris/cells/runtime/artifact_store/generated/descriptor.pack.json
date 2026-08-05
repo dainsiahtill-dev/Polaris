@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T04:27:36.416464Z",
-  "source_hash": "4996c6193cd4ba45",
+  "generated_at": "2026-08-02T15:47:50.758334Z",
+  "source_hash": "d3cb92d095461d10",
   "cell_id": "runtime.artifact_store",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -148,7 +148,7 @@
     {
       "type": "function",
       "name": "_load_runtime_task_rows",
-      "description": "",
+      "description": "Return task rows through the task-runtime owner projection.",
       "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
     },
     {
@@ -239,6 +239,12 @@
       "type": "function",
       "name": "_build_pm_status",
       "description": "Build PM status using PMService as the authoritative source.",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "get_pm_service_status",
+      "description": "",
       "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
     },
     {

@@ -14,6 +14,10 @@ Unattended automation consumers must:
 
 from __future__ import annotations
 
+from polaris.kernelone.platform_modules.formal_run_admission import (
+    FormalRunAdmissionV1,
+    evaluate_formal_run_admission,
+)
 from polaris.kernelone.platform_modules.registry import (
     MODULE_CASCADE_ORDER,
     PLATFORM_MODULES,
@@ -40,6 +44,7 @@ from polaris.kernelone.platform_modules.unattended_supervisor import (
 __all__ = [
     "MODULE_CASCADE_ORDER",
     "PLATFORM_MODULES",
+    "FormalRunAdmissionV1",
     "PlatformModuleRecord",
     "PlatformModuleStatus",
     "ResidualAttributionV1",
@@ -49,6 +54,7 @@ __all__ = [
     "attribute_residual",
     "build_factory_audits_attribution_pack",
     "classify_delivery_status",
+    "evaluate_formal_run_admission",
     "get_module",
     "list_modules",
     "modules_by_status",

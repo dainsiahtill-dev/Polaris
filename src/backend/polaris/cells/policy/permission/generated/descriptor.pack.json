@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:18.400201Z",
-  "source_hash": "1ff1a278859ecb90",
+  "generated_at": "2026-08-02T15:47:48.378277Z",
+  "source_hash": "98f3fdafe1c56441",
   "cell_id": "policy.permission",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -137,12 +137,24 @@
           "doc": "初始化权限服务"
         },
         {
+          "name": "initialize",
+          "doc": "初始化服务，加载内置策略"
+        },
+        {
           "name": "_load_builtin_policies",
           "doc": "加载内置 RBAC 策略"
         },
         {
+          "name": "_sync_from_tool_gateway",
+          "doc": "从现有 RoleToolGateway 同步权限配置"
+        },
+        {
           "name": "_emit_audit_decision",
           "doc": "Write one ALLOW/DENY decision to the audit evidence store."
+        },
+        {
+          "name": "check_permission",
+          "doc": "检查权限"
         },
         {
           "name": "_matches_subject_with_inheritance",
@@ -155,6 +167,22 @@
         {
           "name": "_convert_policy_conditions",
           "doc": "将策略条件字典转换为 PermissionCondition 列表"
+        },
+        {
+          "name": "check_tool_permission",
+          "doc": "检查工具调用权限"
+        },
+        {
+          "name": "get_effective_permissions",
+          "doc": "获取主体的有效权限列表"
+        },
+        {
+          "name": "list_roles",
+          "doc": "列出所有角色及其权限统计"
+        },
+        {
+          "name": "assign_role",
+          "doc": "分配角色"
         },
         {
           "name": "get_policy",
@@ -196,6 +224,12 @@
       "type": "function",
       "name": "_normalize_workspace",
       "description": "",
+      "defined_in": "polaris/cells/policy/permission/internal/permission_service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_permission_service",
+      "description": "获取按 workspace 复用的共享权限服务实例。",
       "defined_in": "polaris/cells/policy/permission/internal/permission_service.py"
     },
     {
@@ -336,6 +370,12 @@
       "type": "function",
       "name": "evaluate_permission",
       "description": "Evaluate a permission command through the public policy contract.",
+      "defined_in": "polaris/cells/policy/permission/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_evaluate",
+      "description": "",
       "defined_in": "polaris/cells/policy/permission/public/service.py"
     },
     {

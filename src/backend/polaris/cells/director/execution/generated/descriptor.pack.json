@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:11.230595Z",
-  "source_hash": "500230a93f825591",
+  "generated_at": "2026-08-02T17:10:20.540567Z",
+  "source_hash": "0c2c9509b1873a4b",
   "cell_id": "director.execution",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -160,7 +160,7 @@
           "doc": "Get Worker pool for parallel execution."
         },
         {
-          "name": "taskboard",
+          "name": "task_runtime",
           "doc": "Get unified task runtime service for task coordination."
         },
         {
@@ -213,11 +213,11 @@
         },
         {
           "name": "_tool_apply_patch",
-          "doc": "Apply a code patch with broadcast support."
+          "doc": "Reject legacy patches outside the canonical directed-effect path."
         },
         {
           "name": "_tool_run_command",
-          "doc": "Run a validated command without shell expansion."
+          "doc": "Reject legacy commands outside the canonical directed-effect path."
         },
         {
           "name": "_tool_spawn_worker",
@@ -277,6 +277,12 @@
       "type": "function",
       "name": "_get_rebind_director_service",
       "description": "Lazily import rebind_director_service to avoid circular import issues.",
+      "defined_in": "polaris/cells/director/execution/public/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "rebind_director_service",
+      "description": "Recreate DirectorService singleton for the target workspace.",
       "defined_in": "polaris/cells/director/execution/public/__init__.py"
     },
     {
@@ -353,6 +359,12 @@
     },
     {
       "type": "function",
+      "name": "_await_result",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/public/service.py"
+    },
+    {
+      "type": "function",
       "name": "_runner",
       "description": "",
       "defined_in": "polaris/cells/director/execution/public/service.py"
@@ -401,19 +413,13 @@
     },
     {
       "type": "function",
-      "name": "_truthy",
-      "description": "",
-      "defined_in": "polaris/cells/director/execution/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_execution_contract_refs_required",
-      "description": "",
-      "defined_in": "polaris/cells/director/execution/public/service.py"
-    },
-    {
-      "type": "function",
       "name": "_build_execution_contract_audit",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_execution_contract_error",
       "description": "",
       "defined_in": "polaris/cells/director/execution/public/service.py"
     },
@@ -478,7 +484,75 @@
           "doc": ""
         },
         {
+          "name": "_emit_typed_event",
+          "doc": "Emit a typed event through the adapter if available."
+        },
+        {
+          "name": "_setup_event_handlers",
+          "doc": ""
+        },
+        {
+          "name": "_unsubscribe_event_handlers",
+          "doc": ""
+        },
+        {
+          "name": "start",
+          "doc": ""
+        },
+        {
           "name": "_on_main_loop_done",
+          "doc": ""
+        },
+        {
+          "name": "stop",
+          "doc": ""
+        },
+        {
+          "name": "submit_task",
+          "doc": ""
+        },
+        {
+          "name": "get_task",
+          "doc": ""
+        },
+        {
+          "name": "list_tasks",
+          "doc": ""
+        },
+        {
+          "name": "cancel_task",
+          "doc": "Cancel a task by ID."
+        },
+        {
+          "name": "get_worker",
+          "doc": ""
+        },
+        {
+          "name": "list_workers",
+          "doc": ""
+        },
+        {
+          "name": "_try_finalize_idle",
+          "doc": "Transition RUNNING -> IDLE when the main loop has exited without workers."
+        },
+        {
+          "name": "get_status",
+          "doc": "Return a status snapshot projected from execution-control rows."
+        },
+        {
+          "name": "_get_task_runtime",
+          "doc": ""
+        },
+        {
+          "name": "_task_stats_from_rows",
+          "doc": "Return Director status counters from observable task rows."
+        },
+        {
+          "name": "_director_task_status_counts",
+          "doc": "Project task-runtime status counters onto the legacy Director wire keys."
+        },
+        {
+          "name": "_main_loop",
           "doc": ""
         },
         {
@@ -490,19 +564,203 @@
           "doc": "Return seconds until the next convergence deadline, if any."
         },
         {
+          "name": "_wait_for_loop_signal",
+          "doc": "Block until stop, explicit wakeup, or a convergence deadline."
+        },
+        {
+          "name": "_check_run_convergence",
+          "doc": ""
+        },
+        {
           "name": "_collect_deadlocked_pending_ids",
           "doc": ""
         },
         {
+          "name": "_fail_pending_tasks",
+          "doc": ""
+        },
+        {
+          "name": "_auto_stop",
+          "doc": ""
+        },
+        {
+          "name": "_schedule_tasks",
+          "doc": ""
+        },
+        {
+          "name": "_assign_task",
+          "doc": ""
+        },
+        {
+          "name": "_execute_task",
+          "doc": ""
+        },
+        {
           "name": "_emit_cognitive_runtime_shadow_task_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_execute_task_work",
+          "doc": "Execute either a command task or a PM-authored file/code task."
+        },
+        {
+          "name": "_run_command",
+          "doc": "Reject legacy command execution outside roles.kernel DEO admission."
+        },
+        {
+          "name": "_check_nag",
+          "doc": ""
+        },
+        {
+          "name": "_check_workers",
+          "doc": ""
+        },
+        {
+          "name": "_check_budget",
+          "doc": ""
+        },
+        {
+          "name": "_auto_scale",
+          "doc": ""
+        },
+        {
+          "name": "_on_task_completed",
+          "doc": ""
+        },
+        {
+          "name": "_on_task_failed",
+          "doc": ""
+        },
+        {
+          "name": "_on_worker_failed",
           "doc": ""
         }
       ]
     },
     {
       "type": "function",
+      "name": "select_task_rows_from_projection",
+      "description": "HTTP-local Director task-row selector for route diagnostics.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "start_director",
+      "description": "Start the Director service.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "stop_director",
+      "description": "Stop the Director service.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "get_status",
+      "description": "Get director status.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
       "name": "get_director_capabilities",
       "description": "Return the Director capability matrix for desktop and workflow hosts.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "get_director_diagnostics",
+      "description": "Return side-effect-free Director desktop readiness diagnostics.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "create_task",
+      "description": "Create and submit a new task.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "list_tasks",
+      "description": "List all tasks.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "get_task",
+      "description": "Get task by ID.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "cancel_task",
+      "description": "Cancel a task.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "list_workers",
+      "description": "List all workers.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "get_worker",
+      "description": "Get worker by ID.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "get_task_llm_events",
+      "description": "获取任务的 LLM 调用事件历史",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "get_llm_events",
+      "description": "获取全局 LLM 调用事件历史（按角色/任务过滤）",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "get_cache_stats",
+      "description": "获取 LLM 缓存统计信息",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_cache",
+      "description": "清空 LLM 缓存",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "director_run_integration_qa",
+      "description": "Run the canonical post-dispatch integration QA after Director reaches terminal state.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "get_token_budget_stats",
+      "description": "获取 Token 预算统计信息",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "director_run_orchestration",
+      "description": "Execute Director run - unified entry point",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "director_get_orchestration",
+      "description": "查询 Director 编排运行状态",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "director_cancel_orchestration",
+      "description": "Cancel a Director orchestration run and return the resulting snapshot.",
       "defined_in": "polaris/delivery/http/v2/director.py"
     }
   ],

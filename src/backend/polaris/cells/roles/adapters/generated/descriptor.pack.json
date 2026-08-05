@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T06:57:03.036352Z",
-  "source_hash": "318b73e3dd5377f5",
+  "generated_at": "2026-08-02T15:47:44.900797Z",
+  "source_hash": "b310234a72a2c751",
   "cell_id": "roles.adapters",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -18,6 +18,14 @@
         {
           "name": "get_capabilities",
           "doc": ""
+        },
+        {
+          "name": "_call_architect_llm",
+          "doc": ""
+        },
+        {
+          "name": "execute",
+          "doc": "执行 Architect 任务."
         },
         {
           "name": "_build_architect_message",
@@ -53,6 +61,10 @@
         },
         {
           "name": "_should_attempt_truncated_docs_repair",
+          "doc": ""
+        },
+        {
+          "name": "_repair_truncated_docs_if_needed",
           "doc": ""
         },
         {
@@ -144,10 +156,6 @@
           "doc": "懒加载任务运行时服务（TaskBoard 统一入口）。"
         },
         {
-          "name": "task_board",
-          "doc": "兼容属性：历史调用点继续使用 ``self.task_board``。"
-        },
-        {
           "name": "_build_env",
           "doc": "构建环境变量"
         },
@@ -168,6 +176,22 @@
           "doc": ""
         },
         {
+          "name": "_record_task_runtime_transition_failure",
+          "doc": ""
+        },
+        {
+          "name": "_task_runtime_transition_failure_evidence",
+          "doc": ""
+        },
+        {
+          "name": "_reset_task_runtime_transition_failures",
+          "doc": ""
+        },
+        {
+          "name": "_with_task_runtime_transition_failure_evidence",
+          "doc": "Project recorded TaskRuntime transition failures into a role result."
+        },
+        {
           "name": "_update_task_progress",
           "doc": "更新任务进度"
         },
@@ -180,6 +204,14 @@
           "doc": ""
         },
         {
+          "name": "_resolve_message_bus",
+          "doc": ""
+        },
+        {
+          "name": "_emit_task_trace_event",
+          "doc": "写入任务板并广播 TASK_TRACE，供外部快速定位阻塞点。"
+        },
+        {
           "name": "_resolve_kernel_validation_enabled",
           "doc": "Resolve whether kernel output validation should gate this turn."
         },
@@ -188,6 +220,18 @@
           "doc": "解析角色内核重试预算。"
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_is_terminal_task_row_status",
+      "description": "Return whether a TaskRow status is terminal and must use an owner transition.",
+      "defined_in": "polaris/cells/roles/adapters/internal/base.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_execution_task_row_status",
+      "description": "Return whether a TaskRow status is owned by execution claim transitions.",
+      "defined_in": "polaris/cells/roles/adapters/internal/base.py"
     },
     {
       "type": "function",
@@ -208,6 +252,10 @@
         {
           "name": "get_capabilities",
           "doc": ""
+        },
+        {
+          "name": "execute",
+          "doc": "执行 Chief Engineer 任务"
         },
         {
           "name": "_build_analysis_message",
@@ -238,6 +286,10 @@
           "doc": ""
         },
         {
+          "name": "execute",
+          "doc": "执行 Director 任务"
+        },
+        {
           "name": "_select_execution_strategy",
           "doc": "Phase 2.4: Select optimal execution strategy based on task characteristics."
         },
@@ -248,6 +300,30 @@
         {
           "name": "_get_sequential_config",
           "doc": "Get Sequential configuration from settings and context."
+        },
+        {
+          "name": "_execute_sequential",
+          "doc": "Execute task using Sequential Engine."
+        },
+        {
+          "name": "_call_canonical_role_runtime",
+          "doc": ""
+        },
+        {
+          "name": "_execute_hybrid",
+          "doc": "Execute task using Hybrid Engine."
+        },
+        {
+          "name": "_call_canonical_role_runtime",
+          "doc": ""
+        },
+        {
+          "name": "_invoke_role_dialogue",
+          "doc": "Invoke Director through the canonical role runtime first."
+        },
+        {
+          "name": "_invoke_role_runtime_session",
+          "doc": "Call roles.runtime so Context OS and Cognitive Runtime participate."
         },
         {
           "name": "_ensure_director_execution_profile",
@@ -282,6 +358,14 @@
           "doc": ""
         },
         {
+          "name": "_invoke_direct_runtime_provider",
+          "doc": "Fail closed: direct provider bypass is no longer a Director fallback."
+        },
+        {
+          "name": "_invoke_role_dialogue_with_timeout",
+          "doc": "Call role LLM with timeout."
+        },
+        {
           "name": "_get_task",
           "doc": "获取任务信息"
         },
@@ -314,6 +398,18 @@
           "doc": "持久化执行后端元数据"
         },
         {
+          "name": "_resolve_child_task_for_dependency_artifact",
+          "doc": "Resolve the child task mapping used to rebuild dependency artifact evidence."
+        },
+        {
+          "name": "_rebind_director_dependency_artifact_for_dialogue",
+          "doc": "Rebuild trusted sibling-export evidence before every Director dialogue turn."
+        },
+        {
+          "name": "_prepare_director_dependency_artifact_snapshot",
+          "doc": "Project one trusted parent-artifact snapshot into a mutable turn context."
+        },
+        {
           "name": "_build_director_message",
           "doc": "构建 Director 角色消息"
         },
@@ -327,11 +423,15 @@
         },
         {
           "name": "_update_task_progress",
-          "doc": "更新任务进度"
+          "doc": "Record Director progress as metadata-only task evidence."
         },
         {
           "name": "_update_board_task",
           "doc": "更新 TaskBoard 任务"
+        },
+        {
+          "name": "_emit_task_trace_event",
+          "doc": "发射任务追踪事件"
         },
         {
           "name": "_append_runtime_stage_signals",
@@ -355,6 +455,18 @@
       "type": "function",
       "name": "_copy_mapping_payload",
       "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_lower_sha256",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_director_execution_authority_evidence",
+      "description": "Project only a self-consistent physical execution envelope across context copies.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
     },
     {
@@ -383,6 +495,72 @@
     },
     {
       "type": "function",
+      "name": "_coerce_positive_float",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_call_timeout_from_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_call_timeout_ceiling_from_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_role_call_timeout",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_context_has_forced_write_retry",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_forced_write_effective_output_budget",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_current_task_write_boundary_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_bind_director_role_subinvocation",
+      "description": "Bind one stable logical role call beneath a parent execution attempt.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_prepare_role_dialogue_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_context_timeout_seconds_for_runtime_command",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
+    },
+    {
+      "type": "function",
       "name": "_join_limited_values",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
@@ -403,6 +581,24 @@
       "type": "function",
       "name": "_has_contract_value",
       "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_looks_like_module_interface_contract_payload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_structured_task_contract_slot_is_authoritative",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_set_structured_task_contract_slot",
+      "description": "Install structured evidence unless a structured value already exists.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
     },
     {
@@ -455,30 +651,6 @@
     },
     {
       "type": "function",
-      "name": "_build_director_actual_sibling_exports_payload",
-      "description": "Build structured evidence for actual exports already present in the workspace.",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_inject_director_actual_sibling_exports",
-      "description": "Promote actual sibling exports into structured context and metadata.",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_build_director_workspace_interface_lines",
-      "description": "Inject the ACTUAL exported symbols of already-generated workspace files.",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_looks_like_test",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
-    },
-    {
-      "type": "function",
       "name": "_build_director_blueprint_handoff_lines",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py"
@@ -521,6 +693,30 @@
     },
     {
       "type": "function",
+      "name": "execute_sequential",
+      "description": "Execute task using Sequential Engine.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter_sequential.py"
+    },
+    {
+      "type": "function",
+      "name": "_wrap_llm_caller",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter_sequential.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_hybrid",
+      "description": "Execute Hybrid through the same audited RoleRuntime boundary as Sequential.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter_sequential.py"
+    },
+    {
+      "type": "function",
+      "name": "_wrap_llm_caller",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter_sequential.py"
+    },
+    {
+      "type": "function",
       "name": "_parse_missing_declared_target_files",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/artifact_quality_diagnostics.py"
@@ -556,9 +752,27 @@
       "defined_in": "polaris/cells/roles/adapters/internal/director/artifact_quality_diagnostics.py"
     },
     {
+      "type": "class",
+      "name": "ContractStepVerifyResolution",
+      "description": "Task-boundary decision for one contract verification command.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/contract_verify.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return the stable audit projection for this resolution."
+        }
+      ]
+    },
+    {
       "type": "function",
       "name": "resolve_contract_step_verify_command",
       "description": "Return the safest machine verify command available in a Director context.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/contract_verify.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_contract_step_verify",
+      "description": "Resolve a verify command and its task-boundary ownership disposition.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/contract_verify.py"
     },
     {
@@ -623,6 +837,30 @@
     },
     {
       "type": "function",
+      "name": "_downstream_validation_targets",
+      "description": "Return declared test assets owned outside the current task.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/contract_verify.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_validation_target",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/contract_verify.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_contract_path",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/contract_verify.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_project_test_command",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/contract_verify.py"
+    },
+    {
+      "type": "function",
       "name": "_records_defer_validation_to_downstream",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/contract_verify.py"
@@ -650,6 +888,154 @@
       "name": "_dedupe_preserve_order",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/contract_verify.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_deferred_repair_payload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/deferred_repair_commit_bridge.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/deferred_repair_commit_bridge.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_lower_sha256",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/deferred_repair_commit_bridge.py"
+    },
+    {
+      "type": "function",
+      "name": "_capability_token_from_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/deferred_repair_commit_bridge.py"
+    },
+    {
+      "type": "function",
+      "name": "_capability_scope_from_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/deferred_repair_commit_bridge.py"
+    },
+    {
+      "type": "function",
+      "name": "commit_materialization_deferred_repairs",
+      "description": "Commit deferred materialization repair results when attempt authority exists.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/deferred_repair_commit_bridge.py"
+    },
+    {
+      "type": "class",
+      "name": "DirectorDependencyArtifactEvidenceError",
+      "description": "Typed fail-closed dependency evidence projection error.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dependency_artifact_evidence.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TrustedDirectorDependencyArtifactSnapshotV2",
+      "description": "Internal exact-type token coupling one payload to one rendered message.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dependency_artifact_evidence.py",
+      "methods": [
+        {
+          "name": "payload",
+          "doc": ""
+        },
+        {
+          "name": "message_lines",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_fail",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dependency_artifact_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dependency_artifact_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_list_of_mappings",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dependency_artifact_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_text_list",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dependency_artifact_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_hash64",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dependency_artifact_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_json_bytes",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dependency_artifact_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_hash",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dependency_artifact_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalized_relative_path",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dependency_artifact_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_dependency_task_ids",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dependency_artifact_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_parent_identity",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dependency_artifact_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_receipt_result_rows",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dependency_artifact_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_validated_receipt_by_path",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dependency_artifact_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "build_director_dependency_artifact_snapshot",
+      "description": "Build exactly one bounded snapshot from declared parent execution facts.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dependency_artifact_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "project_director_dependency_artifact_snapshot",
+      "description": "Reject caller presets and project only an exact internal trusted token.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dependency_artifact_evidence.py"
     },
     {
       "type": "function",
@@ -1985,9 +2371,412 @@
     },
     {
       "type": "function",
+      "name": "seq_llm_caller",
+      "description": "Async LLM caller for SequentialEngine.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dialogue.py"
+    },
+    {
+      "type": "function",
       "name": "get_settings_safe",
       "description": "Get settings safely, returning None on error.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/dialogue.py"
+    },
+    {
+      "type": "class",
+      "name": "_PreparedMutationV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_DirectorDirectedEffectMutationPort",
+      "description": "Validate, revalidate, spend, then invoke the private physical executor.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_revalidate_policy",
+          "doc": ""
+        },
+        {
+          "name": "_consume_once",
+          "doc": ""
+        },
+        {
+          "name": "_execute_physical",
+          "doc": ""
+        },
+        {
+          "name": "_observe_post_state",
+          "doc": ""
+        },
+        {
+          "name": "_commit_receipt",
+          "doc": ""
+        },
+        {
+          "name": "execute_mutation",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_denied",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_recovery_tool_result",
+      "description": "Project only a confirmed TaskRuntime recovery/dead-letter fact.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_failed",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_freeze_value",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_freeze_tool_result",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_thaw_value",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_thaw_arguments",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_validation_result",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_revalidation_result",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_consume_result",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_state_matches",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_physical_effect_receipt",
+      "description": "Project the hash-bound receipt that TaskRuntime must durably commit.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_commit_physical_effect_receipt",
+      "description": "Commit the adapter receipt through TaskRuntime's only public DEO port.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_mark_physical_effect_recovery",
+      "description": "Persist finite recovery after a consumed fence; never re-run the effect.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_attempt_physical_effect_recovery",
+      "description": "Try the durable recovery append and emit diagnostics if it cannot land.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_prepare_mutation",
+      "description": "Canonicalize and authorize immutable mutation inputs without side effects.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_policy_request",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_receipt_commit_is_valid",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "function",
+      "name": "create_director_directed_effect_mutation_port",
+      "description": "Private constructor used only by the adapter public composition boundary.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    },
+    {
+      "type": "class",
+      "name": "_JobRestrictionEvidence",
+      "description": "Canonical, immutable Job Token restrictions used by this boundary.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_TargetRead",
+      "description": "One stable target read and its derived immutable policy evidence.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_DirectorEffectPolicySnapshotPort",
+      "description": "Private, stateless owner of Director policy evidence and revalidation.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "snapshot",
+          "doc": "Capture a no-effect snapshot from canonical workspace evidence."
+        },
+        {
+          "name": "capture_baseline_snapshot",
+          "doc": "Own target-state capture so callers cannot manufacture the baseline."
+        },
+        {
+          "name": "bind_member",
+          "doc": "Purely bind a successful snapshot to one exact sealed member."
+        },
+        {
+          "name": "capture_current_policy_evidence",
+          "doc": "Capture all post-claim policy inputs or return the one closed denial."
+        },
+        {
+          "name": "_claim_grant_is_canonical",
+          "doc": ""
+        },
+        {
+          "name": "_target_evidence_semantically_matches",
+          "doc": "Return True when target binding is unchanged for post-claim policy capture."
+        },
+        {
+          "name": "_capture_policy_target_source",
+          "doc": ""
+        },
+        {
+          "name": "_capture_operation_source",
+          "doc": ""
+        },
+        {
+          "name": "_capture_capability_scope_source",
+          "doc": ""
+        },
+        {
+          "name": "_capture_job_token_source",
+          "doc": ""
+        },
+        {
+          "name": "_capture_tool_spec_source",
+          "doc": "Re-verify the authorized tool definition; bind evidence to baseline hashes."
+        },
+        {
+          "name": "_capture_execution_envelope_source",
+          "doc": ""
+        },
+        {
+          "name": "_capture_allowed_commands_source",
+          "doc": ""
+        },
+        {
+          "name": "revalidate",
+          "doc": "Reconstruct and validate immutable evidence without process-local state."
+        },
+        {
+          "name": "_authorization_hash_matches",
+          "doc": ""
+        },
+        {
+          "name": "_member_matches_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "_snapshot_integrity_error",
+          "doc": ""
+        },
+        {
+          "name": "_member_is_bound",
+          "doc": ""
+        },
+        {
+          "name": "_authorization_binds_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "_reconstruct_request",
+          "doc": ""
+        },
+        {
+          "name": "_evaluate",
+          "doc": ""
+        },
+        {
+          "name": "_evaluate_command",
+          "doc": ""
+        },
+        {
+          "name": "_read_target_state",
+          "doc": ""
+        },
+        {
+          "name": "_agents_policy_hash",
+          "doc": "Return fail-closed, stable policy evidence for every applicable AGENTS file."
+        },
+        {
+          "name": "_validate_write_policy",
+          "doc": ""
+        },
+        {
+          "name": "_path_is_allowed",
+          "doc": "Capability-scope match with canonical relative path forms (R158 ./prefix)."
+        },
+        {
+          "name": "_snapshot_allowed",
+          "doc": ""
+        },
+        {
+          "name": "_snapshot_denial",
+          "doc": ""
+        },
+        {
+          "name": "_revalidation_result",
+          "doc": ""
+        },
+        {
+          "name": "_revalidation_denial_from_target",
+          "doc": ""
+        },
+        {
+          "name": "_revalidation_denial_without_target",
+          "doc": "Project the trusted baseline when fresh target capture did not complete."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_preview_edit_blocks_content",
+      "description": "Dry-run edit_blocks onto ``old_content`` for write-policy evidence (R179).",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py"
+    },
+    {
+      "type": "function",
+      "name": "_hash_payload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py"
+    },
+    {
+      "type": "function",
+      "name": "_content_hash",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py"
+    },
+    {
+      "type": "function",
+      "name": "_operation_hash",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py"
+    },
+    {
+      "type": "function",
+      "name": "_subject_operation_hash",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py"
+    },
+    {
+      "type": "function",
+      "name": "_items_to_dict",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py"
+    },
+    {
+      "type": "function",
+      "name": "_tuple_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py"
+    },
+    {
+      "type": "function",
+      "name": "_scope_hash",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py"
+    },
+    {
+      "type": "function",
+      "name": "_restriction_values",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py"
+    },
+    {
+      "type": "function",
+      "name": "_scope_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_relative_workspace_path",
+      "description": "Return a canonical workspace-relative posix path, or None if unsafe/empty.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py"
+    },
+    {
+      "type": "function",
+      "name": "_thaw",
+      "description": "Rehydrate frozen DEO argument values into plain Python containers.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py"
+    },
+    {
+      "type": "function",
+      "name": "_stat_identity",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py"
+    },
+    {
+      "type": "function",
+      "name": "_target_state_hash",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py"
+    },
+    {
+      "type": "function",
+      "name": "snapshot_target_path",
+      "description": "Return the retained pre-seal target instead of trusting current arguments.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py"
     },
     {
       "type": "class",
@@ -2023,6 +2812,12 @@
       "type": "function",
       "name": "_is_transient_llm_provider_exception",
       "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_invoke_role_dialogue_with_transient_provider_retry",
+      "description": "Retry a Director LLM call once when the provider fails before a response.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
     {
@@ -2118,13 +2913,13 @@
     {
       "type": "function",
       "name": "_empty_write_retry_tool_definition",
-      "description": "",
+      "description": "Registry-faithful retry tool; path pin only for write_file (R127 SSOT).",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
     {
       "type": "function",
       "name": "_pin_file_schema_to_declared_targets",
-      "description": "Pin a file-parameter tool schema to the declared task boundary.",
+      "description": "Pin write_file path properties only (qualification-safe; R127).",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
     {
@@ -2136,7 +2931,7 @@
     {
       "type": "function",
       "name": "_no_write_materialization_retry_tool_definitions",
-      "description": "",
+      "description": "Empty-write retry tools via Forced Tool Surface SSOT (R127).",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
     {
@@ -2165,8 +2960,56 @@
     },
     {
       "type": "function",
+      "name": "_run_no_write_materialization_retry",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_empty_write_content_materialization_retry",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_dependency_artifact_tool_results",
+      "description": "Project write tool_results into receipt-bound rows for sibling exports.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_attach_dependency_artifact_receipt_evidence",
+      "description": "Ensure adapter_result carries receipt rows for sibling-export projection.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
       "name": "_finalize_claimed_execution",
       "description": "Finalize a runtime task and surface terminal-state conflicts as data.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_execution_attempt_authority_from_context",
+      "description": "Read the one public execution-attempt authority carried by this turn.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_execution_attempt_identity_from_context",
+      "description": "Resolve the TaskRuntime attempt identity for deferred repair planning/commit.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_deferred_followup_receipts_as_tool_results",
+      "description": "Project DEO followup batch receipts into adapter tool_results shape.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_commit_deferred_materialization_quality_results",
+      "description": "Commit deferred materialization repairs through DEO followup; no bypass writer.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
     {
@@ -2177,8 +3020,68 @@
     },
     {
       "type": "function",
+      "name": "_task_runtime_heartbeat_failed_signal",
+      "description": "Project a TaskRuntime heartbeat rejection into execution evidence.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_runtime_heartbeat_exception_signal",
+      "description": "Project a TaskRuntime heartbeat exception into execution evidence.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_with_decision_signals",
+      "description": "Return ``result`` with appended decision signals without aliasing lists.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_runtime_finalize_failed_signal",
+      "description": "Project failed TaskRuntime finalization as control-plane evidence.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_with_task_runtime_finalize_evidence",
+      "description": "Return ``result`` with TaskRuntime finalization failure evidence attached.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_suspend_claimed_execution_for_cancellation",
+      "description": "Suspend a claimed Director task during cancellation and emit failure evidence.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
       "name": "_emit_director_adapter_cognitive_receipt",
       "description": "Record a Cognitive Runtime receipt for Director adapter materialization.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_director_task",
+      "description": "执行 Director 任务的核心逻辑",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_task_claim_heartbeat",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_stop_task_claim_heartbeat",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_claim_task_with_retry",
+      "description": "任务声明重试逻辑",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
     {
@@ -2195,6 +3098,12 @@
     },
     {
       "type": "function",
+      "name": "_handle_claim_required",
+      "description": "处理声明失败情况",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
       "name": "_pin_materialize_delivery_mode",
       "description": "Pin ``[mode:materialize]`` for a from-scratch build task.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
@@ -2203,6 +3112,12 @@
       "type": "function",
       "name": "_pin_materialize_context_delivery_mode",
       "description": "Carry the materialize contract on the control plane for ContextOS turns.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_execute_standard_llm_flow",
+      "description": "执行标准 LLM 流程",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
     {
@@ -2243,7 +3158,25 @@
     },
     {
       "type": "function",
+      "name": "_phase_first_llm_call",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_phase_no_write_materialization_retry",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
       "name": "_phase_direct_fallback",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_phase_empty_write_retry",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
@@ -2273,8 +3206,68 @@
     },
     {
       "type": "function",
+      "name": "_phase_quality_repair_loop",
+      "description": "Progress-aware deterministic + LLM quality-repair ladder (Block B).",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
       "name": "_materialization_task_boundary_triage_summary",
       "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_phase_semantic_quality_repair_loop",
+      "description": "Semantic-quality + missing-declared-target LLM repair loop (Block C).",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_summary_field_matches_failure_class",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_dispatch_dropped_failure_payload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_primary_llm_summary_text",
+      "description": "Return compact, structured LLM failure text for deterministic matching.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_primary_llm_provider_failure_payload",
+      "description": "Classify a failed primary role LLM call before materialization fallback.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_lifecycle_tool_dispatch_failure_from_summary",
+      "description": "Return the tool_dispatch_dropped failure payload if Run Ledger lifecycle",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_primary_llm_tool_dispatch_failure",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_seal_claimed_materialization_without_tool_lifecycle",
+      "description": "R137: seal blocked lifecycle when claimed materialization ends with no tools.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_materialization_failure_evidence_row",
+      "description": "Build structured failure evidence for Director materialization failures.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
     {
@@ -2298,7 +3291,13 @@
     {
       "type": "function",
       "name": "_cross_artifact_llm_escalation_enabled",
-      "description": "Default OFF -> byte-identical legacy behaviour. Opt in via env to escalate",
+      "description": "Default OFF -> preserve current deterministic fail-closed behavior.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_phase_cross_artifact_unplannable_llm_escalation",
+      "description": "Escalate deterministically-unplannable cross-artifact quality errors to a",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
     {
@@ -2311,6 +3310,12 @@
       "type": "function",
       "name": "_phase_semantic_quality_failed",
       "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_attach_director_file_event_bus",
+      "description": "Attach the process MessageBus to Director file writers when available.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
     {
@@ -2435,13 +3440,19 @@
     },
     {
       "type": "function",
+      "name": "_execution_attempt_from_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method_repair_bridge.py"
+    },
+    {
+      "type": "function",
       "name": "run_python_runtime_smoke",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method_repair_bridge.py"
     },
     {
       "type": "function",
-      "name": "_run_python_unittest_discover_smoke",
+      "name": "_defer_python_unittest_discover_smoke",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method_repair_bridge.py"
     },
@@ -2469,15 +3480,19 @@
         },
         {
           "name": "set_message_bus",
-          "doc": ""
+          "doc": "Retain the compatibility hook; text fallback owns no physical bus."
         },
         {
           "name": "_llm_call_timeout_max_seconds",
           "doc": ""
         },
         {
+          "name": "clamp_llm_call_timeout_to_factory_deadline",
+          "doc": "Apply the live Factory execution deadline as a non-expanding ceiling."
+        },
+        {
           "name": "resolve_llm_call_timeout_seconds",
-          "doc": "解析 LLM 调用超时时间"
+          "doc": "Resolve the call timeout under the live Factory execution deadline."
         },
         {
           "name": "resolve_direct_fallback_timeout_seconds",
@@ -2488,20 +3503,12 @@
           "doc": "Extract normalized tool results from a role-kernel response."
         },
         {
-          "name": "_legacy_patch_protocol_disabled_result",
+          "name": "execute_tools",
+          "doc": "Reject non-native fallback formats with audit evidence."
+        },
+        {
+          "name": "_patch_file_protocol_disabled_result",
           "doc": ""
-        },
-        {
-          "name": "_apply_protocol_operations",
-          "doc": "应用协议操作"
-        },
-        {
-          "name": "_apply_single_patch",
-          "doc": "应用单个补丁块"
-        },
-        {
-          "name": "_emit_realtime_file_change",
-          "doc": "Broadcast a FILE_WRITTEN event for patch paths applied outside tool executor."
         },
         {
           "name": "_validate_relative_patch_path",
@@ -2526,6 +3533,22 @@
         {
           "name": "_has_structural_path_domain_signal",
           "doc": "Allow path-based signal only for structural files."
+        },
+        {
+          "name": "run_qa_check",
+          "doc": "运行 QA 检查"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorToolExecutionAuthorityError",
+      "description": "Fail-closed denial for unscoped physical executor construction/transport.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execution_tools.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
         }
       ]
     },
@@ -2537,6 +3560,10 @@
       "methods": [
         {
           "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_assert_physical_execution_authority",
           "doc": ""
         },
         {
@@ -2564,6 +3591,10 @@
           "doc": "读取文件工具"
         },
         {
+          "name": "_tool_edit_blocks",
+          "doc": "Apply SEARCH/REPLACE edit_blocks through Director policy + write path (R179)."
+        },
+        {
           "name": "_tool_edit_file",
           "doc": "编辑文件工具（搜索替换）"
         },
@@ -2588,6 +3619,18 @@
           "doc": "代码搜索工具（使用 ripgrep）"
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_guarded_repair_snapshot",
+      "description": "Capture and verify exact pre-state for one repair effect.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execution_tools.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_repair_effect_call",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execution_tools.py"
     },
     {
       "type": "function",
@@ -2639,6 +3682,12 @@
     },
     {
       "type": "function",
+      "name": "_create_director_tool_executor",
+      "description": "Create the private physical executor for the canonical DEO mutation port.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execution_tools.py"
+    },
+    {
+      "type": "function",
       "name": "_seq_parse_bool",
       "description": "Parse boolean value from various types.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
@@ -2665,6 +3714,12 @@
       "type": "function",
       "name": "_match_is_inside_string_literal",
       "description": "Best-effort: is the [rel_start, rel_end) span on ``line`` inside a quote?",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_match_is_inside_line_comment",
+      "description": "Return True when the match sits on a comment-only span of ``line``.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
     },
     {
@@ -2831,6 +3886,12 @@
     },
     {
       "type": "function",
+      "name": "run_materialization_quality_public_boundary",
+      "description": "Execute materialization-quality repair through the typed public boundary.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/materialization_quality_boundary.py"
+    },
+    {
+      "type": "function",
       "name": "has_materialization_quality_runtime_repair_coverage",
       "description": "Return true when runtime coverage maps diagnostics to this port's executable schedule.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/materialization_quality_callback_ports.py"
@@ -2975,6 +4036,24 @@
     },
     {
       "type": "function",
+      "name": "_normalize_materialization_scope_path",
+      "description": "Normalize one repair path for scope comparison (separators, ``./`` prefix).",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/materialization_quality_callback_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_materialization_write_scope_is_workspace_level",
+      "description": "Return true for workspace-level quality invocations without a current-task write scope.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/materialization_quality_callback_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_materialization_allowed_paths_in_current_task_scope",
+      "description": "Constrain runtime repair writes to the current task's materialization scope.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/materialization_quality_callback_ports.py"
+    },
+    {
+      "type": "function",
       "name": "_run_materialization_rust_runtime_repair",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/materialization_quality_callback_ports.py"
@@ -2983,6 +4062,24 @@
       "type": "function",
       "name": "_collect_materialization_rust_base_files",
       "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/materialization_quality_callback_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_rust_missing_binary_relative_path",
+      "description": "Normalize absolute/relative cargo missing-bin paths for allowed_paths.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/materialization_quality_callback_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_rust_missing_binary_paths_from_quality_issues",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/materialization_quality_callback_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_declared_rust_binary_paths_from_cargo",
+      "description": "Return safe relative binary entrypoint paths declared in Cargo.toml.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/materialization_quality_callback_ports.py"
     },
     {
@@ -3467,12 +4564,6 @@
     },
     {
       "type": "function",
-      "name": "writer",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/post_execution_repair_bridge.py"
-    },
-    {
-      "type": "function",
       "name": "_run_go_post_repairs",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/post_execution_repair_bridge.py"
@@ -3588,30 +4679,6 @@
     {
       "type": "function",
       "name": "_run_java_post_repairs",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/post_execution_repair_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_run_java_accessor_alias_runtime_repair",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/post_execution_repair_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_policy_gated_writer",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/post_execution_repair_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_run_java_test_dependency_runtime_repair",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/post_execution_repair_bridge.py"
-    },
-    {
-      "type": "function",
-      "name": "_policy_gated_writer",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/post_execution_repair_bridge.py"
     },
@@ -4025,44 +5092,38 @@
     },
     {
       "type": "function",
+      "name": "_build_materialization_quality_failure_evidence_context",
+      "description": "Project quality-repair diagnostics into final-request evidence slots.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_materialization_quality_workspace_evidence_context",
+      "description": "Project failed workspace quality state into a structured context slot.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
       "name": "_safe_int",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
     {
       "type": "function",
-      "name": "_provider_tool_definition",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_fallback_quality_repair_write_file_tool_definition",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
-    },
-    {
-      "type": "function",
       "name": "_quality_repair_write_file_tool_definition",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_fallback_quality_repair_edit_file_tool_definition",
-      "description": "",
+      "description": "Registry-faithful write_file schema via Forced Tool Surface SSOT (R127).",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
     {
       "type": "function",
       "name": "_quality_repair_edit_file_tool_definition",
-      "description": "",
+      "description": "Registry-faithful edit_file schema via Forced Tool Surface SSOT (R127).",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
     {
       "type": "function",
       "name": "_quality_repair_execute_command_tool_definition",
-      "description": "",
+      "description": "Registry-faithful execute_command schema via Forced Tool Surface SSOT (R127).",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
     {
@@ -4074,7 +5135,7 @@
     {
       "type": "function",
       "name": "_quality_repair_existing_target_tool_definitions",
-      "description": "",
+      "description": "Existing-file quality repair forced tools — registry SSOT only (R127).",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
     {
@@ -4163,20 +5224,32 @@
     },
     {
       "type": "function",
-      "name": "_coerce_raw_single_target_repair_to_write_file",
-      "description": "Normalize weak-model raw file bodies into write_file for one exact target.",
+      "name": "_reject_raw_single_target_repair_body",
+      "description": "Record that an unstructured LLM body has no mutation authority.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_quality_repair_execution_attempt",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_quality_repair_base_files",
+      "description": "Read only explicit repair inputs into the Director Runtime planning snapshot.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
     {
       "type": "function",
       "name": "_deterministic_single_missing_quality_repair_to_write_file",
-      "description": "Create narrow, non-domain missing metadata files after LLM repair misses.",
+      "description": "Plan a requirements repair and defer its effects to the governed boundary.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
     {
       "type": "function",
       "name": "_deterministic_single_missing_python_module_alias_to_write_file",
-      "description": "Create a narrow source-root shim for tests importing a nested Python module.",
+      "description": "Plan a Python source-root bridge and defer its physical effects.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
     {
@@ -4247,12 +5320,6 @@
     },
     {
       "type": "function",
-      "name": "_first_failing_verify_clause",
-      "description": "Clause-level teaching diagnosis — delegates to the KernelOne toolkit",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
-    },
-    {
-      "type": "function",
       "name": "_clean_verify_path_token",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
@@ -4283,20 +5350,14 @@
     },
     {
       "type": "function",
-      "name": "_strip_ansi_for_step_verify_output",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_step_verify_failure_excerpt",
-      "description": "Return the actionable failure block instead of a blind output tail.",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
-    },
-    {
-      "type": "function",
       "name": "_collect_step_verify_errors",
       "description": "写后即查（三层裂变 DO 层自查）: run the construction step's machine",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_deferred_step_verify_obligation",
+      "description": "Record a deferred project verifier without treating it as a failure.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
     {
@@ -4308,12 +5369,6 @@
     {
       "type": "function",
       "name": "_node_environment_has_missing_declared_packages",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
-    },
-    {
-      "type": "function",
-      "name": "_run_step_verify_environment_prep",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
@@ -4349,8 +5404,38 @@
     },
     {
       "type": "function",
+      "name": "_quality_repair_cache_root",
+      "description": "Resolve the cache root used by CE/runtime ledgers from local task context.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_boundary_requesting_task_id",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
       "name": "_task_boundary_scope_filter_evidence",
       "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_dict_items",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_semantic_exporter_scope_discrepancy_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_artifact_quality_issue_paths_by_raw",
+      "description": "Index typed artifact-quality paths by their raw display diagnostic.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
     {
@@ -4361,7 +5446,61 @@
     },
     {
       "type": "function",
+      "name": "_filter_project_completion_errors_to_task_boundary",
+      "description": "Defer project-completion findings owned by explicit downstream targets.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_filter_missing_workspace_file_errors_to_task_write_scope",
+      "description": "Defer verifier missing-file diagnostics that belong to another task.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_rust_missing_binary_quality_error",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_write_scope_touches_rust",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_should_defer_missing_workspace_target",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
       "name": "_collect_materialization_quality_errors",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_materialization_quality_findings",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_scan_workspace_artifact_quality_findings",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_materialization_quality_task_id",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_execute_method_artifact_quality_scanner_is_default",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
@@ -4374,6 +5513,18 @@
     {
       "type": "function",
       "name": "_node_package_manifest_should_be_rescanned_for_test_files",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_cargo_manifest_should_be_rescanned_for_rust_files",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_rust_source_path",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
@@ -4392,6 +5543,12 @@
     {
       "type": "function",
       "name": "_declared_target_file_quality_errors",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_declared_target_file_quality_findings",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
@@ -4421,6 +5578,18 @@
     },
     {
       "type": "function",
+      "name": "_has_materialization_quality_runtime_repair_coverage",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_materialization_quality_repair_retry",
+      "description": "Ask Director for one concrete repair when changed artifacts fail quality gates.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
       "name": "_context_float_value",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
@@ -4435,6 +5604,12 @@
       "type": "function",
       "name": "_materialization_plan_probe_requires_task_boundary_triage",
       "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_annotate_current_task_missing_target_continuation",
+      "description": "Allow Director continuation for missing files owned by the current task.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
     {
@@ -4889,8 +6064,26 @@
     },
     {
       "type": "function",
+      "name": "_iter_artifact_quality_issue_payloads",
+      "description": "Coerce typed-issue payloads into a list of dict copies.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_artifact_quality_issue_path",
+      "description": "Return a normalized workspace-relpath from a typed issue if safely resolvable.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_artifact_quality_issue_module",
+      "description": "Return a Python module name from a typed issue if safely resolvable.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
       "name": "_missing_materialization_quality_repair_target_files",
-      "description": "",
+      "description": "Return missing materialization repair targets.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
     {
@@ -4926,7 +6119,7 @@
     {
       "type": "function",
       "name": "_missing_python_module_alias_repair_target_files",
-      "description": "Return missing Python module shim targets implied by test import errors.",
+      "description": "Return missing Python module bridge targets implied by import errors.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
     {
@@ -4939,6 +6132,12 @@
       "type": "function",
       "name": "_find_python_module_alias_source",
       "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_find_python_module_alias_sources",
+      "description": "Return every safe same-name source; authority requires exactly one.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
     {
@@ -5004,7 +6203,7 @@
     {
       "type": "function",
       "name": "_can_accept_existing_workspace_scope",
-      "description": "Return True when no-diff execution can complete from existing scope evidence.",
+      "description": "Return whether authoritative evidence permits a no-diff completion.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/quality_gate.py"
     },
     {
@@ -5237,110 +6436,26 @@
     },
     {
       "type": "function",
+      "name": "_failure",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_deferred_result",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "defer_director_command_with_director_tools",
+      "description": "Return one typed command request; never execute the command locally.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
+    },
+    {
+      "type": "function",
       "name": "run_runtime_repair_with_director_tools",
-      "description": "Execute a runtime repair while preserving Director as the effect owner.",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_mark_progress",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_policy_gated_writer",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_policy_gated_editor",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_policy_gated_deleter",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_runtime_repair_planning_preflight",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_source_tool_is_registered_runtime_repair",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_direct_runtime_repair_planning_preflight",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_supports_policy_gated_delete_tool",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_project_successful_repair_results",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_project_failed_planning_preflight",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_project_failed_repair",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_project_failed_convergence_repair",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_project_receipt_kernel",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_receipt_requires_revalidation",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_project_receipt_payload",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_project_diagnostics",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
-    },
-    {
-      "type": "function",
-      "name": "_object_to_dict",
-      "description": "",
+      "description": "Plan exactly one repair round and return one typed deferred request.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py"
     },
     {
@@ -5517,6 +6632,12 @@
       "type": "function",
       "name": "_extract_task_target_path_candidates",
       "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/task_scope_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_project_declared_target_path_candidates",
+      "description": "Return project-level target inventory without granting write authority.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/task_scope_paths.py"
     },
     {
@@ -5710,7 +6831,7 @@
           "doc": ""
         },
         {
-          "name": "task_board",
+          "name": "task_runtime",
           "doc": ""
         },
         {
@@ -5858,6 +6979,10 @@
           "doc": ""
         },
         {
+          "name": "_list_board_task_rows",
+          "doc": ""
+        },
+        {
           "name": "_create_board_tasks",
           "doc": ""
         },
@@ -5906,6 +7031,10 @@
       "defined_in": "polaris/cells/roles/adapters/internal/pm/board_tasks.py",
       "methods": [
         {
+          "name": "_list_board_task_rows",
+          "doc": "Return PM task-board rows through the runtime read model when available."
+        },
+        {
           "name": "_create_board_tasks",
           "doc": ""
         },
@@ -5915,6 +7044,10 @@
         },
         {
           "name": "_deduplicate_existing_board_tasks",
+          "doc": ""
+        },
+        {
+          "name": "_task_runtime_dedup_quality_signals",
           "doc": ""
         },
         {
@@ -5942,6 +7075,48 @@
           "doc": "兼容旧接口: 从文本中解析并创建任务."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_with_task_runtime_transition_failure",
+      "description": "Return a row projection annotated with a failed TaskRuntime transition.",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm/board_tasks.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_runtime_transition_failures",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm/board_tasks.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_task_runtime_transition_failures",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm/board_tasks.py"
+    },
+    {
+      "type": "function",
+      "name": "_with_task_runtime_execution_event_failure",
+      "description": "Annotate a row projection when its TaskRuntime execution fact failed.",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm/board_tasks.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedup_primary_task_id",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm/board_tasks.py"
+    },
+    {
+      "type": "function",
+      "name": "_with_dedup_cancel_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm/board_tasks.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedup_failures_by_primary_id",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm/board_tasks.py"
     },
     {
       "type": "function",
@@ -6027,6 +7202,24 @@
       "type": "function",
       "name": "_pm_contract_mapping",
       "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm/normalization.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_quality_contract_context_payload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm/normalization.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_scope_path_covers_target",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm/normalization.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_reconcile_task_target_scope",
+      "description": "Keep every final task-local mutation target inside its capability scope.",
       "defined_in": "polaris/cells/roles/adapters/internal/pm/normalization.py"
     },
     {
@@ -6413,6 +7606,30 @@
     },
     {
       "type": "function",
+      "name": "_normalize_markdown_atx_heading_title",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm/synthesis.py"
+    },
+    {
+      "type": "function",
+      "name": "_markdown_lines_outside_fences",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm/synthesis.py"
+    },
+    {
+      "type": "function",
+      "name": "_markdown_atx_headings",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm/synthesis.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_declared_deterministic_checks",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm/synthesis.py"
+    },
+    {
+      "type": "function",
       "name": "_extract_deterministic_checks_from_directive",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/pm/synthesis.py"
@@ -6516,6 +7733,22 @@
           "doc": ""
         },
         {
+          "name": "execute",
+          "doc": "执行 PM 任务."
+        },
+        {
+          "name": "_run_architect_stage",
+          "doc": "运行 Architect 阶段（兼容保留，实际由 architect 角色承担）."
+        },
+        {
+          "name": "_run_pm_stage",
+          "doc": "运行 PM 阶段."
+        },
+        {
+          "name": "_call_role_llm",
+          "doc": "Call PM planning through the role runtime/Context OS path."
+        },
+        {
           "name": "_pm_route_audit_probe_enabled",
           "doc": ""
         },
@@ -6544,8 +7777,20 @@
           "doc": ""
         },
         {
+          "name": "execute",
+          "doc": "Execute QA task."
+        },
+        {
+          "name": "_call_role_llm",
+          "doc": ""
+        },
+        {
           "name": "_apply_taskboard_qa_verdict",
           "doc": "Apply QA verdict to Director TaskBoard rows."
+        },
+        {
+          "name": "_list_taskboard_rows",
+          "doc": "Return QA task-board rows through the runtime read model when available."
         },
         {
           "name": "_coerce_task_record",
@@ -6738,6 +7983,18 @@
       "defined_in": "polaris/cells/roles/adapters/internal/qa_adapter.py"
     },
     {
+      "type": "function",
+      "name": "_record_qa_task_runtime_transition_failure",
+      "description": "Record a failed QA TaskRuntime transition in the verdict summary.",
+      "defined_in": "polaris/cells/roles/adapters/internal/qa_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_qa_task_runtime_execution_event_failure",
+      "description": "Record TaskRuntime ledger append failure evidence from a row transition.",
+      "defined_in": "polaris/cells/roles/adapters/internal/qa_adapter.py"
+    },
+    {
       "type": "class",
       "name": "ResidentAgiAdapter",
       "description": "Adapter for platform-level AGI supervision turns.",
@@ -6750,6 +8007,10 @@
         {
           "name": "get_capabilities",
           "doc": ""
+        },
+        {
+          "name": "execute",
+          "doc": "Run a Resident AGI decision turn through the shared role runtime."
         },
         {
           "name": "_string",
@@ -6873,6 +8134,12 @@
       "type": "function",
       "name": "_runtime_result_to_dialogue_payload",
       "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/runtime_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "invoke_role_runtime_first",
+      "description": "Invoke a role through `roles.runtime` and fail closed on boundary errors.",
       "defined_in": "polaris/cells/roles/adapters/internal/runtime_dialogue.py"
     },
     {
@@ -7106,6 +8373,18 @@
           "doc": ""
         },
         {
+          "name": "execute_role",
+          "doc": "执行角色（工作流模式）"
+        },
+        {
+          "name": "execute_role_with_tools",
+          "doc": "Execute role with multi-turn tool handling."
+        },
+        {
+          "name": "_store_execution_data",
+          "doc": "存储执行数据到角色数据目录"
+        },
+        {
           "name": "get_role_profile",
           "doc": "获取角色配置"
         },
@@ -7136,6 +8415,12 @@
       ]
     },
     {
+      "type": "function",
+      "name": "execute_workflow_role",
+      "description": "便捷函数：执行工作流角色",
+      "defined_in": "polaris/cells/roles/adapters/internal/workflow_adapter.py"
+    },
+    {
       "type": "class",
       "name": "WorkflowRoleNode",
       "description": "统一工作流角色节点基类",
@@ -7162,6 +8447,10 @@
           "doc": "返回生产执行入口，便于测试和审计。"
         },
         {
+          "name": "execute_kernel",
+          "doc": "通过内核执行角色"
+        },
+        {
           "name": "get_profile",
           "doc": "获取角色配置"
         },
@@ -7182,6 +8471,12 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "run_workflow_role",
+      "description": "便捷函数：快速执行工作流角色",
+      "defined_in": "polaris/cells/roles/adapters/internal/workflow_node.py"
     },
     {
       "type": "class",
@@ -7266,6 +8561,10 @@
         {
           "name": "get_capabilities",
           "doc": "Return supported capabilities."
+        },
+        {
+          "name": "execute",
+          "doc": "Execute one adapter task."
         }
       ]
     },
@@ -7286,6 +8585,18 @@
       "name": "_to_tuple_dict",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "create_director_effect_policy_snapshot_port",
+      "description": "Create the evidence-only policy port for one canonical workspace.",
+      "defined_in": "polaris/cells/roles/adapters/public/directed_effect_policy_service.py"
+    },
+    {
+      "type": "function",
+      "name": "create_director_directed_effect_mutation_port",
+      "description": "Create one mutation port without exposing its physical executor type.",
+      "defined_in": "polaris/cells/roles/adapters/public/directed_effect_service.py"
     },
     {
       "type": "class",
@@ -7319,6 +8630,24 @@
       "type": "function",
       "name": "run_director_materialization_quality_repair_schedule",
       "description": "Run Director materialization-quality repair schedule as a tuple projection.",
+      "defined_in": "polaris/cells/roles/adapters/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_split_materialization_effect_results",
+      "description": "Split runtime schedule evidence from actual tool/effect results.",
+      "defined_in": "polaris/cells/roles/adapters/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_materialization_result_has_effect_payload",
+      "description": "Return whether a projected runtime row carries a dispatchable or physical effect.",
+      "defined_in": "polaris/cells/roles/adapters/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_call_materialization_quality_repair_facade",
+      "description": "Call runtime facade while preserving old mock/facade signatures.",
       "defined_in": "polaris/cells/roles/adapters/public/service.py"
     },
     {
@@ -7361,6 +8690,12 @@
       "type": "function",
       "name": "get_supported_roles",
       "description": "",
+      "defined_in": "polaris/cells/roles/adapters/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "run_director_materialization_quality_repair",
+      "description": "Run Director's materialization-quality repair through the roles public boundary.",
       "defined_in": "polaris/cells/roles/adapters/public/service.py"
     }
   ],

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:17.982385Z",
-  "source_hash": "19619b31723eeca0",
+  "generated_at": "2026-08-02T15:47:47.755008Z",
+  "source_hash": "a6864bf21688b196",
   "cell_id": "llm.control_plane",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -369,6 +369,14 @@
           "doc": ""
         },
         {
+          "name": "chat_stream",
+          "doc": ""
+        },
+        {
+          "name": "chat",
+          "doc": ""
+        },
+        {
           "name": "is_configured",
           "doc": "通过 Cell 公共服务检查角色是否已配置."
         }
@@ -465,14 +473,26 @@
     },
     {
       "type": "function",
+      "name": "run_interactive_interview_question",
+      "description": "Generate an interview answer through the evaluation service.",
+      "defined_in": "polaris/delivery/http/routers/interview.py"
+    },
+    {
+      "type": "function",
       "name": "save_interactive_interview_report",
-      "description": "兼容旧接口的保存报告函数",
+      "description": "Save an interview report through the evaluation service.",
+      "defined_in": "polaris/delivery/http/routers/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "run_interactive_interview_streaming",
+      "description": "Stream interview answer chunks through the evaluation service.",
       "defined_in": "polaris/delivery/http/routers/interview.py"
     },
     {
       "type": "function",
       "name": "cancel_interactive_interview_stream",
-      "description": "兼容旧接口的取消函数（简化实现）",
+      "description": "Return a best-effort cancellation acknowledgement for an interview stream.",
       "defined_in": "polaris/delivery/http/routers/interview.py"
     },
     {
@@ -495,8 +515,20 @@
     },
     {
       "type": "function",
-      "name": "llm_interview_save",
+      "name": "_publish_interview_chunk",
       "description": "",
+      "defined_in": "polaris/delivery/http/routers/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_interview_jetstream",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_llm_interview_ask",
+      "description": "Generate an interview answer for a given role and question.",
       "defined_in": "polaris/delivery/http/routers/interview.py"
     },
     {
@@ -507,14 +539,14 @@
     },
     {
       "type": "function",
-      "name": "llm_interview_cancel",
-      "description": "",
+      "name": "v2_llm_interview_cancel",
+      "description": "Best-effort cancellation of an interview stream.",
       "defined_in": "polaris/delivery/http/routers/interview.py"
     },
     {
       "type": "function",
-      "name": "v2_llm_interview_cancel",
-      "description": "Best-effort cancellation of an interview stream.",
+      "name": "v2_llm_interview_jetstream",
+      "description": "Start an interview run and publish chunks through runtime Nats-JetStream.",
       "defined_in": "polaris/delivery/http/routers/interview.py"
     },
     {
@@ -555,37 +587,37 @@
     },
     {
       "type": "function",
-      "name": "get_llm_config",
+      "name": "_get_llm_config_payload",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/llm.py"
     },
     {
       "type": "function",
-      "name": "save_llm_config",
+      "name": "_save_llm_config_payload",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/llm.py"
     },
     {
       "type": "function",
-      "name": "migrate_config",
+      "name": "_migrate_config_payload",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/llm.py"
     },
     {
       "type": "function",
-      "name": "llm_status",
+      "name": "_llm_status_payload",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/llm.py"
     },
     {
       "type": "function",
-      "name": "get_runtime_status",
+      "name": "_runtime_status_payload",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/llm.py"
     },
     {
       "type": "function",
-      "name": "get_role_runtime_status",
+      "name": "_role_runtime_status_payload",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/llm.py"
     },
@@ -711,48 +743,6 @@
     },
     {
       "type": "function",
-      "name": "provider_health",
-      "description": "",
-      "defined_in": "polaris/delivery/http/routers/providers.py"
-    },
-    {
-      "type": "function",
-      "name": "provider_models",
-      "description": "",
-      "defined_in": "polaris/delivery/http/routers/providers.py"
-    },
-    {
-      "type": "function",
-      "name": "list_providers",
-      "description": "List all available providers with their information",
-      "defined_in": "polaris/delivery/http/routers/providers.py"
-    },
-    {
-      "type": "function",
-      "name": "get_provider_info",
-      "description": "Get detailed information about a specific provider",
-      "defined_in": "polaris/delivery/http/routers/providers.py"
-    },
-    {
-      "type": "function",
-      "name": "get_provider_default_config",
-      "description": "Get default configuration for a provider",
-      "defined_in": "polaris/delivery/http/routers/providers.py"
-    },
-    {
-      "type": "function",
-      "name": "validate_provider_config",
-      "description": "Validate provider configuration",
-      "defined_in": "polaris/delivery/http/routers/providers.py"
-    },
-    {
-      "type": "function",
-      "name": "health_check_all",
-      "description": "Perform health checks on all configured providers",
-      "defined_in": "polaris/delivery/http/routers/providers.py"
-    },
-    {
-      "type": "function",
       "name": "v2_provider_health",
       "description": "Run a health check against a specific LLM provider.",
       "defined_in": "polaris/delivery/http/routers/providers.py"
@@ -827,6 +817,60 @@
       "type": "function",
       "name": "_discard",
       "description": "",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "_publish_test_chunk",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_llm_test",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_llm_test_report",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_llm_test_transcript",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_llm_test_jetstream",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_llm_test",
+      "description": "Run LLM readiness tests and return a report.",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_llm_test_jetstream",
+      "description": "Start LLM readiness tests and publish progress through runtime Nats-JetStream.",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_llm_test_report",
+      "description": "Get a persisted LLM test report by run ID.",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_llm_test_transcript",
+      "description": "Get a persisted LLM test transcript by run ID.",
       "defined_in": "polaris/delivery/http/routers/tests.py"
     },
     {

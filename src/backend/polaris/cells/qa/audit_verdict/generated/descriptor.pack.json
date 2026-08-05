@@ -1,10 +1,70 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T04:05:03.489327Z",
-  "source_hash": "756ddfe9cdee1c83",
+  "generated_at": "2026-08-02T15:47:38.867583Z",
+  "source_hash": "8382084698d114cd",
   "cell_id": "qa.audit_verdict",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "class",
+      "name": "QaEvidenceCommitReceiptV1",
+      "description": "Projection-barrier coordinates for one committed QA evidence fact.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/evidence_commit.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return a JSON-safe barrier projection."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "QaVerdictCommitReceiptV1",
+      "description": "Immutable receipt for one canonical QA verdict ledger fact.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/evidence_commit.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return a JSON-safe final-verdict commit receipt."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_findings_count",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/evidence_commit.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_qa_event",
+      "description": "Append one QA event and return immutable projection coordinates.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/evidence_commit.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalized_identity",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/evidence_commit.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_canonical_verdict_route",
+      "description": "Reject internally contradictory canonical verdict projections.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/evidence_commit.py"
+    },
+    {
+      "type": "function",
+      "name": "commit_qa_evidence",
+      "description": "Commit one typed QA observation and return its barrier receipt.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/evidence_commit.py"
+    },
+    {
+      "type": "function",
+      "name": "commit_qa_verdict",
+      "description": "Commit the canonical QA verdict before any task-state transition.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/evidence_commit.py"
+    },
     {
       "type": "class",
       "name": "ReviewStatus",
@@ -168,8 +228,8 @@
           "doc": ""
         },
         {
-          "name": "_build_verdict_engine_shadow",
-          "doc": "Build a non-authoritative Verdict Engine comparison payload."
+          "name": "_build_canonical_verdict_projection",
+          "doc": "Build the sole authoritative verdict from barrier-read evidence."
         },
         {
           "name": "poll_once",
@@ -197,7 +257,11 @@
         },
         {
           "name": "_append_qa_gate_to_run_ledger",
-          "doc": "Append QA verdict evidence to the platform Run Ledger when token-scoped."
+          "doc": "Append QA evidence and return its projection-barrier coordinates."
+        },
+        {
+          "name": "_apply_canonical_verdict_transition",
+          "doc": "Commit a canonical verdict, then apply its authorized route."
         },
         {
           "name": "_claim_and_process_one",
@@ -206,6 +270,14 @@
         {
           "name": "_build_qa_llm_review_message",
           "doc": ""
+        },
+        {
+          "name": "_run_qa_llm_review_async",
+          "doc": ""
+        },
+        {
+          "name": "_run_qa_audit_async",
+          "doc": "Run QA audit asynchronously and return result dict."
         },
         {
           "name": "_run_qa_audit",
@@ -263,32 +335,20 @@
     },
     {
       "type": "function",
-      "name": "_qa_verdict_engine_mode",
+      "name": "_qa_verdict_projection_payload",
       "description": "",
       "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
     },
     {
       "type": "function",
-      "name": "_qa_verdict_engine_shadow_payload",
-      "description": "",
-      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_authoritative_verdict_engine_route",
-      "description": "Use the verdict engine route only when explicitly promoted.",
+      "name": "_canonical_route_from_projection",
+      "description": "Validate and return the sole route authorized by the canonical envelope.",
       "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
     },
     {
       "type": "function",
       "name": "_qa_llm_audit_timeout_seconds",
       "description": "",
-      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
-    },
-    {
-      "type": "function",
-      "name": "_resolve_qa_route",
-      "description": "Resolve QA route from audit result.",
       "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
     },
     {
@@ -347,18 +407,6 @@
     },
     {
       "type": "function",
-      "name": "_qa_findings_requeue_enabled",
-      "description": "",
-      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
-    },
-    {
-      "type": "function",
-      "name": "_qa_findings_max_bounces",
-      "description": "Resolve the per-task RANK 1 requeue cap (env override, else 2). Clamped to >=0.",
-      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
-    },
-    {
-      "type": "function",
       "name": "_normalize_feedback_counters",
       "description": "",
       "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
@@ -385,6 +433,12 @@
       "type": "function",
       "name": "_format_qa_requeue_feedback",
       "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_failure_class_for_observed_verdict",
+      "description": "Map a local observation token to typed evidence, never to a transition.",
       "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
     },
     {
@@ -498,10 +552,19 @@
     },
     {
       "type": "class",
-      "name": "AuditResult",
-      "description": "Result of a quality audit.",
+      "name": "QaAuditEvidenceV1",
+      "description": "Typed local observations collected by :class:`QAService`.",
       "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_service.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "observed_verdict",
+          "doc": "Return the local observation summary without granting authority."
+        },
+        {
+          "name": "verdict",
+          "doc": "Compatibility alias for legacy evidence readers."
+        }
+      ]
     },
     {
       "type": "class",
@@ -521,6 +584,18 @@
           "doc": ""
         },
         {
+          "name": "_emit_typed_event",
+          "doc": "Emit a typed event through the adapter if available."
+        },
+        {
+          "name": "start",
+          "doc": "Start QA Service."
+        },
+        {
+          "name": "stop",
+          "doc": "Stop QA Service."
+        },
+        {
           "name": "_validate_path",
           "doc": "Validate and sanitize a file path to prevent directory traversal attacks."
         },
@@ -529,8 +604,28 @@
           "doc": "Check if a filename is safe (no path separators)."
         },
         {
+          "name": "audit_task",
+          "doc": "Audit a completed task."
+        },
+        {
+          "name": "run_tests",
+          "doc": "Run test suite."
+        },
+        {
           "name": "_check_python_file",
           "doc": "Check Python file for common issues."
+        },
+        {
+          "name": "_main_loop",
+          "doc": "Main processing loop."
+        },
+        {
+          "name": "_on_task_completed",
+          "doc": "Handle task completion for auto-audit."
+        },
+        {
+          "name": "_on_file_written",
+          "doc": "Handle file write notifications."
         },
         {
           "name": "get_status",
@@ -563,6 +658,20 @@
       "name": "get_quality_service",
       "description": "",
       "defined_in": "polaris/cells/qa/audit_verdict/internal/quality_service.py"
+    },
+    {
+      "type": "class",
+      "name": "QaVerdictConflictV1",
+      "description": "Canonical evidence conflicts that must block a QA verdict.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QaVerdictConflictRuleV1",
+      "description": "One deterministic conflict-resolution rule.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py",
+      "methods": []
     },
     {
       "type": "class",
@@ -608,12 +717,6 @@
     },
     {
       "type": "function",
-      "name": "_int_value",
-      "description": "",
-      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
-    },
-    {
-      "type": "function",
       "name": "_string_list",
       "description": "",
       "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
@@ -650,8 +753,62 @@
     },
     {
       "type": "function",
-      "name": "_failure_text",
+      "name": "_artifact_quality_issues",
       "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_artifact_quality_issue_codes",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_artifact_quality_issue_reason",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "classify_qa_audit_failure",
+      "description": "Classify local QA observations before they are committed as evidence.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_boundary_for_task",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_boundary_is_authoritative",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_evidence_conflicts",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_blocked_conflict_classification",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_execution_evidence_missing_outcome",
+      "description": "Build the canonical non-Director route for missing execution evidence.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_route_committed_qa_failure",
+      "description": "Route a typed QA finding only after its ledger barrier is satisfied.",
       "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_engine.py"
     },
     {
@@ -770,7 +927,7 @@
     {
       "type": "class",
       "name": "QaFailureClassificationV1",
-      "description": "Typed QA failure routing decision.",
+      "description": "Typed QA routing decision with an optional canonical failure class.",
       "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
       "methods": [
         {
@@ -855,6 +1012,12 @@
     },
     {
       "type": "function",
+      "name": "_qa_failure_class_key",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py"
+    },
+    {
+      "type": "function",
       "name": "_normalize_qa_failure_class",
       "description": "",
       "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py"
@@ -867,8 +1030,20 @@
     },
     {
       "type": "function",
+      "name": "project_qa_failure_execution_state",
+      "description": "Project a QA failure class into the runtime execution-state vocabulary.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py"
+    },
+    {
+      "type": "function",
       "name": "build_qa_failure_classification_v1",
       "description": "Build the canonical QA failure classification contract.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "build_qa_pass_classification_v1",
+      "description": "Build QA routing metadata for a successful verdict without a failure.",
       "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py"
     },
     {
@@ -891,8 +1066,20 @@
     },
     {
       "type": "function",
-      "name": "_qa_result_to_audit_dict",
+      "name": "_qa_evidence_to_audit_dict",
       "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_result_to_audit_dict",
+      "description": "Project a persisted public result back into non-authoritative evidence.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_command_payload",
+      "description": "Build the structured QA input without hiding control-plane authority.",
       "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
     },
     {

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:13.652729Z",
-  "source_hash": "b84649888ae1310f",
+  "generated_at": "2026-08-02T15:47:42.095104Z",
+  "source_hash": "99df5f200b7a80f1",
   "cell_id": "docs.court_workflow",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -315,6 +315,48 @@
     },
     {
       "type": "function",
+      "name": "_get_pm_status",
+      "description": "构建 PM 状态.",
+      "defined_in": "polaris/delivery/http/routers/court.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_director_status",
+      "description": "构建 Director 状态.",
+      "defined_in": "polaris/delivery/http/routers/court.py"
+    },
+    {
+      "type": "function",
+      "name": "get_topology_v2",
+      "description": "Get court topology structure.",
+      "defined_in": "polaris/delivery/http/routers/court.py"
+    },
+    {
+      "type": "function",
+      "name": "get_state_v2",
+      "description": "Get current court state.",
+      "defined_in": "polaris/delivery/http/routers/court.py"
+    },
+    {
+      "type": "function",
+      "name": "get_actor_detail_v2",
+      "description": "Get detailed information for a single role.",
+      "defined_in": "polaris/delivery/http/routers/court.py"
+    },
+    {
+      "type": "function",
+      "name": "get_scene_detail_v2",
+      "description": "Get detailed configuration for a single scene.",
+      "defined_in": "polaris/delivery/http/routers/court.py"
+    },
+    {
+      "type": "function",
+      "name": "get_role_mapping_v2",
+      "description": "Get technical role to court role mapping table.",
+      "defined_in": "polaris/delivery/http/routers/court.py"
+    },
+    {
+      "type": "function",
       "name": "_safe_docs_event_id",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/docs.py"
@@ -340,6 +382,18 @@
     {
       "type": "function",
       "name": "_docs_init_subject",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "_publish_docs_init_chunk",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "_drain_docs_init_queue_to_jetstream",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/docs.py"
     },
@@ -387,8 +441,80 @@
     },
     {
       "type": "function",
+      "name": "_resolve_docs_preview_ai_fields",
+      "description": "Resolve Docs Init AI fields with a bounded fallback path.",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
       "name": "_build_history",
       "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "_docs_init_dialogue_core",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "docs_init_dialogue_v2",
+      "description": "Interactive docs wizard dialogue turn (non-streaming).",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_docs_init_dialogue_jetstream",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "docs_init_dialogue_jetstream_v2",
+      "description": "Start docs wizard dialogue and publish chunks through runtime Nats-JetStream.",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "_docs_init_suggest_core",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "docs_init_suggest_v2",
+      "description": "Suggest docs fields using the Architect LLM.",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "_docs_init_preview_core",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "docs_init_preview_v2",
+      "description": "Preview generated docs artifacts before applying.",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "_generate_docs_init_preview_events",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_docs_init_preview_jetstream",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "docs_init_preview_jetstream_v2",
+      "description": "Start docs preview generation and publish chunks through runtime Nats-JetStream.",
       "defined_in": "polaris/delivery/http/routers/docs.py"
     },
     {
@@ -401,12 +527,6 @@
       "type": "function",
       "name": "docs_init_apply_v2",
       "description": "Apply generated docs artifacts to the workspace.",
-      "defined_in": "polaris/delivery/http/routers/docs.py"
-    },
-    {
-      "type": "function",
-      "name": "docs_init_apply",
-      "description": "",
       "defined_in": "polaris/delivery/http/routers/docs.py"
     }
   ],

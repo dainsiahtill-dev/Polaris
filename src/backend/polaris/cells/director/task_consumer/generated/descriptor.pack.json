@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:11.596207Z",
-  "source_hash": "8fa63c5975662a6a",
+  "generated_at": "2026-08-02T15:47:39.461111Z",
+  "source_hash": "362254eb2f0c1f55",
   "cell_id": "director.task_consumer",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -35,6 +35,32 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "_OwnerHandoffFailure",
+      "description": "Typed adapter-failure evidence needed for owner-task routing.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_OwnerHandoffRoutingRequiredError",
+      "description": "Control-flow signal for a structured ScopeAuthority owner handoff.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_OwnerReworkPreparationPlan",
+      "description": "Validated public evidence needed before TaskRuntime may reopen a task.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py",
+      "methods": []
     },
     {
       "type": "class",
@@ -103,12 +129,24 @@
           "doc": ""
         },
         {
+          "name": "_owner_rework_preparation_plan",
+          "doc": "Build TaskRuntime evidence from TaskMarket's public claim projection."
+        },
+        {
           "name": "poll_once",
           "doc": "Poll once for PENDING_EXEC tasks."
         },
         {
           "name": "_process_claim",
           "doc": "Process a single claimed execution task."
+        },
+        {
+          "name": "_handle_owner_handoff_routing",
+          "doc": "Route one structured owner handoff while the requester lease is held."
+        },
+        {
+          "name": "_fail_owner_handoff",
+          "doc": "Requeue a lease-held owner-handoff failure with its typed evidence."
         },
         {
           "name": "_append_final_convergence_event",
@@ -179,6 +217,12 @@
     {
       "type": "function",
       "name": "_director_execution_timeout_seconds",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_await_with_optional_timeout",
       "description": "",
       "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
     },
@@ -324,6 +368,66 @@
       "type": "function",
       "name": "_adapter_failure_message",
       "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_structured_adapter_failure_mappings",
+      "description": "Return bounded typed mappings reachable through known failure fields.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_contains_owner_handoff_requests",
+      "description": "Return whether a typed scope payload contains concrete handoff rows.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_structured_failure_token",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_failure_evidence_rows",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_owner_handoff_failure_from_adapter_failure",
+      "description": "Extract owner-handoff facts from a typed adapter failure payload.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_owner_handoff_id",
+      "description": "Return a deterministic idempotency key for one typed handoff request.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_owner_handoff_failure_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_owner_handoff_evidence_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_owner_handoff_route_result_summary",
+      "description": "Project the public owner-rework result without interpreting its meaning.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_owner_handoff_failure_projection",
+      "description": "Build auditable failure metadata from typed handoff facts only.",
       "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
     },
     {

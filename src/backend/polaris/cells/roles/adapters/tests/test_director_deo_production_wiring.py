@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from polaris.cells.control_plane.run_ledger.public import stable_hash
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 from polaris.cells.runtime.task_runtime.public import TaskRuntimeExecutionAttemptIdentityV1
@@ -229,27 +230,50 @@ async def test_director_timeout_boundary_rejects_execution_envelope_with_mismatc
     assert "execution_envelope_hash" not in caller_context
 
 
+def _strict_leaf_authority_context() -> dict[str, Any]:
+    token = {
+        "schema_version": 1,
+        "token_id": "job-1",
+        "capability_audit": {"ok": True, "issues": []},
+        "allowed_write_paths": ["src/main.rs"],
+        "allowed_read_paths": ["src/main.rs", "src/lib.rs"],
+    }
+    token_hash = stable_hash(token)
+    return {
+        "job_token": token,
+        "control_plane_job_token": token,
+        "capability_token": token,
+        "capability_token_hash": token_hash,
+        "director_execution_envelope": {
+            "envelope_hash": "b" * 64,
+            "authorization": {
+                "capability_token_ref": "job-1",
+                "capability_token_hash": token_hash,
+                "allowed_write_paths": ["src/main.rs"],
+            },
+        },
+    }
+
+
+def _nested_leaf_authority_context() -> dict[str, Any]:
+    context = _strict_leaf_authority_context()
+    token_hash = context["capability_token_hash"]
+    context["metadata"] = {
+        "job_token": context.pop("job_token"),
+        "control_plane_job_token": context.pop("control_plane_job_token"),
+        "capability_token": context.pop("capability_token"),
+        "capability_token_hash": token_hash,
+        "director_execution_envelope": context.pop("director_execution_envelope"),
+    }
+    return context
+
+
 def test_deferred_repair_authority_composes_matching_job_token_and_execution_envelope() -> None:
     from polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge import (
         _capability_token_from_context,
     )
 
-    token = _capability_token_from_context(
-        {
-            "job_token": {
-                "token_id": "job-1",
-                "capability_audit": {"ok": True, "issues": []},
-                "allowed_write_paths": ["src/main.rs"],
-            },
-            "director_execution_envelope": {
-                "envelope_hash": "b" * 64,
-                "authorization": {
-                    "capability_token_ref": "job-1",
-                    "allowed_write_paths": ["src/main.rs"],
-                },
-            },
-        }
-    )
+    token = _capability_token_from_context(_strict_leaf_authority_context())
 
     assert token is not None
     assert token["token_id"] == "job-1"
@@ -257,32 +281,196 @@ def test_deferred_repair_authority_composes_matching_job_token_and_execution_env
     assert token["allowed_write_paths"] == ["src/main.rs"]
 
 
+def test_deferred_repair_authority_accepts_nested_projection_bound_to_canonical_root_hash() -> None:
+    from polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge import (
+        _capability_token_from_context,
+    )
+
+    token = _capability_token_from_context(_nested_leaf_authority_context())
+
+    assert token is not None
+    assert token["token_id"] == "job-1"
+
+
+def test_deferred_repair_read_dependency_never_expands_write_scope() -> None:
+    from polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge import (
+        _capability_scope_from_context,
+    )
+    from polaris.cells.roles.kernel.internal.directed_effect_policy_guard import (
+        _gateway_denial_code,
+        _path_matches_capability_scope,
+    )
+
+    context = _strict_leaf_authority_context()
+    token = context["job_token"]
+    assert isinstance(token, dict)
+    token["allowed_write_paths"] = ["src/consumer.py"]
+    token["allowed_read_paths"] = ["src/consumer.py", "src/provider.py"]
+    token_hash = stable_hash(token)
+    context["capability_token_hash"] = token_hash
+    envelope = context["director_execution_envelope"]
+    assert isinstance(envelope, dict)
+    authorization = envelope["authorization"]
+    assert isinstance(authorization, dict)
+    authorization["capability_token_ref"] = "job-1"
+    authorization["capability_token_hash"] = token_hash
+    authorization["allowed_write_paths"] = ["src/consumer.py"]
+    context["scope_paths"] = ["src/consumer.py", "src/provider.py"]
+    context["allowed_paths"] = ["src/consumer.py", "src/provider.py"]
+
+    scope = _capability_scope_from_context(context)
+    assert scope == ("src/consumer.py",)
+    assert not _path_matches_capability_scope("src/provider.py", scope)
+    assert _gateway_denial_code("path scope denied") == "deo_path_scope_denied"
+
+
 @pytest.mark.parametrize(
-    "context",
+    "defect",
     (
-        {
-            "director_execution_envelope": {
-                "envelope_hash": "c" * 64,
-                "authorization": {"capability_token_ref": "job-1"},
-            }
-        },
-        {
-            "job_token": {
-                "token_id": "job-1",
-                "capability_audit": {"ok": True, "issues": []},
-            },
-            "director_execution_envelope": {
-                "envelope_hash": "d" * 64,
-                "authorization": {"capability_token_ref": "job-other"},
-            },
-        },
+        "single_alias",
+        "absent_schema",
+        "bad_token_hash",
+        "envelope_hash_mismatch",
+        "envelope_token_hash_mismatch",
+        "alias_content_mismatch",
     ),
 )
 def test_deferred_repair_authority_rejects_unbound_or_mismatched_envelope(
-    context: dict[str, Any],
+    defect: str,
 ) -> None:
     from polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge import (
         _capability_token_from_context,
     )
 
+    context = _strict_leaf_authority_context()
+    token = context["job_token"]
+    envelope = context["director_execution_envelope"]
+    assert isinstance(token, dict) and isinstance(envelope, dict)
+    authorization = envelope["authorization"]
+    assert isinstance(authorization, dict)
+    if defect == "single_alias":
+        context.pop("control_plane_job_token")
+        context.pop("capability_token")
+    elif defect == "absent_schema":
+        token.pop("schema_version")
+        token_hash = stable_hash(token)
+        context["capability_token_hash"] = token_hash
+        authorization["capability_token_hash"] = token_hash
+    elif defect == "bad_token_hash":
+        context["capability_token_hash"] = "0" * 64
+    elif defect == "envelope_hash_mismatch":
+        token["execution_envelope_hash"] = "f" * 64
+        token_hash = stable_hash(token)
+        context["capability_token_hash"] = token_hash
+        authorization["capability_token_hash"] = token_hash
+    elif defect == "envelope_token_hash_mismatch":
+        authorization["capability_token_hash"] = "0" * 64
+    else:
+        context["capability_token"] = {**token, "source": "forged"}
+
     assert _capability_token_from_context(context) is None
+
+
+@pytest.mark.parametrize(
+    "defect",
+    ("root_hash_missing", "root_hash_bad", "nested_hash_missing", "nested_hash_bad"),
+)
+def test_nested_authority_cannot_bypass_canonical_root_token_hash(defect: str) -> None:
+    from polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge import (
+        _capability_token_from_context,
+    )
+
+    context = _nested_leaf_authority_context()
+    metadata = context["metadata"]
+    assert isinstance(metadata, dict)
+    if defect == "root_hash_missing":
+        context.pop("capability_token_hash")
+    elif defect == "root_hash_bad":
+        context["capability_token_hash"] = "0" * 64
+    elif defect == "nested_hash_missing":
+        metadata.pop("capability_token_hash")
+    else:
+        metadata["capability_token_hash"] = "0" * 64
+
+    assert _capability_token_from_context(context) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "authority_defect",
+    (
+        "root_hash_missing",
+        "root_hash_bad",
+        "malformed_nested_alias",
+        "malformed_nested_envelope",
+        "malformed_root_alias",
+        "malformed_root_envelope",
+    ),
+)
+async def test_invalid_leaf_authority_never_mutates_on_actual_deferred_commit_path(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    authority_defect: str,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director import (
+        deferred_repair_commit_bridge as bridge,
+    )
+
+    target = tmp_path / "src" / "main.rs"
+    target.parent.mkdir(parents=True)
+    target.write_text("fn main() {}\n", encoding="utf-8")
+    attempt = TaskRuntimeExecutionAttemptIdentityV1(
+        workspace=str(tmp_path.resolve()),
+        task_id=1,
+        external_task_id="task-1",
+        session_id="session-1",
+        attempt=1,
+        role_id="director",
+        worker_id="worker-1",
+        run_id="run-1",
+        lease_expires_at="2099-01-01T00:00:00Z",
+    )
+    context = (
+        _nested_leaf_authority_context()
+        if authority_defect.startswith("root_hash") or authority_defect.startswith("malformed_root")
+        else _strict_leaf_authority_context()
+    )
+    if authority_defect == "root_hash_missing":
+        context.pop("capability_token_hash")
+    elif authority_defect == "root_hash_bad":
+        context["capability_token_hash"] = "0" * 64
+    elif authority_defect == "malformed_nested_alias":
+        token = context["job_token"]
+        context["metadata"] = {
+            "job_token": "malformed-token",
+            "control_plane_job_token": token,
+            "capability_token": token,
+            "capability_token_hash": context["capability_token_hash"],
+        }
+    elif authority_defect == "malformed_nested_envelope":
+        context["context_override"] = {
+            "capability_token_hash": context["capability_token_hash"],
+            "director_execution_envelope": ["malformed-envelope"],
+        }
+    elif authority_defect == "malformed_root_alias":
+        context["job_token"] = "malformed-token"
+    else:
+        context["director_execution_envelope"] = ["malformed-envelope"]
+
+    def unexpected_port_construction(*_args: Any, **_kwargs: Any) -> Any:
+        pytest.fail("invalid authority must fail before physical port construction")
+
+    monkeypatch.setattr(bridge, "create_director_effect_policy_snapshot_port", unexpected_port_construction)
+    monkeypatch.setattr(bridge, "create_directed_effect_fence_ports", unexpected_port_construction)
+    monkeypatch.setattr(bridge, "create_director_directed_effect_mutation_port", unexpected_port_construction)
+
+    receipts = await bridge.commit_materialization_deferred_repairs(
+        workspace=attempt.workspace,
+        tool_results=[{"success": True, "result": {"status": "deferred_repair_effects_pending"}}],
+        execution_attempt=attempt,
+        execution_attempt_authority=create_task_runtime_execution_attempt_authority(attempt),
+        context=context,
+    )
+
+    assert receipts == []
+    assert target.read_text(encoding="utf-8") == "fn main() {}\n"

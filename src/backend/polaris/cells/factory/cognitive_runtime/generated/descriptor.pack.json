@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:18.481594Z",
-  "source_hash": "03083460a2cd9e62",
+  "generated_at": "2026-08-02T15:47:48.485261Z",
+  "source_hash": "8852eba241248e7a",
   "cell_id": "factory.cognitive_runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -164,6 +164,12 @@
     {
       "type": "function",
       "name": "_runner",
+      "description": "",
+      "defined_in": "polaris/application/cognitive_runtime/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_state_first_context_os",
       "description": "",
       "defined_in": "polaris/application/cognitive_runtime/service.py"
     },
@@ -503,6 +509,12 @@
     },
     {
       "type": "function",
+      "name": "_create_cognitive_runtime_service",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/service.py"
+    },
+    {
+      "type": "function",
       "name": "get_cognitive_runtime_public_service",
       "description": "",
       "defined_in": "polaris/cells/factory/cognitive_runtime/public/service.py"
@@ -595,78 +607,6 @@
       "type": "function",
       "name": "get_handoff_pack",
       "description": "",
-      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "v2_resolve_context",
-      "description": "Resolve runtime context for a role and query.",
-      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "v2_lease_edit_scope",
-      "description": "Lease an edit scope for safe file modifications.",
-      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "v2_validate_change_set",
-      "description": "Validate a change set against allowed scope and evidence.",
-      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "v2_record_runtime_receipt",
-      "description": "Record a runtime receipt for audit.",
-      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "v2_get_runtime_receipt",
-      "description": "Retrieve a runtime receipt by ID.",
-      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "v2_export_handoff_pack",
-      "description": "Export a handoff pack for cross-session continuity.",
-      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "v2_rehydrate_handoff_pack",
-      "description": "Rehydrate a handoff pack into a target session.",
-      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "v2_map_diff_to_cells",
-      "description": "Map a file diff to affected cells in the graph catalog.",
-      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "v2_request_projection_compile",
-      "description": "Request a projection compile for changed files and cells.",
-      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "v2_promote_or_reject",
-      "description": "Promote or reject a change set based on gates and receipts.",
-      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "v2_record_rollback_ledger",
-      "description": "Record a rollback ledger entry for audit.",
-      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
-    },
-    {
-      "type": "function",
-      "name": "v2_get_handoff_pack",
-      "description": "Retrieve a handoff pack by ID.",
       "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
     },
     {

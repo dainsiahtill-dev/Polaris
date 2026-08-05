@@ -24,14 +24,18 @@ public_contracts:
   - polaris.cells.audit.evidence.public.service
   commands:
   - AppendEvidenceEventCommandV1
+  - PersistManagedProcessReceiptCommandV1
   queries:
   - QueryEvidenceEventsV1
+  - ReadManagedProcessReceiptQueryV1
   - VerifyEvidenceChainV1
   events:
   - EvidenceAppendedEventV1
   results:
   - EvidenceQueryResultV1
   - EvidenceVerificationResultV1
+  - ManagedProcessReceiptPersistResultV1
+  - ManagedProcessReceiptRecordV1
   errors:
   - EvidenceAuditErrorV1
 depends_on:
@@ -49,6 +53,7 @@ effects_allowed:
 verification:
   tests:
   - polaris/cells/audit/evidence/tests/test_evidence_contract.py
+  - polaris/cells/audit/evidence/tests/test_managed_process_receipts.py
   - tests/test_log_pipeline_storage_layout.py
   gaps:
   - Runtime event writers are not fully funneled through this boundary yet.

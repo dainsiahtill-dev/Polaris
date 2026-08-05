@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T05:20:53.556679Z",
-  "source_hash": "0547fa0ac1f102e4",
+  "generated_at": "2026-08-02T15:47:40.734439Z",
+  "source_hash": "2270c367b2418130",
   "cell_id": "director.runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -776,7 +776,43 @@
     {
       "type": "function",
       "name": "normalize_artifact_quality_errors",
-      "description": "Convert raw artifact-quality strings into typed repair diagnostics.",
+      "description": "Convert raw or structured artifact-quality input into repair diagnostics.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/diagnostics.py"
+    },
+    {
+      "type": "function",
+      "name": "flush_ts_buffer",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/diagnostics.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_text_error_blob",
+      "description": "Normalize one text blob that may contain multi-line tsc diagnostics.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/diagnostics.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_structured_error",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/diagnostics.py"
+    },
+    {
+      "type": "function",
+      "name": "_structured_text",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/diagnostics.py"
+    },
+    {
+      "type": "function",
+      "name": "_structured_path",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/diagnostics.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_error_continuation_lines",
+      "description": "Capture indented tsc follow-up lines (e.g. missing-properties clauses).",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/diagnostics.py"
     },
     {
@@ -1198,6 +1234,12 @@
     },
     {
       "type": "function",
+      "name": "_diagnostics_for_generic_hygiene",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/generic_hygiene_runtime.py"
+    },
+    {
+      "type": "function",
       "name": "_normalize_base_files",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/generic_hygiene_runtime.py"
@@ -1229,7 +1271,13 @@
     {
       "type": "function",
       "name": "build_runtime_dependency_plan",
-      "description": "Build structured package.json dependency repairs for known safe packages.",
+      "description": "Build structured dependency-manifest repairs from explicit diagnostics.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/generic_hygiene_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_tsconfig_node_types_operations",
+      "description": "Ensure ``compilerOptions.types`` includes ``node`` for TS2580 process globals.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/generic_hygiene_syntax.py"
     },
     {
@@ -1294,6 +1342,12 @@
     },
     {
       "type": "function",
+      "name": "_typed_scaffold_marker_error_path",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/generic_hygiene_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "_parse_undeclared_runtime_import_packages",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/generic_hygiene_syntax.py"
@@ -1301,6 +1355,12 @@
     {
       "type": "function",
       "name": "_parse_required_dev_dependency_packages",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/generic_hygiene_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_python_requirements_packages",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/generic_hygiene_syntax.py"
     },
@@ -1446,6 +1506,12 @@
     {
       "type": "function",
       "name": "_normalize_base_files",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/go_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_diagnostics_for_go_repair",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/go_runtime.py"
     },
@@ -2205,6 +2271,24 @@
     },
     {
       "type": "function",
+      "name": "_script_names_for_manifest_issue",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_diagnostic_script_name",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_missing_entrypoints_from_diagnostics",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "_is_node_test_script_contract_diagnostic",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
@@ -2241,13 +2325,31 @@
     },
     {
       "type": "function",
+      "name": "_has_node_test_runner_contract_diagnostic",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "_has_fixed_port_start_script_error",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
     },
     {
       "type": "function",
+      "name": "_has_fixed_port_start_script_diagnostic",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "_has_typescript_source_loader_start_error",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_typescript_source_loader_start_diagnostic",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
     },
@@ -2265,7 +2367,67 @@
     },
     {
       "type": "function",
+      "name": "_has_repairable_test_script_diagnostic",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "_node_test_runner_script",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_placeholder_scripts",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_python_command_scripts",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_fallback_script_for_python_command_script",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_fallback_script_for_placeholder_script",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_node_source_syntax_check_script",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_plain_javascript_source_path",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_non_placeholder_script",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_looks_like_placeholder_script",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_node_test_files",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
     },
@@ -2289,6 +2451,12 @@
     },
     {
       "type": "function",
+      "name": "_missing_node_dist_entrypoints_from_diagnostics",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "_recursive_scripts",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
@@ -2296,6 +2464,12 @@
     {
       "type": "function",
       "name": "_fallback_script_for_recursive_script",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_javascript_node_smoke_entrypoint",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
     },
@@ -2427,6 +2601,12 @@
     },
     {
       "type": "function",
+      "name": "_javascript_module_imports_local_binding",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "_export_existing_declaration_operation",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
@@ -2434,6 +2614,12 @@
     {
       "type": "function",
       "name": "_export_class_method_facade_operation",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_imported_binding_reexport_operation",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax.py"
     },
@@ -3212,6 +3398,12 @@
     },
     {
       "type": "function",
+      "name": "plan_python_missing_module_alias_repair",
+      "description": "Plan a missing source-root module alias inside the runtime kernel.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/python_runtime.py"
+    },
+    {
+      "type": "function",
       "name": "plan_python_unresolved_import_symbol_repair",
       "description": "Plan unresolved import-symbol repairs inside the runtime kernel.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/python_runtime.py"
@@ -3250,6 +3442,12 @@
       "type": "function",
       "name": "run_python_package_shadow_bridge_repair",
       "description": "Run package/module shadow bridge repair through Plan->Compose->Policy->Execute.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/python_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "run_python_missing_module_alias_repair",
+      "description": "Run missing source-root module alias repair through the governed kernel.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/python_runtime.py"
     },
     {
@@ -3304,6 +3502,24 @@
       "type": "function",
       "name": "build_python_package_shadow_bridge_plan",
       "description": "Append package/module shadow bridge code for package.py symbols.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/python_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "build_python_missing_module_alias_plan",
+      "description": "Create a source-root compatibility module for one unambiguous nested module.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/python_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_python_missing_top_level_module_name",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/python_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_python_nested_module_alias_candidates",
+      "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/python_syntax.py"
     },
     {
@@ -3861,6 +4077,12 @@
     },
     {
       "type": "function",
+      "name": "_diagnostic_metadata_archetype",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/registry.py"
+    },
+    {
+      "type": "function",
       "name": "_looks_like_rust_missing_method_self",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/registry.py"
@@ -3904,6 +4126,12 @@
     {
       "type": "function",
       "name": "_infer_diagnostic_phase",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/registry.py"
+    },
+    {
+      "type": "function",
+      "name": "_infer_typed_diagnostic_phase",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/registry.py"
     },
@@ -3983,6 +4211,12 @@
     },
     {
       "type": "function",
+      "name": "_initial_runtime_diagnostics",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
+    },
+    {
+      "type": "function",
       "name": "_normalize_source_tools",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
@@ -3990,6 +4224,18 @@
     {
       "type": "function",
       "name": "_artifact_quality_errors_from_diagnostics",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_artifact_quality_errors",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "_effective_artifact_quality_errors",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
     },
@@ -4051,6 +4297,12 @@
       "type": "function",
       "name": "runtime_repair_bindings",
       "description": "Return registered executable runtime repair bindings without callables.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "runtime_repair_binding_has_typed_planner",
+      "description": "Return whether *source_tool* has a typed diagnostic planner.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
     },
     {
@@ -4151,6 +4403,12 @@
     },
     {
       "type": "function",
+      "name": "_plan_javascript_dom_global_runtime_guard_typed",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
+    },
+    {
+      "type": "function",
       "name": "_plan_javascript_missing_method_runtime",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
@@ -4182,6 +4440,12 @@
     {
       "type": "function",
       "name": "_plan_python_package_shadow_bridge",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "_plan_python_missing_module_alias",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
     },
@@ -4236,6 +4500,12 @@
     {
       "type": "function",
       "name": "_plan_go_error_string_helper",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "_plan_go_error_string_helper_typed",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
     },
@@ -4385,6 +4655,18 @@
     },
     {
       "type": "function",
+      "name": "_plan_generic_hygiene_typed",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "planner",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
+    },
+    {
+      "type": "function",
       "name": "_plan_cpp_include_path",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
@@ -4499,7 +4781,31 @@
     },
     {
       "type": "function",
+      "name": "_plan_typescript_runtime_source_tool_typed",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "planner",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
+    },
+    {
+      "type": "function",
       "name": "_run_typescript_runtime_source_tool",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "runner",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_typescript_runtime_source_tool_typed",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
     },
@@ -4589,6 +4895,12 @@
     },
     {
       "type": "function",
+      "name": "_run_python_missing_module_alias",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
+    },
+    {
+      "type": "function",
       "name": "_run_python_unresolved_import_symbol",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
@@ -4638,6 +4950,12 @@
     {
       "type": "function",
       "name": "_run_go_error_string_helper",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_go_error_string_helper_typed",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
     },
@@ -4776,6 +5094,18 @@
     {
       "type": "function",
       "name": "_run_generic_hygiene",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "runner",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_generic_hygiene_typed",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch.py"
     },
@@ -6164,7 +6494,7 @@
     {
       "type": "function",
       "name": "build_rust_missing_binary_entrypoint_plan",
-      "description": "Build write-file operations for declared Rust binary targets missing an entrypoint.",
+      "description": "Build write-file ops for missing Rust binary entrypoints (declared or implied).",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/rust_syntax.py"
     },
     {
@@ -6206,7 +6536,7 @@
     {
       "type": "function",
       "name": "build_rust_missing_trait_derive_plan",
-      "description": "Build span-based edits that add ordinary missing trait derives to Rust structs.",
+      "description": "Build span-based edits that add ordinary missing trait derives to Rust structs/enums.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/rust_syntax.py"
     },
     {
@@ -6291,6 +6621,12 @@
       "type": "function",
       "name": "_rust_file_for_module_symbol",
       "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/rust_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_expand_rust_derive_prerequisites",
+      "description": "Expand requested derives with their rustc-required companion traits.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/rust_syntax.py"
     },
     {
@@ -6488,6 +6824,18 @@
     {
       "type": "function",
       "name": "_declared_rust_binary_entrypoint_paths",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/rust_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_rust_missing_binary_paths_from_diagnostic",
+      "description": "Project cargo-shaped missing-bin diagnostics into workspace-relative paths.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/rust_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_diagnostics_indicate_missing_rust_binary",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/rust_syntax.py"
     },
@@ -7345,6 +7693,12 @@
     },
     {
       "type": "function",
+      "name": "_diagnostics_for_typescript_runtime",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_runtime.py"
+    },
+    {
+      "type": "function",
       "name": "_normalize_repair_path",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_runtime.py"
@@ -7424,7 +7778,7 @@
     {
       "type": "function",
       "name": "build_typescript_duplicate_object_property_plan",
-      "description": "Build a canonical repair plan for TS1117 duplicate object property lines.",
+      "description": "Build a canonical repair plan for TS1117/TS2300 duplicate property lines.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
     },
     {
@@ -7454,7 +7808,61 @@
     {
       "type": "function",
       "name": "build_typescript_readonly_assignment_plan",
-      "description": "Build a narrow TS2540 repair plan for same-file readonly declarations.",
+      "description": "Build TS2540/TS2542 repairs for readonly property and ReadonlyArray index writes.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "build_typescript_literal_union_expand_plan",
+      "description": "Expand string-literal union aliases when usage emits a missing literal (R160 TS2322).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "build_typescript_init_property_alias_plan",
+      "description": "Rename common excess init keys on object literals (R160 TS2353).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_functions_accepting_type",
+      "description": "Return exported function names whose first parameter is ``type_name``.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_pick_function_alias",
+      "description": "Pick the best alternative function name for a wrong-domain callee (R161).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_rewrite_named_import_binding_lines",
+      "description": "Return (line_index, repaired_line) for named-import bindings old_name → new_name.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "build_typescript_arg_type_function_alias_plan",
+      "description": "Rewrite wrong-domain callees when argument type mismatches the parameter (R161).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "build_typescript_json_as_source_plan",
+      "description": "Rewrite package-manifest JSON written into ``.ts``/``.tsx`` paths (R159).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_package_json_enable_node_test_script_operation",
+      "description": "Point scripts.test at node --test smoke when it only re-ran build/tsc (R169).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "build_typescript_duplicate_function_plan",
+      "description": "Remove later duplicate function declarations (TS2393 / TS2323 redeclare export).",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
     },
     {
@@ -7514,7 +7922,7 @@
     {
       "type": "function",
       "name": "_build_html_typescript_module_script_plan",
-      "description": "",
+      "description": "Plan HTML entrypoint quality repairs (TS module scripts + truncated HTML).",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
     },
     {
@@ -7562,6 +7970,12 @@
     {
       "type": "function",
       "name": "_build_typescript_member_alias_plan",
+      "description": "Rewrite missing member access to existing API surface (R160 class getters/methods).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_ensure_working",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
     },
@@ -7574,6 +7988,48 @@
     {
       "type": "function",
       "name": "_build_typescript_import_specifier_keyword_plan",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_typescript_missing_relative_module_plan",
+      "description": "Create missing relative TypeScript modules reported as TS2307 (R180 verify.js).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_typescript_invalid_module_augmentation_plan",
+      "description": "Strip invalid ``declare module`` blocks (TS2664) when the target cannot resolve.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_typescript_missing_relative_module_errors",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_typescript_invalid_module_augmentation_errors",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_relative_module_stub_path",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_typescript_relative_module_stub_content",
+      "description": "Minimal stub for a missing relative module based on importer usage.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_remove_typescript_declare_module_block_operation",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
     },
@@ -7617,6 +8073,24 @@
       "type": "function",
       "name": "_build_typescript_unique_export_import_plan",
       "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_import_type_value_conflict_symbols",
+      "description": "Map path → symbols that collide as type-only + value imports (R164).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_rewrite_import_type_value_conflict_content",
+      "description": "Drop type-only bindings when a value import of the same name exists.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_typescript_import_type_value_conflict_plan",
+      "description": "Resolve type-only vs value import conflicts (TS2300 / TS1361, R164).",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
     },
     {
@@ -7741,6 +8215,30 @@
     },
     {
       "type": "function",
+      "name": "_is_package_manifest_json_content",
+      "description": "Return True when a TypeScript path body is actually a package.json object.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_smoke_verify_module_content",
+      "description": "Minimal valid TypeScript module for a path that previously held package JSON.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_node_smoke_test_content",
+      "description": "Minimal smoke test for package.json scripts.test that lack targets.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_missing_package_script_test_targets",
+      "description": "Return concrete missing test paths declared by package.json scripts.test.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "_repair_plan_or_none",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
@@ -7761,6 +8259,12 @@
       "type": "function",
       "name": "_typescript_errors_require_rootdir_widening",
       "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_removed_compiler_options",
+      "description": "Return removed tsconfig compiler options explicitly present in diagnostics.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
     },
     {
@@ -7789,8 +8293,32 @@
     },
     {
       "type": "function",
-      "name": "_html_javascript_entrypoint_for_typescript_source",
+      "name": "_parse_html_truncated_entrypoint_paths",
+      "description": "Return unique HTML paths with truncated/incomplete HTML diagnostics.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_html_entrypoint_quality_text_with_metadata",
+      "description": "Close truncated HTML structure and rewrite TS module scripts to compiled JS.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_replace_src",
       "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_common_prefix_len",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_html_javascript_entrypoint_for_typescript_source",
+      "description": "Map a TypeScript module script src to the compiled JavaScript entrypoint.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
     },
     {
@@ -7915,6 +8443,12 @@
     },
     {
       "type": "function",
+      "name": "_typed_typescript_escaped_newline_path",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "repair_typescript_escaped_newline_in_line_comments",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
@@ -7981,6 +8515,18 @@
     },
     {
       "type": "function",
+      "name": "_typescript_line_is_import_binding_context",
+      "description": "Return True when ``name`` on ``line`` is an import/type import binding.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_remove_named_import_binding_anywhere",
+      "description": "Remove a named import binding without requiring a diagnostic line number.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "_remove_typescript_named_import_binding",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
@@ -8035,7 +8581,25 @@
     },
     {
       "type": "function",
+      "name": "_typescript_unused_multiline_parameter_line_replacement",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "_typescript_identifier_occurrence_is_parameter",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_identifier_occurrence_has_parameter_shape",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_identifier_occurrence_is_in_multiline_parameter_list",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
     },
@@ -8103,6 +8667,12 @@
       "type": "function",
       "name": "_typescript_receiver_for_member_access",
       "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_type_declaration_body",
+      "description": "Return the brace-balanced body of a class/interface declaration.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
     },
     {
@@ -8263,6 +8833,12 @@
     },
     {
       "type": "function",
+      "name": "_typescript_symbol_has_field_constructor_binding",
+      "description": "True when ``this.field = new Symbol(...)`` or typed field is assigned.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "_build_typescript_missing_export_class_declaration",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
@@ -8401,6 +8977,24 @@
     },
     {
       "type": "function",
+      "name": "_order_type_declaration_paths_for_usage",
+      "description": "Order class/interface declaration files: imported by usage first, then others.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_member_count",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_extend_typescript_declare_const_type_literal_operation",
+      "description": "Insert missing member into ``declare const receiver: { ... }`` type literal (R180).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "_typescript_constructor_default_arguments",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
@@ -8413,7 +9007,19 @@
     },
     {
       "type": "function",
+      "name": "_repair_typescript_unresolved_identifier_import",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "_parse_named_import_symbols",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_named_import_symbols_with_added_symbol",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
     },
@@ -8599,6 +9205,12 @@
     },
     {
       "type": "function",
+      "name": "_typescript_module_exports_symbol_resolved",
+      "description": "True when module or its star/named reexport chain exports ``symbol``.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "_typescript_exported_symbol_is_type_only",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
@@ -8613,6 +9225,12 @@
       "type": "function",
       "name": "_find_unique_runtime_export_source",
       "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_reexport_would_cycle",
+      "description": "True when ``source`` already reexports/imports from ``module`` (barrel cycle).",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
     },
     {
@@ -8779,6 +9397,48 @@
     },
     {
       "type": "function",
+      "name": "_too_many_arguments_callsite_trim_operation",
+      "description": "Drop surplus call arguments by aligning identifiers to declaration params (R169).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_too_many_arguments_declaration_expand_operation",
+      "description": "Insert ``_extraN: unknown`` parameters so declaration accepts the call (R169).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_function_param_names_from_header",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_select_args_for_params",
+      "description": "Select a subsequence of call args that best matches declaration param names.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_find_unique_typescript_function_declaration_multiline",
+      "description": "Find multi-line ``function name(\\n params \\n)`` with exact param count.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_insert_unknown_params_into_callable_header",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_expand_multiline_function_params",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "_typescript_call_name_from_usage_line",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
@@ -8887,8 +9547,26 @@
     },
     {
       "type": "function",
+      "name": "_typescript_unwrap_phantom_call",
+      "description": "Replace ``missing(expr)`` with ``expr`` when ``missing`` is undefined.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "_select_typescript_unresolved_identifier_replacement",
       "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_local_function_names",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_best_local_function_alias",
+      "description": "Pick a same-file helper whose name is a close alias of the missing symbol.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
     },
     {
@@ -9079,6 +9757,42 @@
     },
     {
       "type": "function",
+      "name": "_parse_readonly_index_assignment_targets",
+      "description": "Map path -> property names for TS2542 readonly-array index assignments.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_readonly_array_index_assignment_operations",
+      "description": "Mutate ReadonlyArray/readonly[] property types so index assignment compiles.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_duplicate_function_targets",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_duplicate_function_name",
+      "description": "Resolve a diagnostic name token (including ``__line__N``) to a function id.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_duplicate_function_removal_operation",
+      "description": "Remove the last complete function declaration of ``name`` when duplicates exist.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_function_body_end_offset",
+      "description": "Return exclusive end offset of a function body starting near ``from_index``.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
       "name": "_parse_shorthand_property_scope_targets",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
@@ -9237,6 +9951,24 @@
       "type": "function",
       "name": "_readonly_assignment_operations",
       "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_readonly_assignment_class_field_operations",
+      "description": "Strip ``readonly`` from unique class fields across the repair base files.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_readonly_class_field_declaration_spans",
+      "description": "Readonly field spans that sit inside ``class`` bodies (not interface/type).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_readonly_assignment_cast_operations",
+      "description": "Cast assignment receiver to ``any`` so readonly property writes compile.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
     },
     {
@@ -9471,6 +10203,204 @@
       "type": "function",
       "name": "_is_typescript_comma_expected_diagnostic",
       "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "build_typescript_truncated_eof_plan",
+      "description": "Close truncated TypeScript files ending mid-declaration (R168 Flower.ts).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_file_looks_truncated",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_truncated_eof_operation",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "build_typescript_implicit_return_type_plan",
+      "description": "Add ``: void`` to interface method signatures reported by TS7010 (R167).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_implicit_return_void_operation",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "build_typescript_object_assign_assertion_plan",
+      "description": "Assert ``Object.freeze({...}) as Type`` for TS2322 object→named-type assigns (R167).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_object_freeze_assert_operation",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "build_typescript_readonly_array_mutation_plan",
+      "description": "Retype ``const x: readonly T[] = []`` so ``push`` is legal (TS2339 R167).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_readonly_array_binding_operation",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "build_typescript_param_object_property_plan",
+      "description": "Retype ``param: number`` when body uses ``param.prop`` and a type owns prop (R167).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "build_typescript_object_literal_missing_props_plan",
+      "description": "Inject stub members into object literals missing required type properties.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "build_typescript_identifier_suggestion_plan",
+      "description": "Apply TS2552 'Did you mean' identifier renames when the suggestion is in scope.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "build_typescript_unused_local_plan",
+      "description": "Prefix unused locals (TS6133) with underscore, including destructured names.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_typescript_unused_local_diagnostic",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_delete_unused_local_function_operation",
+      "description": "Delete an already-underscored unused function declaration (TS6133).",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_prefix_unused_local_operation",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "build_typescript_argument_shape_adapter_plan",
+      "description": "Adapt call-site arguments that miss required object-literal properties.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_typescript_identifier_suggestion_diagnostic",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_identifier_in_scope",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_rename_identifier_at_diagnostic",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_typescript_argument_missing_props_diagnostic",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_adapt_argument_shape_operation",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_extract_argument_expression",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_build_argument_shape_adapter",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_type_field_names",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_typescript_missing_props_diagnostic",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_object_prop_stub_expression",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_object_literal_open_at_diagnostic",
+      "description": "Locate the object-literal ``{`` that tsc flagged for missing props.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "body_missing_count",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_inject_missing_object_props_operation",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_types_with_named_properties",
+      "description": "Map property name → types/interfaces that declare it.",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_param_type_from_property_operation",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
+    },
+    {
+      "type": "function",
+      "name": "_typescript_ensure_named_type_import_operation",
+      "description": "Insert ``type_name`` into an existing relative import when missing.",
       "defined_in": "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py"
     },
     {
@@ -10057,6 +10987,34 @@
     },
     {
       "type": "class",
+      "name": "DirectorRepairEffectV1",
+      "description": "One immutable, state-bound Director tool effect or rollback contingency.",
+      "defined_in": "polaris/cells/director/runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "immutable_identity",
+          "doc": "Return the complete canonical effect identity used by the plan hash."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Return a JSON-serializable immutable effect projection."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorRepairEffectPlanV1",
+      "description": "One server-derived repair round with predeclared forward and rollback effects.",
+      "defined_in": "polaris/cells/director/runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return the complete execution-grade repair effect plan."
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "DirectorRepairPlanningResultV1",
       "description": "Public deterministic repair planning result.",
       "defined_in": "polaris/cells/director/runtime/public/contracts.py",
@@ -10264,6 +11222,12 @@
     },
     {
       "type": "function",
+      "name": "_repair_diagnostic_v1_to_dict",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
       "name": "_to_environment_prep_receipt_tuple_from_any",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/public/contracts.py"
@@ -10279,6 +11243,547 @@
       "name": "_callback_receipt_projection_v1",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_sha256_hex",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_relative_effect_path",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_directed_effect_value_to_json",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "hash_director_repair_effect_plan",
+      "description": "Hash one complete immutable repair effect plan in a distinct domain.",
+      "defined_in": "polaris/cells/director/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_director_repair_effect_plan",
+      "description": "Reconstruct one plan exactly and reject forged derived hashes or identities.",
+      "defined_in": "polaris/cells/director/runtime/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectImmutableMapV1",
+      "description": "Explicit immutable map value with recursively canonicalized items.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectImmutableSequenceV1",
+      "description": "Explicit immutable ordered sequence value.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectIdentityViewV1",
+      "description": "Canonical immutable identity shared by all pre-execution boundaries.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectClassificationResultV1",
+      "description": "One canonical tool classification before mutation admission.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectAuthorizationEvidenceV1",
+      "description": "Immutable restriction evidence for one canonical prospective mutation.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py",
+      "methods": [
+        {
+          "name": "validate_arguments_binding",
+          "doc": "Fail closed unless this evidence hash binds the supplied canonical payload."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectPreflightRequestV1",
+      "description": "Pure Director preflight input after canonical classification.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectPreflightResultV1",
+      "description": "Typed outcome of pure Director mutation preflight.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectExecutionValidationRequestV1",
+      "description": "Exact execution-time revalidation input for one claimed mutation.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectExecutionValidationResultV1",
+      "description": "Closed execution-time authorization verdict without execution handles.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectClassificationEvidenceV1",
+      "description": "Frozen mutation classification tied to one captured ToolSpec view.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectAuthorizationBindingV1",
+      "description": "Additive Task4 wrapper; it never changes the legacy Task3 hash contract.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectPublicPolicyEvidenceV1",
+      "description": "One-way baseline projection of an authorization binding, never policy truth.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectExecutionEvidenceComparisonRequestV1",
+      "description": "Baseline/supplied structural comparison input; it has no freshness semantics.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectExecutionEvidenceComparisonResultV1",
+      "description": "Closed structural comparison verdict, explicitly not an execution grant.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "create_directed_effect_inventory_intent",
+      "description": "Project one TaskRuntime inventory value from already-validated public evidence.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_token",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_hash",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_error_code",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "require_directed_effect_hash",
+      "description": "Validate one canonical lowercase SHA-256 digest for a DEO contract.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "require_directed_effect_bool",
+      "description": "Require an exact bool without accepting integer substitutes.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_directed_effect_error_code",
+      "description": "Validate that an optional denial belongs to the closed DEO taxonomy.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_immutable_value",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_directed_effect_immutable_items",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "require_directed_effect_immutable_items",
+      "description": "Validate one sorted immutable key/value payload without coercion.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "hash_directed_effect_arguments",
+      "description": "Return the SHA-256 of one canonical immutable arguments payload.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonicalize_directed_effect_value",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_sorted_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "hash_director_effect_authorization_evidence",
+      "description": "Bind every authority-bearing authorization field in a distinct domain.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_directed_effect_identity_binding",
+      "description": "Validate and project one exact evidence/grant/outer identity binding.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_director_effect_authorization_evidence",
+      "description": "Reconstruct legacy Task3 evidence to detect forged frozen instances.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "hash_director_effect_classification_evidence",
+      "description": "Hash one mutation classification captured from a single ToolSpec snapshot.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_director_effect_classification_evidence",
+      "description": "Reconstruct Task4 classification evidence to reject object-level forgeries.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "hash_director_effect_authorization_binding",
+      "description": "Bind immutable Task3 authority to immutable Task4 classification evidence.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_director_effect_authorization_binding",
+      "description": "Reconstruct the additive wrapper and its nested evidence without I/O.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "hash_director_effect_public_policy_evidence",
+      "description": "Hash the complete baseline-only public policy projection.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "project_director_effect_public_policy_evidence",
+      "description": "Project public policy evidence deterministically from exactly one binding.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_director_effect_public_policy_evidence",
+      "description": "Validate a projection hash without constructing a second policy source.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectPolicyOperationSubjectV1",
+      "description": "Prospective pre-seal operation identity and normalized descriptor.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectTargetStateEvidenceV1",
+      "description": "Immutable target-state evidence, including an explicit command-only form.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectPolicySnapshotRequestV1",
+      "description": "No-effect request for one adapter-owned policy snapshot.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectPolicyBaselineCaptureRequestV1",
+      "description": "Adapter-owned target capture request without caller-supplied file state.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectPolicySnapshotResultV1",
+      "description": "Frozen no-effect policy verdict with no executable capability.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectPolicyBoundSnapshotV1",
+      "description": "Successful pre-seal snapshot bound to one sealed TaskRuntime member.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectPolicyMemberBindingRequestV1",
+      "description": "Pure post-seal request that binds a snapshot to an actual member.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectPolicyMemberBindingResultV1",
+      "description": "Typed result of exact policy snapshot/member binding.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectPolicyRevalidationRequestV1",
+      "description": "Execution-time request to recompute the same policy boundary.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectPolicyRevalidationResultV1",
+      "description": "Current policy verdict immediately before a physical mutation.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectCurrentPolicyEvidenceCaptureRequestV1",
+      "description": "Post-claim request accepted only by the adapter-owned evidence producer.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectCurrentPolicyEvidenceV1",
+      "description": "Versioned post-claim evidence; only the policy port may produce it.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectCurrentPolicyEvidenceCaptureResultV1",
+      "description": "Closed capture result with no third or malformed state.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectCurrentPolicyEvidenceCapturePortV1",
+      "description": "Sole post-claim current-evidence producer boundary.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py",
+      "methods": [
+        {
+          "name": "capture_current_policy_evidence",
+          "doc": "Capture versioned evidence or return the one closed denial."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorEffectPolicySnapshotPortV1",
+      "description": "Adapter-owned policy boundary consumed without adapter imports.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py",
+      "methods": [
+        {
+          "name": "capture_baseline_snapshot",
+          "doc": "Read target state and capture the baseline through the sole adapter."
+        },
+        {
+          "name": "snapshot",
+          "doc": "Capture a no-effect policy snapshot for a prospective mutation."
+        },
+        {
+          "name": "bind_member",
+          "doc": "Bind one successful snapshot to the exact sealed TaskRuntime member."
+        },
+        {
+          "name": "revalidate",
+          "doc": "Re-evaluate the same policy immediately before physical execution."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_token",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_string",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_error_code",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_operation_subject_items",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "hash_director_effect_policy_operation_subject",
+      "description": "Hash one prospective operation without trusting its supplied digest.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_target_state_evidence_items",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "hash_directed_effect_target_state_evidence",
+      "description": "Domain-separate the aggregate target-state hash from its immutable components.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "hash_directed_effect_target_state_components",
+      "description": "Return the canonical aggregate for already-validated target-state components.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_director_effect_policy_snapshot_result",
+      "description": "Reconstruct a policy snapshot and every nested hash-bearing value.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "hash_directed_effect_policy_snapshot_evidence",
+      "description": "Bind the complete frozen policy baseline in a distinct snapshot domain.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "hash_directed_effect_policy_member_binding",
+      "description": "Bind snapshot, legacy authorization, additive binding, and member.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_director_effect_policy_bound_snapshot",
+      "description": "Reconstruct a bound snapshot and reject forged nested policy evidence.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_director_effect_policy_member_binding_result",
+      "description": "Reconstruct one binding result before it can become a prepared capability.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "hash_directed_effect_policy_revalidation_evidence",
+      "description": "Bind the complete current revalidation verdict in its own hash domain.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "hash_director_effect_current_policy_evidence",
+      "description": "Bind every post-claim current-source observation in one hash domain.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_director_effect_current_policy_evidence",
+      "description": "Canonical-reconstruct current evidence before execution may consume it.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_director_effect_current_policy_capture_result",
+      "description": "Canonical-reconstruct the closed producer result and nested evidence.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_policy_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_denied",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_grant_is_canonical",
+      "description": "Recreate the TaskRuntime grant to reject malformed nested records.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_bound_snapshot_is_canonical",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_policy_matches_binding",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_service.py"
+    },
+    {
+      "type": "function",
+      "name": "compare_directed_effect_execution_evidence",
+      "description": "Compare baseline and supplied evidence using only hashes and identities.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_service.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_directed_effect_execution",
+      "description": "Validate one claimed mutation structurally before current-policy revalidation.",
+      "defined_in": "polaris/cells/director/runtime/public/directed_effect_service.py"
     },
     {
       "type": "function",
@@ -10391,7 +11896,7 @@
     {
       "type": "function",
       "name": "attach_director_repair_revalidation_evidence",
-      "description": "Compatibility helper for projecting post-check evidence onto receipts.",
+      "description": "Project post-check evidence onto a repair summary and return the summary.",
       "defined_in": "polaris/cells/director/runtime/public/service.py"
     },
     {
@@ -10517,7 +12022,43 @@
     {
       "type": "function",
       "name": "normalize_director_repair_diagnostics",
-      "description": "Normalize raw artifact-quality text into public repair diagnostics.",
+      "description": "Normalize raw or structured artifact-quality input into public repair diagnostics.",
+      "defined_in": "polaris/cells/director/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_director_repair_issue_diagnostics",
+      "description": "Normalize typed artifact-quality issues into public repair diagnostics.",
+      "defined_in": "polaris/cells/director/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_diagnostics_from_artifact_quality_issues",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_repair_diagnostic_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_diagnostic_raw_key",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_diagnostic_structural_key",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_diagnostics_from_quality_inputs",
+      "description": "Combine legacy precise diagnostics with typed issue evidence.",
       "defined_in": "polaris/cells/director/runtime/public/service.py"
     },
     {
@@ -10582,7 +12123,7 @@
     },
     {
       "type": "function",
-      "name": "_artifact_quality_error_from_coverage_item",
+      "name": "_repair_diagnostic_from_coverage_item",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/public/service.py"
     },
@@ -10912,6 +12453,24 @@
     },
     {
       "type": "function",
+      "name": "_repair_effect_call_id",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_effect_operation_id",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_public_repair_effect_plan",
+      "description": "Project one immutable forward/rollback plan before any Director tool runs.",
+      "defined_in": "polaris/cells/director/runtime/public/service.py"
+    },
+    {
+      "type": "function",
       "name": "_to_public_repair_plan_summary",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/public/service.py"
@@ -10930,13 +12489,25 @@
     },
     {
       "type": "function",
+      "name": "_to_internal_repair_diagnostic",
+      "description": "",
+      "defined_in": "polaris/cells/director/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_public_repair_diagnostics_from_command",
+      "description": "Project command diagnostics without forcing typed evidence through strings.",
+      "defined_in": "polaris/cells/director/runtime/public/service.py"
+    },
+    {
+      "type": "function",
       "name": "_artifact_quality_errors_from_command",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/public/service.py"
     },
     {
       "type": "function",
-      "name": "_artifact_quality_error_from_diagnostic",
+      "name": "_runtime_artifact_quality_errors_from_command",
       "description": "",
       "defined_in": "polaris/cells/director/runtime/public/service.py"
     },

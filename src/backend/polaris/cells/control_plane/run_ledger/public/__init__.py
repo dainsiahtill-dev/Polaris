@@ -30,6 +30,14 @@ from .failure_evidence import (
 )
 from .job_token import JobToken
 from .ledger import RunLedger, stable_hash, stable_json
+from .managed_process_lifecycle import (
+    MANAGED_PROCESS_LIFECYCLE_EVENT_TYPE,
+    MANAGED_PROCESS_LIFECYCLE_SCHEMA_V1,
+    ProjectManagedProcessLifecycleCommandV1,
+    build_managed_process_lifecycle_event,
+    derive_managed_process_evidence_presence,
+    project_managed_process_lifecycle,
+)
 from .projection import build_run_ledger_projection, summarize_run_ledger_projection
 from .provenance import build_run_provenance_bundle
 from .service import (
@@ -111,6 +119,8 @@ from .tool_lifecycle import (
 
 __all__ = [
     "FACTORY_SETTLEMENT_BARRIER_SCHEMA_V1",
+    "MANAGED_PROCESS_LIFECYCLE_EVENT_TYPE",
+    "MANAGED_PROCESS_LIFECYCLE_SCHEMA_V1",
     "AppendRunLedgerEventCommandV1",
     "AppendToolCallLifecycleEventCommandV1",
     "ControlPlaneRunLedgerV1Error",
@@ -121,6 +131,7 @@ __all__ = [
     "FailureEvidenceV1",
     "JobToken",
     "NativeToolCallEnvelopeV1",
+    "ProjectManagedProcessLifecycleCommandV1",
     "ReadRunLedgerProjectionBarrierQueryV1",
     "ReadRunLedgerProjectionQueryV1",
     "ReadRunProvenanceBundleQueryV1",
@@ -140,6 +151,7 @@ __all__ = [
     "build_claimed_materialization_without_tool_lifecycle_receipt",
     "build_completed_task_boundary_verdict",
     "build_deferred_followup_task_boundary_verdict",
+    "build_managed_process_lifecycle_event",
     "build_missing_dispatch_lifecycle_receipt",
     "build_native_tool_call_envelope_payloads",
     "build_native_tool_call_envelopes",
@@ -153,10 +165,10 @@ __all__ = [
     "build_tool_dispatch_dropped_lifecycle_from_anomaly_flags",
     "build_tool_dispatch_dropped_lifecycle_from_observed_calls",
     "build_tool_lifecycle_requirement_run_ledger_event",
+    "derive_managed_process_evidence_presence",
     "empty_tool_lifecycle_summary",
     "evaluate_task_boundary_verdict",
     "failure_evidence_from_lifecycle_receipt",
-    "reconcile_task_boundary_artifacts_with_workspace",
     "is_failure_class",
     "looks_like_failure_evidence_payload",
     "merge_failure_evidence_payload",
@@ -178,6 +190,7 @@ __all__ = [
     "project_completion_audit_evidence_to_metadata",
     "project_completion_dispatch_evidence_to_metadata",
     "project_lifecycle_failure_evidence_to_metadata",
+    "project_managed_process_lifecycle",
     "project_native_tool_call_envelopes_to_metadata",
     "project_native_tool_call_facts_from_evidence_to_metadata",
     "project_native_tool_call_facts_to_metadata",
@@ -191,6 +204,7 @@ __all__ = [
     "read_run_ledger_projection",
     "read_run_ledger_projection_barrier",
     "read_run_provenance_bundle",
+    "reconcile_task_boundary_artifacts_with_workspace",
     "stable_hash",
     "stable_json",
     "summarize_failed_gate_evidence_context_slot",

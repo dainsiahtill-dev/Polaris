@@ -1,0 +1,21 @@
+verification_card:
+  id: vc-20260802-GR2A-resident-goal-attempt-ledger
+  status: accepted
+  owner: resident.autonomy
+  scope: strict durable Goal and Attempt state machine
+  invariants:
+    - query path is zero-write and effect-free
+    - stream is strict UTF-8, schema checked, revisioned, hash chained, and fsynced
+    - idempotency replay returns the original receipt and semantic conflicts fail closed
+    - COMPLETED_VERIFIED is reserved and unreachable in GR2A
+    - no provider or model is called
+  evidence_passed:
+    - cross-process Goal CAS and strict Attempt receipt focused pytest
+    - resident.autonomy focused pytest
+    - focused ruff format and check
+    - focused mypy
+    - descriptor, context pack, and graph catalog consistency
+    - independent audit of cross-process CAS and nested receipt tamper rejection
+    - independent audit of the real lock barrier and lifecycle revision persistence
+    - main-agent revalidation: 114 focused tests, ruff, format, mypy, diff-check
+  evidence_pending: []

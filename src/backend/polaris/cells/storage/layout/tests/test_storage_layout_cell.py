@@ -23,6 +23,7 @@ import os
 from typing import TYPE_CHECKING
 
 import pytest
+import yaml
 
 # ─── Imports of the code under test ──────────────────────────────────────────
 from polaris.cells.storage.layout import (
@@ -180,6 +181,21 @@ def test_descriptor_advertises_read_only_runtime_root_contract() -> None:
     assert "ResolveExistingRuntimeRootReadOnlyQueryV1" in public_names
     assert "ExistingRuntimeRootReadOnlyResultV1" in public_names
     assert "resolve_existing_runtime_root_read_only" in public_names
+
+
+def test_read_only_runtime_root_result_is_declared_in_manifest_and_catalog() -> None:
+    """The source Cell manifest and Graph SSoT must advertise the same result."""
+    from pathlib import Path
+
+    cell_root = Path(__file__).resolve().parents[1]
+    manifest = yaml.safe_load((cell_root / "cell.yaml").read_text(encoding="utf-8"))
+    catalog = yaml.safe_load(
+        (cell_root.parents[3] / "docs" / "graph" / "catalog" / "cells.yaml").read_text(encoding="utf-8")
+    )
+    catalog_cell = next(cell for cell in catalog["cells"] if cell["id"] == "storage.layout")
+
+    assert "ExistingRuntimeRootReadOnlyResultV1" in manifest["public_contracts"]["results"]
+    assert "ExistingRuntimeRootReadOnlyResultV1" in catalog_cell["public_contracts"]["results"]
 
 
 class TestPersistedSettings:

@@ -1,6 +1,6 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:10.589199Z",
+  "generated_at": "2026-08-02T15:47:38.218670Z",
   "source_hash": "9cda7a6d594a3174",
   "cell_id": "values.alignment",
   "workspace": "/home/dains/Documents/polaris/src/backend",
@@ -35,6 +35,26 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "evaluate",
+          "doc": "Evaluate an action against the 4D value matrix."
+        },
+        {
+          "name": "_evaluate_user_long_term",
+          "doc": "Dimension 1: User Long-term Interest."
+        },
+        {
+          "name": "_evaluate_system_integrity",
+          "doc": "Dimension 2: System Integrity."
+        },
+        {
+          "name": "_evaluate_others_impact",
+          "doc": "Dimension 3: Others Impact."
+        },
+        {
+          "name": "_evaluate_future_amplification",
+          "doc": "Dimension 4: Future Amplification (1000x test)."
         },
         {
           "name": "_identify_conflicts",

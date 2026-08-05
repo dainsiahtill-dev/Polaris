@@ -304,6 +304,161 @@ def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _derive_leaf_job_token(
+    *,
+    parent_token: dict[str, Any],
+    parent_task_id: str,
+    step_id: str,
+    target_file: str,
+    dependency_targets: list[str],
+    blueprint_id: str,
+    blueprint_path: str,
+    blueprint_hash: str,
+    construction_contract_hash: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Derive a post-hardening leaf capability from the CE parent token.
+
+    The token is content-addressed over its parent lineage and construction
+    binding. Readable dependency targets are intentionally separate from the
+    single writable target so Role Kernel's nested-token union cannot recover
+    the parent's sibling write authority.
+    """
+
+    parent_token_id = str(parent_token.get("token_id") or "").strip()
+    parent_token_hash = stable_hash(parent_token)
+    parent_contract_hash = str(parent_token.get("contract_hash") or "").strip()
+    parent_blueprint_hash = str(parent_token.get("blueprint_hash") or "").strip()
+    parent_capability_audit = _mapping(parent_token.get("capability_audit"))
+    target = str(target_file or "").strip()
+    missing = [
+        name
+        for name, value in (
+            ("parent_token_id", parent_token_id),
+            ("parent_task_id", parent_task_id),
+            ("step_id", step_id),
+            ("target_file", target),
+            ("blueprint_hash", blueprint_hash),
+            ("construction_contract_hash", construction_contract_hash),
+            ("parent_contract_hash", parent_contract_hash),
+            ("parent_blueprint_hash", parent_blueprint_hash),
+        )
+        if not value
+    ]
+    if missing:
+        raise ValueError(f"CE leaf authority binding is incomplete: {', '.join(missing)}")
+
+    allowed_write_paths = [target]
+    allowed_read_paths = list(
+        dict.fromkeys([target, *(str(path or "").strip() for path in dependency_targets if str(path or "").strip())])
+    )
+    lineage_binding = {
+        "schema_version": 1,
+        "parent_token_id": parent_token_id,
+        "parent_token_hash": parent_token_hash,
+        "parent_contract_hash": parent_contract_hash,
+        "parent_blueprint_hash": parent_blueprint_hash,
+        "parent_capability_audit_hash": stable_hash(parent_capability_audit),
+        "parent_task_id": parent_task_id,
+        "step_id": step_id,
+        "target_file": target,
+        "blueprint_id": blueprint_id,
+        "blueprint_hash": blueprint_hash,
+        "construction_contract_hash": construction_contract_hash,
+        "allowed_read_paths": allowed_read_paths,
+        "allowed_write_paths": allowed_write_paths,
+    }
+    lineage_hash = stable_hash(lineage_binding)
+    token_id = f"job-{stable_hash({**lineage_binding, 'lineage_hash': lineage_hash})[:24]}"
+    parent_gate_policy = _mapping(parent_token.get("gate_policy"))
+    leaf_token = JobToken(
+        schema_version=1,
+        token_id=token_id,
+        run_id=str(parent_token.get("run_id") or "").strip(),
+        factory_run_id=str(parent_token.get("factory_run_id") or parent_token.get("run_id") or "").strip(),
+        project_id=str(parent_token.get("project_id") or parent_task_id).strip(),
+        stage="pending_exec",
+        target_files=allowed_write_paths,
+        allowed_paths=allowed_read_paths,
+        allowed_write_paths=allowed_write_paths,
+        allowed_read_paths=allowed_read_paths,
+        required_artifacts=list(dict.fromkeys([blueprint_path, target])),
+        gate_policy=parent_gate_policy,
+        capability_audit={
+            "ok": True,
+            "issues": [],
+            "parent_token_id": parent_token_id,
+            "parent_token_hash": parent_token_hash,
+            "parent_contract_hash": parent_contract_hash,
+            "parent_blueprint_hash": parent_blueprint_hash,
+            "parent_capability_audit_hash": stable_hash(parent_capability_audit),
+            "construction_contract_hash": construction_contract_hash,
+            "step_id": step_id,
+            "target_file": target,
+            "lineage_hash": lineage_hash,
+        },
+        parent_token_id=parent_token_id,
+        contract_hash=construction_contract_hash,
+        blueprint_hash=blueprint_hash,
+        source="chief_engineer.blueprint.leaf_job_token",
+    ).to_dict()
+    lineage = {
+        "schema_version": 1,
+        "source": "chief_engineer.blueprint.leaf_handoff",
+        "parent_job_token_id": parent_token_id,
+        "parent_job_token_hash": parent_token_hash,
+        "parent_contract_hash": parent_contract_hash,
+        "parent_blueprint_hash": parent_blueprint_hash,
+        "job_token_id": token_id,
+        "parent_task_id": parent_task_id,
+        "step_id": step_id,
+        "target_file": target,
+        "blueprint_id": blueprint_id,
+        "blueprint_hash": blueprint_hash,
+        "construction_contract_hash": construction_contract_hash,
+        "lineage_hash": lineage_hash,
+    }
+    return leaf_token, lineage
+
+
+def _validated_parent_job_token(payload: dict[str, Any], *, blueprint_hash: str) -> dict[str, Any]:
+    aliases = [_mapping(payload.get(key)) for key in ("job_token", "control_plane_job_token", "capability_token")]
+    if any(not token for token in aliases):
+        raise ValueError("CE parent JobToken aliases are required")
+    parent_token = aliases[0]
+    if any(token != parent_token for token in aliases[1:]):
+        raise ValueError("CE parent JobToken aliases disagree")
+    if parent_token.get("schema_version") != 1 or isinstance(parent_token.get("schema_version"), bool):
+        raise ValueError("CE parent JobToken schema_version must be exactly 1")
+    token_id = str(parent_token.get("token_id") or "").strip()
+    if not token_id or str(payload.get("job_token_id") or "").strip() != token_id:
+        raise ValueError("CE parent JobToken identity is invalid")
+    audit = _mapping(parent_token.get("capability_audit"))
+    if audit.get("ok") is not True or list(audit.get("issues") or []):
+        raise ValueError("CE parent JobToken capability_audit must be clean")
+    expected_hash = str(payload.get("capability_token_hash") or "").strip()
+    if not expected_hash or expected_hash != stable_hash(parent_token):
+        raise ValueError("CE parent JobToken content hash mismatch")
+    token_blueprint_hash = str(parent_token.get("blueprint_hash") or "").strip()
+    if not blueprint_hash or token_blueprint_hash != blueprint_hash:
+        raise ValueError("CE parent JobToken blueprint_hash mismatch")
+    token_contract_hash = str(parent_token.get("contract_hash") or "").strip()
+    if not token_contract_hash or token_contract_hash != str(payload.get("contract_hash") or "").strip():
+        raise ValueError("CE parent JobToken contract_hash mismatch")
+    if str(parent_token.get("run_id") or "").strip() != str(payload.get("run_id") or "").strip():
+        raise ValueError("CE parent JobToken run_id mismatch")
+    for field_name in ("target_files", "allowed_write_paths", "allowed_read_paths"):
+        raw_paths = parent_token.get(field_name)
+        if (
+            not isinstance(raw_paths, list)
+            or not raw_paths
+            or any(not isinstance(path, str) or not path.strip() for path in raw_paths)
+        ):
+            raise ValueError(f"CE parent JobToken {field_name} is malformed")
+    if set(parent_token["target_files"]) != set(parent_token["allowed_write_paths"]):
+        raise ValueError("CE parent JobToken target/write scope mismatch")
+    return parent_token
+
+
 def _ce_requeue_context_payload(payload: dict[str, Any]) -> dict[str, Any]:
     context: dict[str, Any] = {}
     for key in _CE_REQUEUE_CONTEXT_KEYS:
@@ -692,6 +847,7 @@ class CEConsumer:
                 "job_token": job_token,
                 "control_plane_job_token": job_token,
                 "capability_token": job_token,
+                "capability_token_hash": stable_hash(job_token),
                 "control_plane_lineage": control_plane_lineage,
                 "context_snapshot_ref": str(payload.get("context_snapshot_ref", "")),
                 "guardrails": blueprint_result.get("guardrails", []),
@@ -1136,6 +1292,22 @@ class CEConsumer:
         owners = prior_file_owners or {}
         published = 0
         run_id = str(payload.get("run_id", ""))
+        construction_contract_hash = _payload_hash(
+            build_blueprint_tasks_contract(
+                parent_pm_task=task_id,
+                blueprint_id=blueprint_id,
+                blueprint_path=blueprint_path,
+                steps=steps,
+            )
+        )
+        target_by_step_id = {
+            str(item.get("step_id") or ""): str(item.get("target_file") or "").strip()
+            for item in steps
+            if str(item.get("step_id") or "").strip() and str(item.get("target_file") or "").strip()
+        }
+        parent_blueprint_hash = str(payload.get("blueprint_hash") or "").strip()
+        parent_token = _validated_parent_job_token(payload, blueprint_hash=parent_blueprint_hash)
+        prepared_commands: list[PublishTaskWorkItemCommandV1] = []
         for step in steps:
             step_id = str(step.get("step_id") or "")
             depends_on = list(step.get("depends_on") or ())
@@ -1145,28 +1317,55 @@ class CEConsumer:
                 if owner_sid not in depends_on:
                     depends_on.append(owner_sid)
                 step = {**step, "edit_on_prior": True, "edit_on_prior_owner": owner_sid}
+            dependency_targets = [
+                target_by_step_id[dependency_step_id]
+                for dependency_step_id in depends_on
+                if dependency_step_id in target_by_step_id
+            ]
+            target_file = str(step.get("target_file") or "").strip()
+            parent_write_paths = set(parent_token["allowed_write_paths"])
+            parent_read_paths = set(parent_token["allowed_read_paths"])
+            if target_file not in parent_write_paths:
+                raise ValueError(f"CE leaf target {target_file!r} is outside parent allowed_write_paths")
+            denied_reads = [path for path in [target_file, *dependency_targets] if path not in parent_read_paths]
+            if denied_reads:
+                raise ValueError(f"CE leaf read paths are outside parent allowed_read_paths: {denied_reads!r}")
+            leaf_token, leaf_lineage = _derive_leaf_job_token(
+                parent_token=parent_token,
+                parent_task_id=task_id,
+                step_id=step_id,
+                target_file=target_file,
+                dependency_targets=dependency_targets,
+                blueprint_id=blueprint_id,
+                blueprint_path=blueprint_path,
+                blueprint_hash=parent_blueprint_hash,
+                construction_contract_hash=construction_contract_hash,
+            )
+            capability_token_hash = stable_hash(leaf_token)
             step_payload = {
                 **{k: payload.get(k) for k in ("workspace", "run_id", "run_dir", "cache_root") if payload.get(k)},
                 "title": step.get("title") or f"{payload.get('title', task_id)} · {step['step_id']}",
                 "target_files": [step["target_file"]],
-                "scope_paths": [step["target_file"]],
+                "scope_paths": list(leaf_token["allowed_read_paths"]),
                 "construction_step": step,
                 "blueprint_id": blueprint_id,
                 "blueprint_path": blueprint_path,
                 "blueprint_hash": str(payload.get("blueprint_hash") or ""),
                 "contract_hash": str(payload.get("contract_hash") or payload.get("pm_contract_hash") or ""),
                 "pm_contract_hash": str(payload.get("contract_hash") or payload.get("pm_contract_hash") or ""),
-                "job_token_id": str(payload.get("job_token_id") or ""),
-                "job_token": _mapping(payload.get("job_token")),
-                "control_plane_job_token": _mapping(payload.get("control_plane_job_token")),
-                "capability_token": _mapping(payload.get("capability_token")),
-                "control_plane_lineage": _mapping(payload.get("control_plane_lineage")),
+                "construction_contract_hash": construction_contract_hash,
+                "job_token_id": str(leaf_token["token_id"]),
+                "job_token": leaf_token,
+                "control_plane_job_token": leaf_token,
+                "capability_token": leaf_token,
+                "capability_token_hash": capability_token_hash,
+                "control_plane_lineage": leaf_lineage,
                 "route": "chief_blueprint_required",
                 "acceptance_criteria": [step["verify"]] if step.get("verify") else [],
                 "architecture_decisions": list(payload.get("architecture_decisions") or []),
                 "selected_libraries": list(payload.get("selected_libraries") or []),
             }
-            self._svc.publish_work_item(
+            prepared_commands.append(
                 PublishTaskWorkItemCommandV1(
                     workspace=self._workspace,
                     trace_id=f"fission-{task_id}",
@@ -1182,15 +1381,21 @@ class CEConsumer:
                     metadata={
                         "blueprint_id": blueprint_id,
                         "blueprint_hash": str(payload.get("blueprint_hash") or ""),
-                        "job_token_id": str(payload.get("job_token_id") or ""),
-                        "job_token": _mapping(payload.get("job_token")),
-                        "control_plane_lineage": _mapping(payload.get("control_plane_lineage")),
+                        "construction_contract_hash": construction_contract_hash,
+                        "job_token_id": str(leaf_token["token_id"]),
+                        "job_token": leaf_token,
+                        "control_plane_job_token": leaf_token,
+                        "capability_token": leaf_token,
+                        "capability_token_hash": capability_token_hash,
+                        "control_plane_lineage": leaf_lineage,
                         "architecture_decisions": list(payload.get("architecture_decisions") or []),
                         "selected_libraries": list(payload.get("selected_libraries") or []),
                         "fission": "ce-blueprint-tasks/1",
                     },
                 )
             )
+        for command in prepared_commands:
+            self._svc.publish_work_item(command)
             published += 1
         return published
 

@@ -164,7 +164,7 @@ async def build_director_status(
 ) -> dict[str, Any]:
     """Build Director status from the current local/workflow sources only."""
     del state
-    local_status = await get_director_local_status()
+    local_status = await get_director_local_status(workspace)
     workflow_status = await get_workflow_director_status(workspace, cache_root)
     run_ledger_run_id = _extract_run_ledger_run_id(workflow_status, local_status)
     run_ledger_projection = _read_run_ledger_projection_for_run(workspace, run_ledger_run_id)
