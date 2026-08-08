@@ -566,6 +566,11 @@ _TASK_CONTRACT_SCALAR_KEYS = (
     "ce_handoff_decision_ref",
     "handoff_source",
 )
+_TASK_RUNTIME_GOVERNANCE_SCALAR_KEYS = (
+    "factory_run_deadline_epoch_seconds",
+    "factory_director_execution_deadline_epoch_seconds",
+    "factory_run_deadline_safety_seconds",
+)
 _STRUCTURED_TASK_CONTRACT_SLOT_KEYS = frozenset(
     {
         "pm_contract",
@@ -1714,15 +1719,35 @@ class DirectorAdapter(BaseRoleAdapter):
             return
         sources = _task_contract_sources(task)
         contract_payload = _promoted_task_contract_payload(sources)
+        task_metadata_raw = task.get("metadata")
+        task_metadata: dict[str, Any] = dict(task_metadata_raw) if isinstance(task_metadata_raw, dict) else {}
+        governance_sources = [task_metadata]
+        nested_task_metadata = task_metadata.get("metadata")
+        if isinstance(nested_task_metadata, dict):
+            governance_sources.append(nested_task_metadata)
+        governance_payload = {
+            key: value
+            for key in _TASK_RUNTIME_GOVERNANCE_SCALAR_KEYS
+            if (value := _first_contract_value(governance_sources, key)) is not None
+        }
         blueprint_payload = _load_ce_blueprint_contract_payload(workspace, task)
         contract_payload = _merge_ce_blueprint_contract_payload(contract_payload, blueprint_payload)
-        if not contract_payload:
+        if not contract_payload and not governance_payload:
             return
 
         metadata_raw = context.get("metadata")
         metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
-        task_metadata_raw = task.get("metadata")
-        task_metadata: dict[str, Any] = dict(task_metadata_raw) if isinstance(task_metadata_raw, dict) else {}
+
+        # TaskRuntime owns these operational values after Factory admission. They
+        # are not PM/CE contract fields, but downstream Director repair and
+        # verification must see the same deadline authority. Preserve any value
+        # already projected by the orchestration context; otherwise promote the
+        # claimed TaskRuntime row's trusted metadata into both context views.
+        for key, value in governance_payload.items():
+            if not _has_contract_value(context, key):
+                context[key] = value
+            if not _has_contract_value(metadata, key):
+                metadata[key] = value
 
         for key in _TASK_CONTRACT_LIST_KEYS:
             value = contract_payload.get(key)

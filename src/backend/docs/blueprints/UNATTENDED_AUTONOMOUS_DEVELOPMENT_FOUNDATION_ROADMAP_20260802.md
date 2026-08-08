@@ -71,7 +71,7 @@ production fact source or a repair mechanism.
 | GR3 | TaskRuntime / execution broker / TaskBoundary | lease, timeout, partial materialization, settle and receipt projection preserve completed work |
 | GR4 | Verifier policy/execution + Run Ledger | modality is recorded as missing or failed correctly; commands have receipts; outcome axes reconcile |
 | GR5 | CE/Director prevention | export handoff, final-request pin, and write admission reject incoherent materialization before M10 repair |
-| GR6 | External Supervisor | bounded single-module remediation, retry/backoff, model ceiling and escalation are policy-driven |
+| GR6 | `orchestration.workflow_runtime` convergence + external Supervisor policy | durable single-leaf retries are owner-bound; only workflow-runtime may seal a structured model ceiling from ContextOS and content-addressed owner receipts |
 | GR7 | Factory Bench | pre-bench gate passes, fresh isolated projects reach `COMPLETED_VERIFIED`, then N batches reveal no new general root cause |
 
 Each bucket has a blueprint, verification card, focused tests, static graph
@@ -98,7 +98,8 @@ READY -> ATTEMPT_ACTIVE -> SETTLING -> OUTCOME_PROJECTED
 - `CONTROL_PLANE_FAIL` cannot be rendered as a product/build failure.
 - `ATTEMPT_BLOCKED` carries a typed primary residual; the Supervisor may open
   only its declared module, retry after bounded backoff, or stop at
-  `model_ceiling`.
+  workflow-runtime's sealed `MODEL_CEILING_QUALIFIED` result. Bench substring
+  matches and caller booleans are discovery candidates only.
 
 ## Mandatory final-request context audit
 
@@ -126,8 +127,8 @@ project it performs:
 4. If red, open only the primary residual's module under its repair budget.
 5. Re-run focused module gates before consuming another physical attempt.
 6. Stop and surface a typed escalation when the same residual changes class,
-   repair coverage is exhausted, a model ceiling is reached, or a hard
-   control-plane contract is broken.
+   repair coverage is exhausted, workflow-runtime returns a sealed model
+   ceiling, or a hard control-plane contract is broken.
 
 It never edits a generated target project, never turns a Bench gate into a
 repair tool, and never interprets its own report as Polaris evidence.
@@ -176,7 +177,13 @@ Accepted partial seals:
   projection-pending without re-spawn.  Full DEO claim/commit migrate deferred.
 - **Formal-run admission** — `evaluate_formal_run_admission()` machine-checks
   critical surfaces (not COMPLETED_VERIFIED).
-- **Unattended residual planner** — residual → one module_id + phase order.
+- **Structured model-ceiling authority** — KernelOne retains generic residual
+  attribution only; `orchestration.workflow_runtime` re-reads the final
+  provider request and directly queries attempt/failure/execution/control/
+  environment/provider/repair owners. It emits a sealed terminal result only
+  when every owner fact is exact and clear, and convergence owner-revalidates
+  the result before accepting it. Missing owner query APIs fail closed as
+  `CONTROL_PLANE_BLOCKED`; generic evidence receipts never substitute.
 
 Remaining order (do not skip):
 
@@ -185,8 +192,9 @@ Remaining order (do not skip):
 2. Close residual GR1C/GR1D/GR2 items that still forge projection/graph risk.
 3. Harden GR4/M03/M09/M10 until L1 four pillars + chain green under isolated
    probe without forged success.
-4. **GR6** full Supervisor outer loop (retry budget / stop / model ceiling
-   execution of planned commands).
+4. **GR6** finish durable receipt production/convergence and let the external
+   Supervisor consume only owner-bound workflow outcomes and sealed ceiling
+   results (never a KernelOne/Bench heuristic planner).
 5. **GR7** N-batch + L1–L12 march only after repeated L1 `COMPLETED_VERIFIED`.
 
 Still open elsewhere (do not collapse into GR3B): GR1C bootstrap composition,

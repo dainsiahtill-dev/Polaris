@@ -22,7 +22,7 @@
 |-----|--------|------|
 | `attribute_residual` / `attribute_factory_audit_record` | `polaris.kernelone.platform_modules.residual_attribution` | residual → one module_id |
 | `classify_delivery_status` | same | `DELIVERY_VERIFIED_*` vs delivery/chain fail classes |
-| `plan_unattended_step` | `polaris.kernelone.platform_modules.unattended_supervisor` | next phase: module → cascade → L1-01 / stop |
+| `qualify_model_ceiling` / `revalidate_model_ceiling_result` | `polaris.cells.orchestration.workflow_runtime.public.model_ceiling` | internal sealing plus mandatory direct-owner revalidation; missing owner APIs park |
 | CLI | `scripts/platform_modules/attribute_factory_audit.py` | JSON pack from `factory_audits.json` |
 | Gates | `scripts/platform_modules/run_module_gates.py` | module / cascade / bench |
 
@@ -33,11 +33,12 @@ External Claude/Codex supervisors **must** consume these outputs. They must **no
 ```bash
 python src/backend/scripts/platform_modules/attribute_factory_audit.py \
   --audits /tmp/factory-bench-.../factory_audits.json \
-  --json-out /tmp/attribution.json \
-  --no-module-gate-ok --no-cascade-ok
+  --json-out /tmp/attribution.json
 ```
 
-Follow `next_step.commands` only. After module green, re-attribute with `--module-gate-ok`; after cascade green, `--cascade-ok` unlocks one L1-01 command.
+The CLI emits attribution candidates only.  Workflow-runtime convergence and
+the external project-level Supervisor decide scheduling from authoritative
+ProjectOutcome/model-ceiling results.
 
 ### Embedded in factory_audits.json
 
@@ -46,9 +47,9 @@ Follow `next_step.commands` only. After module green, re-attribute with `--modul
 - `platform_residual_attribution.primary.primary_module_id`
 - `platform_residual_attribution.primary.delivery_status`
 - `platform_residual_attribution.primary.gate_commands`
-- `unattended_next_step.phase` / `commands` / `allow_l1_01_bench`
 
-External supervisors **must** consume these fields or the CLI pack; they must **not** invent module_id from chat.
+External supervisors may consume these candidate fields but must **not** invent
+terminal status or module_id from chat.
 
 M07 cascade gate includes residual attribution unit tests so cascade red fails closed if attribution contracts break.
 
@@ -88,7 +89,8 @@ Unattended policy: schedule control-plane fixes on `DELIVERY_VERIFIED_CHAIN_CONT
 
 ## 6. Stop conditions
 
-- `is_model_ceiling=true` → stop platform rule expansion.
+- sealed `ModelCeilingTerminalResultV1.terminal=true` → stop model retries;
+  Bench regex/category strings never authorize this state.
 - ≥3 residual class shifts under M10 → prevention, not new regex.
 - Cascade red → ban L1-01 bench.
 - N-batch incomplete → ban L1-02.

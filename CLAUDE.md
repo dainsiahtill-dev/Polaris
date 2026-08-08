@@ -17,6 +17,17 @@
 - 后端强制规则：`Cell` 开发先复用已有 Cell 公开能力；所有新开发必须基于 `KernelOne` 底座能力与契约链路。
 - 若本文件与 `src/backend/AGENTS.md` 或 `src/backend/docs/AGENT_ARCHITECTURE_STANDARD.md` 存在冲突，以后两者为准。
 
+### 0.0) 无人值守项目完成权威（强制）
+
+- 项目完成身份必须精确绑定 `(workspace, project_id, run_id, completion_contract_hash)`；禁止按“最新 run”、路径猜测、跨 workspace 搜索或 caller 自报字段拼接完成事实。
+- Chief Engineer 只拥有整个 PM task-set 的 typed completion contract；合同必须绑定 owner task、required artifact、verifier modality、canonical argv/cwd、entrypoint（或显式 N/A）和合同 hash。Director 只能无损传递该合同及 hash，不能缩减、改写或自行声明项目完成。
+- `factory.verification_guard` 只消费 owner contract 并执行物理验证；artifact hash、依赖准备、build/test/lint、entrypoint 都必须形成按 obligation/owner/hash 绑定的 typed receipt。禁止信任 caller-supplied evidence、generic mapping receipt、TaskBoundary、stage gate、日志摘要或“磁盘看起来存在”；`audit.evidence` 只能保存审计副本，不能制造执行权威。
+- `orchestration.workflow_runtime` 只拥有 durable convergence cursor：残差、依赖、attempt budget、action reservation、settlement 和终态；跨进程更新必须 CAS，effect 前必须先 reserve，崩溃重放必须复用 deterministic action id。禁止在 Factory、adapter、bench 或 Agent 中另藏重试循环/第二事实源。
+- `runtime.projection` 是唯一可签发 `completed_verified` 的 owner。只有 exact completion contract 与全部 owner-sealed physical receipts 一致、无 missing/failed obligation 时才能完成；VerificationGuard、Director、QA、workflow runtime 和外部 Supervisor 都不得签发最终成功。
+- 角色失败必须阶段局部恢复，禁止默认重跑整条 `PM -> Chief Engineer -> Director`：CE 输出/schema 失败只重试 `chief_engineer_review`，复用已提交 PM contract 并把失败证据注入下一次最终 provider request；Director 失败只保留已完成 task、重开未完成 task，执行 bounded `edit/repair -> affected verifier`；QA/Verifier 失败只回到 exact owner Director task。PM 仅在 PM contract 本身无效或被显式 supersede 时重跑。重复唤醒必须用 TaskMarket durable idempotency receipt 去重；局部预算耗尽输出 `model_ceiling`/结构化 blocker，不自动升级上游。只有不可变合同矛盾、权限或架构 authority 冲突可 fail-closed，且仍禁止自动改写合同。
+- `model_ceiling` 只能由 owner query 的最终请求快照、physical-attempt、Run Ledger settlement、provider health、repair coverage 和 residual 证据共同封存；禁止 caller 自报 attempt 数、预算或通用 JSON receipt 触发 terminal。未满足证据时必须 fail-closed 为非终态。
+- 外层 Supervisor 只做项目级调度（启动、读取归因、推进/暂停/告警），不得进入 Run Ledger 成功条件。Bench 仅在 unit/type/architecture gates 全绿后作为稀缺验证；失败先产出唯一 residual/module attribution，再修 owner Cell，禁止无归因反复长跑。
+
 ### 0.1) Director deterministic repairs 收敛边界（强制）
 
 确定性修复内核唯一归属 `director.runtime`：

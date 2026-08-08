@@ -4452,6 +4452,37 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
         assert envelope["ce_blueprint"]["hash"] == "ce-blueprint-hash"
         assert envelope["handoff_decision"]["allowed"] is True
 
+    def test_promote_task_runtime_governance_deadlines_into_director_context(self, tmp_path: Any) -> None:
+        task = {
+            "subject": "Implement project entrypoint",
+            "metadata": {
+                "task_id": "TASK-1",
+                "pm_task_id": "TASK-1",
+                "target_files": ["src/index.ts"],
+                "scope_paths": ["src/index.ts"],
+                "factory_run_deadline_epoch_seconds": 150.0,
+                "factory_director_execution_deadline_epoch_seconds": 120.0,
+                "factory_run_deadline_safety_seconds": 15.0,
+            },
+        }
+        context: dict[str, Any] = {
+            "factory_run_deadline_epoch_seconds": 140.0,
+            "metadata": {"task_type": "implement"},
+        }
+
+        DirectorAdapter._promote_task_contract_to_runtime_context(
+            task=task,
+            context=context,
+            workspace=str(tmp_path),
+        )
+
+        assert context["factory_run_deadline_epoch_seconds"] == 140.0
+        assert context["factory_director_execution_deadline_epoch_seconds"] == 120.0
+        assert context["factory_run_deadline_safety_seconds"] == 15.0
+        assert context["metadata"]["factory_run_deadline_epoch_seconds"] == 150.0
+        assert context["metadata"]["factory_director_execution_deadline_epoch_seconds"] == 120.0
+        assert context["metadata"]["factory_run_deadline_safety_seconds"] == 15.0
+
     def test_promote_task_contract_replaces_summary_slots_with_structured_evidence(self, tmp_path: Any) -> None:
         BlueprintPersistence(str(tmp_path)).save(
             "ce_TASK-1",
@@ -11430,6 +11461,80 @@ class TestQualityRepairMissingTargetContract:
         assert summary["error_code"] == "quality_repair_deadline_insufficient"
         assert summary["deadline_decision"]["can_start"] is False
         assert summary["deadline_decision"]["reason"] == "factory_deadline_insufficient"
+
+    @pytest.mark.asyncio
+    async def test_quality_repair_honors_director_wave_deadline_when_run_deadline_is_absent(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Late local repair must preserve Director settlement/verifier reserve."""
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                del result
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                raise AssertionError("quality repair must not outlive the Director wave")
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.ts").write_text("export const ok = true;\n", encoding="utf-8")
+
+        with patch(
+            "polaris.cells.roles.adapters.internal.director.quality_gate.time.time",
+            return_value=100.0,
+        ):
+            tool_results, summary = await _run_materialization_quality_repair_retry(
+                _Adapter(),
+                task={"target_files": ["src/main.ts"]},
+                target_task_id="TASK-DIRECTOR-DEADLINE",
+                run_id="run-director-deadline",
+                context={
+                    "metadata": {
+                        "factory_director_execution_deadline_epoch_seconds": 120.0,
+                    }
+                },
+                original_message="Repair TypeScript project.",
+                llm_call_timeout=180,
+                artifact_quality_errors=[
+                    "Artifact quality scan failed: workspace validation command failed (npm run build): "
+                    "src/main.ts(1,1): error TS2304: Cannot find name 'missingSymbol'."
+                ],
+                changed_files=["src/main.ts"],
+            )
+
+        assert tool_results == []
+        assert summary["error_code"] == "quality_repair_deadline_insufficient"
+        assert summary["deadline_decision"]["can_start"] is False
+        assert summary["deadline_decision"]["reason"] == "factory_deadline_insufficient"
+        assert summary["deadline_decision"]["deadline_source"] == ("factory_director_execution_deadline_epoch_seconds")
 
     def test_repair_targets_css_import_exact_path(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

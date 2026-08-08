@@ -29,6 +29,16 @@
 
 规则：先服从当前 graph，再按 `FINAL_SPEC.md` 判断迁移方向，最后应用 ACGA 2.0 增强规则。
 
+### 1.1 无人值守完成闭环镜像
+
+- Exact identity 固定为 `(workspace, project_id, run_id, completion_contract_hash)`；禁止 latest-run、跨 workspace fallback 或 caller 自报身份。
+- Chief Engineer 拥有 whole-project typed completion contract；Director 只做 hash-bound 无损传递。合同必须覆盖 owner task、artifact、canonical verifier argv/cwd/modality、entrypoint或显式 N/A。
+- VerificationGuard 负责物理验证和 obligation-bound typed receipts，但不拥有最终成功；caller evidence、TaskBoundary、stage gate、generic audit receipt、日志摘要与磁盘猜测都不是权威。
+- workflow runtime 只拥有 durable convergence cursor，并使用跨进程 CAS、reserve-before-effect、deterministic action id 与 crash replay；不得在 Factory/adapter/bench 中复制重试状态机。
+- 角色失败必须阶段局部恢复，禁止默认重跑整条 `PM -> Chief Engineer -> Director`：CE 输出/schema 失败只重试 `chief_engineer_review`，复用已提交 PM contract 并把失败证据注入下一次最终 provider request；Director 失败只保留已完成 task、重开未完成 task，执行 bounded `edit/repair -> rerun affected verifier`；QA/Verifier 失败只回到 exact owner Director task。PM 仅在 PM contract 本身无效或被显式 supersede 时重跑。TaskMarket requeue 必须以 action id 原子幂等；达到局部预算后输出 model ceiling/blocker，不得把失败改写成 PASS 或自动升级上游。
+- runtime.projection 独占 `completed_verified` 签发。`model_ceiling` 必须由 owner-query facts 封存，禁止由自报 attempt/budget/JSON 触发。
+- Bench 仅用于门禁全绿后的稀缺验证；失败必须先落唯一 residual/module attribution。外部 Supervisor 只做项目调度，不进入平台事实源或成功条件。
+
 ## 2. 多实例与 Bench 边界速记
 
 - Polaris 后端实例仍然是单 workspace 绑定；多项目观测通过平台级 Instance Registry + `/launcher` 管理多个独立实例。
