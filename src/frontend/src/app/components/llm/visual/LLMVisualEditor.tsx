@@ -204,7 +204,6 @@ export function LLMVisualEditor({
 
   const onNodeContextMenu = useCallback(
     (event: React.MouseEvent, node: Node<VisualNodeData>) => {
-      console.log("[LLMVisualEditor] onNodeContextMenu fired:", node.id, node.type);
       event.preventDefault();
       const rect = editorContainerRef.current?.getBoundingClientRect();
       setContextMenu({
@@ -220,7 +219,6 @@ export function LLMVisualEditor({
 
   const onEdgeContextMenu = useCallback(
     (event: React.MouseEvent, edge: Edge) => {
-      console.log("[LLMVisualEditor] onEdgeContextMenu fired:", edge.id, (edge as Edge<VisualEdgeData>).data?.kind);
       event.preventDefault();
       event.stopPropagation();
       const rect = editorContainerRef.current?.getBoundingClientRect();
@@ -237,7 +235,6 @@ export function LLMVisualEditor({
 
   const onPaneContextMenu = useCallback(
     (event: MouseEvent | React.MouseEvent<Element, MouseEvent>) => {
-      console.log("[LLMVisualEditor] onPaneContextMenu fired (right-click on empty area)");
       event.preventDefault();
       setContextMenu(null);
     },
@@ -245,12 +242,10 @@ export function LLMVisualEditor({
   );
 
   const onPaneClick = useCallback(() => {
-    console.log("[LLMVisualEditor] onPaneClick fired — clearing context menu");
     setContextMenu(null);
   }, []);
 
   const closeContextMenu = useCallback(() => {
-    console.log("[LLMVisualEditor] closeContextMenu called");
     setContextMenu(null);
   }, []);
 
@@ -397,15 +392,6 @@ export function LLMVisualEditor({
     () => getContextMenuItems(),
     [getContextMenuItems],
   );
-
-  // DEBUG: track contextMenu state lifecycle
-  useEffect(() => {
-    if (contextMenu) {
-      console.log("[LLMVisualEditor] useEffect: contextMenu SET", { type: contextMenu.type, items: contextMenuView.items.length, x: contextMenu.x, y: contextMenu.y });
-    } else {
-      console.log("[LLMVisualEditor] useEffect: contextMenu CLEARED");
-    }
-  }, [contextMenu, contextMenuView]);
 
   useEffect(() => {
     if (!providerDraft && providers.length > 0) {
@@ -854,7 +840,6 @@ export function LLMVisualEditor({
                   type="button"
                   data-testid={`llm-visual-context-menu-item-${item.label}`}
                   onClick={() => {
-                    console.log("[LLMVisualEditor] menu item clicked:", item.label);
                     if (!item.disabled) {
                       item.action();
                       closeContextMenu();
