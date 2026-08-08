@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os  # re-exported for lossless surface + test monkeypatch of ``os.name``
 import re  # re-exported for lossless surface compatibility
@@ -195,6 +196,14 @@ _CHILD_SESSION_SETTLEMENT_EVIDENCE_METADATA_KEY = "factory_child_session_settlem
 # Router code may select an operation, but it cannot authorize or persist one.
 _AUTOMATIC_ROUTER_MUTATION_GUARD_MATRIX: dict[str, tuple[str, ...]] = {
     "summary_projection": ("store.save_run",),
+    "chief_engineer_local_rework": (
+        "store.save_run",
+        "_append_event",
+        "reconcile_stage_execution_for_reentry",
+    ),
+    "chief_engineer_local_rework_reentry": ("reconcile_stage_execution_for_reentry",),
+    "director_local_rework": ("store.save_run", "_append_event", "reconcile_stage_execution_for_reentry"),
+    "director_local_rework_reentry": ("reconcile_stage_execution_for_reentry",),
     "quality_rework": ("store.save_run", "_append_event", "reconcile_stage_execution_for_reentry"),
     "quality_rework_reentry": ("reconcile_stage_execution_for_reentry",),
     "stage_sequence": ("execute_stage",),
@@ -1712,14 +1721,22 @@ class FactoryRunService:
 
         result.started_at = result.started_at or started_at
         result.completed_at = result.completed_at or self._now()
-        quality_rework_decision_pending = (
-            str(result.stage or "").strip() == "quality_gate" and str(result.status or "").strip().lower() == "failed"
-        )
-        if quality_rework_decision_pending:
+        failed_stage = str(result.stage or "").strip()
+        local_rework_decision_pending = failed_stage in {
+            "chief_engineer_review",
+            "director_dispatch",
+            "quality_gate",
+        } and (str(result.status or "").strip().lower() == "failed")
+        if local_rework_decision_pending:
+            rework_reason = {
+                "chief_engineer_review": "chief_engineer_local_rework_decision_pending",
+                "director_dispatch": "director_local_rework_decision_pending",
+                "quality_gate": "quality_rework_decision_pending",
+            }[failed_stage]
             result.metadata = dict(result.metadata or {})
             result.metadata["factory_terminal_drain_deferred"] = {
                 "schema_version": "factory.terminal-drain-deferred.v1",
-                "reason": "quality_rework_decision_pending",
+                "reason": rework_reason,
                 "decision_owner": "factory_orchestration",
             }
         terminal_after_stage = False
@@ -1747,13 +1764,14 @@ class FactoryRunService:
         # FAILED/CANCELLED must still drain the workspace lease here so a missed
         # or timed-out router complete_run cannot leave lease state=active forever
         # (L1-05 r82: director_dispatch failed, completed_at=null, lease stuck active).
-        # A failed quality gate is the one terminal-looking stage result that
-        # can authoritatively request another Director wave. Preserve live
-        # TaskRuntime rows until the synchronous orchestration caller reads and
-        # records that decision. If no rework is requested, the caller's normal
-        # failure closeout invokes complete_run() and drains immediately. All
-        # other failed stages retain the service-owned auto-drain guarantee.
-        if terminal_after_stage and not quality_rework_decision_pending:
+        # Failed CE, Director, and quality stages can request one bounded
+        # owner-local recovery wave. Preserve live TaskRuntime rows until the
+        # synchronous orchestration caller records that decision. CE reuses the
+        # authoritative PM contract; Director reopens only unfinished work; QA
+        # returns to Director. If no rework is requested, the caller's normal
+        # failure closeout drains immediately. Upstream roles are never replayed
+        # merely because a downstream stage failed.
+        if terminal_after_stage and not local_rework_decision_pending:
             try:
                 if self._stage_result_releases_execution_claim(result):
                     await self.settle_terminal_run(run_id)
@@ -1770,7 +1788,84 @@ class FactoryRunService:
                     stage,
                     settle_exc,
                 )
+        if result.stage == "chief_engineer_review" and result.status == "success":
+            try:
+                await self._notify_project_completion_supervisor(run_id, result)
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                logger.error(
+                    "Project completion supervisor notification failed for run %s: %s",
+                    run_id,
+                    exc,
+                    exc_info=True,
+                )
+                await self._append_event(
+                    run_id,
+                    {
+                        "type": "project_completion_control_plane_blocked",
+                        "message": str(exc)[:500],
+                        "error_type": type(exc).__name__,
+                        "timestamp": self._now(),
+                        "terminal": False,
+                    },
+                )
         return result
+
+    async def _notify_project_completion_supervisor(
+        self,
+        run_id: str,
+        result: StageResult,
+    ) -> None:
+        """Emit the CE-owned completion identity after its stage commit.
+
+        This is an event-driven call point, not a scan/poll loop.  The CE
+        persisted portfolio remains authority; the Factory result only carries
+        its logical artifact reference.
+        """
+
+        from polaris.cells.chief_engineer.blueprint.public import (
+            QueryProjectCompletionContractV1,
+            query_project_completion_contract,
+        )
+        from polaris.cells.orchestration.workflow_orchestration.public.project_completion import (
+            AdvanceProjectCompletionCommandV1,
+            ProjectCompletionIdentityV1,
+            notify_project_completion,
+        )
+
+        identities: list[ProjectCompletionIdentityV1] = []
+        for logical_ref in result.artifacts:
+            if not str(logical_ref).startswith("runtime/blueprints/ce_portfolio_"):
+                continue
+            physical_ref = Path(resolve_logical_path(str(self.workspace), str(logical_ref)))
+            payload = json.loads(physical_ref.read_text(encoding="utf-8"))
+            completion = payload.get("project_completion_contract")
+            if not isinstance(completion, Mapping):
+                continue
+            project_id = str(completion.get("project_id") or "").strip()
+            contract_hash = str(completion.get("contract_hash") or "").strip()
+            if not project_id or not contract_hash:
+                continue
+            # Re-read via the CE owner API before scheduling; never trust the
+            # transport artifact projection alone.
+            contract = query_project_completion_contract(
+                QueryProjectCompletionContractV1(
+                    workspace=str(self.workspace),
+                    project_id=project_id,
+                    run_id=run_id,
+                    contract_hash=contract_hash,
+                )
+            )
+            identities.append(
+                ProjectCompletionIdentityV1(
+                    workspace=str(self.workspace),
+                    project_id=contract.project_id,
+                    run_id=contract.run_id,
+                    completion_contract_hash=contract.contract_hash,
+                )
+            )
+        if len(identities) != 1:
+            raise RuntimeError("chief_engineer_project_completion_identity_not_unique")
+        await notify_project_completion(AdvanceProjectCompletionCommandV1(identity=identities[0]))
 
     async def _run_stage_heartbeat(
         self,

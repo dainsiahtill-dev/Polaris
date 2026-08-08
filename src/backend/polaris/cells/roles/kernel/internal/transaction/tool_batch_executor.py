@@ -1605,6 +1605,7 @@ class ToolBatchExecutor:
         workspace: str,
         turn_id: str,
         batch_id: str,
+        preserve_same_path_inventory: bool = False,
     ) -> tuple[list[ToolInvocation], _PreparedDirectedEffectDispatchV1 | None]:
         """Authorize and seal every mutation before any member of the batch executes."""
 
@@ -1615,7 +1616,16 @@ class ToolBatchExecutor:
         mutations = [invocation for invocation in canonical if invocation.effect_type is not ToolEffectType.READ]
         if not mutations:
             return canonical, None
-        mutations, path_superseded_drops = _collapse_last_write_wins_mutations(mutations)
+        # Ordinary model batches use last-write-wins so repeated writes to one
+        # target do not invalidate later DEO claim baselines. Deferred repair
+        # followups are different: their sealed inventory intentionally contains
+        # a forward mutation plus a same-path rollback contingency. Collapsing
+        # that pair drops the forward member, then the explicit forward/rollback
+        # partition cannot cover the prepared inventory and settlement fails.
+        # Preserve the exact paired inventory only for that typed followup path.
+        path_superseded_drops: list[tuple[str, str, str]] = []
+        if not preserve_same_path_inventory:
+            mutations, path_superseded_drops = _collapse_last_write_wins_mutations(mutations)
         if not mutations:
             # All mutations were pathless-empty or collapsed away; fail closed.
             first_error = path_superseded_drops[0][2] if path_superseded_drops else "directed_effect_policy_denied"
@@ -1943,6 +1953,7 @@ class ToolBatchExecutor:
                 workspace=workspace,
                 turn_id=turn_id,
                 batch_id=followup.batch_id,
+                preserve_same_path_inventory=True,
             )
         except RuntimeError as deo_exc:
             error_token = str(deo_exc)

@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import threading
+import unicodedata
 import uuid
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
@@ -41,12 +42,24 @@ from polaris.cells.chief_engineer.blueprint.public import (
     ChiefEngineerBlueprintPortfolioV1,
     ChiefEngineerPortfolioTaskV1,
     GenerateTaskBlueprintCommandV1,
+    ProjectKindAuthorityV1,
+    VerificationCommandAuthorityV1,
     build_chief_engineer_blueprint_portfolio,
+    derive_project_kind_authority_from_catalog_snapshot,
     generate_task_blueprint,
     project_chief_engineer_task_blueprint,
+    project_completion_catalog_snapshot_hash,
+    project_completion_verifier_policy_snapshot_hash,
     validate_director_handoff_from_payload,
 )
+from polaris.cells.chief_engineer.blueprint.public.contracts import (
+    _issue_chief_engineer_portfolio_authority_carrier,
+)
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
+from polaris.cells.control_plane.verifier_policy.public import (
+    CompileEvidencePolicyCommandV1,
+    compile_evidence_policy,
+)
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
@@ -124,7 +137,10 @@ from .factory_run_models import (
 from .factory_stage_artifact_bindings import (
     FactoryStageArtifactBindingError,
     parse_factory_stage_artifact_json,
+    revalidate_pm_stage_artifact_binding,
 )
+from .factory_stage_persistence import reduce_factory_stage_persistence
+from .factory_store import FactoryStore
 from .factory_workspace_quality import WorkspaceQualityRunner
 from .run_ledger import load_run_ledger_projection
 
@@ -335,7 +351,7 @@ _CE_BLUEPRINT_OUTPUT_CONTRACT = """
 Chief Engineer output contract:
 - Call submit_structured_role_output exactly once with the complete result object. This is a
   provider response protocol, not an executable workspace tool and not a side effect.
-- Required top-level keys: construction_plan, scope_for_apply, risk_flags.
+- Required top-level keys: construction_plan, project_completion_contract, scope_for_apply, risk_flags.
 - construction_plan must describe one coherent project architecture, not isolated task answers.
 - construction_plan.task_plans must be an object keyed by every PM task id. Each task plan must name
   concrete files, public interfaces, dependencies, implementation phases, and verification evidence.
@@ -345,6 +361,23 @@ Chief Engineer output contract:
 - scope_for_apply must be an array of repository-relative paths or modules. It is advisory only and
   cannot expand the PM-authoritative target_files/scope_paths.
 - risk_flags must be an array, even when empty.
+- project_completion_contract must describe completion for the ENTIRE validated PM task set, never one task.
+  It must contain obligations.artifacts, obligations.entrypoints, and
+  obligations.verification. Every PM target file must be a required artifact. Active artifact and entrypoint
+  paths must be exact PM target paths or component-safe descendants of PM scope_paths, and owner_task_id must be
+  the PM task that owns that target/scope. Every verification must name covers_obligation_ids and select one exact
+  PM-owned command_authority_hash supplied in project_completion_authority; never invent or rewrite a command. Every active
+  obligation must name exact owner_task_id from the validated PM task set; not_applicable obligations must use
+  owner_task_id=null. The immutable project_kind_authority in project_completion_authority decides application versus
+  library; never emit or override project_kind. Every project kind requires at least one required build/test/lint
+  verifier. Applications require a required test artifact and test verifier; only libraries may mark both
+  not_applicable. Every project kind declares environment_prep: applications require it; libraries may mark it
+  not_applicable. Applications also require an
+  executable entrypoint with source_path/runtime_path plus an authorized entrypoint verifier. Libraries must mark
+  entrypoint not_applicable.
+- Do not emit project_id, run_id, project_kind, project_kind_authority, pm_contract_hash, covered_task_ids,
+  completion_predicate_version, or verifier_policy_hash. Factory injects those authority fields from committed PM,
+  catalog, and verifier-policy evidence.
 - Do not call any other tool or emit code patches, <SESSION_PATCH>, or file edit instructions.
 """
 
@@ -361,6 +394,31 @@ class _ChiefEngineerExecutionAttemptLeaseBudget:
             raise ValueError("chief_engineer_execution_attempt_lease_ttl_must_be_positive")
         if not 0 < self.heartbeat_interval_seconds < self.lease_ttl_seconds:
             raise ValueError("chief_engineer_execution_attempt_heartbeat_interval_out_of_bounds")
+
+
+@dataclass(frozen=True, slots=True)
+class _ChiefEngineerPortfolioAuthorityV1:
+    """Factory-owned identities injected into one project completion contract."""
+
+    project_id: str
+    pm_stage_event_id: str
+    pm_contract_hash: str
+    pm_task_ids: tuple[str, ...]
+    catalog_snapshot: Mapping[str, Any]
+    catalog_snapshot_hash: str
+    project_kind_authority: ProjectKindAuthorityV1
+    verifier_policy_hash: str
+    verifier_policy: Mapping[str, Any]
+    verifier_policy_snapshot_hash: str
+    verification_command_authority: tuple[VerificationCommandAuthorityV1, ...]
+
+
+class _ChiefEngineerPortfolioAuthorityError(RuntimeError):
+    """Stable pre-provider authority failure surfaced verbatim as a stage signal code."""
+
+    def __init__(self, code: str, detail: str = "") -> None:
+        self.code = code
+        super().__init__(detail or code)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2704,6 +2762,32 @@ class OrchestrationStageExecutor:
         return helpers.is_taskboard_converged(stats)
 
     @staticmethod
+    def _taskboard_has_active_execution(stats: Mapping[str, Any]) -> bool:
+        """Whether authoritative TaskRuntime facts prove a child is still active.
+
+        The orchestration lifecycle may publish a non-success terminal result
+        before the TaskRuntime-owned execution row reaches its terminal fact.
+        In that interval the lifecycle progress marker can be absent even though
+        the child is physically executing.  TaskRuntime is the canonical task
+        authority, so any active row must preserve the already-admitted Director
+        execution lease instead of collapsing the wait to the 5s settlement
+        reserve.
+        """
+
+        return any(
+            _safe_taskboard_stat(stats.get(key)) > 0
+            for key in (
+                "in_progress",
+                "in_design",
+                "in_execution",
+                "in_qa",
+                "running",
+                "processing",
+                "executing",
+            )
+        )
+
+    @staticmethod
     def _has_director_progress(before: dict[str, int], after: dict[str, int]) -> bool:
         return helpers.has_director_progress(before, after)
 
@@ -4718,6 +4802,7 @@ class OrchestrationStageExecutor:
         pm_tasks: list[dict[str, Any]],
         *,
         run_id: str,
+        failure_feedback: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Build one structured final-request evidence payload for all PM tasks.
 
@@ -4772,7 +4857,7 @@ class OrchestrationStageExecutor:
             "source_artifact": "tasks/plan.json",
             "tasks": [dict(task) for task in pm_tasks],
         }
-        return {
+        context = {
             "factory_run_id": run_id,
             "source_artifact": "tasks/plan.json",
             "pm_task_contract": pm_contract_set,
@@ -4790,6 +4875,10 @@ class OrchestrationStageExecutor:
             "scope_paths": scope_paths,
             "task_count": len(task_rows),
         }
+        if failure_feedback:
+            context["failure_feedback"] = deepcopy(dict(failure_feedback))
+            context["chief_engineer_local_rework"] = True
+        return context
 
     def _chief_engineer_portfolio_objective(self, pm_tasks: list[dict[str, Any]]) -> str:
         """Return a natural-language project design objective for one CE call."""
@@ -4805,6 +4894,226 @@ class OrchestrationStageExecutor:
             "Validated PM tasks:\n" + "\n".join(task_lines) + _CE_BLUEPRINT_OUTPUT_CONTRACT
         )
 
+    def _chief_engineer_project_kind_authority(
+        self,
+        *,
+        project_id: str,
+        run_id: str,
+        pm_contract_hash: str,
+        catalog_snapshot: Mapping[str, Any],
+        catalog_snapshot_hash: str,
+    ) -> ProjectKindAuthorityV1:
+        """Mirror the CE owner derivation for provider context; CE revalidates it."""
+
+        try:
+            return derive_project_kind_authority_from_catalog_snapshot(
+                project_id=project_id,
+                run_id=run_id,
+                pm_contract_hash=pm_contract_hash,
+                catalog_snapshot=catalog_snapshot,
+                catalog_snapshot_hash=catalog_snapshot_hash,
+            )
+        except (TypeError, ValueError) as exc:
+            raise _ChiefEngineerPortfolioAuthorityError(
+                "chief_engineer.project_completion_project_kind_authority_invalid",
+                str(exc),
+            ) from exc
+
+    def _chief_engineer_catalog_snapshot(self) -> dict[str, Any]:
+        """Capture the exact platform catalog after PM artifact revalidation."""
+
+        catalog_path = self.workspace / ".polaris" / "catalog_contract.json"
+        if not catalog_path.exists():
+            return {}
+        try:
+            payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise _ChiefEngineerPortfolioAuthorityError(
+                "chief_engineer.project_completion_catalog_snapshot_invalid",
+                "catalog_contract.json is unreadable or invalid JSON",
+            ) from exc
+        if type(payload) is not dict:
+            raise _ChiefEngineerPortfolioAuthorityError(
+                "chief_engineer.project_completion_catalog_snapshot_invalid",
+                "catalog_contract.json must be an exact JSON object",
+            )
+        return payload
+
+    def _chief_engineer_verification_command_authority(
+        self,
+        committed_pm_tasks: list[dict[str, Any]],
+    ) -> tuple[VerificationCommandAuthorityV1, ...]:
+        """Read exact structured verifier argv/cwd authority from the committed PM document.
+
+        Natural-language acceptance criteria and generic verifier-policy modalities are deliberately
+        not command authority.  Missing or malformed structured rows fail before any CE provider call.
+        """
+
+        authorities: list[VerificationCommandAuthorityV1] = []
+        seen_hashes: set[str] = set()
+        for index, task in enumerate(committed_pm_tasks, start=1):
+            task_id = self._task_id(task, index)
+            if "verification_commands" not in task:
+                raise _ChiefEngineerPortfolioAuthorityError(
+                    "chief_engineer.project_completion_verification_command_authority_missing",
+                    f"committed PM task {task_id!r} is missing verification_commands",
+                )
+            rows = task.get("verification_commands")
+            if type(rows) is not list:
+                raise _ChiefEngineerPortfolioAuthorityError(
+                    "chief_engineer.project_completion_verification_command_authority_invalid",
+                    f"committed PM task {task_id!r} verification_commands must be a JSON array",
+                )
+            for row_index, raw_row in enumerate(rows):
+                if not isinstance(raw_row, Mapping) or set(raw_row) != {"modality", "argv", "cwd"}:
+                    raise _ChiefEngineerPortfolioAuthorityError(
+                        "chief_engineer.project_completion_verification_command_authority_invalid",
+                        f"committed PM task {task_id!r} verification_commands[{row_index}] "
+                        "must contain exactly modality, argv, cwd",
+                    )
+                try:
+                    authority = VerificationCommandAuthorityV1(
+                        task_id=task_id,
+                        modality=raw_row["modality"],
+                        argv=raw_row["argv"],
+                        cwd=raw_row["cwd"],
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise _ChiefEngineerPortfolioAuthorityError(
+                        "chief_engineer.project_completion_verification_command_authority_invalid",
+                        f"committed PM task {task_id!r} verification_commands[{row_index}] is invalid: {exc}",
+                    ) from exc
+                if authority.authority_hash in seen_hashes:
+                    continue
+                seen_hashes.add(authority.authority_hash)
+                authorities.append(authority)
+        if not authorities:
+            raise _ChiefEngineerPortfolioAuthorityError(
+                "chief_engineer.project_completion_verification_command_authority_missing",
+                "committed PM task set contains no structured verification command authority",
+            )
+        if not any(authority.modality in {"build", "test", "lint"} for authority in authorities):
+            raise _ChiefEngineerPortfolioAuthorityError(
+                "chief_engineer.project_completion_delivery_verifier_authority_missing",
+                "committed PM task set requires at least one build/test/lint command authority",
+            )
+        return tuple(sorted(authorities, key=lambda item: item.authority_hash))
+
+    async def _load_chief_engineer_portfolio_authority(
+        self,
+        *,
+        run: FactoryRun,
+        pm_tasks: list[dict[str, Any]],
+        portfolio_tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
+    ) -> _ChiefEngineerPortfolioAuthorityV1:
+        """Bind CE completion authority to committed PM and verifier-policy evidence."""
+
+        catalog_snapshot = self._chief_engineer_catalog_snapshot()
+        catalog_project_id = str(catalog_snapshot.get("project_id") or "").strip()
+        # ``FactoryConfig.name`` is a human-facing run label (the HTTP/bench
+        # caller commonly sets it to ``Factory Run - pm``), not project
+        # identity authority.  Prefer the catalog identity captured after PM
+        # artifact revalidation; retain the display-name fallback only for
+        # legacy/non-catalog workspaces.
+        project_id = catalog_project_id or str(run.config.name)
+        if not project_id or project_id != project_id.strip():
+            raise RuntimeError("chief_engineer_project_completion_project_id_missing")
+        if any(unicodedata.category(character).startswith("C") for character in project_id):
+            raise RuntimeError("chief_engineer_project_completion_project_id_invalid")
+        if len(project_id.encode("utf-8")) > 128:
+            raise RuntimeError("chief_engineer_project_completion_project_id_invalid")
+        expected_task_ids = tuple(sorted(task.task_id for task in portfolio_tasks))
+        if not expected_task_ids:
+            raise RuntimeError("chief_engineer_project_completion_task_set_missing")
+
+        runtime_root = Path(resolve_storage_roots(str(self.workspace)).runtime_root)
+        factory_store = FactoryStore(runtime_root / "factory", create_root=False)
+        events = await factory_store.get_authoritative_events(run.id)
+        persistence = reduce_factory_stage_persistence(events, factory_run_id=run.id)
+        pm_commits = tuple(commit for commit in persistence.commits if commit.stage == "pm_planning")
+        if not pm_commits:
+            raise RuntimeError("chief_engineer_project_completion_pm_commit_missing")
+        pm_commit = pm_commits[-1]
+        pm_stage_event = next(
+            (
+                event
+                for event in events
+                if event.get("type") == "stage_completed"
+                and event.get("event_id") == pm_commit.stage_completed_event_id
+            ),
+            None,
+        )
+        if pm_stage_event is None:
+            raise RuntimeError("chief_engineer_project_completion_pm_stage_event_missing")
+        proof = revalidate_pm_stage_artifact_binding(
+            factory_store=factory_store,
+            factory_run_id=run.id,
+            stage_event=pm_stage_event,
+        )
+        committed_pm_tasks_raw = proof.document.get("tasks")
+        if type(committed_pm_tasks_raw) is not list or committed_pm_tasks_raw != pm_tasks:
+            raise RuntimeError("chief_engineer_project_completion_pm_document_mismatch")
+        committed_pm_tasks = cast(list[dict[str, Any]], committed_pm_tasks_raw)
+        committed_portfolio_tasks = self._chief_engineer_portfolio_tasks(committed_pm_tasks)
+        if committed_portfolio_tasks != portfolio_tasks:
+            raise RuntimeError("chief_engineer_project_completion_pm_path_authority_mismatch")
+        if proof.task_ids != expected_task_ids:
+            raise RuntimeError(
+                "chief_engineer_project_completion_pm_task_set_mismatch:"
+                f"expected={list(expected_task_ids)}:actual={list(proof.task_ids)}"
+            )
+
+        target_files = tuple(path for task in portfolio_tasks for path in task.target_files)
+        acceptance_criteria = tuple(
+            criterion
+            for task in committed_pm_tasks
+            for criterion in self._task_string_list(task, "acceptance", "acceptance_criteria")
+        )
+        verification_command_authority = self._chief_engineer_verification_command_authority(committed_pm_tasks)
+        try:
+            catalog_snapshot_hash = project_completion_catalog_snapshot_hash(catalog_snapshot)
+        except (TypeError, ValueError) as exc:
+            raise _ChiefEngineerPortfolioAuthorityError(
+                "chief_engineer.project_completion_catalog_snapshot_invalid",
+                str(exc),
+            ) from exc
+        project_kind_authority = self._chief_engineer_project_kind_authority(
+            project_id=project_id,
+            run_id=run.id,
+            pm_contract_hash=proof.item.canonical_json_sha256,
+            catalog_snapshot=catalog_snapshot,
+            catalog_snapshot_hash=catalog_snapshot_hash,
+        )
+        policy = dict(
+            compile_evidence_policy(
+                CompileEvidencePolicyCommandV1(
+                    workspace=str(self.workspace),
+                    task_id=f"CE-PORTFOLIO-{run.id}",
+                    run_id=run.id,
+                    target_files=target_files,
+                    acceptance_criteria=acceptance_criteria,
+                    explicit_required_modalities=("command",),
+                )
+            ).policy
+        )
+        verifier_policy_hash = str(policy.get("policy_hash") or "")
+        if re.fullmatch(r"[0-9a-f]{64}", verifier_policy_hash) is None:
+            raise RuntimeError("chief_engineer_project_completion_verifier_policy_hash_invalid")
+        verifier_policy_snapshot_hash = project_completion_verifier_policy_snapshot_hash(policy)
+        return _ChiefEngineerPortfolioAuthorityV1(
+            project_id=project_id,
+            pm_stage_event_id=str(pm_commit.stage_completed_event_id),
+            pm_contract_hash=proof.item.canonical_json_sha256,
+            pm_task_ids=proof.task_ids,
+            catalog_snapshot=catalog_snapshot,
+            catalog_snapshot_hash=catalog_snapshot_hash,
+            project_kind_authority=project_kind_authority,
+            verifier_policy_hash=verifier_policy_hash,
+            verifier_policy=policy,
+            verifier_policy_snapshot_hash=verifier_policy_snapshot_hash,
+            verification_command_authority=verification_command_authority,
+        )
+
     @staticmethod
     def _chief_engineer_structured_output_contract(
         portfolio_task_ids: tuple[str, ...],
@@ -4818,6 +5127,122 @@ class OrchestrationStageExecutor:
                 "additionalProperties": True,
             }
             for task_id in portfolio_task_ids
+        }
+        nullable_string = {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]}
+        completion_contract_schema = {
+            "type": "object",
+            "properties": {
+                "obligations": {
+                    "type": "object",
+                    "properties": {
+                        "artifacts": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "obligation_id": {"type": "string", "minLength": 1},
+                                    "path": {"type": "string", "minLength": 1},
+                                    "semantic_role": {
+                                        "type": "string",
+                                        "enum": [
+                                            "source",
+                                            "test",
+                                            "manifest",
+                                            "config",
+                                            "docs",
+                                            "entrypoint",
+                                            "assets",
+                                        ],
+                                    },
+                                    "applicability": {
+                                        "type": "string",
+                                        "enum": ["required", "optional", "not_applicable"],
+                                    },
+                                    "owner_task_id": nullable_string,
+                                },
+                                "required": [
+                                    "obligation_id",
+                                    "path",
+                                    "semantic_role",
+                                    "applicability",
+                                    "owner_task_id",
+                                ],
+                                "additionalProperties": False,
+                            },
+                        },
+                        "entrypoints": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "obligation_id": {"type": "string", "minLength": 1},
+                                    "kind": {
+                                        "type": "string",
+                                        "enum": ["cli", "web", "api", "library"],
+                                    },
+                                    "applicability": {
+                                        "type": "string",
+                                        "enum": ["required", "optional", "not_applicable"],
+                                    },
+                                    "owner_task_id": nullable_string,
+                                    "source_path": nullable_string,
+                                    "runtime_path": nullable_string,
+                                    "command": nullable_string,
+                                },
+                                "required": [
+                                    "obligation_id",
+                                    "kind",
+                                    "applicability",
+                                    "owner_task_id",
+                                    "source_path",
+                                    "runtime_path",
+                                    "command",
+                                ],
+                                "additionalProperties": False,
+                            },
+                        },
+                        "verification": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "obligation_id": {"type": "string", "minLength": 1},
+                                    "modality": {
+                                        "type": "string",
+                                        "enum": ["environment_prep", "build", "test", "lint", "entrypoint"],
+                                    },
+                                    "command_authority_hash": nullable_string,
+                                    "applicability": {
+                                        "type": "string",
+                                        "enum": ["required", "optional", "not_applicable"],
+                                    },
+                                    "owner_task_id": nullable_string,
+                                    "covers_obligation_ids": {
+                                        "type": "array",
+                                        "items": {"type": "string", "minLength": 1},
+                                    },
+                                },
+                                "required": [
+                                    "obligation_id",
+                                    "modality",
+                                    "command_authority_hash",
+                                    "applicability",
+                                    "owner_task_id",
+                                    "covers_obligation_ids",
+                                ],
+                                "additionalProperties": False,
+                            },
+                        },
+                    },
+                    "required": ["artifacts", "entrypoints", "verification"],
+                    "additionalProperties": False,
+                },
+            },
+            "required": ["obligations"],
+            "additionalProperties": False,
         }
         return RoleStructuredOutputContractV1(
             schema_name="chief_engineer_blueprint_portfolio",
@@ -4864,9 +5289,11 @@ class OrchestrationStageExecutor:
                     },
                     "scope_for_apply": {"type": "array", "items": {}},
                     "risk_flags": {"type": "array", "items": {}},
+                    "project_completion_contract": completion_contract_schema,
                 },
                 "required": [
                     "construction_plan",
+                    "project_completion_contract",
                     "risk_flags",
                 ],
                 "additionalProperties": False,
@@ -4995,7 +5422,7 @@ class OrchestrationStageExecutor:
         """Validate the nested project-level CE output contract."""
 
         errors: list[str] = []
-        required_keys = {"construction_plan", "risk_flags"}
+        required_keys = {"construction_plan", "project_completion_contract", "risk_flags"}
         missing_keys = sorted(required_keys - set(payload))
         if missing_keys:
             errors.append("missing top-level keys: " + ", ".join(missing_keys))
@@ -5034,6 +5461,17 @@ class OrchestrationStageExecutor:
             errors.append("scope_for_apply must be an array")
         if not isinstance(payload.get("risk_flags"), list):
             errors.append("risk_flags must be an array")
+        completion_contract = payload.get("project_completion_contract")
+        if not isinstance(completion_contract, Mapping):
+            errors.append("project_completion_contract must be an object")
+        else:
+            obligations = completion_contract.get("obligations")
+            if not isinstance(obligations, Mapping):
+                errors.append("project_completion_contract.obligations must be an object")
+            else:
+                for field in ("artifacts", "entrypoints", "verification"):
+                    if not isinstance(obligations.get(field), list):
+                        errors.append(f"project_completion_contract.obligations.{field} must be an array")
         return errors
 
     def _settle_chief_engineer_execution_attempt_after_exception(
@@ -5375,11 +5813,20 @@ class OrchestrationStageExecutor:
 
         portfolio_tasks: tuple[ChiefEngineerPortfolioTaskV1, ...] = ()
         portfolio_context: dict[str, Any] = {}
+        portfolio_authority: _ChiefEngineerPortfolioAuthorityV1 | None = None
         deadline_decision: FactoryDeadlineAdmissionV1 | None = None
         if pm_tasks and not cancelled_by_factory:
             try:
+                start_metadata_raw = context.get("metadata")
+                start_metadata = start_metadata_raw if isinstance(start_metadata_raw, Mapping) else {}
+                local_rework_raw = start_metadata.get("chief_engineer_local_rework_evidence")
+                local_rework_evidence = local_rework_raw if isinstance(local_rework_raw, Mapping) else None
                 portfolio_tasks = self._chief_engineer_portfolio_tasks(pm_tasks)
-                portfolio_context = self._chief_engineer_portfolio_context(pm_tasks, run_id=run.id)
+                portfolio_context = self._chief_engineer_portfolio_context(
+                    pm_tasks,
+                    run_id=run.id,
+                    failure_feedback=local_rework_evidence,
+                )
             except (TypeError, ValueError) as exc:
                 stage_signals.append(
                     {
@@ -5388,6 +5835,48 @@ class OrchestrationStageExecutor:
                         "detail": f"{type(exc).__name__}: {exc}",
                     }
                 )
+
+        if portfolio_tasks:
+            try:
+                portfolio_authority = await self._load_chief_engineer_portfolio_authority(
+                    run=run,
+                    pm_tasks=pm_tasks,
+                    portfolio_tasks=portfolio_tasks,
+                )
+                portfolio_context["project_completion_authority"] = {
+                    "project_id": portfolio_authority.project_id,
+                    "run_id": run.id,
+                    "pm_contract_hash": portfolio_authority.pm_contract_hash,
+                    "covered_task_ids": list(portfolio_authority.pm_task_ids),
+                    "project_kind_authority": portfolio_authority.project_kind_authority.to_dict(),
+                    "completion_predicate_version": "polaris.project_completion_predicate.v1",
+                    "verifier_policy_hash": portfolio_authority.verifier_policy_hash,
+                    "verifier_policy": dict(portfolio_authority.verifier_policy),
+                    "verifier_policy_snapshot_hash": portfolio_authority.verifier_policy_snapshot_hash,
+                    "verification_command_authority": [
+                        item.to_dict() for item in portfolio_authority.verification_command_authority
+                    ],
+                    "authority": "factory_committed_pm_and_verifier_policy",
+                    "llm_may_override": False,
+                }
+            except _ChiefEngineerPortfolioAuthorityError as exc:
+                stage_signals.append(
+                    {
+                        "code": exc.code,
+                        "severity": "error",
+                        "detail": str(exc),
+                    }
+                )
+                portfolio_tasks = ()
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                stage_signals.append(
+                    {
+                        "code": "chief_engineer.project_completion_authority_invalid",
+                        "severity": "error",
+                        "detail": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+                portfolio_tasks = ()
 
         ce_result: RoleExecutionResultV1 | None = None
         if portfolio_tasks:
@@ -5487,6 +5976,7 @@ class OrchestrationStageExecutor:
                             "response_format_mode": "json",
                             "chief_engineer_json_contract_required": True,
                             "chief_engineer_portfolio_required": True,
+                            "project_completion_authority": dict(portfolio_context["project_completion_authority"]),
                         },
                     )
                     llm_call_count = 1
@@ -5734,13 +6224,27 @@ class OrchestrationStageExecutor:
         has_pre_projection_errors = any(
             str(signal.get("severity") or "").strip().lower() == "error" for signal in stage_signals
         )
-        if portfolio_tasks and ce_llm_blueprint and not has_pre_projection_errors:
+        if portfolio_tasks and portfolio_authority is not None and ce_llm_blueprint and not has_pre_projection_errors:
             try:
                 portfolio = build_chief_engineer_blueprint_portfolio(
                     BuildChiefEngineerBlueprintPortfolioCommandV1(
                         workspace=str(self.workspace),
                         run_id=run.id,
                         tasks=portfolio_tasks,
+                        authority_carrier=_issue_chief_engineer_portfolio_authority_carrier(
+                            workspace=str(self.workspace),
+                            run_id=run.id,
+                            project_id=portfolio_authority.project_id,
+                            pm_stage_event_id=portfolio_authority.pm_stage_event_id,
+                            pm_contract_hash=portfolio_authority.pm_contract_hash,
+                            tasks=portfolio_tasks,
+                            catalog_snapshot=portfolio_authority.catalog_snapshot,
+                            catalog_snapshot_hash=portfolio_authority.catalog_snapshot_hash,
+                            verifier_policy_hash=portfolio_authority.verifier_policy_hash,
+                            verifier_policy_snapshot=portfolio_authority.verifier_policy,
+                            verifier_policy_snapshot_hash=portfolio_authority.verifier_policy_snapshot_hash,
+                            verification_command_authority=(portfolio_authority.verification_command_authority),
+                        ),
                         llm_blueprint=ce_llm_blueprint,
                     )
                 )
@@ -6360,7 +6864,11 @@ class OrchestrationStageExecutor:
                 if not round_requested_task_ids and attempts:
                     inflight_run_id = str((last_command_result.run_id if last_command_result else "") or "").strip()
                     active_execution_observed = bool(
-                        inflight_run_id and self._active_director_execution_progress_marker(run_id=inflight_run_id)
+                        inflight_run_id
+                        and (
+                            self._active_director_execution_progress_marker(run_id=inflight_run_id)
+                            or self._taskboard_has_active_execution(before_stats)
+                        )
                     )
                     carried_execution_lease_seconds = (
                         _whole_wait_seconds(last_director_execution_deadline_monotonic)
@@ -6999,7 +7507,7 @@ class OrchestrationStageExecutor:
                 signals=stage_signals,
             )
 
-        dispatch_payload = {
+        dispatch_payload: dict[str, Any] = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source": "factory_stage_executor",
             "factory_run_id": run.id,

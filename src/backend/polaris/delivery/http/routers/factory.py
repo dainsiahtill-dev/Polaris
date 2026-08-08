@@ -141,6 +141,8 @@ SERVICE_STATUS_TO_CONTRACT: dict[ServiceRunStatus, RunLifecycleStatus] = {
 _DEFAULT_LOOP_MAX_CYCLES = 12
 _DEFAULT_LOOP_STALL_THRESHOLD = 2
 _DEFAULT_QUALITY_REWORK_MAX_CYCLES = 3
+_DEFAULT_CHIEF_ENGINEER_LOCAL_REWORK_MAX_CYCLES = 2
+_DEFAULT_DIRECTOR_LOCAL_REWORK_MAX_CYCLES = 2
 _FACTORY_RUN_DEADLINE_METADATA_KEYS = (
     "factory_run_deadline_epoch_seconds",
     "factory_deadline_epoch_seconds",
@@ -148,7 +150,13 @@ _FACTORY_RUN_DEADLINE_METADATA_KEYS = (
 )
 _RETRY_START_POLICY_AFTER_CHECKPOINT = "after_checkpoint"
 FactoryStartFrom: TypeAlias = Literal["auto", "architect", "pm", "director_resume"]
-StageSequenceStatus: TypeAlias = Literal["completed", "cancelled", "quality_rework_requested"]
+StageSequenceStatus: TypeAlias = Literal[
+    "completed",
+    "cancelled",
+    "chief_engineer_rework_requested",
+    "director_rework_requested",
+    "quality_rework_requested",
+]
 _TASK_BOUNDARY_REWORK_REASON = "task_boundary_interface_discrepancy_required"
 _TASK_BOUNDARY_OWNER_REWORK_REASON = "task_boundary_owner_task_retry_required"
 _PLAN_PROBE_UNPLANNABLE_STATUS = "coverage_matched_but_unplannable"
@@ -558,6 +566,24 @@ def _pm_plan_task_count(workspace: str) -> int:
     payload = _load_json_object(Path(resolve_runtime_path(workspace, "runtime/tasks/plan.json")))
     tasks = payload.get("tasks")
     return len(tasks) if isinstance(tasks, list) else 0
+
+
+def _pm_plan_task_ids(workspace: str) -> tuple[str, ...]:
+    """Return canonical PM task ids that Director-local rework may reopen."""
+
+    payload = _load_json_object(Path(resolve_runtime_path(workspace, "runtime/tasks/plan.json")))
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list):
+        return ()
+    task_ids: list[str] = []
+    seen: set[str] = set()
+    for item in tasks:
+        task_id = _resolve_task_identifier(item)
+        if not task_id or task_id in seen:
+            continue
+        seen.add(task_id)
+        task_ids.append(task_id)
+    return tuple(task_ids)
 
 
 def _director_resume_task_files(task_dir: Path) -> list[Path]:
@@ -2136,9 +2162,117 @@ async def _execute_run_with_service(
             operation="quality_rework_reentry",
         )
 
+    async def _record_director_local_rework_request(cycle: int, summary: dict[str, Any]) -> None:
+        """Keep PM/CE authority and reopen only unfinished Director tasks."""
+
+        if await service.get_run(run_id) is None:
+            return
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+        def apply_director_rework(current_run: FactoryRun) -> bool:
+            if current_run.status in {ServiceRunStatus.COMPLETED, ServiceRunStatus.CANCELLED}:
+                return False
+            history_raw = current_run.metadata.get("director_local_rework_history")
+            history: list[Any] = list(history_raw) if isinstance(history_raw, list) else []
+            failure_raw = current_run.metadata.get("failure")
+            intermediate_failure = dict(failure_raw) if isinstance(failure_raw, dict) else {}
+            entry = {
+                "cycle": cycle,
+                "timestamp": timestamp,
+                "source": "factory.director_dispatch.local_rework",
+                "summary": dict(summary),
+                "intermediate_failure": intermediate_failure,
+            }
+            history.append(entry)
+            if current_run.status == ServiceRunStatus.FAILED:
+                current_run.status = ServiceRunStatus.RUNNING
+                current_run.metadata.pop("failure", None)
+            if str(current_run.metadata.get("last_failed_stage") or "").strip() == "director_dispatch":
+                current_run.metadata.pop("last_failed_stage", None)
+            current_run.stages_failed = [
+                stage for stage in current_run.stages_failed if str(stage or "").strip() != "director_dispatch"
+            ]
+            current_run.metadata["director_local_rework_history"] = history[-20:]
+            current_run.metadata["director_local_rework_last"] = entry
+            current_run.metadata["director_local_rework_cycles_executed"] = cycle
+            return True
+
+        current_run = await service.apply_automatic_router_mutation(
+            run_id,
+            operation="director_local_rework",
+            mutation=apply_director_rework,
+            event={
+                "type": "director_local_rework_requested",
+                "cycle": cycle,
+                "summary": dict(summary),
+            },
+        )
+        if current_run.status in {ServiceRunStatus.COMPLETED, ServiceRunStatus.CANCELLED}:
+            return
+        await service.reconcile_stage_execution_for_reentry(
+            run_id,
+            operation="director_local_rework_reentry",
+        )
+
+    async def _record_chief_engineer_local_rework_request(cycle: int, summary: dict[str, Any]) -> None:
+        """Preserve the PM contract and reopen only the failed CE stage."""
+
+        if await service.get_run(run_id) is None:
+            return
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+        def apply_chief_engineer_rework(current_run: FactoryRun) -> bool:
+            if current_run.status in {ServiceRunStatus.COMPLETED, ServiceRunStatus.CANCELLED}:
+                return False
+            history_raw = current_run.metadata.get("chief_engineer_local_rework_history")
+            history: list[Any] = list(history_raw) if isinstance(history_raw, list) else []
+            failure_raw = current_run.metadata.get("failure")
+            intermediate_failure = dict(failure_raw) if isinstance(failure_raw, dict) else {}
+            entry = {
+                "cycle": cycle,
+                "timestamp": timestamp,
+                "source": "factory.chief_engineer_review.local_rework",
+                "summary": dict(summary),
+                "intermediate_failure": intermediate_failure,
+            }
+            history.append(entry)
+            if current_run.status == ServiceRunStatus.FAILED:
+                current_run.status = ServiceRunStatus.RUNNING
+                current_run.metadata.pop("failure", None)
+            if str(current_run.metadata.get("last_failed_stage") or "").strip() == "chief_engineer_review":
+                current_run.metadata.pop("last_failed_stage", None)
+            current_run.stages_failed = [
+                stage for stage in current_run.stages_failed if str(stage or "").strip() != "chief_engineer_review"
+            ]
+            current_run.metadata["chief_engineer_local_rework_history"] = history[-20:]
+            current_run.metadata["chief_engineer_local_rework_last"] = entry
+            current_run.metadata["chief_engineer_local_rework_cycles_executed"] = cycle
+            return True
+
+        current_run = await service.apply_automatic_router_mutation(
+            run_id,
+            operation="chief_engineer_local_rework",
+            mutation=apply_chief_engineer_rework,
+            event={
+                "type": "chief_engineer_local_rework_requested",
+                "cycle": cycle,
+                "summary": dict(summary),
+            },
+        )
+        if current_run.status in {ServiceRunStatus.COMPLETED, ServiceRunStatus.CANCELLED}:
+            return
+        await service.reconcile_stage_execution_for_reentry(
+            run_id,
+            operation="chief_engineer_local_rework_reentry",
+        )
+
     async def _execute_stage_sequence(
         stage_names: list[str],
         *,
+        allow_chief_engineer_rework: bool = False,
+        chief_engineer_rework_cycle: int = 0,
+        allow_director_rework: bool = False,
+        director_rework_cycle: int = 0,
         allow_quality_rework: bool = False,
         quality_rework_cycle: int = 0,
     ) -> StageSequenceStatus:
@@ -2171,6 +2305,45 @@ async def _execute_run_with_service(
                 )
                 return "cancelled"
             if result.status != "success":
+                if allow_chief_engineer_rework and active_stage == "chief_engineer_review":
+                    rework_summary = {
+                        "schema_version": "factory.chief_engineer_local_rework.v1",
+                        "cycle": chief_engineer_rework_cycle,
+                        "stage_status": str(result.status or ""),
+                        "stage_output": str(result.output or "")[:4000],
+                        "preserved_pm_contract": True,
+                    }
+                    payload.metadata["chief_engineer_local_rework_evidence"] = dict(rework_summary)
+                    await _record_chief_engineer_local_rework_request(
+                        chief_engineer_rework_cycle,
+                        rework_summary,
+                    )
+                    return "chief_engineer_rework_requested"
+                if allow_director_rework and active_stage == "director_dispatch":
+                    reset_result = TaskRuntimeService(workspace).reset_task_rows_for_reexecution(
+                        source="factory.director_dispatch.local_rework",
+                        preserve_completed=True,
+                        eligible_external_task_ids=_pm_plan_task_ids(workspace),
+                    )
+                    reset_files = [
+                        str(item or "").strip()
+                        for item in reset_result.get("changed_files", [])
+                        if str(item or "").strip()
+                    ]
+                    if bool(reset_result.get("success")) and reset_files:
+                        rework_summary = {
+                            "schema_version": "factory.director_local_rework.v1",
+                            "cycle": director_rework_cycle,
+                            "stage_status": str(result.status or ""),
+                            "stage_output": str(result.output or "")[:4000],
+                            "reset_files": reset_files,
+                            "preserved_files": list(reset_result.get("preserved_files", [])),
+                            "excluded_files": list(reset_result.get("excluded_files", [])),
+                            "eligible_external_task_ids": list(reset_result.get("eligible_external_task_ids") or []),
+                        }
+                        payload.metadata["director_local_rework_evidence"] = dict(rework_summary)
+                        await _record_director_local_rework_request(director_rework_cycle, rework_summary)
+                        return "director_rework_requested"
                 if allow_quality_rework and active_stage == "quality_gate":
                     task_boundary_rework = _apply_quality_gate_task_boundary_rework_requests(workspace)
                     rework_summary = _read_quality_gate_rework_summary(workspace)
@@ -2216,21 +2389,40 @@ async def _execute_run_with_service(
                 )
             return ["director_dispatch", "quality_gate"]
 
-        async def _execute_with_quality_rework(stage_names: list[str]) -> bool:
+        async def _execute_with_stage_local_rework(stage_names: list[str]) -> bool:
+            chief_engineer_rework_cycles = 0
+            director_rework_cycles = 0
             quality_rework_cycles = 0
             next_stage_names = list(stage_names)
             while True:
-                next_cycle = quality_rework_cycles + 1
+                next_director_cycle = director_rework_cycles + 1
+                next_quality_cycle = quality_rework_cycles + 1
                 sequence_status = await _execute_stage_sequence(
                     next_stage_names,
+                    allow_chief_engineer_rework=(
+                        chief_engineer_rework_cycles < _DEFAULT_CHIEF_ENGINEER_LOCAL_REWORK_MAX_CYCLES
+                    ),
+                    chief_engineer_rework_cycle=chief_engineer_rework_cycles + 1,
+                    allow_director_rework=director_rework_cycles < _DEFAULT_DIRECTOR_LOCAL_REWORK_MAX_CYCLES,
+                    director_rework_cycle=next_director_cycle,
                     allow_quality_rework=True,
-                    quality_rework_cycle=next_cycle,
+                    quality_rework_cycle=next_quality_cycle,
                 )
                 if sequence_status == "completed":
                     return True
                 if sequence_status == "cancelled":
                     return False
-                quality_rework_cycles = next_cycle
+                if sequence_status == "chief_engineer_rework_requested":
+                    chief_engineer_rework_cycles += 1
+                    chief_engineer_index = next_stage_names.index("chief_engineer_review")
+                    next_stage_names = next_stage_names[chief_engineer_index:]
+                    continue
+                if sequence_status == "director_rework_requested":
+                    director_rework_cycles = next_director_cycle
+                    director_index = next_stage_names.index("director_dispatch")
+                    next_stage_names = next_stage_names[director_index:]
+                    continue
+                quality_rework_cycles = next_quality_cycle
                 if quality_rework_cycles > quality_rework_max_cycles:
                     raise RuntimeError(
                         "Quality gate requested rework after exceeding max cycles "
@@ -2278,8 +2470,8 @@ async def _execute_run_with_service(
                             f"Delivery loop exceeded max cycles ({max_cycles}); stop to prevent infinite loop"
                         )
 
-                    sequence_status = await _execute_stage_sequence(iterative_stages)
-                    if sequence_status != "completed":
+                    completed = await _execute_with_stage_local_rework(iterative_stages)
+                    if not completed:
                         return
 
                     current_run = await service.get_run(run_id)
@@ -2362,12 +2554,12 @@ async def _execute_run_with_service(
                     break
 
                 if terminal_stages:
-                    completed = await _execute_with_quality_rework(terminal_stages)
+                    completed = await _execute_with_stage_local_rework(terminal_stages)
                     if not completed:
                         return
 
         if not loop_enabled:
-            completed = await _execute_with_quality_rework(execution_stages)
+            completed = await _execute_with_stage_local_rework(execution_stages)
             if not completed:
                 return
 

@@ -719,10 +719,19 @@ async def test_authoritative_guard_sources_gateway_policy_and_adapter_baseline()
 
 
 @pytest.mark.asyncio
-async def test_whole_mutation_batch_is_authorized_before_lifecycle_prepare(
+@pytest.mark.parametrize(
+    ("preserve_same_path_inventory", "expected_write_ids"),
+    (
+        (False, ("write-2",)),
+        (True, ("write-1", "write-2")),
+    ),
+)
+async def test_mutation_batch_authorizes_exact_post_collapse_inventory(
     monkeypatch: pytest.MonkeyPatch,
+    preserve_same_path_inventory: bool,
+    expected_write_ids: tuple[str, ...],
 ) -> None:
-    """All final calls classify once; every mutation authorizes before batch sealing."""
+    """Normal batches collapse same-path writes; typed rollback inventories do not."""
 
     events: list[tuple[str, object]] = []
     _, baseline = _snapshot_request_and_result(_invocation())
@@ -843,6 +852,7 @@ async def test_whole_mutation_batch_is_authorized_before_lifecycle_prepare(
         workspace="/workspace",
         turn_id="turn-1",
         batch_id="batch-1",
+        preserve_same_path_inventory=preserve_same_path_inventory,
     )
 
     assert [item.effect_type for item in canonical] == [
@@ -851,16 +861,12 @@ async def test_whole_mutation_batch_is_authorized_before_lifecycle_prepare(
         ToolEffectType.WRITE,
     ]
     assert events == [
-        ("authorize", "write-1"),
-        ("authorize", "write-2"),
-        ("prepare", ("write-1", "write-2")),
+        *(("authorize", call_id) for call_id in expected_write_ids),
+        ("prepare", expected_write_ids),
     ]
     assert prepared is not None and prepared.batch is prepared_sentinel
-    assert tuple(call_id for call_id, _ in prepared.restrictions_by_call_id) == (
-        "write-1",
-        "write-2",
-    )
-    assert calls.gateway == calls.policy == 2
+    assert tuple(call_id for call_id, _ in prepared.restrictions_by_call_id) == expected_write_ids
+    assert calls.gateway == calls.policy == len(expected_write_ids)
 
 
 @pytest.mark.parametrize(

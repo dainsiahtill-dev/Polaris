@@ -25,14 +25,18 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from typing import Any
 
 import pytest
 from polaris.cells.chief_engineer.blueprint.public import (
     BlueprintPersistence,
     GenerateTaskBlueprintCommandV1,
+    VerificationCommandAuthorityV1,
+    derive_project_kind_authority_from_catalog_snapshot,
     generate_task_blueprint,
+    project_completion_catalog_snapshot_hash,
+    project_completion_verifier_policy_snapshot_hash,
 )
 from polaris.cells.chief_engineer.blueprint.public.contracts import TaskBlueprintResultV1
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
@@ -180,7 +184,149 @@ def _bootstrap_real_fact_stream_workspace(request: pytest.FixtureRequest) -> Non
 
 
 def _executor(workspace: Path) -> OrchestrationStageExecutor:
-    return OrchestrationStageExecutor(workspace)
+    executor = OrchestrationStageExecutor(workspace)
+    catalog_snapshot = {"project_kind": "library"}
+    catalog_snapshot_hash = project_completion_catalog_snapshot_hash(catalog_snapshot)
+
+    async def _test_portfolio_authority(
+        self: OrchestrationStageExecutor,
+        *,
+        run: FactoryRun,
+        pm_tasks: list[dict[str, Any]],
+        portfolio_tasks: tuple[Any, ...],
+    ) -> Any:
+        del self, pm_tasks
+        catalog_path = workspace / ".polaris" / "catalog_contract.json"
+        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+        catalog_path.write_text(json.dumps(catalog_snapshot), encoding="utf-8")
+        task_ids = tuple(sorted(task.task_id for task in portfolio_tasks))
+        command_authority = tuple(
+            VerificationCommandAuthorityV1(
+                task_id=task_id,
+                modality=modality,  # type: ignore[arg-type]
+                argv=argv,
+                cwd=".",
+            )
+            for task_id in task_ids
+            for modality, argv in (
+                ("environment_prep", ("python", "-m", "pip", "install", "-e", ".")),
+                ("build", ("python", "-m", "compileall", ".")),
+                ("test", ("pytest", "-q")),
+                ("entrypoint", ("python", "-m", "src.main")),
+            )
+        )
+        policy = {
+            "schema_version": "evidence_policy.v1",
+            "policy_hash": "b" * 64,
+            "source": "control_plane.verifier_policy.evidence_policy_compiler",
+            "required_evidence_modalities": ["command"],
+        }
+        return stage_executor_module._ChiefEngineerPortfolioAuthorityV1(
+            project_id=run.config.name,
+            pm_stage_event_id=f"pm-stage-{run.id}",
+            pm_contract_hash="a" * 64,
+            pm_task_ids=task_ids,
+            catalog_snapshot=catalog_snapshot,
+            catalog_snapshot_hash=catalog_snapshot_hash,
+            project_kind_authority=derive_project_kind_authority_from_catalog_snapshot(
+                project_id=run.config.name,
+                run_id=run.id,
+                pm_contract_hash="a" * 64,
+                catalog_snapshot=catalog_snapshot,
+                catalog_snapshot_hash=catalog_snapshot_hash,
+            ),
+            verifier_policy_hash="b" * 64,
+            verifier_policy=policy,
+            verifier_policy_snapshot_hash=project_completion_verifier_policy_snapshot_hash(policy),
+            verification_command_authority=command_authority,
+        )
+
+    executor._load_chief_engineer_portfolio_authority = MethodType(  # type: ignore[method-assign]
+        _test_portfolio_authority,
+        executor,
+    )
+    return executor
+
+
+def _library_completion_requirements(
+    *target_files: str,
+    owner_task_ids: tuple[str, ...],
+    test_path: str,
+    test_owner_task_id: str,
+) -> dict[str, Any]:
+    assert len(owner_task_ids) == len(target_files)
+    artifacts = [
+        {
+            "obligation_id": f"artifact-{index}",
+            "path": path,
+            "semantic_role": "source",
+            "applicability": "required",
+            "owner_task_id": owner_task_ids[index - 1],
+        }
+        for index, path in enumerate(target_files, start=1)
+    ]
+    test_artifact_id = "artifact-test"
+    artifacts.append(
+        {
+            "obligation_id": test_artifact_id,
+            "path": test_path,
+            "semantic_role": "test",
+            "applicability": "required",
+            "owner_task_id": test_owner_task_id,
+        }
+    )
+    build_authority = VerificationCommandAuthorityV1(
+        task_id=owner_task_ids[0],
+        modality="build",
+        argv=("python", "-m", "compileall", "."),
+    )
+    test_authority = VerificationCommandAuthorityV1(
+        task_id=test_owner_task_id,
+        modality="test",
+        argv=("pytest", "-q"),
+    )
+    return {
+        "obligations": {
+            "artifacts": artifacts,
+            "entrypoints": [
+                {
+                    "obligation_id": "entrypoint-library-na",
+                    "kind": "library",
+                    "applicability": "not_applicable",
+                    "owner_task_id": None,
+                    "source_path": None,
+                    "runtime_path": None,
+                    "command": None,
+                }
+            ],
+            "verification": [
+                {
+                    "obligation_id": "verify-build",
+                    "modality": "build",
+                    "command_authority_hash": build_authority.authority_hash,
+                    "applicability": "required",
+                    "covers_obligation_ids": [artifacts[0]["obligation_id"]],
+                    "owner_task_id": owner_task_ids[0],
+                },
+                {
+                    "obligation_id": "verify-test",
+                    "modality": "test",
+                    "command_authority_hash": test_authority.authority_hash,
+                    "applicability": "required",
+                    "covers_obligation_ids": [test_artifact_id],
+                    "owner_task_id": test_owner_task_id,
+                },
+                {
+                    "obligation_id": "verify-environment-na",
+                    "modality": "environment_prep",
+                    "command_authority_hash": None,
+                    "applicability": "not_applicable",
+                    "covers_obligation_ids": [],
+                    "owner_task_id": None,
+                },
+            ],
+        },
+    }
 
 
 def test_executor_constructor_does_not_bootstrap_fact_stream(
@@ -246,8 +392,8 @@ def _write_minimal_chief_engineer_plan(executor: OrchestrationStageExecutor) -> 
                     "id": "TASK-CANCEL",
                     "title": "Implement cancellation coverage",
                     "goal": "Exercise the Chief Engineer cancellation path.",
-                    "target_files": ["src/cancel.py"],
-                    "scope_paths": ["src/cancel.py"],
+                    "target_files": ["src/cancel.py", "tests/test_cancel.py"],
+                    "scope_paths": ["src/cancel.py", "tests/test_cancel.py"],
                     "acceptance_criteria": ["cancellation is observable"],
                     "execution_checklist": ["Suspend the claimed attempt"],
                 }
@@ -281,6 +427,12 @@ def _single_task_chief_engineer_result() -> SimpleNamespace:
         },
         "scope_for_apply": ["src/cancel.py"],
         "risk_flags": [],
+        "project_completion_contract": _library_completion_requirements(
+            "src/cancel.py",
+            owner_task_ids=("TASK-CANCEL",),
+            test_path="tests/test_cancel.py",
+            test_owner_task_id="TASK-CANCEL",
+        ),
     }
     return SimpleNamespace(
         ok=True,
@@ -1632,8 +1784,8 @@ class TestChiefEngineerHandoffGuards:
                         "id": "TASK-1",
                         "title": "Build mood color wheel",
                         "goal": "Build a mood color wheel with doodle behavior.",
-                        "target_files": ["models/mood.go", "engine/wheel.go", "main.go"],
-                        "scope_paths": ["models/mood.go", "engine/wheel.go", "main.go"],
+                        "target_files": ["models/mood.go", "engine/wheel.go", "main.go", "engine/wheel_test.go"],
+                        "scope_paths": ["models/mood.go", "engine/wheel.go", "main.go", "engine/wheel_test.go"],
                         "acceptance_criteria": [
                             "mood, color, wheel, and doodle behavior tests pass",
                             "go test ./... passes",
@@ -1704,6 +1856,14 @@ class TestChiefEngineerHandoffGuards:
                             "mitigation": "assert report output in tests",
                         }
                     ],
+                    "project_completion_contract": _library_completion_requirements(
+                        "models/mood.go",
+                        "engine/wheel.go",
+                        "main.go",
+                        owner_task_ids=("TASK-1", "TASK-1", "TASK-1"),
+                        test_path="engine/wheel_test.go",
+                        test_owner_task_id="TASK-1",
+                    ),
                 }
                 return SimpleNamespace(
                     ok=True,
@@ -1771,6 +1931,22 @@ class TestChiefEngineerHandoffGuards:
             "consumer_declarations",
         }
         assert project_interface_schema["additionalProperties"] is False
+        completion_schema = command.structured_output_contract.json_schema["properties"]["project_completion_contract"]
+        assert completion_schema["additionalProperties"] is False
+        obligations_schema = completion_schema["properties"]["obligations"]
+        assert obligations_schema["required"] == ["artifacts", "entrypoints", "verification"]
+        assert obligations_schema["properties"]["verification"]["items"]["properties"]["covers_obligation_ids"] == {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+        }
+        verification_item_schema = obligations_schema["properties"]["verification"]["items"]
+        assert "command_authority_hash" in verification_item_schema["properties"]
+        assert "command" not in verification_item_schema["properties"]
+        assert "owner_task_id" in obligations_schema["properties"]["artifacts"]["items"]["required"]
+        assert command.context["project_completion_authority"]["pm_contract_hash"] == "a" * 64
+        assert command.context["project_completion_authority"]["covered_task_ids"] == ["TASK-1"]
+        assert command.metadata["project_completion_authority"]["verifier_policy_hash"] == "b" * 64
+        assert command.context["project_completion_authority"]["verification_command_authority"]
         assert command.metadata["max_retries"] == 0
         assert command.metadata["temperature"] == 0.2
         assert command.metadata["reasoning_budget_tokens"] == 4_096
@@ -1845,6 +2021,424 @@ class TestChiefEngineerHandoffGuards:
         assert omission_signal["severity"] == "warning"
         assert omission_signal["pm_authority_preserved"] is True
         assert omission_signal["scope_expansion_allowed"] is False
+
+    def test_chief_engineer_review_fails_before_provider_without_committed_pm_authority(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = OrchestrationStageExecutor(tmp_path)
+        _write_minimal_chief_engineer_plan(executor)
+        provider_calls: list[Any] = []
+
+        class _UnexpectedRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                provider_calls.append(command)
+                raise AssertionError("provider dispatch must not run without committed PM authority")
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _UnexpectedRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-missing-pm-authority",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "failed"
+        assert result.metadata["error_code"] == "chief_engineer.project_completion_authority_invalid"
+        assert provider_calls == []
+
+    def test_chief_engineer_portfolio_authority_uses_committed_pm_and_compiled_verifier_policy(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = OrchestrationStageExecutor(tmp_path)
+        catalog_path = tmp_path / ".polaris" / "catalog_contract.json"
+        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+        catalog_path.write_text(
+            json.dumps(
+                {
+                    "project_id": "catalog-project-owner",
+                    "project_type": "service",
+                }
+            ),
+            encoding="utf-8",
+        )
+        pm_tasks = [
+            {
+                "id": "TASK-OWNER",
+                "goal": "Bind exact completion owner",
+                "target_files": ["src/owner.py"],
+                "acceptance_criteria": ["python -m compileall src passes"],
+                "verification_commands": [
+                    {
+                        "modality": "build",
+                        "argv": ["python", "-m", "compileall", "src"],
+                        "cwd": ".",
+                    }
+                ],
+            }
+        ]
+        portfolio_tasks = executor._chief_engineer_portfolio_tasks(pm_tasks)
+        store_calls: list[tuple[Path, bool]] = []
+
+        class _FakeFactoryStore:
+            def __init__(self, base_dir: Path, *, create_root: bool = True) -> None:
+                store_calls.append((base_dir, create_root))
+
+            async def get_authoritative_events(self, run_id: str) -> list[dict[str, Any]]:
+                assert run_id == "factory-run-owner"
+                return [{"type": "stage_completed", "event_id": "pm-stage-event"}]
+
+        monkeypatch.setattr(stage_executor_module, "FactoryStore", _FakeFactoryStore)
+        monkeypatch.setattr(
+            stage_executor_module,
+            "reduce_factory_stage_persistence",
+            lambda _events, *, factory_run_id: SimpleNamespace(
+                commits=(
+                    SimpleNamespace(
+                        stage="pm_planning",
+                        stage_completed_event_id="pm-stage-event",
+                        factory_run_id=factory_run_id,
+                    ),
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            stage_executor_module,
+            "revalidate_pm_stage_artifact_binding",
+            lambda **_kwargs: SimpleNamespace(
+                item=SimpleNamespace(canonical_json_sha256="c" * 64),
+                document={"tasks": pm_tasks},
+                task_ids=("TASK-OWNER",),
+            ),
+        )
+        policy_commands: list[Any] = []
+
+        def _compile_policy(command: Any) -> Any:
+            policy_commands.append(command)
+            return SimpleNamespace(
+                policy={
+                    "schema_version": "evidence_policy.v1",
+                    "policy_hash": "d" * 64,
+                    "source": "control_plane.verifier_policy.evidence_policy_compiler",
+                    "required_evidence_modalities": ["command"],
+                }
+            )
+
+        monkeypatch.setattr(stage_executor_module, "compile_evidence_policy", _compile_policy)
+        run = FactoryRun(
+            id="factory-run-owner",
+            # The run name is a display label, not canonical project identity.
+            config=FactoryConfig(name="Factory Run - pm"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        authority = asyncio.run(
+            executor._load_chief_engineer_portfolio_authority(
+                run=run,
+                pm_tasks=pm_tasks,
+                portfolio_tasks=portfolio_tasks,
+            )
+        )
+
+        assert authority.project_id == "catalog-project-owner"
+        assert authority.pm_contract_hash == "c" * 64
+        assert authority.pm_task_ids == ("TASK-OWNER",)
+        assert authority.project_kind_authority.project_kind == "application"
+        assert authority.project_kind_authority.source_ref == "chief_engineer.committed_pm_catalog_snapshot"
+        assert authority.project_kind_authority.justification == (
+            "conservative_application_without_explicit_library_authority"
+        )
+        assert authority.verifier_policy_hash == "d" * 64
+        assert len(authority.verification_command_authority) == 1
+        assert authority.verification_command_authority[0].argv == (
+            "python",
+            "-m",
+            "compileall",
+            "src",
+        )
+        assert store_calls[0][1] is False
+        assert policy_commands[0].target_files == ("src/owner.py",)
+        assert policy_commands[0].acceptance_criteria == ("python -m compileall src passes",)
+        assert policy_commands[0].explicit_required_modalities == ("command",)
+
+    def test_chief_engineer_project_kind_requires_explicit_catalog_library_authority(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        catalog_path = tmp_path / ".polaris" / "catalog_contract.json"
+        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+        catalog_path.write_text(
+            json.dumps(
+                {
+                    "project_id": "library-project",
+                    "project_kind": "library",
+                    "project_type": "python_package",
+                }
+            ),
+            encoding="utf-8",
+        )
+        executor = OrchestrationStageExecutor(tmp_path)
+        catalog_snapshot = executor._chief_engineer_catalog_snapshot()
+        catalog_snapshot_hash = project_completion_catalog_snapshot_hash(catalog_snapshot)
+
+        authority = executor._chief_engineer_project_kind_authority(
+            project_id="library-project",
+            run_id="factory-run-library",
+            pm_contract_hash="c" * 64,
+            catalog_snapshot=catalog_snapshot,
+            catalog_snapshot_hash=catalog_snapshot_hash,
+        )
+
+        assert authority.project_kind == "library"
+        assert authority.justification == "catalog_explicit_project_kind:library"
+        assert len(authority.source_hash) == 64
+
+    def test_chief_engineer_unknown_catalog_project_kind_fails_closed(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        catalog_path = tmp_path / ".polaris" / "catalog_contract.json"
+        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+        catalog_path.write_text(
+            json.dumps({"project_kind": "service"}),
+            encoding="utf-8",
+        )
+        executor = OrchestrationStageExecutor(tmp_path)
+        catalog_snapshot = executor._chief_engineer_catalog_snapshot()
+        catalog_snapshot_hash = project_completion_catalog_snapshot_hash(catalog_snapshot)
+
+        with pytest.raises(stage_executor_module._ChiefEngineerPortfolioAuthorityError) as exc_info:
+            executor._chief_engineer_project_kind_authority(
+                project_id="project-owner",
+                run_id="factory-run-owner",
+                pm_contract_hash="c" * 64,
+                catalog_snapshot=catalog_snapshot,
+                catalog_snapshot_hash=catalog_snapshot_hash,
+            )
+
+        assert exc_info.value.code == "chief_engineer.project_completion_project_kind_authority_invalid"
+
+    def test_chief_engineer_missing_pm_command_authority_fails_before_provider_dispatch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        _write_minimal_chief_engineer_plan(executor)
+        provider_calls: list[Any] = []
+
+        async def _load_missing_authority(
+            self: OrchestrationStageExecutor,
+            *,
+            run: FactoryRun,
+            pm_tasks: list[dict[str, Any]],
+            portfolio_tasks: tuple[Any, ...],
+        ) -> Any:
+            del run, portfolio_tasks
+            return self._chief_engineer_verification_command_authority(pm_tasks)
+
+        class _UnexpectedRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                provider_calls.append(command)
+                raise AssertionError("provider dispatch must not run without PM command authority")
+
+        executor._load_chief_engineer_portfolio_authority = MethodType(  # type: ignore[method-assign]
+            _load_missing_authority,
+            executor,
+        )
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _UnexpectedRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-missing-command-authority",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "failed"
+        assert (
+            result.metadata["error_code"] == "chief_engineer.project_completion_verification_command_authority_missing"
+        )
+        assert provider_calls == []
+
+    def test_chief_engineer_missing_structured_verification_commands_has_stable_pre_provider_code(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        executor = OrchestrationStageExecutor(tmp_path)
+
+        with pytest.raises(stage_executor_module._ChiefEngineerPortfolioAuthorityError) as exc_info:
+            executor._chief_engineer_verification_command_authority(
+                [
+                    {
+                        "id": "TASK-NO-COMMAND-AUTHORITY",
+                        "goal": "Must not infer commands from prose",
+                        "target_files": ["src/main.py"],
+                        "acceptance_criteria": ["echo ok", "python --version"],
+                    }
+                ]
+            )
+
+        assert exc_info.value.code == "chief_engineer.project_completion_verification_command_authority_missing"
+
+    @pytest.mark.parametrize(
+        "argv",
+        (
+            ["echo", "ok"],
+            ["printf", "ok"],
+            ["python", "--version"],
+            ["node", "--help"],
+            ["python", "-m", "src.main", "--help"],
+            ["true"],
+            ["python", "-c", "pass"],
+        ),
+    )
+    def test_chief_engineer_fake_structured_verifier_is_rejected_pre_provider(
+        self,
+        tmp_path: Path,
+        argv: list[str],
+    ) -> None:
+        executor = OrchestrationStageExecutor(tmp_path)
+
+        with pytest.raises(stage_executor_module._ChiefEngineerPortfolioAuthorityError) as exc_info:
+            executor._chief_engineer_verification_command_authority(
+                [
+                    {
+                        "id": "TASK-FAKE-COMMAND",
+                        "goal": "Do not accept a no-op as delivery evidence",
+                        "target_files": ["src/main.py"],
+                        "verification_commands": [
+                            {
+                                "modality": "test",
+                                "argv": argv,
+                                "cwd": ".",
+                            }
+                        ],
+                    }
+                ]
+            )
+
+        assert exc_info.value.code == "chief_engineer.project_completion_verification_command_authority_invalid"
+        assert "proof-of-work" in str(exc_info.value)
+
+    def test_chief_engineer_portfolio_authority_rejects_mutable_pm_path_drift_before_policy_compile(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = OrchestrationStageExecutor(tmp_path)
+        pm_tasks = [
+            {
+                "id": "TASK-OWNER",
+                "goal": "Bind exact completion owner",
+                "target_files": ["src/owner.py"],
+            }
+        ]
+        portfolio_tasks = executor._chief_engineer_portfolio_tasks(pm_tasks)
+
+        class _FakeFactoryStore:
+            def __init__(self, _base_dir: Path, *, create_root: bool = True) -> None:
+                assert create_root is False
+
+            async def get_authoritative_events(self, _run_id: str) -> list[dict[str, Any]]:
+                return [{"type": "stage_completed", "event_id": "pm-stage-event"}]
+
+        monkeypatch.setattr(stage_executor_module, "FactoryStore", _FakeFactoryStore)
+        monkeypatch.setattr(
+            stage_executor_module,
+            "reduce_factory_stage_persistence",
+            lambda _events, *, factory_run_id: SimpleNamespace(
+                commits=(
+                    SimpleNamespace(
+                        stage="pm_planning",
+                        stage_completed_event_id="pm-stage-event",
+                        factory_run_id=factory_run_id,
+                    ),
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            stage_executor_module,
+            "revalidate_pm_stage_artifact_binding",
+            lambda **_kwargs: SimpleNamespace(
+                item=SimpleNamespace(canonical_json_sha256="c" * 64),
+                document={
+                    "tasks": [
+                        {
+                            "id": "TASK-OWNER",
+                            "goal": "Bind exact completion owner",
+                            "target_files": ["src/committed.py"],
+                        }
+                    ]
+                },
+                task_ids=("TASK-OWNER",),
+            ),
+        )
+        monkeypatch.setattr(
+            stage_executor_module,
+            "compile_evidence_policy",
+            lambda _command: pytest.fail("policy compile must not run after committed PM path drift"),
+        )
+        run = FactoryRun(
+            id="factory-run-owner-drift",
+            config=FactoryConfig(name="project-owner"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        with pytest.raises(RuntimeError, match="chief_engineer_project_completion_pm_document_mismatch"):
+            asyncio.run(
+                executor._load_chief_engineer_portfolio_authority(
+                    run=run,
+                    pm_tasks=pm_tasks,
+                    portfolio_tasks=portfolio_tasks,
+                )
+            )
+
+    @pytest.mark.parametrize("project_id", [" project-owner", "project\nowner", "x" * 129])
+    def test_chief_engineer_portfolio_authority_rejects_invalid_project_id_before_ledger_read(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        project_id: str,
+    ) -> None:
+        executor = OrchestrationStageExecutor(tmp_path)
+        pm_tasks = [
+            {
+                "id": "TASK-OWNER",
+                "goal": "Bind exact completion owner",
+                "target_files": ["src/owner.py"],
+            }
+        ]
+        portfolio_tasks = executor._chief_engineer_portfolio_tasks(pm_tasks)
+
+        class _UnexpectedFactoryStore:
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                raise AssertionError("invalid project authority must fail before ledger access")
+
+        monkeypatch.setattr(stage_executor_module, "FactoryStore", _UnexpectedFactoryStore)
+        run = FactoryRun(
+            id="factory-run-invalid-project-owner",
+            config=FactoryConfig(name=project_id),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        with pytest.raises(RuntimeError, match="chief_engineer_project_completion_project_id_"):
+            asyncio.run(
+                executor._load_chief_engineer_portfolio_authority(
+                    run=run,
+                    pm_tasks=pm_tasks,
+                    portfolio_tasks=portfolio_tasks,
+                )
+            )
 
     def test_chief_engineer_schema_repair_uses_separate_claim_and_closes_stage(
         self,
@@ -2631,8 +3225,8 @@ class TestChiefEngineerHandoffGuards:
                         "title": "Build forecast engine",
                         "goal": "Use the weather model from a forecast engine.",
                         "depends_on": ["TASK-1"],
-                        "target_files": ["src/engine/forecast.py"],
-                        "scope_paths": ["src/engine/forecast.py"],
+                        "target_files": ["src/engine/forecast.py", "tests/test_forecast.py"],
+                        "scope_paths": ["src/engine/forecast.py", "tests/test_forecast.py"],
                         "acceptance_criteria": ["forecast consumes the shared weather model"],
                         "execution_checklist": ["Implement forecast rules"],
                         "delivery_plan_document": delivery_plan_document,
@@ -2683,6 +3277,13 @@ class TestChiefEngineerHandoffGuards:
                     },
                     "scope_for_apply": ["src/models/weather.py", "src/engine/forecast.py"],
                     "risk_flags": [],
+                    "project_completion_contract": _library_completion_requirements(
+                        "src/models/weather.py",
+                        "src/engine/forecast.py",
+                        owner_task_ids=("TASK-1", "TASK-2"),
+                        test_path="tests/test_forecast.py",
+                        test_owner_task_id="TASK-2",
+                    ),
                 }
                 return SimpleNamespace(
                     ok=True,
@@ -2721,6 +3322,7 @@ class TestChiefEngineerHandoffGuards:
         assert review["llm_call_count"] == 1
         assert review["generated_blueprints"] == 2
         assert review["portfolio"]["portfolio_hash"]
+        assert review["portfolio"]["project_completion_contract_hash"]
         assert review["project_interface_contract"]["project_interface_contract_hash"]
         blueprints = [
             BlueprintPersistence(str(tmp_path), ensure_directory=False).load(row["blueprint_id"])
@@ -9988,6 +10590,17 @@ class TestDirectorDispatchLoop:
         assert len(executor.settlement_grace_seconds) == 1
         assert 55 <= executor.settlement_grace_seconds[0] <= 60
 
+    def test_taskboard_active_execution_is_authoritative_when_lifecycle_marker_lags(self) -> None:
+        assert OrchestrationStageExecutor._taskboard_has_active_execution(
+            {"in_progress": 1, "completed": 2, "blocked": 1}
+        )
+        assert OrchestrationStageExecutor._taskboard_has_active_execution(
+            {"in_execution": 1, "completed": 2}
+        )
+        assert not OrchestrationStageExecutor._taskboard_has_active_execution(
+            {"in_progress": 0, "in_execution": 0, "completed": 3, "blocked": 1}
+        )
+
     @pytest.mark.asyncio
     async def test_missing_write_receipt_with_artifacts_stays_failed(
         self,
@@ -11302,3 +11915,32 @@ def test_workspace_quality_repair_issue_payloads_falls_back_to_string_projection
     assert len(payloads) == 1
     assert payloads[0]["message"] == raw.removeprefix("Artifact quality scan failed:").strip()
     assert payloads[0]["metadata"]["raw"] == raw
+
+
+def test_chief_engineer_portfolio_context_includes_local_rework_failure_feedback(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    failure_feedback = {
+        "schema_version": "factory.chief_engineer_local_rework.v1",
+        "cycle": 1,
+        "stage_output": "project_completion_contract.obligations is required",
+        "preserved_pm_contract": True,
+    }
+
+    context = executor._chief_engineer_portfolio_context(
+        [
+            {
+                "id": "TASK-1",
+                "goal": "Build a runnable CLI",
+                "target_files": ["src/main.py"],
+                "scope_paths": ["src/main.py"],
+                "acceptance_criteria": ["python src/main.py exits 0"],
+                "steps": ["Implement the entrypoint"],
+            }
+        ],
+        run_id="factory-local-ce-rework",
+        failure_feedback=failure_feedback,
+    )
+
+    assert context["chief_engineer_local_rework"] is True
+    assert context["failure_feedback"] == failure_feedback
+    assert context["failure_feedback"] is not failure_feedback

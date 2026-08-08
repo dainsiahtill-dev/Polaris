@@ -2557,7 +2557,13 @@ class TaskRuntimeService:
             "tombstone_count": len(tombstone_events),
         }
 
-    def reset_task_rows_for_reexecution(self, *, source: str = "") -> dict[str, Any]:
+    def reset_task_rows_for_reexecution(
+        self,
+        *,
+        source: str = "",
+        preserve_completed: bool = False,
+        eligible_external_task_ids: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
         """Reset current task rows to a clean pre-execution state.
 
         Boundary:
@@ -2565,17 +2571,40 @@ class TaskRuntimeService:
             method is the reexecution mutation owner. It preserves task ids and
             dependency fields, removes stale execution/session state, and must
             append one ``task_runtime.execution`` fact per row mutation.
+            ``preserve_completed`` supports Director-local recovery: already
+            verified task rows remain authoritative while failed, blocked, or
+            incomplete rows are made claimable again.
+            ``eligible_external_task_ids`` confines owner-local recovery to the
+            canonical PM contract. Platform coordination rows (CE portfolio,
+            settlement, verifier, repair) must retain their own lifecycle and
+            must never be reopened as Director work.
         """
 
+        eligible_ids: set[str] | None = None
+        if eligible_external_task_ids is not None:
+            normalized_ids = tuple(str(item or "").strip() for item in eligible_external_task_ids)
+            if any(not item for item in normalized_ids):
+                raise ValueError("eligible_external_task_ids must contain non-empty strings")
+            eligible_ids = set(normalized_ids)
+
         reset_files: list[str] = []
+        preserved_files: list[str] = []
+        excluded_files: list[str] = []
         skipped_files: list[str] = []
         deleted_session_files: list[str] = []
         execution_events: list[dict[str, Any]] = []
         for task in self._list_file_task_entities():
             task_id = int(task.id)
             task_file_name = f"task_{task_id}.json"
+            external_task_id = str(task.metadata.get("external_task_id") or task_id).strip()
+            if eligible_ids is not None and external_task_id not in eligible_ids:
+                excluded_files.append(task_file_name)
+                continue
+            previous_status = str(task.status.value if isinstance(task.status, TaskStatus) else task.status)
+            if preserve_completed and previous_status == TaskStatus.COMPLETED.value:
+                preserved_files.append(task_file_name)
+                continue
             try:
-                previous_status = str(task.status.value if isinstance(task.status, TaskStatus) else task.status)
                 replaced = self._replace_task_row_for_reexecution(task.to_dict())
             except (KeyError, RuntimeError, TypeError, ValueError) as exc:
                 logger.warning("Failed to reset task row %s for reexecution: %s", task_id, exc)
@@ -2597,13 +2626,18 @@ class TaskRuntimeService:
                 )
             )
             reset_files.append(task_file_name)
-        return self._project_reexecution_prepare_result(
+        result = self._project_reexecution_prepare_result(
             operation="reset",
             changed_files=reset_files,
             skipped_files=skipped_files,
             deleted_session_files=deleted_session_files,
             execution_events=execution_events,
         )
+        result["preserved_files"] = preserved_files
+        result["excluded_files"] = excluded_files
+        result["preserve_completed"] = bool(preserve_completed)
+        result["eligible_external_task_ids"] = sorted(eligible_ids) if eligible_ids is not None else None
+        return result
 
     def import_task_rows_for_reexecution(
         self,

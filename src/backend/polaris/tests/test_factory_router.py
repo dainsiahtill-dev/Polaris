@@ -41,7 +41,7 @@ from polaris.kernelone.quality import (
     owner_handoff_identifier_tokens,
     task_record_identifier_tokens,
 )
-from polaris.kernelone.storage import clear_storage_roots_cache, resolve_logical_path
+from polaris.kernelone.storage import clear_storage_roots_cache, resolve_logical_path, resolve_runtime_path
 
 _SETTINGS_ENV_NAMES: tuple[str, ...] = (
     "KERNELONE_WORKSPACE",
@@ -176,6 +176,65 @@ class QaLlmUnavailableStageExecutor(FakeStageExecutor):
         )
 
 
+class ChiefEngineerLocalReworkStageExecutor(FakeStageExecutor):
+    """CE failure retries CE only and receives prior failure evidence."""
+
+    def __init__(self) -> None:
+        self.pm_calls = 0
+        self.chief_engineer_calls = 0
+        self.director_calls = 0
+        self.qa_calls = 0
+
+    async def execute(self, stage, run, context):
+        del run
+        if stage == "pm_planning":
+            self.pm_calls += 1
+        elif stage == "chief_engineer_review":
+            self.chief_engineer_calls += 1
+            if self.chief_engineer_calls == 1:
+                return StageResult(
+                    stage=stage,
+                    status="failed",
+                    output=(
+                        "Chief Engineer portfolio review generated 0/3 blueprints; "
+                        "structured_output_payload_schema_mismatch:"
+                        "project_completion_contract:'obligations' is a required property"
+                    ),
+                    artifacts=["runtime/chief_engineer/portfolio.json"],
+                )
+            metadata = context.get("metadata")
+            assert isinstance(metadata, dict)
+            evidence = metadata.get("chief_engineer_local_rework_evidence")
+            assert isinstance(evidence, dict)
+            assert evidence["preserved_pm_contract"] is True
+            assert "obligations" in evidence["stage_output"]
+        elif stage == "director_dispatch":
+            self.director_calls += 1
+        elif stage == "quality_gate":
+            self.qa_calls += 1
+        return StageResult(
+            stage=stage,
+            status="success",
+            output=f"{stage} completed",
+            artifacts=[f"artifacts/{stage}.json"],
+        )
+
+
+class ChiefEngineerAlwaysFailsStageExecutor(ChiefEngineerLocalReworkStageExecutor):
+    """CE exhausts its local budget without replaying PM or reaching Director."""
+
+    async def execute(self, stage, run, context):
+        if stage == "chief_engineer_review":
+            self.chief_engineer_calls += 1
+            return StageResult(
+                stage=stage,
+                status="failed",
+                output="Chief Engineer output remains schema-invalid",
+                artifacts=["runtime/chief_engineer/portfolio.json"],
+            )
+        return await super().execute(stage, run, context)
+
+
 class QualityReworkStageExecutor(FakeStageExecutor):
     """Executor that simulates QA reopening a Director task for one rework round."""
 
@@ -228,6 +287,66 @@ class QualityReworkStageExecutor(FakeStageExecutor):
                     ),
                     artifacts=["runtime/qa/report.json"],
                 )
+        return StageResult(
+            stage=stage,
+            status="success",
+            output=f"{stage} completed",
+            artifacts=[f"artifacts/{stage}.json"],
+        )
+
+
+class DirectorLocalReworkStageExecutor(FakeStageExecutor):
+    """Director failure reopens only unfinished rows and never reruns PM/CE."""
+
+    def __init__(self, workspace: Path) -> None:
+        self.workspace = workspace
+        self.director_calls = 0
+        self.qa_calls = 0
+        self.completed_task_id = 0
+        self.failed_task_id = 0
+        self.internal_task_id = 0
+
+    async def execute(self, stage, run, context):
+        del run, context
+        if stage == "director_dispatch":
+            self.director_calls += 1
+            task_runtime = TaskRuntimeService(str(self.workspace))
+            if self.director_calls == 1:
+                completed = task_runtime.create_task_row(
+                    subject="already delivered",
+                    metadata={"external_task_id": "TASK-1"},
+                )
+                failed = task_runtime.create_task_row(
+                    subject="repair locally",
+                    metadata={"external_task_id": "TASK-2"},
+                )
+                internal = task_runtime.create_task_row(
+                    subject="materialization settlement",
+                    metadata={"external_task_id": "factory-director-mat-settle:unit"},
+                )
+                self.completed_task_id = int(completed["id"])
+                self.failed_task_id = int(failed["id"])
+                self.internal_task_id = int(internal["id"])
+                plan_path = Path(resolve_runtime_path(str(self.workspace), "runtime/tasks/plan.json"))
+                plan_path.parent.mkdir(parents=True, exist_ok=True)
+                plan_path.write_text(
+                    json.dumps({"tasks": [{"id": "TASK-1"}, {"id": "TASK-2"}]}),
+                    encoding="utf-8",
+                )
+                _complete_task_row(task_runtime, self.completed_task_id)
+                _fail_task_row(task_runtime, self.failed_task_id, error="compiler failed")
+                _fail_task_row(task_runtime, self.internal_task_id, error="settlement failed")
+                return StageResult(
+                    stage=stage,
+                    status="failed",
+                    output="Director dispatch failed: compiler failed",
+                    artifacts=["runtime/results/director.result.json"],
+                )
+            assert task_runtime.get_task(self.completed_task_id)["status"] == "completed"
+            assert task_runtime.get_task(self.failed_task_id)["status"] == "pending"
+            assert task_runtime.get_task(self.internal_task_id)["status"] == "failed"
+        if stage == "quality_gate":
+            self.qa_calls += 1
         return StageResult(
             stage=stage,
             status="success",
@@ -1816,6 +1935,114 @@ def test_execute_run_reenters_director_when_quality_gate_requests_rework(temp_wo
     summary_json = updated.metadata.get("summary_json")
     assert isinstance(summary_json, dict)
     assert summary_json.get("status") == "PASS"
+
+
+def test_execute_run_retries_director_locally_without_rerunning_upstream_roles(temp_workspace: Path) -> None:
+    executor = DirectorLocalReworkStageExecutor(temp_workspace)
+    service = FactoryRunService(
+        temp_workspace,
+        executor=executor,
+    )
+    run = asyncio.run(
+        service.create_run(
+            FactoryConfig(
+                name="director-local-rework-run",
+                stages=["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
+            )
+        )
+    )
+    asyncio.run(service.start_run(run.id))
+    payload = FactoryStartRequest(
+        workspace=str(temp_workspace),
+        start_from="pm",
+        directive="Build and repair locally",
+        run_director=True,
+    )
+    state = SimpleNamespace(settings=Settings(workspace=str(temp_workspace)))
+
+    asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
+
+    updated = asyncio.run(service.get_run(run.id))
+    assert updated is not None
+    assert updated.status == FactoryRunStatus.COMPLETED
+    assert executor.director_calls == 2
+    assert executor.qa_calls == 1
+    assert updated.stages_completed.count("pm_planning") == 1
+    assert updated.stages_completed.count("chief_engineer_review") == 1
+    history = updated.metadata.get("director_local_rework_history")
+    assert isinstance(history, list) and len(history) == 1
+    assert history[0]["summary"]["reset_files"] == [f"task_{executor.failed_task_id}.json"]
+    assert history[0]["summary"]["preserved_files"] == [f"task_{executor.completed_task_id}.json"]
+    assert history[0]["summary"]["excluded_files"] == [f"task_{executor.internal_task_id}.json"]
+    assert history[0]["summary"]["eligible_external_task_ids"] == ["TASK-1", "TASK-2"]
+
+
+def test_execute_run_retries_chief_engineer_locally_without_rerunning_pm(temp_workspace: Path) -> None:
+    executor = ChiefEngineerLocalReworkStageExecutor()
+    service = FactoryRunService(temp_workspace, executor=executor)
+    run = asyncio.run(
+        service.create_run(
+            FactoryConfig(
+                name="chief-engineer-local-rework-run",
+                stages=["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
+            )
+        )
+    )
+    asyncio.run(service.start_run(run.id))
+    payload = FactoryStartRequest(
+        workspace=str(temp_workspace),
+        start_from="pm",
+        directive="Keep PM contract and repair CE output locally",
+        run_director=True,
+    )
+    state = SimpleNamespace(settings=Settings(workspace=str(temp_workspace)))
+
+    asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
+
+    updated = asyncio.run(service.get_run(run.id))
+    assert updated is not None
+    assert updated.status == FactoryRunStatus.COMPLETED
+    assert executor.pm_calls == 1
+    assert executor.chief_engineer_calls == 2
+    assert executor.director_calls == 1
+    assert executor.qa_calls == 1
+    assert updated.stages_completed.count("pm_planning") == 1
+    history = updated.metadata.get("chief_engineer_local_rework_history")
+    assert isinstance(history, list) and len(history) == 1
+    assert history[0]["summary"]["preserved_pm_contract"] is True
+
+
+def test_execute_run_bounds_chief_engineer_local_rework_without_upstream_replay(temp_workspace: Path) -> None:
+    executor = ChiefEngineerAlwaysFailsStageExecutor()
+    service = FactoryRunService(temp_workspace, executor=executor)
+    run = asyncio.run(
+        service.create_run(
+            FactoryConfig(
+                name="chief-engineer-local-rework-exhaustion",
+                stages=["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
+            )
+        )
+    )
+    asyncio.run(service.start_run(run.id))
+    payload = FactoryStartRequest(
+        workspace=str(temp_workspace),
+        start_from="pm",
+        directive="Bound CE retries",
+        run_director=True,
+    )
+    state = SimpleNamespace(settings=Settings(workspace=str(temp_workspace)))
+
+    asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
+
+    updated = asyncio.run(service.get_run(run.id))
+    assert updated is not None
+    assert updated.status == FactoryRunStatus.FAILED
+    assert executor.pm_calls == 1
+    assert executor.chief_engineer_calls == 3
+    assert executor.director_calls == 0
+    assert executor.qa_calls == 0
+    history = updated.metadata.get("chief_engineer_local_rework_history")
+    assert isinstance(history, list) and len(history) == 2
 
 
 def test_execute_run_reenters_director_when_quality_gate_reports_task_boundary_triage(temp_workspace: Path) -> None:

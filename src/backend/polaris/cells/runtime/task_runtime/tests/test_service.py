@@ -5778,6 +5778,107 @@ def test_task_runtime_reset_rows_for_reexecution_emits_execution_facts(tmp_path:
         )
 
 
+def test_task_runtime_reexecution_can_preserve_completed_rows(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+
+    completed = service.create_task_row(subject="completed task")
+    failed = service.create_task_row(subject="failed task")
+    completed_claim = service.claim_execution(
+        int(completed["id"]),
+        worker_id="director",
+        role_id="director",
+        run_id="run-local-rework",
+        selection_source="unit",
+    )
+    failed_claim = service.claim_execution(
+        int(failed["id"]),
+        worker_id="director",
+        role_id="director",
+        run_id="run-local-rework",
+        selection_source="unit",
+    )
+    assert completed_claim["success"] is True
+    assert failed_claim["success"] is True
+    assert (
+        _settle_claimed_execution_attempt(
+            service,
+            completed_claim,
+            outcome="completed",
+            summary="verified output retained",
+        )["success"]
+        is True
+    )
+    assert (
+        _settle_claimed_execution_attempt(
+            service,
+            failed_claim,
+            outcome="failed",
+            summary="repair locally",
+        )["success"]
+        is True
+    )
+
+    result = service.reset_task_rows_for_reexecution(
+        source="unit.director-local-rework",
+        preserve_completed=True,
+    )
+
+    assert result["success"] is True
+    assert result["preserve_completed"] is True
+    assert result["preserved_files"] == [f"task_{completed['id']}.json"]
+    assert result["reset_files"] == [f"task_{failed['id']}.json"]
+    assert service.get_task(int(completed["id"]))["status"] == "completed"
+    assert service.get_task(int(failed["id"]))["status"] == "pending"
+
+
+def test_task_runtime_reexecution_filters_to_owner_external_task_ids(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+
+    director_task = service.create_task_row(
+        subject="PM task",
+        metadata={"external_task_id": "TASK-2"},
+    )
+    coordination_task = service.create_task_row(
+        subject="settlement coordination",
+        metadata={"external_task_id": "factory-director-mat-settle:run-1"},
+    )
+    for row in (director_task, coordination_task):
+        claim = service.claim_execution(
+            int(row["id"]),
+            worker_id="director",
+            role_id="director",
+            run_id="run-local-rework-filter",
+            selection_source="unit",
+        )
+        assert claim["success"] is True
+        assert (
+            _settle_claimed_execution_attempt(
+                service,
+                claim,
+                outcome="failed",
+                summary="retry decision pending",
+            )["success"]
+            is True
+        )
+
+    result = service.reset_task_rows_for_reexecution(
+        source="unit.director-local-rework",
+        preserve_completed=True,
+        eligible_external_task_ids=("TASK-2",),
+    )
+
+    assert result["success"] is True
+    assert result["eligible_external_task_ids"] == ["TASK-2"]
+    assert result["reset_files"] == [f"task_{director_task['id']}.json"]
+    assert result["excluded_files"] == [f"task_{coordination_task['id']}.json"]
+    assert service.get_task(int(director_task["id"]))["status"] == "pending"
+    assert service.get_task(int(coordination_task["id"]))["status"] == "failed"
+
+
 def test_task_runtime_import_rows_for_reexecution_preserves_ids_and_events(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

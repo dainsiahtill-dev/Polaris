@@ -366,6 +366,7 @@ async def test_executor_followup_is_visible_distinct_and_uses_normal_prepare_the
     assert ledger.tool_batch_count == 2
     assert ledger.state_history[-1][0] == "DEFERRED_REPAIR_FOLLOWUP_SCHEDULED"
     assert len(observed["prepare"]["invocations"]) == 2  # type: ignore[index]
+    assert observed["prepare"]["preserve_same_path_inventory"] is True  # type: ignore[index]
     runtime_kwargs = observed["runtime"][1]  # type: ignore[index]
     assert len(runtime_kwargs["directed_effect_dispatch_call_ids"]) == 1
     assert len(runtime_kwargs["directed_effect_abort_call_ids"]) == 1
