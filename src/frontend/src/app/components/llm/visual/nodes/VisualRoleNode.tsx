@@ -48,7 +48,7 @@ export function VisualRoleNode({ data }: NodeProps<Node<VisualRoleNodeData>>) {
         <span className="text-xs font-semibold tracking-wide">{data.label}</span>
         <span className={`inline-flex items-center gap-1 rounded-full border border-white/10 px-2 py-0.5 text-[9px] uppercase ${statusColor} text-black font-bold`}>
           {runtimeStatus?.running && (
-            <span className="inline-block w-1.5 h-1.5 bg-white/[0.08]0 rounded-full" />
+            <span className="inline-block w-1.5 h-1.5 bg-white/20 rounded-full animate-pulse" />
           )}
           {statusLabel}
         </span>

@@ -1,4 +1,4 @@
-import type { Connection, Node } from "@xyflow/react";
+import type { Connection, Edge, Node } from "@xyflow/react";
 import { getRoleDisplayLabel } from "@/app/constants/roleLabels";
 import { getRequiredLlmAssignmentRoleIds } from "../../roleDefinitions";
 import type {
@@ -10,7 +10,7 @@ import type {
 import { getRoleBindings } from "./configConverter";
 
 export const isValidVisualConnection = (
-  connection: Connection,
+  connection: Connection | Edge,
   nodes: Node<VisualNodeData>[],
 ): boolean => {
   if (!connection.source || !connection.target) return false;

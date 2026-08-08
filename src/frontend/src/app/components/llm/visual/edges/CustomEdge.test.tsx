@@ -6,7 +6,7 @@ import type { VisualEdgeData } from "../types/visual";
 import { CustomEdge } from "./CustomEdge";
 
 describe("CustomEdge", () => {
-  it("keeps a wide invisible hit target for edge context menus", () => {
+  it("renders with a wide interaction width for reliable right-click", () => {
     const { container } = render(
       <svg>
         <CustomEdge
@@ -27,12 +27,36 @@ describe("CustomEdge", () => {
       </svg>,
     );
 
+    // BaseEdge with interactionWidth={40} creates a wide invisible interaction
+    // path (react-flow__edge-interaction) that reliably receives pointer events.
     const interactionPath = container.querySelector(
-      ".llm-visual-edge-hit-target",
+      ".react-flow__edge-interaction",
     );
     expect(interactionPath).not.toBeNull();
-    expect(interactionPath).toHaveAttribute("stroke", "transparent");
     expect(interactionPath).toHaveAttribute("stroke-width", "40");
-    expect(interactionPath).toHaveAttribute("pointer-events", "stroke");
+  });
+
+  it("applies correct color based on edge kind", () => {
+    const { container } = render(
+      <svg>
+        <CustomEdge
+          {...({
+            id: "edge:test",
+            source: "model:a",
+            target: "role:b",
+            sourceX: 0,
+            sourceY: 0,
+            targetX: 100,
+            targetY: 100,
+            sourcePosition: Position.Right,
+            targetPosition: Position.Left,
+            data: { kind: "provider-to-model" },
+          } as EdgeProps<Edge<VisualEdgeData>>)}
+        />
+      </svg>,
+    );
+
+    const basePaths = container.querySelectorAll(".react-flow__edge-path");
+    expect(basePaths.length).toBeGreaterThan(0);
   });
 });

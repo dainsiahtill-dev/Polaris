@@ -24,7 +24,7 @@ import "@xyflow/react/dist/style.css";
 import { devLogger } from "@/app/utils/devLogger";
 import { useVisualLLMConfig } from "./hooks/useVisualLLMConfig";
 import { nodeTypes, edgeTypes } from "./utils/nodeTypes";
-import { validateVisualGraph } from "./utils/validation";
+import { validateVisualGraph, isValidVisualConnection } from "./utils/validation";
 import {
   extractNodePositions,
   extractNodeStates,
@@ -64,7 +64,6 @@ type ContextMenuState = {
 
 type LayoutPoint = { x: number; y: number };
 
-const EDGE_CONTEXT_MENU_HIT_DISTANCE = 28;
 
 const isVisualRoleId = (value: string): value is VisualRoleId =>
   isKnownLlmRoleId(value);
@@ -195,13 +194,23 @@ export function LLMVisualEditor({
     [config, getCurrentConfig, onConfigChange],
   );
 
+  // --- Standard ReactFlow context-menu handlers (simplified, robust) ---
+  // Previously used a complex capture-phase handler + DOM traversal + proximity
+  // detection. That over-engineering caused the handlers to interfere with each
+  // other, breaking right-click on edges. Now using ONLY ReactFlow's native
+  // onEdgeContextMenu / onNodeContextMenu / onPaneContextMenu — the standard,
+  // well-tested approach. CustomEdge uses interactionWidth={40} for a wide hit
+  // area so ReactFlow's edge detection is reliable.
+
   const onNodeContextMenu = useCallback(
     (event: React.MouseEvent, node: Node<VisualNodeData>) => {
+      console.log("[LLMVisualEditor] onNodeContextMenu fired:", node.id, node.type);
       event.preventDefault();
+      const rect = editorContainerRef.current?.getBoundingClientRect();
       setContextMenu({
         visible: true,
-        x: event.clientX,
-        y: event.clientY,
+        x: rect ? event.clientX - rect.left : event.clientX,
+        y: rect ? event.clientY - rect.top : event.clientY,
         type: "node",
         data: node,
       });
@@ -211,126 +220,37 @@ export function LLMVisualEditor({
 
   const onEdgeContextMenu = useCallback(
     (event: React.MouseEvent, edge: Edge) => {
-      event.preventDefault();
-      setContextMenu({
-        visible: true,
-        x: event.clientX,
-        y: event.clientY,
-        type: "edge",
-        data: edge,
-      });
-    },
-    [],
-  );
-
-  const findNearestEdgeAtClientPoint = useCallback(
-    (clientX: number, clientY: number): Edge | null => {
-      const container = editorContainerRef.current;
-      if (!container) return null;
-
-      const paths = Array.from(
-        container.querySelectorAll<SVGPathElement>(
-          ".llm-visual-edge-hit-target",
-        ),
-      );
-      let bestEdgeId = "";
-      let bestDistance = Number.POSITIVE_INFINITY;
-
-      paths.forEach((path) => {
-        const edgeId = path.dataset.edgeId;
-        if (!edgeId) return;
-
-        const length = path.getTotalLength();
-        const matrix = path.getScreenCTM();
-        if (!Number.isFinite(length) || length <= 0 || !matrix) return;
-
-        const steps = Math.min(72, Math.max(18, Math.ceil(length / 14)));
-        for (let index = 0; index <= steps; index += 1) {
-          const point = path.getPointAtLength((length * index) / steps);
-          const screenPoint = new DOMPoint(point.x, point.y).matrixTransform(
-            matrix,
-          );
-          const distance = Math.hypot(
-            screenPoint.x - clientX,
-            screenPoint.y - clientY,
-          );
-          if (distance < bestDistance) {
-            bestEdgeId = edgeId;
-            bestDistance = distance;
-          }
-        }
-      });
-
-      if (!bestEdgeId || bestDistance > EDGE_CONTEXT_MENU_HIT_DISTANCE) {
-        return null;
-      }
-      return edges.find((edge) => edge.id === bestEdgeId) || null;
-    },
-    [edges],
-  );
-
-  const resolveEdgeFromContextMenuEvent = useCallback(
-    (event: MouseEvent | React.MouseEvent<Element, MouseEvent>) => {
-      const target = event.target instanceof Element ? event.target : null;
-      if (target?.closest(".react-flow__node")) {
-        return null;
-      }
-      const edgeId =
-        target
-          ?.closest<SVGPathElement>("[data-edge-id]")
-          ?.getAttribute("data-edge-id") ||
-        target?.closest<SVGGElement>(".react-flow__edge")?.dataset.id ||
-        "";
-      return (
-        edges.find((item) => item.id === edgeId) ||
-        findNearestEdgeAtClientPoint(event.clientX, event.clientY)
-      );
-    },
-    [edges, findNearestEdgeAtClientPoint],
-  );
-
-  const openEdgeContextMenu = useCallback(
-    (edge: Edge, clientX: number, clientY: number) => {
-      setContextMenu({
-        visible: true,
-        x: clientX,
-        y: clientY,
-        type: "edge",
-        data: edge,
-      });
-    },
-    [],
-  );
-
-  const onFlowContainerContextMenuCapture = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
-      const edge = resolveEdgeFromContextMenuEvent(event);
-      if (!edge) return;
+      console.log("[LLMVisualEditor] onEdgeContextMenu fired:", edge.id, (edge as Edge<VisualEdgeData>).data?.kind);
       event.preventDefault();
       event.stopPropagation();
-      openEdgeContextMenu(edge, event.clientX, event.clientY);
+      const rect = editorContainerRef.current?.getBoundingClientRect();
+      setContextMenu({
+        visible: true,
+        x: rect ? event.clientX - rect.left : event.clientX,
+        y: rect ? event.clientY - rect.top : event.clientY,
+        type: "edge",
+        data: edge,
+      });
     },
-    [openEdgeContextMenu, resolveEdgeFromContextMenuEvent],
+    [],
   );
 
   const onPaneContextMenu = useCallback(
     (event: MouseEvent | React.MouseEvent<Element, MouseEvent>) => {
+      console.log("[LLMVisualEditor] onPaneContextMenu fired (right-click on empty area)");
       event.preventDefault();
-      const edge = resolveEdgeFromContextMenuEvent(event);
-      if (!edge) {
-        setContextMenu(null);
-        return;
-      }
-      openEdgeContextMenu(edge, event.clientX, event.clientY);
+      setContextMenu(null);
     },
-    [openEdgeContextMenu, resolveEdgeFromContextMenuEvent],
+    [],
   );
 
   const onPaneClick = useCallback(() => {
+    console.log("[LLMVisualEditor] onPaneClick fired — clearing context menu");
     setContextMenu(null);
   }, []);
 
   const closeContextMenu = useCallback(() => {
+    console.log("[LLMVisualEditor] closeContextMenu called");
     setContextMenu(null);
   }, []);
 
@@ -426,26 +346,66 @@ export function LLMVisualEditor({
       }
       return { items, title };
     } else if (contextMenu.type === "edge") {
-      const edge = contextMenu.data as Edge;
-      return {
-        title: "连接操作",
-        items: [
-          {
-            label: "删除连接",
-            icon: Unplug,
+      const edge = contextMenu.data as Edge<VisualEdgeData>;
+      const edgeKind = edge.data?.kind;
+      // Only model-to-role edges can be deleted (they correspond to a role binding
+      // in the config). Provider-to-model edges are structural — deleting the
+      // model node (via its context menu) is the correct way to remove a model.
+      if (edgeKind === "model-to-role") {
+        return {
+          title: "连接操作",
+          items: [
+            {
+              label: "删除连接",
+              icon: Unplug,
+              variant: "danger",
+              action: () => deleteEdge(edge.id),
+            },
+          ],
+        };
+      }
+      // Provider-to-model or unknown edge — show informational items
+      const items: ContextMenuItem[] = [];
+      const sourceNode = nodes.find((n) => n.id === edge.source);
+      if (sourceNode?.type === "provider") {
+        const targetNode = nodes.find((n) => n.id === edge.target);
+        if (targetNode?.type === "model") {
+          items.push({
+            label: "删除模型（含连接）",
+            icon: Trash2,
             variant: "danger",
-            action: () => deleteEdge(edge.id),
+            action: () => deleteNode(targetNode.id),
+          });
+        }
+      }
+      return {
+        title: edgeKind === "provider-to-model" ? "提供商 → 模型" : "连接操作",
+        items: items.length > 0 ? items : [
+          {
+            label: "此连接不可直接删除",
+            icon: Unplug,
+            disabled: true,
+            action: () => {},
           },
         ],
       };
     }
     return { items: [] };
-  }, [clearRoleAssignment, contextMenu, deleteNode, deleteEdge]);
+  }, [clearRoleAssignment, contextMenu, deleteNode, deleteEdge, nodes]);
 
   const contextMenuView = useMemo(
     () => getContextMenuItems(),
     [getContextMenuItems],
   );
+
+  // DEBUG: track contextMenu state lifecycle
+  useEffect(() => {
+    if (contextMenu) {
+      console.log("[LLMVisualEditor] useEffect: contextMenu SET", { type: contextMenu.type, items: contextMenuView.items.length, x: contextMenu.x, y: contextMenu.y });
+    } else {
+      console.log("[LLMVisualEditor] useEffect: contextMenu CLEARED");
+    }
+  }, [contextMenu, contextMenuView]);
 
   useEffect(() => {
     if (!providerDraft && providers.length > 0) {
@@ -495,9 +455,12 @@ export function LLMVisualEditor({
     );
   };
 
-  const isValid = useCallback((connection: Connection | Edge) => {
-    return Boolean(connection.source && connection.target);
-  }, []);
+  const isValid = useCallback(
+    (connection: Connection | Edge) => {
+      return isValidVisualConnection(connection, nodes);
+    },
+    [nodes],
+  );
 
   const nodeColor = (node: Node<VisualNodeData>) => {
     if (node.type === "role") return "#22d3ee";
@@ -547,7 +510,6 @@ export function LLMVisualEditor({
       data-testid="llm-visual-editor"
       ref={editorContainerRef}
       className="relative soft-panel rounded-xl p-4"
-      onContextMenuCapture={onFlowContainerContextMenuCapture}
     >
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div>
@@ -861,13 +823,68 @@ export function LLMVisualEditor({
       </div>
 
       {contextMenu && (
-        <ContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          items={contextMenuView.items}
-          title={contextMenuView.title}
-          onClose={closeContextMenu}
-        />
+        <div
+          data-testid="llm-visual-context-menu"
+          style={{
+            position: "absolute",
+            top: `${contextMenu.y}px`,
+            left: `${contextMenu.x}px`,
+            zIndex: 99999,
+            minWidth: "180px",
+            background: "#1e293b",
+            border: "1px solid #475569",
+            borderRadius: "8px",
+            padding: "4px",
+            boxShadow: "0 10px 40px rgba(0,0,0,0.5)",
+          }}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          {contextMenuView.title && (
+            <div style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", padding: "8px 12px", fontSize: "12px", fontWeight: 600, color: "#94a3b8" }}>
+              {contextMenuView.title}
+            </div>
+          )}
+          <div style={{ padding: "4px" }}>
+            {contextMenuView.items.map((item, index) => {
+              const Icon = item.icon;
+              const isDanger = item.variant === "danger";
+              return (
+                <button
+                  key={index}
+                  type="button"
+                  data-testid={`llm-visual-context-menu-item-${item.label}`}
+                  onClick={() => {
+                    console.log("[LLMVisualEditor] menu item clicked:", item.label);
+                    if (!item.disabled) {
+                      item.action();
+                      closeContextMenu();
+                    }
+                  }}
+                  disabled={item.disabled}
+                  style={{
+                    display: "flex",
+                    width: "100%",
+                    alignItems: "center",
+                    gap: "8px",
+                    padding: "6px 8px",
+                    fontSize: "12px",
+                    borderRadius: "4px",
+                    border: "none",
+                    background: "transparent",
+                    cursor: item.disabled ? "not-allowed" : "pointer",
+                    color: item.disabled ? "#475569" : isDanger ? "#f87171" : "#e2e8f0",
+                    opacity: item.disabled ? 0.5 : 1,
+                  }}
+                  onMouseEnter={(e) => { if (!item.disabled) e.currentTarget.style.background = isDanger ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.1)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                >
+                  {Icon && <Icon size={14} />}
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {showValidationPanel && validation.issues.length > 0 && (

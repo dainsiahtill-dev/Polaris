@@ -11,6 +11,13 @@ const EDGE_COLORS: Record<string, string> = {
   "model-to-role": "#64748b",
 };
 
+/**
+ * CustomEdge — simplified for robust right-click interaction.
+ *
+ * Uses ReactFlow's built-in interactionWidth (40px wide invisible hit area)
+ * instead of a custom hit-target path. This ensures onEdgeContextMenu fires
+ * reliably across all browsers without CSS pointer-events conflicts.
+ */
 export function CustomEdge(props: EdgeProps<Edge<VisualEdgeData>>) {
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX: props.sourceX,
@@ -25,33 +32,21 @@ export function CustomEdge(props: EdgeProps<Edge<VisualEdgeData>>) {
     : "#94a3b8";
 
   return (
-    <>
-      <BaseEdge
-        id={props.id}
-        path={edgePath}
-        labelX={labelX}
-        labelY={labelY}
-        label={props.label}
-        labelStyle={props.labelStyle}
-        labelShowBg={props.labelShowBg}
-        labelBgStyle={props.labelBgStyle}
-        labelBgPadding={props.labelBgPadding}
-        labelBgBorderRadius={props.labelBgBorderRadius}
-        style={{ ...props.style, stroke, strokeWidth: 2 }}
-        markerStart={props.markerStart}
-        markerEnd={props.markerEnd}
-        interactionWidth={0}
-      />
-      <path
-        data-edge-id={props.id}
-        d={edgePath}
-        fill="none"
-        stroke="transparent"
-        strokeWidth={props.interactionWidth ?? 40}
-        pointerEvents="stroke"
-        className="llm-visual-edge-hit-target"
-        cursor="context-menu"
-      />
-    </>
+    <BaseEdge
+      id={props.id}
+      path={edgePath}
+      labelX={labelX}
+      labelY={labelY}
+      label={props.label}
+      labelStyle={props.labelStyle}
+      labelShowBg={props.labelShowBg}
+      labelBgStyle={props.labelBgStyle}
+      labelBgPadding={props.labelBgPadding}
+      labelBgBorderRadius={props.labelBgBorderRadius}
+      style={{ ...props.style, stroke, strokeWidth: 2 }}
+      markerStart={props.markerStart}
+      markerEnd={props.markerEnd}
+      interactionWidth={40}
+    />
   );
 }
