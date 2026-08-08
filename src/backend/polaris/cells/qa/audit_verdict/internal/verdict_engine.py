@@ -454,8 +454,18 @@ def _route_committed_qa_failure(
             evidence_refs=evidence_refs,
         )
         return "FAIL", False, "pending_exec", "", classification
+    if normalized == FailureClassV1.MISSING_ENTRYPOINT_TARGET.value:
+        classification = build_qa_failure_classification_v1(
+            failure_class=normalized,
+            route="pending_exec",
+            reason=reason,
+            repairable_by_director=True,
+            owner="director",
+            responsible_layer=layer,
+            evidence_refs=evidence_refs,
+        )
+        return "FAIL", False, "pending_exec", "", classification
     if normalized in {
-        FailureClassV1.MISSING_ENTRYPOINT_TARGET.value,
         FailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
         FailureClassV1.BLUEPRINT_VERIFY_INVALID.value,
     }:
@@ -674,15 +684,14 @@ def _route_classification(
         if boundary_failure_class == TaskBoundaryFailureClassV1.MISSING_ENTRYPOINT_TARGET.value:
             classification = build_qa_failure_classification_v1(
                 failure_class=FailureClassV1.MISSING_ENTRYPOINT_TARGET.value,
-                route="pending_design",
+                route="pending_exec",
                 reason=boundary_reason,
-                repairable_by_director=False,
-                requires_ce_replan=True,
-                owner="chief_engineer",
+                repairable_by_director=True,
+                owner="director",
                 responsible_layer=responsible_layer or "task_boundary",
                 evidence_refs=evidence_refs,
             )
-            return "FAIL", False, "pending_design", "", classification
+            return "FAIL", False, "pending_exec", "", classification
         if is_failure_class(boundary_failure_class, FailureClassV1.TOOL_DISPATCH_DROPPED):
             classification = build_qa_failure_classification_v1(
                 failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,

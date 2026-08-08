@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock
 
@@ -16,13 +17,6 @@ from polaris.cells.events.fact_stream.public.service import (
     AppendFactEventCommandV1,
     append_fact_event,
     provision_fact_stream_lock_authority,
-)
-from polaris.cells.orchestration.workflow_runtime.public.service import (
-    OrchestrationMode,
-    OrchestrationSnapshot,
-    RunStatus,
-    TaskPhase,
-    TaskSnapshot,
 )
 from polaris.cells.runtime.projection.internal import runtime_projection_service as projection_service
 from polaris.cells.runtime.projection.internal.runtime_projection_service import (
@@ -53,7 +47,40 @@ from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.cells.workspace.integrity.public.service import write_workspace_status
 
 if TYPE_CHECKING:
+    from datetime import datetime
     from pathlib import Path
+
+
+@dataclass(slots=True)
+class _ProjectionTaskSnapshot:
+    """Cell-local owner-port fixture; never imports workflow-runtime types."""
+
+    task_id: str
+    status: str
+    phase: str
+    role_id: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "task_id": self.task_id,
+            "status": self.status,
+            "phase": self.phase,
+            "role_id": self.role_id,
+        }
+
+
+@dataclass(slots=True)
+class _ProjectionOrchestrationSnapshot:
+    """Projection-port-shaped fixture kept inside the owning Cell's tests."""
+
+    run_id: str
+    workspace: str
+    mode: str = "workflow"
+    status: str = "running"
+    current_phase: str = "executing"
+    tasks: dict[str, _ProjectionTaskSnapshot] = field(default_factory=dict)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 @pytest.fixture
@@ -1246,17 +1273,14 @@ class TestRuntimeProjectionServiceBuildAsync:
     ) -> None:
         task_runtime = TaskRuntimeService(str(tmp_path))
         task_runtime.create_task_row(subject="Runtime row")
-        snapshot = OrchestrationSnapshot(
+        snapshot = _ProjectionOrchestrationSnapshot(
             run_id="director-active123",
             workspace=str(tmp_path),
-            mode=OrchestrationMode.WORKFLOW.value,
-            status=RunStatus.RUNNING,
-            current_phase=TaskPhase.EXECUTING,
             tasks={
-                "task-0-director": TaskSnapshot(
+                "task-0-director": _ProjectionTaskSnapshot(
                     task_id="task-0-director",
-                    status=RunStatus.RUNNING,
-                    phase=TaskPhase.EXECUTING,
+                    status="running",
+                    phase="executing",
                     role_id="director",
                 )
             },
@@ -1304,11 +1328,9 @@ class TestRuntimeProjectionServiceBuildAsync:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        snapshot = OrchestrationSnapshot(
+        snapshot = _ProjectionOrchestrationSnapshot(
             run_id="director-other123",
             workspace=str(tmp_path / "other"),
-            mode=OrchestrationMode.WORKFLOW.value,
-            status=RunStatus.RUNNING,
         )
         monkeypatch.setattr(
             "polaris.cells.runtime.projection.internal.runtime_projection_service._list_recent_orchestration_runs",

@@ -77,7 +77,13 @@ def _imports_forbidden_layer(module: str) -> str | None:
 
 
 def _collect_imports(source: str) -> list[str]:
-    """Parse *source* and return all imported module names."""
+    """Parse *source* and return static plus literal dynamic imports.
+
+    A literal ``importlib.import_module("polaris.cells...")`` is still a
+    dependency.  Treating only ``Import``/``ImportFrom`` nodes as edges let a
+    foundation module hide an upper-layer dependency behind reflection.
+    Non-literal dynamic targets remain intentionally unclassified here.
+    """
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -89,7 +95,42 @@ def _collect_imports(source: str) -> list[str]:
                 modules.append(alias.name)
         elif isinstance(node, ast.ImportFrom) and node.module:
             modules.append(node.module)
+        elif isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.Constant):
+            target = node.args[0].value
+            if not isinstance(target, str):
+                continue
+            is_importlib_call = (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "importlib"
+                and node.func.attr == "import_module"
+            )
+            is_direct_dynamic_call = isinstance(node.func, ast.Name) and node.func.id in {
+                "import_module",
+                "__import__",
+            }
+            if is_importlib_call or is_direct_dynamic_call:
+                modules.append(target)
     return modules
+
+
+def test_collect_imports_detects_literal_dynamic_imports() -> None:
+    source = """
+import importlib
+from importlib import import_module
+
+importlib.import_module("polaris.cells.runtime.projection")
+import_module("polaris.delivery.http")
+__import__("polaris.domain.entities")
+importlib.import_module(runtime_selected_module)
+"""
+    assert _collect_imports(source) == [
+        "importlib",
+        "importlib",
+        "polaris.cells.runtime.projection",
+        "polaris.delivery.http",
+        "polaris.domain.entities",
+    ]
 
 
 def _is_test_file(rel_path: str) -> bool:

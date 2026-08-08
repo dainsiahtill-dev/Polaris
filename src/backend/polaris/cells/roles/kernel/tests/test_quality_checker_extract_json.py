@@ -161,6 +161,24 @@ class TestValidateOutputBareJsonIntegration:
         assert result.data is not None
         assert result.errors == []
 
+    def test_chief_engineer_missing_advisory_scope_still_passes(self) -> None:
+        """PM scope authority makes CE ``scope_for_apply`` optional advice."""
+        checker = QualityChecker()
+
+        class MockProfile:
+            role_id = "chief_engineer"
+
+        content = (
+            '{"construction_plan": {"task_plans": {}, "project_interface_contract": '
+            '{"provider_declarations": [], "consumer_declarations": []}}, '
+            '"project_completion_contract": {"obligations": {}}, "risk_flags": []}'
+        )
+        result = checker.validate_output(content, MockProfile())  # type: ignore[arg-type]
+        assert result.success is True
+        assert result.data is not None
+        assert "scope_for_apply" not in result.data
+        assert result.errors == []
+
     def test_pm_bare_json_passes_parsing(self) -> None:
         checker = QualityChecker()
 
@@ -254,8 +272,8 @@ class TestSchemaAwareJsonExtraction:
         assert data["risk_flags"] == ["low"]
         assert errors == []
 
-    def test_ce_rejects_wrapped_blueprint_missing_explicit_scope(self) -> None:
-        """Task target files cannot be promoted into an absent CE scope contract."""
+    def test_ce_accepts_wrapped_blueprint_missing_optional_scope(self) -> None:
+        """Absent CE advice stays absent; PM scope authority is not synthesized."""
         checker = QualityChecker()
         content = (
             '{"llm_blueprint": {\n'
@@ -268,9 +286,10 @@ class TestSchemaAwareJsonExtraction:
             "}}\n"
         )
         data, errors = checker._extract_json(content, role="chief_engineer")
-        assert data is None
-        assert errors
-        assert any("blueprint keys" in error for error in errors)
+        assert data is not None
+        assert "scope_for_apply" not in data
+        assert data["risk_flags"] == ["elevated"]
+        assert errors == []
 
     def test_ce_recovers_unquoted_angle_bracket_actions_array(self) -> None:
         """R68: CE emitted unquoted ``<Type>`` soup after ``actions`` colon.
@@ -371,7 +390,6 @@ class TestSchemaAwareJsonExtraction:
         assert data is None
         assert len(errors) > 0
         assert "construction_plan" in errors[0]
-        assert "scope_for_apply" in errors[0]
         assert "risk_flags" in errors[0]
 
     def test_pm_prefers_tasks_object(self) -> None:

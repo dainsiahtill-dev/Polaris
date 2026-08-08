@@ -18,6 +18,39 @@ def test_director_rejects_deepseek_anthropic_tool_choice_incompatible_runtime() 
     )
 
 
+def test_director_accepts_contract_verified_deepseek_anthropic_runtime() -> None:
+    assert (
+        is_role_runtime_supported(
+            "director",
+            "anthropic_compat-deepseek",
+            {
+                "type": "anthropic_compat",
+                "base_url": "https://api.deepseek.com/anthropic",
+                "model": "deepseek-v4-flash",
+                "tool_schema_profile": "full",
+                "execution_profile": "full",
+            },
+        )
+        is True
+    )
+
+
+def test_director_rejects_partially_profiled_deepseek_anthropic_runtime() -> None:
+    assert (
+        role_runtime_support_issue(
+            "director",
+            "anthropic_compat-deepseek",
+            {
+                "type": "anthropic_compat",
+                "base_url": "https://api.deepseek.com/anthropic",
+                "model": "deepseek-v4-flash",
+                "tool_schema_profile": "full",
+            },
+        )
+        == "director_deepseek_tool_contract_unverified"
+    )
+
+
 def test_director_rejects_explicitly_disabled_tool_choice_runtime() -> None:
     assert (
         is_role_runtime_supported(

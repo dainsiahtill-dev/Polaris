@@ -5,35 +5,49 @@ visibility: public
 stateful: true
 owner: orchestration
 purpose: 'Own workflow engine runtime, activity and workflow registration, and workflow
-  state persistence for PM, Director and QA orchestration.
+  state persistence for PM, Director and QA orchestration. Its typed project-completion
+  cursor durably registers nonterminal identity and bounded limits for process-restart recovery.
 
   '
 current_modules:
 - polaris.cells.orchestration.workflow_runtime.public.contracts
+- polaris.cells.orchestration.workflow_runtime.public.model_ceiling
+- polaris.cells.orchestration.workflow_runtime.public.project_completion_cursor
 tags: []
 owned_paths:
+- polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py
+- polaris/cells/orchestration/workflow_runtime/public/model_ceiling_bootstrap.py
+- polaris/cells/orchestration/workflow_runtime/public/project_completion_cursor.py
 - polaris/cells/orchestration/workflow_runtime/internal/**
 - polaris/infrastructure/db/repositories/workflow_runtime_store.py
 public_contracts:
   modules:
   - polaris.cells.orchestration.workflow_runtime.public.contracts
+  - polaris.cells.orchestration.workflow_runtime.public.model_ceiling
+  - polaris.cells.orchestration.workflow_runtime.public.project_completion_cursor
   commands:
   - StartWorkflowCommandV1
   - CancelWorkflowCommandV1
   queries:
   - QueryWorkflowStatusV1
   - QueryWorkflowEventsV1
+  - ModelCeilingCandidateV1
   events:
   - WorkflowExecutionStartedEventV1
   - WorkflowExecutionCompletedEventV1
   results:
   - WorkflowExecutionResultV1
+  - ModelCeilingTerminalResultV1
+  - ProjectCompletionCursorRegistrationV1
   errors:
   - WorkflowRuntimeErrorV1
+  - ModelCeilingOwnerObservationError
+  - ProjectCompletionCursorConflictError
 depends_on:
 - archive.run_archive
-- audit.evidence
+- context.engine
 - control_plane.run_ledger
+- director.runtime
 - events.fact_stream
 - factory.cognitive_runtime
 - orchestration.workflow_activity
@@ -43,6 +57,7 @@ depends_on:
 - policy.permission
 - policy.workspace_guard
 - resident.autonomy
+- roles.kernel
 - roles.profile
 - runtime.artifact_store
 - runtime.execution_broker

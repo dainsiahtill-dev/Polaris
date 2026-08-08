@@ -6,8 +6,8 @@ Usage:
       --audits /path/to/factory_audits.json \\
       --json-out /tmp/attribution.json
 
-Unattended supervisors consume the JSON primary.primary_module_id and
-gate_commands. Does not run repairs or benches.
+Workflow supervisors may consume the non-terminal
+``primary.primary_module_id`` candidate. Does not schedule, repair, or bench.
 """
 
 from __future__ import annotations
@@ -24,28 +24,12 @@ if str(_BACKEND_ROOT) not in sys.path:
 from polaris.kernelone.platform_modules.residual_attribution import (  # noqa: E402
     attribute_factory_audits_file,
 )
-from polaris.kernelone.platform_modules.unattended_supervisor import (  # noqa: E402
-    plan_unattended_step,
-)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--audits", required=True, help="Path to factory_audits.json")
     parser.add_argument("--json-out", default="", help="Optional write path for attribution pack")
-    parser.add_argument(
-        "--cascade-ok",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Known cascade readiness for next-step plan",
-    )
-    parser.add_argument(
-        "--module-gate-ok",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Known module-gate readiness for next-step plan",
-    )
-    parser.add_argument("--n-batch-streak", type=int, default=0)
     args = parser.parse_args(argv)
 
     audits_path = Path(args.audits).expanduser().resolve()
@@ -54,16 +38,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     pack = attribute_factory_audits_file(str(audits_path))
-    step = plan_unattended_step(
-        attribution=pack["primary"],
-        cascade_ok=args.cascade_ok,
-        module_gate_ok=args.module_gate_ok,
-        n_batch_streak=int(args.n_batch_streak or 0),
-    )
     out = {
-        "schema_version": "platform.unattended_attribution_pack.v1",
+        "schema_version": "platform.residual_attribution_pack.v1",
         "attribution_pack": pack,
-        "next_step": step.to_dict(),
     }
     text = json.dumps(out, indent=2, ensure_ascii=False) + "\n"
     if args.json_out:

@@ -19,6 +19,7 @@ cells:
   - policy.permission
   - policy.workspace_guard
   - finops.budget_guard
+  - orchestration.workflow_orchestration
   - orchestration.workflow_runtime
   - runtime.task_runtime
   - runtime.task_market
@@ -58,6 +59,10 @@ relations:
     to: chief_engineer.blueprint
     type: commands
     contract: ClaimTaskWorkItemCommandV1
+  - from: factory.pipeline
+    to: chief_engineer.blueprint
+    type: commands
+    contract: BuildChiefEngineerBlueprintPortfolioCommandV1
   - from: chief_engineer.blueprint
     to: runtime.task_market
     type: commands
@@ -118,6 +123,26 @@ relations:
     to: runtime.execution_broker
     type: commands
     contract: LaunchExecutionProcessCommandV1
+  - from: orchestration.workflow_orchestration
+    to: runtime.projection
+    type: queries
+    contract: ProjectOutcomeAuthorityQueryV1
+  - from: orchestration.workflow_orchestration
+    to: factory.verification_guard
+    type: queries
+    contract: QueryProjectCompletionDiagnosticsV1
+  - from: factory.verification_guard
+    to: runtime.execution_broker
+    type: commands
+    contract: RunProjectVerificationCommandV1
+  - from: runtime.execution_broker
+    to: control_plane.verifier_policy
+    type: queries
+    contract: EvaluateVerifierCommandPolicyQueryV1
+  - from: orchestration.workflow_orchestration
+    to: orchestration.workflow_runtime
+    type: depends_on
+    contract: ProjectCompletionCursorPortV1
   - from: roles.runtime
     to: runtime.execution_broker
     type: commands
@@ -196,6 +221,9 @@ critical_contracts:
   - DispatchPmTasksCommandV1
   - ExecuteRoleCapabilityInvocationCommandV1
   - GenerateTaskBlueprintCommandV1
+  - BuildChiefEngineerBlueprintPortfolioCommandV1
+  - QueryProjectCompletionContractV1
+  - ProjectCompletionContractV1
   - VerifyCompletionCommandV1
   - WorkspaceWriteGuardQueryV1
   - PublishTaskWorkItemCommandV1
@@ -213,6 +241,8 @@ critical_contracts:
   - RecordRuntimeReceiptCommandV1
   - ExportHandoffPackCommandV1
   - StartWorkflowCommandV1
+  - AdvanceProjectCompletionCommandV1
+  - ProjectCompletionCursorPortV1
   - LaunchExecutionProcessCommandV1
   - UpdateRuntimeTaskCommandV1
   - ReopenRuntimeTaskCommandV1
@@ -274,6 +304,8 @@ verify_targets:
     - ReserveBudgetCommandV1
     - AppendFactEventCommandV1
 migration_notes:
+  - Project-completion supervision is restart-safe: nonterminal identity and bounded limits are recovered from the workflow-runtime cursor, and process-local wake events are latency hints only. Bootstrap composition outside the orchestration Cell binds its public action port to runtime.task_market and replays the TaskMarket transactional outbox before scheduling.
+  - Project-completion diagnostics treat TaskRuntime, TaskBoundary, and Run Ledger gate summaries as prerequisites only; the current public owner APIs lack exact per-obligation effect/command receipt bindings, so completion evidence fails closed as missing rather than inferring pass/fail.
   - Subgraph declared during business-cell convergence; some legacy routes may still proxy to Polaris entrypoints.
   - Director's projection-oriented execution backend is opt-in and currently routed through roles.adapters during migration.
   - Cognitive Runtime receipt/handoff sidecar is live, and Director runtime codegen proposal-to-apply now uses scope lease plus change-set validation as a mainline write acceptance gate.

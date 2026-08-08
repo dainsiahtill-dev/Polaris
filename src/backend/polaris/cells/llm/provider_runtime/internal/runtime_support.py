@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
 
@@ -40,7 +39,7 @@ def _truthy_config_flag(provider_cfg: dict[str, Any], name: str) -> bool:
     return str(raw_flag).strip().lower() in {"1", "true", "yes", "on", "enabled", "enable"}
 
 
-def _minimax_director_contract_supported(provider_cfg: dict[str, Any]) -> bool:
+def _director_tool_contract_supported(provider_cfg: dict[str, Any]) -> bool:
     if _truthy_config_flag(provider_cfg, "director_tool_contract_supported"):
         return True
 
@@ -58,6 +57,10 @@ def _tool_choice_disabled(provider_cfg: dict[str, Any]) -> bool:
         if token in {"1", "true", "yes", "on", "disabled", "disable"}:
             return True
 
+    return False
+
+
+def _is_deepseek_anthropic_compat(provider_cfg: dict[str, Any]) -> bool:
     token = " ".join(
         [
             str(provider_cfg.get("base_url") or ""),
@@ -66,22 +69,7 @@ def _tool_choice_disabled(provider_cfg: dict[str, Any]) -> bool:
             str(provider_cfg.get("model") or ""),
         ]
     ).lower()
-    is_deepseek = _normalize_provider_type(provider_cfg) == "anthropic_compat" and "deepseek" in token
-    # Opt-in experiment guard (default OFF): deepseek was pre-emptively blocked from
-    # the Director role because its API was observed to reject forced tool_choice.
-    # KERNELONE_ALLOW_DEEPSEEK_DIRECTOR lets an operator explicitly test whether the
-    # current deepseek API honors the forced tool_choice the Director requires (the
-    # platform never actually sent it -- r19 was blocked pre-emptively here). The
-    # safety guard is preserved by default; this flag is for controlled bench
-    # experiments to probe whether deepseek can serve as a stronger Director.
-    if is_deepseek and os.environ.get("KERNELONE_ALLOW_DEEPSEEK_DIRECTOR", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
-        return False
-    return is_deepseek
+    return _normalize_provider_type(provider_cfg) == "anthropic_compat" and "deepseek" in token
 
 
 def _codex_exec_sandbox(provider_cfg: dict[str, Any]) -> str:
@@ -111,8 +99,16 @@ def role_runtime_support_issue(
     if _tool_choice_disabled(provider_cfg):
         return "director_tool_choice_disabled"
 
+    if _is_deepseek_anthropic_compat(provider_cfg) and not _director_tool_contract_supported(provider_cfg):
+        # DeepSeek's Anthropic-compatible surface has varied across deployments.
+        # Do not infer support from the provider brand and do not require a hidden
+        # process environment escape hatch.  The persisted provider capability
+        # contract is authoritative: either an explicit operator verification or
+        # both full tool-schema and execution profiles must be present.
+        return "director_deepseek_tool_contract_unverified"
+
     provider_type = _normalize_provider_type(provider_cfg)
-    if provider_type == "minimax" and not _minimax_director_contract_supported(provider_cfg):
+    if provider_type == "minimax" and not _director_tool_contract_supported(provider_cfg):
         # MiniMax chat endpoints may be usable for planning roles, but current
         # configured M2.x responses do not expose enforceable native tool_calls.
         # Keep Director blocked unless an operator explicitly marks this

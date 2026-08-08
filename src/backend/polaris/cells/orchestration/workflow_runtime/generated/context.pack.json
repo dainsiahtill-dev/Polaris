@@ -2,15 +2,14 @@
   "id": "orchestration.workflow_runtime",
   "title": "Workflow Runtime",
   "kind": "capability",
-  "purpose": "Own workflow engine runtime, activity and workflow registration, and workflow state persistence for PM, Director and QA orchestration.",
+  "purpose": "Own workflow engine runtime, activity and workflow registration, and workflow state persistence for PM, Director and QA orchestration. Its typed project-completion cursor durably registers nonterminal identity and bounded limits for process-restart recovery.",
   "summary": "Business capability boundary for orchestration.workflow_runtime.",
   "owned_paths": [
-    "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/**",
-    "polaris/cells/orchestration/workflow_runtime/internal/runtime_orchestrator.py",
-    "polaris/cells/orchestration/workflow_runtime/internal/event_stream.py",
-    "polaris/cells/orchestration/workflow_runtime/internal/process_launcher.py",
-    "polaris/cells/orchestration/workflow_runtime/public/contracts.py",
-    "polaris/cells/orchestration/workflow_runtime/public/service.py"
+    "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py",
+    "polaris/cells/orchestration/workflow_runtime/public/model_ceiling_bootstrap.py",
+    "polaris/cells/orchestration/workflow_runtime/public/project_completion_cursor.py",
+    "polaris/cells/orchestration/workflow_runtime/internal/**",
+    "polaris/infrastructure/db/repositories/workflow_runtime_store.py"
   ],
   "public_contracts": {
     "commands": [
@@ -19,25 +18,33 @@
     ],
     "queries": [
       "QueryWorkflowStatusV1",
-      "QueryWorkflowEventsV1"
+      "QueryWorkflowEventsV1",
+      "ModelCeilingCandidateV1"
     ],
     "events": [
       "WorkflowExecutionStartedEventV1",
       "WorkflowExecutionCompletedEventV1"
     ],
     "results": [
-      "WorkflowExecutionResultV1"
+      "WorkflowExecutionResultV1",
+      "ModelCeilingTerminalResultV1",
+      "ProjectCompletionCursorRegistrationV1"
     ],
     "errors": [
-      "WorkflowRuntimeErrorV1"
+      "WorkflowRuntimeErrorV1",
+      "ModelCeilingOwnerObservationError",
+      "ProjectCompletionCursorConflictError"
     ]
   },
   "neighbors": [
     "runtime.state_owner",
     "policy.workspace_guard",
     "policy.permission",
-    "audit.evidence",
-    "events.fact_stream"
+    "context.engine",
+    "director.runtime",
+    "events.fact_stream",
+    "roles.kernel",
+    "runtime.execution_broker"
   ],
   "state_owners": [
     "runtime/workflows/*",
@@ -54,16 +61,20 @@
   "invariants": [
     "All state writes must remain single-owner and contract-driven.",
     "Append-only evidence and event semantics must be preserved.",
+    "A model ceiling is terminal only when direct owner queries join every material repair round to the exact failed verifier and no executable repair; incomplete evidence parks CONTROL_PLANE_BLOCKED.",
     "All text file reads and writes must use explicit UTF-8."
   ],
   "hotspots": [
     "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/**",
+    "polaris/cells/orchestration/workflow_runtime/internal/model_ceiling_authority.py",
+    "polaris/cells/orchestration/workflow_runtime/internal/project_completion_cursor.py",
     "polaris/cells/orchestration/workflow_runtime/internal/runtime_orchestrator.py",
     "polaris/cells/orchestration/workflow_runtime/internal/event_stream.py",
     "polaris/cells/orchestration/workflow_runtime/public/service.py"
   ],
   "test_targets": [
     "polaris/cells/orchestration/workflow_runtime/tests/test_workflow_runtime_models.py",
+    "polaris/cells/orchestration/workflow_runtime/tests/test_model_ceiling_authority.py",
     "polaris/cells/orchestration/workflow_runtime/tests/test_unified_orchestration_service.py",
     "polaris/cells/orchestration/workflow_runtime/tests/test_workflow_runtime_acyclicity.py"
   ],
@@ -72,7 +83,9 @@
       "cell.yaml",
       "README.agent.md",
       "generated/context.pack.json",
-      "public/contracts.py"
+      "public/contracts.py",
+      "public/model_ceiling.py",
+      "public/project_completion_cursor.py"
     ],
     "expand_to_neighbors_only_when_needed": true
   }

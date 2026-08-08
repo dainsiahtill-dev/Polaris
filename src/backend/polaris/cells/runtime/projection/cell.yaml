@@ -12,7 +12,9 @@ current_modules:
 - polaris.cells.runtime.projection.internal.runtime_projection_service
 - polaris.cells.runtime.projection.internal.director_status_owner
 - polaris.cells.runtime.projection.internal.project_outcome
+- polaris.cells.runtime.projection.internal.project_outcome_authority
 - polaris.cells.runtime.projection.internal.project_outcome_factory_owner
+- polaris.cells.runtime.projection.internal.workflow_runtime_owner
 - polaris.cells.runtime.projection.public.bootstrap
 - polaris.cells.runtime.projection.public.contracts
 - polaris.cells.runtime.projection.public.service
@@ -31,6 +33,7 @@ public_contracts:
   - RuntimeProjectionQueryV1
   - ProjectOutcomeQueryV1
   - ProjectOutcomeFactoryOwnerQueryV1
+  - ProjectOutcomeAuthorityQueryV1
   events:
   - RuntimeProjectedEventV1
   - RuntimeObserverEventV1
@@ -40,6 +43,9 @@ public_contracts:
   - ProjectOutcomeV1
   - FactoryChainOwnerObservationV1
   - ProjectOutcomeFactoryOwnerBindingV1
+  - ProjectOutcomeNonFactoryOwnerObservationV1
+  - ProjectOutcomeNonFactoryOwnerProjectionHashesV1
+  - ProjectOutcomeAuthorityBindingV1
   errors:
   - RuntimeProjectionErrorV1
   - DirectorStatusObservationV1Error
@@ -53,12 +59,10 @@ depends_on:
 - llm.evaluation
 - llm.provider_runtime
 - orchestration.pm_planning
-- orchestration.workflow_runtime
 - qa.audit_verdict
 - resident.autonomy
 - runtime.artifact_store
 - runtime.state_owner
-- runtime.task_market
 - runtime.task_runtime
 - storage.layout
 - workspace.integrity
@@ -75,8 +79,10 @@ verification:
   - tests/test_runtime_projection_observability.py
   - polaris/cells/runtime/projection/tests/test_project_outcome.py
   - polaris/cells/runtime/projection/tests/test_factory_chain_owner_binding.py
+  - polaris/cells/runtime/projection/tests/test_project_outcome_authority_binding.py
   - polaris/cells/runtime/projection/tests/test_director_status_owner_binding.py
   - polaris/cells/runtime/projection/tests/test_gr1c_dependency_cut.py
+  - polaris/tests/architecture/test_project_completion_composition_fence.py
   gaps:
   - Projection still contains projection read-joins pending cleanup.
   smoke_commands: []

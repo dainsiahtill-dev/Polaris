@@ -1,0 +1,113 @@
+card_id: vc-20260808-durable-project-completion-loop
+classification: unattended_project_completion_foundation
+status: implementation_active
+bench_status: not_yet_accepted
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  bench_productization: forbidden
+  new_cell: forbidden
+ownership:
+  completion_contract: chief_engineer.blueprint
+  task_execution_contract: director.tasking
+  completion_diagnostics: factory.verification_guard
+  convergence_cursor: orchestration.workflow_runtime
+  completion_verdict: runtime.projection
+  task_facts: runtime.task_runtime
+  task_exchange: runtime.task_market
+  evidence_facts: control_plane.run_ledger
+invariants:
+  - one_authoritative_completed_verified_verdict
+  - owner_bound_facts_only
+  - current_run_effect_receipt_required
+  - task_boundary_never_overrides_task_runtime_lifecycle
+  - missing_evidence_distinct_from_failed_evidence
+  - build_success_never_hides_test_failure
+  - director_ok_without_effects_is_not_completion
+  - completion_contract_hash_end_to_end
+  - one_dependency_ready_leaf_per_project
+  - durable_cursor_not_second_fact_source
+  - committed_effects_not_replayed_after_crash
+  - downstream_failure_retries_owner_stage_without_upstream_replay
+  - ce_retry_preserves_pm_contract_and_includes_failure_feedback
+  - director_retry_preserves_completed_task_rows
+  - structured_model_ceiling_only
+  - bench_internal_only
+characterization:
+  required_red_tests:
+    - boundary_completed_with_failed_task_runtime_blocks
+    - path_exists_without_current_run_receipt_blocks
+    - build_pass_and_test_fail_blocks
+    - empty_director_success_blocks
+    - unbound_project_outcome_is_never_authoritative
+implementation_buckets:
+  f1:
+    name: authoritative_project_outcome
+    status: pending
+  f2:
+    name: typed_completion_contract
+    status: pending
+  f3a:
+    name: complete_verification_diagnostics
+    status: pending
+  f3b:
+    name: durable_convergence_workflow
+    status: pending
+  f4:
+    name: structured_model_ceiling_and_seal
+    status: pending
+validation:
+  baseline:
+    command: >-
+      python -m pytest -q
+      polaris/cells/runtime/projection/tests/test_project_outcome.py
+      polaris/cells/runtime/projection/tests/test_factory_chain_owner_binding.py
+      polaris/cells/control_plane/run_ledger/tests/test_task_boundary.py
+      polaris/cells/factory/verification_guard/tests/test_verification_guard.py
+      polaris/cells/director/tasking/tests/test_execution_envelope.py
+      polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py
+      polaris/cells/orchestration/workflow_runtime/tests/test_workflow_runtime_models.py
+    result: 338_passed
+    exit_code: 0
+  focused: pending
+  ruff: pending
+  ruff_format: pending
+  mypy: pending
+  architecture_graph: pending
+  independent_review: pending
+  isolated_project: pending
+  n_batch: pending
+  f4:
+    focused:
+      command: >-
+        python -m pytest -q
+        polaris/cells/orchestration/workflow_runtime/tests/test_model_ceiling_authority.py
+        polaris/tests/unit/bootstrap/test_workflow_runtime_model_ceiling_owner.py
+        polaris/kernelone/platform_modules/tests/test_residual_attribution.py
+        scripts/factory_bench/test_chain_forensics.py
+        scripts/factory_bench/test_batch_report.py
+      result: 46_passed
+      exit_code: 0
+    app_composition:
+      command: >-
+        python -m pytest -q
+        polaris/tests/unit/delivery/http/test_route_contracts.py::test_create_app_has_no_duplicate_http_method_paths
+      result: 1_passed_2_warnings
+      exit_code: 0
+    architecture:
+      result: 565_passed_6_skipped
+      exit_code: 0
+    ruff: passed
+    ruff_format: passed
+    mypy: 6_sources_passed
+    independent_review: pending
+    production_receipt_producers: pending_owner_integration
+related_adrs:
+  - ADR-0096
+  - ADR-0097
+  - ADR-0099
+  - ADR-0100
+related_blueprint:
+  - docs/blueprints/DURABLE_PROJECT_COMPLETION_LOOP_20260808.md
+closure: open
+next_action: implement_f0_f1_characterization_and_owner_binding

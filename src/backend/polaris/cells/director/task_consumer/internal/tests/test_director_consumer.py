@@ -7,6 +7,7 @@ import threading
 import time
 import warnings
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -18,8 +19,163 @@ from polaris.cells.director.task_consumer.internal.director_consumer import (
     InterfaceContractRepairRequiredError,
     ScopeConflictDetector,
     UnrecoverableExecutionError,
+    _revalidate_qa_exact_verifier,
     _run_coroutine_sync,
 )
+
+
+def test_exact_qa_verifier_revalidation_binds_prior_and_new_receipts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class FakeReceipt:
+        def __init__(self, *, receipt_hash: str, input_artifact_hash: str, succeeded: bool) -> None:
+            self.workspace = str(tmp_path)
+            self.project_id = "project-1"
+            self.run_id = "run-1"
+            self.completion_contract_hash = "c" * 64
+            self.obligation_id = "verify.test"
+            self.owner_task_id = "TASK-1"
+            self.modality = "test"
+            self.argv = ("pytest", "-q")
+            self.cwd = "."
+            self.command_authority_hash = "a" * 64
+            self.input_artifact_hash = input_artifact_hash
+            self.proof_evidence_hash = "4" * 64
+            self.receipt_hash = receipt_hash
+            self.receipt_ref = "execution-broker://project-verification/" + receipt_hash
+            self.exit_code = 0 if succeeded else 1
+            self.timed_out = False
+            self.succeeded = succeeded
+
+    command = SimpleNamespace(
+        workspace=str(tmp_path),
+        project_id="project-1",
+        run_id="run-1",
+        completion_contract_hash="c" * 64,
+        obligation_id="verify.test",
+        owner_task_id="TASK-1",
+        modality="test",
+        argv=("pytest", "-q"),
+        cwd=".",
+        command_authority_hash="a" * 64,
+        input_artifacts=(SimpleNamespace(obligation_id="artifact.main", path="src/main.py"),),
+        timeout_seconds=300.0,
+        job_token_id="token-1",
+        job_token_set_hash="b" * 64,
+        execution_policy_hash="d" * 64,
+        authority_revision="e" * 64,
+        policy_profile_id="default",
+        policy_decision_hash="f" * 64,
+        executable_path="/usr/bin/pytest",
+        executable_realpath="/usr/bin/pytest",
+        executable_hash="6" * 64,
+    )
+    prior = FakeReceipt(receipt_hash="1" * 64, input_artifact_hash="3" * 64, succeeded=False)
+    current = FakeReceipt(receipt_hash="2" * 64, input_artifact_hash="5" * 64, succeeded=True)
+    monkeypatch.setattr(director_consumer_module, "ProjectVerificationReceiptV1", FakeReceipt)
+    monkeypatch.setattr(
+        director_consumer_module,
+        "QueryProjectVerificationReceiptV1",
+        lambda **kwargs: SimpleNamespace(**kwargs),
+    )
+    monkeypatch.setattr(
+        director_consumer_module,
+        "authorize_project_verification_command",
+        lambda _query: command,
+    )
+    monkeypatch.setattr(director_consumer_module, "query_project_verification_receipt", lambda _query: prior)
+    monkeypatch.setattr(
+        director_consumer_module,
+        "run_project_verification",
+        lambda _command: SimpleNamespace(receipt=current, code="completed"),
+    )
+    payload = {
+        "task_completion_projection": {
+            "schema_version": "polaris.task_completion_projection.v1",
+            "projection_hash": "9" * 64,
+            "project_id": "project-1",
+            "run_id": "run-1",
+            "project_contract_hash": "c" * 64,
+            "task_id": "TASK-1",
+            "verification_execution_authority": [
+                {
+                    "obligation_id": "verify.test",
+                    "owner_task_id": "TASK-1",
+                    "modality": "test",
+                    "argv": ["pytest", "-q"],
+                    "cwd": ".",
+                    "command_authority_hash": "a" * 64,
+                }
+            ],
+        },
+        "qa_local_repair_context": {
+            "task_id": "TASK-1",
+            "repair_authority_kind": "exact_verifier_receipt",
+            "task_completion_projection_hash": "9" * 64,
+            "project_completion_contract_hash": "c" * 64,
+            "failed_verifier": {
+                "project_id": "project-1",
+                "run_id": "run-1",
+                "completion_contract_hash": "c" * 64,
+                "obligation_id": "verify.test",
+                "owner_task_id": "TASK-1",
+                "modality": "test",
+                "argv": ["pytest", "-q"],
+                "cwd": ".",
+                "command_authority_hash": "a" * 64,
+                "input_artifact_hash": "3" * 64,
+                "receipt_hash": "1" * 64,
+                "receipt_ref": "execution-broker://project-verification/" + "1" * 64,
+            },
+            "repair_policy": {"same_task_only": True, "rerun_exact_failed_verifier": True},
+        }
+    }
+
+    result = _revalidate_qa_exact_verifier(workspace=str(tmp_path), task_id="TASK-1", payload=payload)
+
+    assert result is not None
+    assert result["prior_failed_receipt_hash"] == "1" * 64
+    assert result["revalidation_receipt_hash"] == "2" * 64
+    assert result["succeeded"] is True
+
+
+def test_qa_failed_verifier_locator_from_old_run_is_rejected_before_owner_query(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    owner_query = MagicMock(side_effect=AssertionError("cross-run locator must fail before owner query"))
+    monkeypatch.setattr(director_consumer_module, "authorize_project_verification_command", owner_query)
+    payload = {
+        "task_completion_projection": {
+            "projection_hash": "9" * 64,
+            "project_id": "project-1",
+            "run_id": "run-current",
+            "project_contract_hash": "c" * 64,
+            "task_id": "TASK-1",
+            "verification_execution_authority": [],
+        },
+        "qa_local_repair_context": {
+            "task_id": "TASK-1",
+            "repair_authority_kind": "exact_verifier_receipt",
+            "task_completion_projection_hash": "9" * 64,
+            "project_completion_contract_hash": "c" * 64,
+            "failed_verifier": {
+                "project_id": "project-1",
+                "run_id": "run-old",
+                "completion_contract_hash": "c" * 64,
+                "obligation_id": "verify.test",
+                "owner_task_id": "TASK-1",
+                "receipt_hash": "1" * 64,
+                "receipt_ref": "execution-broker://project-verification/" + "1" * 64,
+            },
+            "repair_policy": {"same_task_only": True, "rerun_exact_failed_verifier": True},
+        },
+    }
+
+    with pytest.raises(ValueError, match="another project/run/contract"):
+        director_consumer_module._resolve_qa_local_repair_authority(
+            workspace=str(tmp_path), task_id="TASK-1", payload=payload
+        )
+    owner_query.assert_not_called()
 
 
 def _allow_blueprint_id_handoff(_workspace: str, _task_id: str, payload: dict[str, Any]) -> tuple[bool, str, str]:
@@ -189,7 +345,7 @@ class TestDirectorExecutionConsumerHandoffGate:
     ) -> None:
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc
-        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="dead_letter")
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="rejected")
         claim = MagicMock()
         claim.task_id = "TASK-1"
         claim.lease_token = "lease-1"
@@ -204,7 +360,9 @@ class TestDirectorExecutionConsumerHandoffGate:
         mock_svc.acknowledge_task_stage.assert_not_called()
         fail_call = mock_svc.fail_task_stage.call_args[0][0]
         assert fail_call.error_code == "INVALID_BLUEPRINT_HANDOFF"
-        assert fail_call.to_dead_letter is True
+        assert fail_call.to_dead_letter is False
+        assert fail_call.failure_disposition == "isolated_contract_blocker"
+        assert fail_call.metadata["structured_blocker"]["automatic_upstream_replan"] is False
         assert "missing or unreadable" in fail_call.error_message
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
@@ -228,6 +386,13 @@ class TestDirectorExecutionConsumerHandoffGate:
             "decision_hash": "strict-hash-2",
             "allowed": True,
         }
+        task_projection = {
+            "schema_version": "polaris.task_completion_projection.v1",
+            "project_contract_hash": "c" * 64,
+            "project_contract_ref": "runtime/blueprints/p.json#project_completion_contract",
+            "task_id": "TASK-2",
+            "projection_hash": "d" * 64,
+        }
         monkeypatch.setattr(
             director_consumer_module,
             "_validated_blueprint_handoff",
@@ -240,6 +405,7 @@ class TestDirectorExecutionConsumerHandoffGate:
                     "blueprint_id": "bp-2",
                     "strict_decision_payload": strict_decision,
                     "decision_payload": {"allowed": True, "decision_id": "legacy"},
+                    "task_completion_projection": task_projection,
                 },
             ),
         )
@@ -250,6 +416,9 @@ class TestDirectorExecutionConsumerHandoffGate:
             assert payload["ce_handoff_decision"] == strict_decision
             assert payload["ce_handoff_decision_hash"] == "strict-hash-2"
             assert payload["handoff_decision_hash"] == "strict-hash-2"
+            assert payload["task_completion_projection"] == task_projection
+            assert payload["completion_contract_hash"] == "c" * 64
+            assert "task_completion_projection" not in payload["director_handoff_validation"]
             return {"success": True, "changed_files": ["main.py"]}
 
         with patch.object(consumer, "_execute_task", side_effect=_execute):
@@ -257,6 +426,46 @@ class TestDirectorExecutionConsumerHandoffGate:
 
         assert result["ok"] is True
         mock_svc.fail_task_stage.assert_not_called()
+
+    def test_adapter_input_uses_task_projection_and_strips_project_wide_contract(self) -> None:
+        task_projection = {
+            "schema_version": "polaris.task_completion_projection.v1",
+            "task_id": "TASK-1",
+            "project_contract_hash": "a" * 64,
+            "owned_artifacts": [{"path": "src/main.py"}],
+        }
+        qa_local_repair_context = {
+            "schema_version": "qa.local_repair_context.v1",
+            "task_id": "TASK-1",
+            "failed_verifier": {
+                "command": "python -m pytest tests/test_main.py",
+                "exit_code": 1,
+            },
+            "repair_policy": {
+                "same_task_only": True,
+                "rerun_exact_failed_verifier": True,
+            },
+        }
+        adapter_input = director_consumer_module._build_director_adapter_input(
+            "TASK-1",
+            {
+                "title": "Repair current task",
+                "project_completion_contract": {"all_tasks": ["TASK-1", "TASK-2"]},
+                "project_completion_authority": {"all_commands": ["build", "test"]},
+                "pm_task_contracts": [{"task_id": "TASK-1"}, {"task_id": "TASK-2"}],
+                "task_completion_projection": task_projection,
+                "completion_contract_hash": "a" * 64,
+                "qa_local_repair_context": qa_local_repair_context,
+            },
+            "lease-1",
+        )
+
+        assert adapter_input["task_completion_projection"] == task_projection
+        assert adapter_input["completion_contract_hash"] == "a" * 64
+        assert adapter_input["qa_local_repair_context"] == qa_local_repair_context
+        assert "project_completion_contract" not in adapter_input
+        assert "project_completion_authority" not in adapter_input
+        assert "pm_task_contracts" not in adapter_input
 
 
 class TestDirectorExecutionConsumerPollOnce:
@@ -353,7 +562,7 @@ class TestDirectorExecutionConsumerPollOnce:
         no_claim = MagicMock()
         no_claim.ok = False
         mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
-        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="dead_letter")
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="rejected")
 
         consumer = DirectorExecutionConsumer(workspace="/test", worker_id="d1")
         with patch.object(
@@ -368,7 +577,8 @@ class TestDirectorExecutionConsumerPollOnce:
         mock_svc.acknowledge_task_stage.assert_not_called()
         fail_call = mock_svc.fail_task_stage.call_args[0][0]
         assert fail_call.error_code == "MISSING_BLUEPRINT"
-        assert fail_call.to_dead_letter is True
+        assert fail_call.to_dead_letter is False
+        assert fail_call.failure_disposition == "isolated_contract_blocker"
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_no_execution_evidence_requeues_pending_exec(self, mock_get_svc: MagicMock) -> None:
@@ -760,7 +970,7 @@ class TestDirectorExecutionConsumerPollOnce:
         assert "syntax" in fail_call.error_message.lower()
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
-    def test_final_convergence_routes_contract_amendment_to_ce(
+    def test_final_convergence_terminates_contract_amendment_without_upstream_replan(
         self,
         mock_get_svc: MagicMock,
         tmp_path: Path,
@@ -796,7 +1006,7 @@ class TestDirectorExecutionConsumerPollOnce:
         no_claim = MagicMock()
         no_claim.ok = False
         mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
-        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_design")
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=False, status="rejected")
 
         consumer = DirectorExecutionConsumer(workspace=str(tmp_path), worker_id="d1")
         with patch.object(
@@ -808,11 +1018,16 @@ class TestDirectorExecutionConsumerPollOnce:
 
         assert results[0]["ok"] is False
         assert results[0]["reason"] == "director_final_convergence_failed"
-        assert results[0]["requeue_stage"] == "pending_design"
+        assert results[0]["requeue_stage"] is None
         mock_svc.acknowledge_task_stage.assert_not_called()
         fail_call = mock_svc.fail_task_stage.call_args[0][0]
         assert fail_call.error_code == "FINAL_CONVERGENCE_CONTRACT_AMENDMENT_REQUIRED"
-        assert fail_call.requeue_stage == "pending_design"
+        assert fail_call.requeue_stage is None
+        assert fail_call.to_dead_letter is False
+        blocker = fail_call.metadata["structured_blocker"]
+        assert blocker["blocker_kind"] == "contract_or_authority_contradiction"
+        assert blocker["automatic_upstream_replan"] is False
+        assert blocker["automatic_escalation"] is False
         assert fail_call.metadata["final_convergence"]["contract_amendment_request"] is not None
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
@@ -1084,7 +1299,7 @@ class TestDirectorExecutionConsumerPollOnce:
         mock_svc.commit_compensation_actions.assert_called_once()
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
-    def test_missing_blueprint_dead_letters(self, mock_get_svc: MagicMock) -> None:
+    def test_missing_blueprint_becomes_isolated_contract_blocker(self, mock_get_svc: MagicMock) -> None:
         """Verify task without blueprint_id is moved to dead_letter."""
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc
@@ -1108,10 +1323,11 @@ class TestDirectorExecutionConsumerPollOnce:
         assert results[0]["ok"] is False
         assert results[0]["reason"] == "missing_blueprint"
 
-        # Verify dead-letter: fail called with to_dead_letter=True
+        # Missing authority terminates only this task; it never poisons dependencies.
         fail_call = mock_svc.fail_task_stage.call_args[0][0]
         assert fail_call.error_code == "MISSING_BLUEPRINT"
-        assert fail_call.to_dead_letter is True
+        assert fail_call.to_dead_letter is False
+        assert fail_call.failure_disposition == "isolated_contract_blocker"
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_execution_failure_requeues_pending_exec(self, mock_get_svc: MagicMock) -> None:
@@ -1150,7 +1366,7 @@ class TestDirectorExecutionConsumerPollOnce:
         mock_svc.compensate_task.assert_not_called()
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
-    def test_interface_contract_amendment_requeues_pending_design(self, mock_get_svc: MagicMock) -> None:
+    def test_interface_contract_amendment_terminates_as_structured_blocker(self, mock_get_svc: MagicMock) -> None:
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc
 
@@ -1195,8 +1411,13 @@ class TestDirectorExecutionConsumerPollOnce:
         ]
         fail_call = mock_svc.fail_task_stage.call_args[0][0]
         assert fail_call.error_code == "INTERFACE_CONTRACT_AMENDMENT_REQUIRED"
-        assert fail_call.requeue_stage == "pending_design"
+        assert fail_call.requeue_stage is None
+        assert fail_call.to_dead_letter is False
         assert fail_call.metadata["amendment_request"] == amendment
+        blocker = fail_call.metadata["structured_blocker"]
+        assert blocker["blocker_kind"] == "contract_or_authority_contradiction"
+        assert blocker["automatic_upstream_replan"] is False
+        assert blocker["automatic_escalation"] is False
         mock_svc.compensate_task.assert_not_called()
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
@@ -1250,7 +1471,7 @@ class TestDirectorExecutionConsumerPollOnce:
         mock_svc.compensate_task.assert_not_called()
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
-    def test_unrecoverable_execution_compensates_and_dead_letters(self, mock_get_svc: MagicMock) -> None:
+    def test_unrecoverable_execution_stays_on_same_task_for_local_repair(self, mock_get_svc: MagicMock) -> None:
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc
 
@@ -1276,14 +1497,12 @@ class TestDirectorExecutionConsumerPollOnce:
         assert len(results) == 1
         assert results[0]["task_id"] == "task-fatal"
         assert results[0]["ok"] is False
-        assert results[0]["dead_lettered"] is True
-        mock_svc.compensate_task.assert_called_once()
-        compensate_call = mock_svc.compensate_task.call_args.kwargs
-        assert compensate_call["task_id"] == "task-fatal"
-        assert compensate_call["initiator"] == "director_consumer"
+        mock_svc.compensate_task.assert_not_called()
 
         fail_call = mock_svc.fail_task_stage.call_args[0][0]
-        assert fail_call.to_dead_letter is True
+        assert fail_call.to_dead_letter is False
+        assert fail_call.requeue_stage == "pending_exec"
+        assert fail_call.failure_disposition == "same_task_local_retry"
         assert fail_call.error_code == "EXEC_UNRECOVERABLE"
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")

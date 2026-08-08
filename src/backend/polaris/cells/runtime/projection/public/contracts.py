@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
@@ -173,6 +173,29 @@ def _require_exact_int(value: object, field_name: str) -> int:
     return value
 
 
+def _normalize_sha256(
+    value: object,
+    field_name: str,
+    *,
+    allow_empty: bool = False,
+) -> str:
+    """Validate one lowercase SHA-256 digest without accepting coercions."""
+    if type(value) is not str:
+        raise ProjectOutcomeValidationV1Error(
+            f"invalid_{field_name}_type",
+            f"{field_name} must be an exact string",
+        )
+    token = value.strip()
+    if allow_empty and not token:
+        return ""
+    if len(token) != 64 or any(character not in "0123456789abcdef" for character in token):
+        raise ProjectOutcomeValidationV1Error(
+            f"invalid_{field_name}",
+            f"{field_name} must be a lowercase SHA-256 digest",
+        )
+    return token
+
+
 _EVIDENCE_AXIS_NAMES: tuple[str, ...] = (
     "delivery",
     "chain",
@@ -241,6 +264,171 @@ class ProjectOutcomeNonFactoryEvidenceRefsV1:
                 name,
                 _normalize_token_tuple(getattr(self, name), f"non_factory_evidence_refs_{name}"),
             )
+
+    def empty_axes(self) -> tuple[str, ...]:
+        """Return non-Factory axes that do not carry owner evidence refs."""
+        return tuple(
+            name
+            for name in ("delivery", "qa", "task_boundary", "task_runtime", "run_ledger")
+            if not getattr(self, name)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectOutcomeNonFactoryOwnerProjectionHashesV1:
+    """Typed owner projection hashes for every non-Factory outcome axis.
+
+    An empty hash means that the corresponding owner could not bind a current
+    projection. It is preserved as an explicit non-authoritative observation;
+    malformed non-empty values fail closed.
+    """
+
+    delivery: str = ""
+    qa: str = ""
+    task_boundary: str = ""
+    task_runtime: str = ""
+    run_ledger: str = ""
+
+    def __post_init__(self) -> None:
+        for name in ("delivery", "qa", "task_boundary", "task_runtime", "run_ledger"):
+            object.__setattr__(
+                self,
+                name,
+                _normalize_sha256(
+                    getattr(self, name),
+                    f"non_factory_owner_projection_hash_{name}",
+                    allow_empty=True,
+                ),
+            )
+
+    def empty_axes(self) -> tuple[str, ...]:
+        """Return non-Factory axes lacking a current owner projection hash."""
+        return tuple(
+            name
+            for name in ("delivery", "qa", "task_boundary", "task_runtime", "run_ledger")
+            if not getattr(self, name)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectOutcomeAuthorityQueryV1:
+    """Direct owner-bound outcome query with no caller-supplied facts."""
+
+    workspace: str
+    project_id: str
+    run_id: str
+    completion_contract_hash: str
+
+    def __post_init__(self) -> None:
+        for field_name in ("workspace", "project_id", "run_id"):
+            value = getattr(self, field_name)
+            if type(value) is not str or not value.strip():
+                raise ProjectOutcomeOwnerObservationV1Error(
+                    f"invalid_project_outcome_authority_{field_name}",
+                    f"{field_name} must be a non-empty exact string",
+                )
+            object.__setattr__(self, field_name, value.strip())
+        try:
+            contract_hash = _normalize_sha256(
+                self.completion_contract_hash,
+                "completion_contract_hash",
+            )
+        except ProjectOutcomeValidationV1Error as exc:
+            raise ProjectOutcomeOwnerObservationV1Error(exc.error_code, str(exc)) from exc
+        object.__setattr__(self, "completion_contract_hash", contract_hash)
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectOutcomeNonFactoryOwnerObservationV1:
+    """Immutable direct-owner facts for the five non-Factory outcome axes."""
+
+    workspace: str
+    project_id: str
+    run_id: str
+    completion_contract_hash: str
+    delivery: DeliveryAxisV1
+    qa: QaAxisV1
+    task_boundary: TaskBoundaryAxisV1
+    task_runtime: TaskRuntimeAxisV1
+    run_ledger: RunLedgerAxisV1
+    evidence_refs: ProjectOutcomeNonFactoryEvidenceRefsV1 = field(
+        default_factory=ProjectOutcomeNonFactoryEvidenceRefsV1
+    )
+    projection_hashes: ProjectOutcomeNonFactoryOwnerProjectionHashesV1 = field(
+        default_factory=ProjectOutcomeNonFactoryOwnerProjectionHashesV1
+    )
+    missing_required_modalities: tuple[str, ...] = field(default_factory=tuple)
+    failed_required_modalities: tuple[str, ...] = field(default_factory=tuple)
+    reasons: tuple[str, ...] = field(default_factory=tuple)
+    task_count: int = 0
+    completed_task_count: int = 0
+
+    def __post_init__(self) -> None:
+        identity = ProjectOutcomeAuthorityQueryV1(
+            workspace=self.workspace,
+            project_id=self.project_id,
+            run_id=self.run_id,
+            completion_contract_hash=self.completion_contract_hash,
+        )
+        if type(self.evidence_refs) is not ProjectOutcomeNonFactoryEvidenceRefsV1:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "invalid_project_outcome_non_factory_owner_evidence_refs_type",
+                "evidence_refs must be an exact ProjectOutcomeNonFactoryEvidenceRefsV1 instance",
+            )
+        if type(self.projection_hashes) is not ProjectOutcomeNonFactoryOwnerProjectionHashesV1:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "invalid_project_outcome_non_factory_owner_projection_hashes_type",
+                "projection_hashes must be an exact ProjectOutcomeNonFactoryOwnerProjectionHashesV1 instance",
+            )
+        try:
+            probe = ProjectOutcomeQueryV1(
+                run_id=identity.run_id,
+                delivery=self.delivery,
+                chain=ChainAxisV1.NOT_STARTED,
+                qa=self.qa,
+                task_boundary=self.task_boundary,
+                task_runtime=self.task_runtime,
+                run_ledger=self.run_ledger,
+                evidence_refs=ProjectOutcomeEvidenceRefsV1(
+                    delivery=self.evidence_refs.delivery,
+                    qa=self.evidence_refs.qa,
+                    task_boundary=self.evidence_refs.task_boundary,
+                    task_runtime=self.evidence_refs.task_runtime,
+                    run_ledger=self.evidence_refs.run_ledger,
+                ),
+                missing_required_modalities=self.missing_required_modalities,
+                failed_required_modalities=self.failed_required_modalities,
+                reasons=self.reasons,
+                task_count=self.task_count,
+                completed_task_count=self.completed_task_count,
+            )
+        except ProjectOutcomeValidationV1Error as exc:
+            raise ProjectOutcomeOwnerObservationV1Error(exc.error_code, str(exc)) from exc
+        object.__setattr__(self, "workspace", identity.workspace)
+        object.__setattr__(self, "project_id", identity.project_id)
+        object.__setattr__(self, "run_id", identity.run_id)
+        object.__setattr__(self, "completion_contract_hash", identity.completion_contract_hash)
+        object.__setattr__(self, "missing_required_modalities", probe.missing_required_modalities)
+        object.__setattr__(self, "failed_required_modalities", probe.failed_required_modalities)
+        object.__setattr__(self, "reasons", probe.reasons)
+        object.__setattr__(self, "task_count", probe.task_count)
+        object.__setattr__(self, "completed_task_count", probe.completed_task_count)
+
+
+@runtime_checkable
+class ProjectOutcomeNonFactoryOwnerObservationPortV1(Protocol):
+    """Bootstrap-bound direct observation port for non-Factory owner facts."""
+
+    async def observe_project_outcome_non_factory(
+        self,
+        *,
+        workspace: str,
+        project_id: str,
+        run_id: str,
+        completion_contract_hash: str,
+    ) -> ProjectOutcomeNonFactoryOwnerObservationV1:
+        """Return one exact owner observation for the requested identity."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -635,7 +823,10 @@ class ProjectOutcomeFactoryOwnerQueryV1:
             )
 
 
-@dataclass(frozen=True)
+_PROJECT_OUTCOME_AUTHORITY_TOKEN = object()
+
+
+@dataclass(frozen=True, init=False)
 class ProjectOutcomeV1:
     """Read-only multi-axis project outcome projection.
 
@@ -643,10 +834,10 @@ class ProjectOutcomeV1:
     Axes remain independent: chain/control-plane failure does not rewrite
     delivery, and missing modalities stay distinct from failed modalities.
 
-    GR0 deliberately exposes only an unbound completion candidate. Therefore
-    ``authority_bound`` and ``completed_verified`` must both remain false. GR1
-    will add an owner-fact adapter and an authority-bound construction path; a
-    caller cannot unlock completion by supplying arbitrary evidence strings.
+    GR0 deliberately exposes only an unbound completion candidate. The same
+    result type can become authoritative only through the same-Cell owner
+    binding path carrying an unexported construction seal; public callers
+    cannot unlock completion by supplying arbitrary evidence strings.
     """
 
     run_id: str
@@ -668,8 +859,54 @@ class ProjectOutcomeV1:
     task_count: int = 0
     completed_task_count: int = 0
 
-    def __post_init__(self) -> None:
-        """Reject directly constructed results that violate reducer invariants."""
+    def __init__(
+        self,
+        run_id: str,
+        delivery: DeliveryAxisV1,
+        chain: ChainAxisV1,
+        qa: QaAxisV1,
+        task_boundary: TaskBoundaryAxisV1,
+        task_runtime: TaskRuntimeAxisV1,
+        run_ledger: RunLedgerAxisV1,
+        missing_required_modalities: tuple[str, ...],
+        failed_required_modalities: tuple[str, ...],
+        completion_candidate: bool,
+        authority_bound: bool,
+        completed_verified: bool,
+        recommended_disposition: RecommendedDispositionV1,
+        evidence_refs: ProjectOutcomeEvidenceRefsV1,
+        reasons: tuple[str, ...],
+        blocking_axes: tuple[str, ...],
+        task_count: int = 0,
+        completed_task_count: int = 0,
+        *,
+        _authority_token: object | None = None,
+    ) -> None:
+        for field_name, value in (
+            ("run_id", run_id),
+            ("delivery", delivery),
+            ("chain", chain),
+            ("qa", qa),
+            ("task_boundary", task_boundary),
+            ("task_runtime", task_runtime),
+            ("run_ledger", run_ledger),
+            ("missing_required_modalities", missing_required_modalities),
+            ("failed_required_modalities", failed_required_modalities),
+            ("completion_candidate", completion_candidate),
+            ("authority_bound", authority_bound),
+            ("completed_verified", completed_verified),
+            ("recommended_disposition", recommended_disposition),
+            ("evidence_refs", evidence_refs),
+            ("reasons", reasons),
+            ("blocking_axes", blocking_axes),
+            ("task_count", task_count),
+            ("completed_task_count", completed_task_count),
+        ):
+            object.__setattr__(self, field_name, value)
+        self._validate_and_normalize(_authority_token)
+
+    def _validate_and_normalize(self, authority_token: object | None) -> None:
+        """Reject forged authority and normalize reducer-derived invariants."""
         candidate_query = ProjectOutcomeQueryV1(
             run_id=self.run_id,
             delivery=self.delivery,
@@ -714,17 +951,32 @@ class ProjectOutcomeV1:
                 "inconsistent_completion_candidate",
                 f"completion_candidate must be {expected_candidate!r}",
             )
-        if self.authority_bound is not False:
-            raise ProjectOutcomeValidationV1Error(
-                "unsupported_authority_binding_v1",
-                "GR0 ProjectOutcomeV1 cannot be authority-bound; use the future owner-fact adapter",
-            )
-        if self.completed_verified is not False:
+        if self.completed_verified and not self.authority_bound:
             raise ProjectOutcomeValidationV1Error(
                 "unbound_completed_verified",
                 "completed_verified cannot be true before owner-fact authority binding",
             )
-        expected_disposition = candidate_query.candidate_disposition()
+        if self.authority_bound and authority_token is not _PROJECT_OUTCOME_AUTHORITY_TOKEN:
+            raise ProjectOutcomeValidationV1Error(
+                "unsupported_authority_binding_v1",
+                "Authority-bound ProjectOutcomeV1 requires the same-Cell owner-binding seal",
+            )
+        if not self.authority_bound and authority_token is not None:
+            raise ProjectOutcomeValidationV1Error(
+                "unexpected_project_outcome_authority_seal",
+                "Unbound ProjectOutcomeV1 must not carry the authority seal",
+            )
+        expected_completed = self.authority_bound and expected_candidate
+        if self.completed_verified is not expected_completed:
+            raise ProjectOutcomeValidationV1Error(
+                "inconsistent_authoritative_completed_verified",
+                f"completed_verified must be {expected_completed!r}",
+            )
+        expected_disposition = (
+            RecommendedDispositionV1.COMPLETE
+            if self.authority_bound and expected_candidate
+            else candidate_query.candidate_disposition()
+        )
         if self.recommended_disposition is not expected_disposition:
             raise ProjectOutcomeValidationV1Error(
                 "inconsistent_recommended_disposition",
@@ -803,6 +1055,116 @@ class ProjectOutcomeFactoryOwnerBindingV1:
         object.__setattr__(self, "factory_chain_evidence_refs", evidence_refs)
 
 
+_PROJECT_OUTCOME_AUTHORITY_BINDING_TOKEN = object()
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectOutcomeAuthorityBindingV1:
+    """Owner provenance around the single authoritative outcome verdict.
+
+    ``ProjectOutcomeV1`` remains the only verdict object. This wrapper carries
+    identity and provenance only; it cannot introduce a competing authority or
+    completion boolean.
+    """
+
+    outcome: ProjectOutcomeV1
+    workspace: str
+    project_id: str
+    run_id: str
+    completion_contract_hash: str
+    factory_chain_projection_hash: str
+    factory_chain_evidence_refs: tuple[str, ...]
+    non_factory_projection_hashes: ProjectOutcomeNonFactoryOwnerProjectionHashesV1
+    non_factory_evidence_refs: ProjectOutcomeNonFactoryEvidenceRefsV1
+    _authority_token: InitVar[object | None] = None
+
+    def __post_init__(self, _authority_token: object | None) -> None:
+        if _authority_token is not _PROJECT_OUTCOME_AUTHORITY_BINDING_TOKEN:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "project_outcome_authority_binding_seal_required",
+                "Authority provenance must be created by the same-Cell owner-binding path",
+            )
+        if type(self.outcome) is not ProjectOutcomeV1:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "invalid_project_outcome_authority_outcome_type",
+                "outcome must be an exact ProjectOutcomeV1 instance",
+            )
+        if not self.outcome.authority_bound:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "project_outcome_authority_seal_missing",
+                "Authority binding requires an authority-sealed ProjectOutcomeV1",
+            )
+        identity = ProjectOutcomeAuthorityQueryV1(
+            workspace=self.workspace,
+            project_id=self.project_id,
+            run_id=self.run_id,
+            completion_contract_hash=self.completion_contract_hash,
+        )
+        if identity.run_id != self.outcome.run_id:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "project_outcome_authority_run_identity_mismatch",
+                "binding run_id must equal outcome.run_id",
+            )
+        try:
+            factory_hash = _normalize_sha256(
+                self.factory_chain_projection_hash,
+                "factory_chain_projection_hash",
+            )
+            factory_refs = _normalize_token_tuple(
+                self.factory_chain_evidence_refs,
+                "factory_chain_evidence_refs",
+            )
+        except ProjectOutcomeValidationV1Error as exc:
+            raise ProjectOutcomeOwnerObservationV1Error(exc.error_code, str(exc)) from exc
+        if not factory_refs or factory_hash not in factory_refs:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "project_outcome_factory_projection_hash_not_bound",
+                "Factory projection hash must be present in Factory evidence refs",
+            )
+        if factory_refs != self.outcome.evidence_refs.chain:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "project_outcome_factory_evidence_mismatch",
+                "Factory evidence refs must exactly equal the reduced chain evidence refs",
+            )
+        if type(self.non_factory_projection_hashes) is not ProjectOutcomeNonFactoryOwnerProjectionHashesV1:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "invalid_project_outcome_non_factory_projection_hashes_type",
+                "non_factory_projection_hashes must have the exact typed owner-hash contract",
+            )
+        if type(self.non_factory_evidence_refs) is not ProjectOutcomeNonFactoryEvidenceRefsV1:
+            raise ProjectOutcomeOwnerObservationV1Error(
+                "invalid_project_outcome_non_factory_evidence_refs_type",
+                "non_factory_evidence_refs must have the exact typed evidence contract",
+            )
+
+        for axis in ("delivery", "qa", "task_boundary", "task_runtime", "run_ledger"):
+            projection_hash = getattr(self.non_factory_projection_hashes, axis)
+            evidence_refs = getattr(self.non_factory_evidence_refs, axis)
+            outcome_refs = getattr(self.outcome.evidence_refs, axis)
+            if evidence_refs != outcome_refs:
+                raise ProjectOutcomeOwnerObservationV1Error(
+                    "project_outcome_non_factory_evidence_mismatch",
+                    f"{axis} owner evidence must exactly equal the reduced outcome evidence",
+                )
+            if not projection_hash or not evidence_refs:
+                raise ProjectOutcomeOwnerObservationV1Error(
+                    "project_outcome_owner_evidence_incomplete",
+                    f"{axis} owner projection hash and evidence refs are required",
+                )
+            if projection_hash not in evidence_refs:
+                raise ProjectOutcomeOwnerObservationV1Error(
+                    "project_outcome_owner_projection_hash_not_bound",
+                    f"{axis} projection hash must be present in its owner evidence refs",
+                )
+
+        object.__setattr__(self, "workspace", identity.workspace)
+        object.__setattr__(self, "project_id", identity.project_id)
+        object.__setattr__(self, "run_id", identity.run_id)
+        object.__setattr__(self, "completion_contract_hash", identity.completion_contract_hash)
+        object.__setattr__(self, "factory_chain_projection_hash", factory_hash)
+        object.__setattr__(self, "factory_chain_evidence_refs", factory_refs)
+
+
 __all__ = [
     "ChainAxisV1",
     "DeliveryAxisV1",
@@ -811,11 +1173,16 @@ __all__ = [
     "DirectorStatusObservationV1Error",
     "FactoryChainOwnerObservationPortV1",
     "FactoryChainOwnerObservationV1",
+    "ProjectOutcomeAuthorityBindingV1",
+    "ProjectOutcomeAuthorityQueryV1",
     "ProjectOutcomeEvidenceRefsV1",
     "ProjectOutcomeFactoryOwnerBindingV1",
     "ProjectOutcomeFactoryOwnerQueryV1",
     "ProjectOutcomeNonFactoryClaimsV1",
     "ProjectOutcomeNonFactoryEvidenceRefsV1",
+    "ProjectOutcomeNonFactoryOwnerObservationPortV1",
+    "ProjectOutcomeNonFactoryOwnerObservationV1",
+    "ProjectOutcomeNonFactoryOwnerProjectionHashesV1",
     "ProjectOutcomeOwnerObservationV1Error",
     "ProjectOutcomeQueryV1",
     "ProjectOutcomeV1",

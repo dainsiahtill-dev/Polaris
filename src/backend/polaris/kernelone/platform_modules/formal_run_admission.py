@@ -51,10 +51,6 @@ def evaluate_formal_run_admission() -> FormalRunAdmissionV1:
             "polaris.kernelone.platform_modules",
             "attribute_residual",
         ),
-        "unattended_step_planner": _import_ok(
-            "polaris.kernelone.platform_modules",
-            "plan_unattended_step",
-        ),
         "factory_bench_runner": _import_ok(
             "scripts.factory_bench.run_factory_bench",
             "main",

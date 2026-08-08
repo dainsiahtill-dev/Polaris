@@ -314,7 +314,6 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
             "src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py",
             "src/backend/polaris/kernelone/platform_modules/residual_attribution.py",
-            "src/backend/polaris/kernelone/platform_modules/unattended_supervisor.py",
         ),
         pytest_targets=(
             "src/backend/polaris/cells/factory/pipeline/tests/test_factory_execution_control_plane_ssot.py",
@@ -326,14 +325,13 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "missing_ce_blocks_director",
             "stage_persistence_commits_before_next_stage",
             "residual_maps_to_exactly_one_module_id",
-            "unattended_module_gate_before_cascade_before_bench",
+            "residual_attribution_is_non_terminal_and_workflow_owner_schedules",
         ),
         depends_on=("M05_stage_lease_heartbeat", "M06_director_multi_task"),
         markers=("module_factory_chain",),
         notes=(
-            "Unattended residual attribution + step planner live under KernelOne "
-            "platform_modules and gate with M07 so cascade enforces "
-            "one-residual-one-module before L1-01 bench."
+            "KernelOne owns generic one-residual-one-module attribution only; "
+            "workflow_runtime owns project scheduling and terminal policy."
         ),
     ),
     "M08_run_ledger_tool_lifecycle": PlatformModuleRecord(

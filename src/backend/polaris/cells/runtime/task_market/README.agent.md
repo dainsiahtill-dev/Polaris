@@ -41,10 +41,18 @@ Stage mapping:
   - `MoveTaskToDeadLetterCommandV1`
 - query:
   - `QueryTaskMarketStatusV1`
+  - `QueryTaskRequeueReceiptV1`
 - results:
   - `TaskWorkItemResultV1`
   - `TaskLeaseRenewResultV1`
   - `TaskMarketStatusResultV1`
+  - `TaskRequeueReceiptV1`
+
+`RequeueTaskCommandV1` supports an optional SHA-256 idempotency key and
+fingerprint.  Verification/QA recovery must use this path to reopen the exact
+Director-owned task without returning work to PM or Chief Engineer.  Repeated
+wakes with the same key are no-ops backed by a durable, queryable receipt;
+reusing a key for a different fingerprint fails closed.
 
 ## Runtime Storage
 

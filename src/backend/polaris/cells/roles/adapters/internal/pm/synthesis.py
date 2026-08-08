@@ -216,6 +216,152 @@ def _directive_requires_language_root_delivery_contract(directive: str) -> bool:
     )
 
 
+def _synthesized_task_target_files(item: dict[str, Any]) -> tuple[str, ...]:
+    raw_targets = item.get("target_files")
+    if not isinstance(raw_targets, list):
+        return ()
+    return tuple(str(path or "").replace("\\", "/").strip() for path in raw_targets if str(path or "").strip())
+
+
+def _synthesized_contract_language(contracts: list[dict[str, Any]], directive: str) -> str:
+    targets = {path for item in contracts for path in _synthesized_task_target_files(item)}
+    lower_targets = {path.lower() for path in targets}
+    if "cargo.toml" in lower_targets or any(path.endswith(".rs") for path in lower_targets):
+        return "rust"
+    if "go.mod" in lower_targets or any(path.endswith(".go") for path in lower_targets):
+        return "go"
+    if "pom.xml" in lower_targets or any(path.endswith(".java") for path in lower_targets):
+        return "java"
+    if "cmakelists.txt" in lower_targets or any(path.endswith((".cpp", ".hpp")) for path in lower_targets):
+        return "cpp"
+    if any(path.endswith((".ts", ".tsx")) for path in lower_targets):
+        return "typescript"
+    if "package.json" in lower_targets or any(path.endswith((".js", ".jsx")) for path in lower_targets):
+        return "javascript"
+    if any(path.endswith(".py") for path in lower_targets):
+        return "python"
+    explicit = _explicit_primary_language_from_directive(directive)
+    return explicit if explicit in {"rust", "go", "java", "cpp", "typescript", "javascript", "python"} else ""
+
+
+def _synthesized_verifier_profile(language: str) -> dict[str, tuple[str, ...]]:
+    profiles: dict[str, dict[str, tuple[str, ...]]] = {
+        "typescript": {
+            "environment_prep": ("npm", "install"),
+            "build": ("npm", "run", "build"),
+            "test": ("npm", "test"),
+            "entrypoint": ("npm", "start"),
+        },
+        "javascript": {
+            "environment_prep": ("npm", "install"),
+            "build": ("npm", "run", "build"),
+            "test": ("npm", "test"),
+            "entrypoint": ("npm", "start"),
+        },
+        "python": {
+            "environment_prep": ("python", "-m", "venv", ".venv"),
+            "build": ("python", "-m", "compileall", "-q", "."),
+            "test": ("python", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"),
+            "entrypoint": ("python", "-m", "src.main"),
+        },
+        "go": {
+            "environment_prep": ("go", "mod", "download"),
+            "build": ("go", "build", "./..."),
+            "test": ("go", "test", "./..."),
+            "entrypoint": ("go", "run", "."),
+        },
+        "rust": {
+            "environment_prep": ("cargo", "fetch"),
+            "build": ("cargo", "build"),
+            "test": ("cargo", "test"),
+            "entrypoint": ("cargo", "run"),
+        },
+        "cpp": {
+            "environment_prep": ("cmake", "-S", ".", "-B", "build"),
+            "build": ("cmake", "--build", "build"),
+            "test": ("python", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"),
+            "entrypoint": ("./build/polaris_app",),
+        },
+        "java": {
+            "environment_prep": ("mvn", "-q", "-DskipTests", "dependency:go-offline"),
+            "build": ("mvn", "-q", "-DskipTests", "package"),
+            "test": ("python", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"),
+            "entrypoint": ("java", "-cp", "target/classes", "polaris.factory.Main"),
+        },
+    }
+    return profiles.get(language, {})
+
+
+def _attach_synthesized_verification_commands(
+    contracts: list[dict[str, Any]],
+    *,
+    directive: str,
+) -> list[dict[str, Any]]:
+    """Bind deterministic fallback commands to the task that owns their artifacts.
+
+    This is used only by PM's deterministic fallback templates.  Physical
+    execution policy still validates every argv later; this helper merely
+    prevents free-text acceptance criteria from becoming command authority.
+    """
+
+    language = _synthesized_contract_language(contracts, directive)
+    profile = _synthesized_verifier_profile(language)
+    if not profile:
+        return [dict(item) for item in contracts]
+
+    manifest_names = {
+        "typescript": {"package.json"},
+        "javascript": {"package.json"},
+        "python": {"requirements.txt", "pyproject.toml"},
+        "go": {"go.mod"},
+        "rust": {"cargo.toml"},
+        "cpp": {"cmakelists.txt"},
+        "java": {"pom.xml"},
+    }.get(language, set())
+    entrypoint_paths = {
+        "typescript": {"src/index.ts", "src/main.ts", "src/main.tsx", "index.html"},
+        "javascript": {"src/index.js", "src/main.js", "index.html"},
+        "python": {"src/main.py", "main.py", "app.py"},
+        "go": {"main.go"},
+        "rust": {"src/main.rs"},
+        "cpp": {"src/main.cpp"},
+        "java": {"src/main/java/polaris/factory/main.java"},
+    }.get(language, set())
+
+    contract_target_sets = tuple({path.lower() for path in _synthesized_task_target_files(item)} for item in contracts)
+    contract_set_owns_manifest = any(targets.intersection(manifest_names) for targets in contract_target_sets)
+
+    finalized: list[dict[str, Any]] = []
+    for index, raw_item in enumerate(contracts):
+        item = dict(raw_item)
+        if "verification_commands" in item:
+            finalized.append(item)
+            continue
+        targets = contract_target_sets[index]
+        owns_manifest = bool(targets.intersection(manifest_names))
+        owns_test = any(
+            path.startswith("tests/")
+            or "/test/" in path
+            or "/tests/" in path
+            or path.endswith(("_test.go", ".test.ts", ".spec.ts", ".test.js", ".spec.js", "test_product.py"))
+            for path in targets
+        )
+        owns_entrypoint = bool(targets.intersection(entrypoint_paths))
+        owns_build_input = any(not path.endswith((".md", ".txt")) and not path.startswith("tests/") for path in targets)
+        commands: list[dict[str, Any]] = []
+        if owns_manifest or (index == 0 and not contract_set_owns_manifest):
+            commands.append({"modality": "environment_prep", "argv": list(profile["environment_prep"]), "cwd": "."})
+        if owns_build_input:
+            commands.append({"modality": "build", "argv": list(profile["build"]), "cwd": "."})
+        if owns_test:
+            commands.append({"modality": "test", "argv": list(profile["test"]), "cwd": "."})
+        if owns_entrypoint:
+            commands.append({"modality": "entrypoint", "argv": list(profile["entrypoint"]), "cwd": "."})
+        item["verification_commands"] = commands
+        finalized.append(item)
+    return finalized
+
+
 _DETERMINISTIC_CHECK_TOKEN_PATTERN = (
     r"(?:html|ts_syntax|js_syntax|py_compile|package_scripts|rust_compile|cpp_compile|java_compile|"
     r"go_compile|min_files:\d+|source_target_coverage:[^\s]+|content_any:[A-Za-z0-9_|-]+)"
@@ -819,6 +965,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 directive=directive,
                 projection_hint=projection_hint,
             )
+            contracts = _attach_synthesized_verification_commands(contracts, directive=directive)
             normalized = [self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(contracts)]
             return [item for item in normalized if isinstance(item, dict)]
 
@@ -847,6 +994,10 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 domain_token=str(domain or "app"),
                 source_metadata=source_metadata,
             )
+            javascript_contracts = _attach_synthesized_verification_commands(
+                javascript_contracts,
+                directive=directive,
+            )
             contracts = [
                 self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(javascript_contracts)
             ]
@@ -858,6 +1009,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 domain_label=str(domain_label),
                 source_metadata=source_metadata,
             )
+            java_contracts = _attach_synthesized_verification_commands(java_contracts, directive=directive)
             contracts = [
                 self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(java_contracts)
             ]
@@ -868,6 +1020,10 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 directive=directive,
                 domain_label=str(domain_label),
                 source_metadata=source_metadata,
+            )
+            python_contracts = _attach_synthesized_verification_commands(
+                python_contracts,
+                directive=directive,
             )
             contracts = [
                 self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(python_contracts)
@@ -880,6 +1036,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 domain_label=str(domain_label),
                 source_metadata=source_metadata,
             )
+            go_contracts = _attach_synthesized_verification_commands(go_contracts, directive=directive)
             contracts = [
                 self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(go_contracts)
             ]
@@ -890,6 +1047,10 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             source_metadata=source_metadata,
         )
         if placeholder_repair_contracts:
+            placeholder_repair_contracts = _attach_synthesized_verification_commands(
+                placeholder_repair_contracts,
+                directive=directive,
+            )
             contracts = [
                 self._normalize_task_contract(item, idx + 1, directive)
                 for idx, item in enumerate(placeholder_repair_contracts)
@@ -901,6 +1062,10 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             source_metadata=source_metadata,
         )
         if frontend_repair_contracts:
+            frontend_repair_contracts = _attach_synthesized_verification_commands(
+                frontend_repair_contracts,
+                directive=directive,
+            )
             contracts = [
                 self._normalize_task_contract(item, idx + 1, directive)
                 for idx, item in enumerate(frontend_repair_contracts)
@@ -913,6 +1078,10 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             source_metadata=source_metadata,
         )
         if frontend_contracts:
+            frontend_contracts = _attach_synthesized_verification_commands(
+                frontend_contracts,
+                directive=directive,
+            )
             contracts = [
                 self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(frontend_contracts)
             ]
@@ -924,6 +1093,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 domain_label=str(domain_label),
                 source_metadata=source_metadata,
             )
+            rust_contracts = _attach_synthesized_verification_commands(rust_contracts, directive=directive)
             contracts = [
                 self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(rust_contracts)
             ]
@@ -935,6 +1105,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 domain_label=str(domain_label),
                 source_metadata=source_metadata,
             )
+            cpp_contracts = _attach_synthesized_verification_commands(cpp_contracts, directive=directive)
             contracts = [
                 self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(cpp_contracts)
             ]
@@ -1077,6 +1248,10 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "metadata": dict(source_metadata),
                     },
                 ]
+                root_contracts = _attach_synthesized_verification_commands(
+                    root_contracts,
+                    directive=directive,
+                )
                 contracts = [
                     self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(root_contracts)
                 ]
@@ -1150,6 +1325,10 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "metadata": dict(source_metadata),
                     },
                 ]
+                root_contracts = _attach_synthesized_verification_commands(
+                    root_contracts,
+                    directive=directive,
+                )
                 contracts = [
                     self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(root_contracts)
                 ]
@@ -1221,6 +1400,10 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "metadata": dict(source_metadata),
                 },
             ]
+            root_contracts = _attach_synthesized_verification_commands(
+                root_contracts,
+                directive=directive,
+            )
             contracts = [
                 self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(root_contracts)
             ]
@@ -1304,6 +1487,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             },
         ]
 
+        raw_contracts = _attach_synthesized_verification_commands(raw_contracts, directive=directive)
         contracts = [self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(raw_contracts)]
         return [item for item in contracts if isinstance(item, dict)]
 
@@ -1865,7 +2049,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "scope": delivery_targets,
                     "target_files": delivery_targets,
                     "steps": [
-                        "创建 CMakeLists.txt，声明 C++17 标准、可执行目标和所有 src/**/*.cpp 源文件",
+                        "创建 CMakeLists.txt，声明 C++17 标准、名为 polaris_app 的可执行目标和所有 src/**/*.cpp 源文件",
                         f"实现 src/models/ 下与 {keyword_summary} 对齐的领域对象头文件和实现文件",
                         "实现 src/engine/generator.hpp，声明领域规则生成公开 API",
                         f"实现 src/engine/generator.cpp，将 {keyword_summary} 等需求元素组合为可解释输出",
@@ -1875,7 +2059,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         f"验证脚本覆盖确定性检查：{check_summary}",
                     ],
                     "acceptance": [
-                        "`CMakeLists.txt`、`src/models/`、`src/engine/`、`src/main.cpp`、`tests/test_product.py` 与 `README.md` 存在且非空",
+                        "`CMakeLists.txt` 声明 polaris_app 可执行目标；`src/models/`、`src/engine/`、`src/main.cpp`、`tests/test_product.py` 与 `README.md` 存在且非空",
                         "`src/main.cpp` 存在并可作为 C++17 CLI 入口编译运行",
                         f"`src/engine/` 源码实现与 {keyword_summary} 对齐的领域规则",
                         f"源码包含需求关键词：{keyword_summary}",

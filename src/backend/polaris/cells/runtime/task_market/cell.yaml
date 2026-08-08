@@ -27,6 +27,7 @@ public_contracts:
     - MoveTaskToDeadLetterCommandV1
   queries:
     - QueryTaskMarketStatusV1
+    - QueryTaskRequeueReceiptV1
   events:
     - TaskWorkItemPublishedEventV1
     - TaskLeaseGrantedEventV1
@@ -36,6 +37,7 @@ public_contracts:
     - TaskWorkItemResultV1
     - TaskLeaseRenewResultV1
     - TaskMarketStatusResultV1
+    - TaskRequeueReceiptV1
   errors:
     - TaskMarketErrorV1
 depends_on:

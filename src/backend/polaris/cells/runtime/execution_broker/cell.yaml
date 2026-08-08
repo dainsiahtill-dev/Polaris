@@ -2,7 +2,7 @@ id: runtime.execution_broker
 title: Runtime Execution Broker
 kind: capability
 visibility: public
-stateful: false
+stateful: true
 owner: runtime
 purpose: 'Provide a unified cell-level execution facade for subprocess, async task,
   and blocking I/O submissions. This cell standardizes lifecycle control, timeout/cancel
@@ -12,7 +12,10 @@ purpose: 'Provide a unified cell-level execution facade for subprocess, async ta
 current_modules:
 - polaris.cells.runtime.execution_broker.public.bootstrap
 - polaris.cells.runtime.execution_broker.public.service
+- polaris.cells.runtime.execution_broker.public.project_verification
 - polaris.cells.runtime.execution_broker.internal.managed_process_ports
+- polaris.cells.runtime.execution_broker.internal.project_verification_authority
+- polaris.cells.runtime.execution_broker.internal.project_verification_sandbox
 - polaris.cells.runtime.execution_broker.internal.service
 - polaris.kernelone.runtime.execution_facade
 tags: []
@@ -21,36 +24,61 @@ owned_paths:
 public_contracts:
   modules:
   - polaris.cells.runtime.execution_broker.public.contracts
+  - polaris.cells.runtime.execution_broker.public.bootstrap
+  - polaris.cells.runtime.execution_broker.public.project_verification
   commands:
+  - ConsumeProjectVerificationCapabilityCommandV1
   - AppendManagedProcessReceiptCommandV1
   - LaunchExecutionProcessCommandV1
+  - RecordProjectArtifactCommandV1
+  - RunProjectVerificationCommandV1
   queries:
   - GetExecutionProcessStatusQueryV1
   - GetManagedProcessReceiptQueryV1
+  - QueryProjectArtifactReceiptV1
+  - QueryProjectVerificationReceiptV1
+  - ResolveProjectArtifactAuthorityQueryV1
+  - ResolveProjectVerificationAuthorityQueryV1
   events: []
   results:
   - ExecutionProcessLaunchResultV1
   - ExecutionProcessWaitResultV1
   - ManagedProcessReceiptAppendResultV1
   - ManagedProcessReceiptRecordV1
+  - ProjectArtifactReceiptV1
+  - ProjectArtifactExecutionAuthorityV1
+  - ProjectVerificationCapabilityConsumptionV1
+  - ProjectVerificationExecutionAuthorityV1
+  - ProjectVerificationExecutionResultV1
+  - ProjectVerificationReceiptV1
   errors:
   - ExecutionBrokerError
 depends_on:
+- control_plane.verifier_policy
 - runtime.state_owner
 - policy.workspace_guard
 - audit.evidence
 subgraphs:
 - execution_governance_pipeline
-state_owners: []
+state_owners:
+- runtime/evidence/project_verification_receipts.sqlite3
+- config/execution_broker/project_verification_receipt_hmac.key
+- config/execution_broker/verifier_snapshots/*
 effects_allowed:
 - process.spawn:runtime/*
 - fs.write:runtime/logs/*
 - fs.write:runtime/events/*
+- fs.write:runtime/evidence/*
+- fs.read:runtime/evidence/*
+- fs.read:config/execution_broker/*
+- fs.write:config/execution_broker/*
 - ws.outbound:runtime/*
 verification:
   tests:
   - polaris/cells/runtime/execution_broker/tests/test_managed_process_ports.py
   - polaris/cells/runtime/execution_broker/tests/test_service.py
+  - polaris/cells/runtime/execution_broker/tests/test_project_verification_receipts.py
+  - polaris/cells/runtime/execution_broker/tests/test_project_verification_sandbox.py
   gaps:
   - Legacy sync process callers still need full call-site migration to async-first
     broker contracts.

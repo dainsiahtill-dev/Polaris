@@ -19,6 +19,8 @@ from polaris.cells.runtime.task_market.public.contracts import (
     OWNER_REWORK_HANDOFFS_METADATA_KEY,
     OWNER_REWORK_RESOLVED_ONLY_DEPENDENCY_MODE,
     OWNER_REWORK_ROUTE_SCHEMA_V1,
+    TASK_LOCAL_RETRY_SCHEDULE_METADATA_KEY,
+    TASK_REQUEUE_RECEIPTS_METADATA_KEY,
     AcknowledgeTaskStageCommandV1,
     ClaimTaskWorkItemCommandV1,
     FailTaskStageCommandV1,
@@ -28,12 +30,14 @@ from polaris.cells.runtime.task_market.public.contracts import (
     OwnerReworkRouteResultV1,
     PublishTaskWorkItemCommandV1,
     QueryTaskMarketStatusV1,
+    QueryTaskRequeueReceiptV1,
     RenewTaskLeaseCommandV1,
     RequeueTaskCommandV1,
     RouteOwnerReworkCommandV1,
     TaskLeaseRenewResultV1,
     TaskMarketError,
     TaskMarketStatusResultV1,
+    TaskRequeueReceiptV1,
     TaskWorkItemResultV1,
 )
 
@@ -68,10 +72,15 @@ _REQUEUE_CONTEXT_PAYLOAD_KEYS = frozenset(
         "amendment_request",
         "director_interface_discrepancy_retry",
         "interface_discrepancy_context",
+        "qa_local_repair_context",
         "task_boundary_discrepancy_evidence",
         "task_boundary_interface_discrepancy_retry",
     }
 )
+_LOCAL_RETRY_BACKOFF_BASE_SECONDS = 1.0
+_LOCAL_RETRY_BACKOFF_MAX_SECONDS = 60.0
+_LOCAL_RETRY_MAX_ROUNDS = 6
+_LOCAL_RETRY_PARK_METADATA_KEY = "task_local_retry_control_plane_park"
 
 __all__ = [
     "_DEPENDENCY_TERMINAL_FAILURE_STATUSES",
@@ -124,6 +133,7 @@ class LifecycleMixin(ServiceBaseMixin):
                 )
             else:
                 expected_versions = {item.task_id: int(item.version)}
+                prior_requeue_receipts = dict(item.metadata).get(TASK_REQUEUE_RECEIPTS_METADATA_KEY)
                 item.trace_id = command.trace_id
                 item.run_id = command.run_id
                 item.workspace = command.workspace
@@ -144,6 +154,11 @@ class LifecycleMixin(ServiceBaseMixin):
                 item.compensation_group_id = command.compensation_group_id
                 item.payload = dict(command.payload)
                 item.metadata = dict(command.metadata)
+                if isinstance(prior_requeue_receipts, dict) and prior_requeue_receipts:
+                    # Idempotency receipts are durable execution history.  A
+                    # later task projection refresh must not erase them and
+                    # accidentally permit the same physical rework twice.
+                    item.metadata[TASK_REQUEUE_RECEIPTS_METADATA_KEY] = dict(prior_requeue_receipts)
                 item.max_attempts = max(1, int(command.max_attempts))
                 item.lease_token = ""
                 item.lease_expires_at = 0.0
@@ -675,9 +690,7 @@ class LifecycleMixin(ServiceBaseMixin):
             # see WHY the last attempt failed — claim results expose payload,
             # not last_error (live I3-r10: QA verify bounces retried blind,
             # made no changes, and died no_materialized_changes).
-            requeue_context_payload = (
-                self._requeue_context_payload(command.metadata) if command.requeue_stage else {}
-            )
+            requeue_context_payload = self._requeue_context_payload(command.metadata) if command.requeue_stage else {}
             item.payload = {
                 **dict(item.payload),
                 "last_failure": {
@@ -701,19 +714,92 @@ class LifecycleMixin(ServiceBaseMixin):
                     "feedback_counters": feedback_counters,
                 }
 
+            failure_disposition = str(command.failure_disposition or "default")
+            same_task_local_retry = failure_disposition == "same_task_local_retry"
+            isolated_contract_blocker = failure_disposition == "isolated_contract_blocker"
+            model_ceiling = failure_disposition == "model_ceiling"
+            control_plane_blocked = False
+            item.metadata = {
+                **dict(item.metadata),
+                "last_failure_disposition": failure_disposition,
+            }
+            if isolated_contract_blocker or model_ceiling:
+                # Contract/authority contradiction terminates only this row.
+                # It must not poison dependencies, trigger saga compensation,
+                # enter DLQ, or silently request an upstream role rerun.
+                item.metadata["dependency_terminal_cascade_suppressed"] = True
+                item.metadata["automatic_upstream_replan"] = False
+                item.metadata["automatic_escalation"] = False
+            if same_task_local_retry and command.requeue_stage:
+                previous_schedule = item.metadata.get(TASK_LOCAL_RETRY_SCHEDULE_METADATA_KEY)
+                try:
+                    previous_sequence = (
+                        int(previous_schedule.get("sequence") or 0) if isinstance(previous_schedule, Mapping) else 0
+                    )
+                except (TypeError, ValueError):
+                    previous_sequence = 0
+                sequence = max(1, previous_sequence + 1)
+                if sequence > _LOCAL_RETRY_MAX_ROUNDS:
+                    # Local repair is deliberately bounded. Exhaustion is not a
+                    # product failure, DLQ event, dependency failure, or excuse
+                    # to reopen PM/CE. Park this row until the owner-qualified
+                    # model-ceiling/control-plane supervisor supplies a terminal
+                    # disposition or explicitly resumes it.
+                    control_plane_blocked = True
+                    same_task_local_retry = False
+                    failure_disposition = "control_plane_blocked"
+                    item.metadata.pop(TASK_LOCAL_RETRY_SCHEDULE_METADATA_KEY, None)
+                    item.metadata[_LOCAL_RETRY_PARK_METADATA_KEY] = {
+                        "schema_version": "task-market.local-retry-control-plane-park.v1",
+                        "status": "CONTROL_PLANE_BLOCKED",
+                        "stage": command.requeue_stage,
+                        "rounds_consumed": _LOCAL_RETRY_MAX_ROUNDS,
+                        "attempted_sequence": sequence,
+                        "last_error_code": command.error_code,
+                        "owner_qualification_required": True,
+                        "automatic_upstream_replan": False,
+                        "automatic_escalation": False,
+                    }
+                    item.metadata["last_failure_disposition"] = failure_disposition
+                    item.metadata["dependency_terminal_cascade_suppressed"] = True
+                    item.metadata["automatic_upstream_replan"] = False
+                    item.metadata["automatic_escalation"] = False
+                else:
+                    backoff_seconds = min(
+                        _LOCAL_RETRY_BACKOFF_MAX_SECONDS,
+                        _LOCAL_RETRY_BACKOFF_BASE_SECONDS * (2 ** min(sequence - 1, 10)),
+                    )
+                    scheduled_at_epoch = now_epoch()
+                    item.metadata[TASK_LOCAL_RETRY_SCHEDULE_METADATA_KEY] = {
+                        "schema_version": "task-market.local-retry-schedule.v1",
+                        "stage": command.requeue_stage,
+                        "sequence": sequence,
+                        "max_rounds": _LOCAL_RETRY_MAX_ROUNDS,
+                        "backoff_seconds": backoff_seconds,
+                        "scheduled_at_epoch": scheduled_at_epoch,
+                        "not_before_epoch": scheduled_at_epoch + backoff_seconds,
+                        "error_code": command.error_code,
+                    }
+
             # Determine disposition.
             non_consuming_requeue = (
                 command.requeue_stage is not None
                 and not command.to_dead_letter
-                and str(command.error_code or "").strip().upper() in _NON_CONSUMING_REQUEUE_ERROR_CODES
+                and (
+                    same_task_local_retry
+                    or str(command.error_code or "").strip().upper() in _NON_CONSUMING_REQUEUE_ERROR_CODES
+                )
             )
             if non_consuming_requeue and item.attempts > 0:
                 # claim_work_item increments attempts before consumers can inspect
                 # file-scope conflicts. A transient lock conflict should wait for
                 # the owner, not burn the task's execution retry budget.
                 item.attempts -= 1
-            move_to_dead_letter = bool(command.to_dead_letter) or (
-                not non_consuming_requeue and item.attempts >= item.max_attempts
+            move_to_dead_letter = (
+                not isolated_contract_blocker
+                and not model_ceiling
+                and not control_plane_blocked
+                and (bool(command.to_dead_letter) or (not non_consuming_requeue and item.attempts >= item.max_attempts))
             )
             dead_letter_records: list[dict[str, Any]] = []
 
@@ -730,7 +816,7 @@ class LifecycleMixin(ServiceBaseMixin):
                 reason = "dead_lettered"
                 event_type = "task_market.work_item_dead_lettered"
                 lm.clear_lease(item)
-            elif command.requeue_stage:
+            elif command.requeue_stage and not control_plane_blocked:
                 item.stage = command.requeue_stage
                 item.status = command.requeue_stage
                 lm.clear_lease(item)
@@ -743,8 +829,28 @@ class LifecycleMixin(ServiceBaseMixin):
                 lm.clear_lease(item)
                 item.version += 1
                 item.updated_at = now_iso()
-                reason = "rejected"
-                event_type = "task_market.stage_rejected"
+                reason = (
+                    "control_plane_blocked"
+                    if control_plane_blocked
+                    else (
+                        "model_ceiling"
+                        if model_ceiling
+                        else ("contract_blocked" if isolated_contract_blocker else "rejected")
+                    )
+                )
+                event_type = (
+                    "task_market.stage_control_plane_blocked"
+                    if control_plane_blocked
+                    else (
+                        "task_market.stage_model_ceiling"
+                        if model_ceiling
+                        else (
+                            "task_market.stage_contract_blocked"
+                            if isolated_contract_blocker
+                            else "task_market.stage_rejected"
+                        )
+                    )
+                )
 
             items[item.task_id] = item
 
@@ -788,6 +894,7 @@ class LifecycleMixin(ServiceBaseMixin):
                     "error_message": command.error_message,
                     "requeue_stage": command.requeue_stage or "",
                     "to_dead_letter": bool(command.to_dead_letter),
+                    "failure_disposition": failure_disposition,
                     "failure_metadata": dict(command.metadata),
                 },
             )
@@ -809,7 +916,7 @@ class LifecycleMixin(ServiceBaseMixin):
             )
 
             # Saga compensation only on terminal failure paths (not requeue).
-            if command.requeue_stage is None:
+            if command.requeue_stage is None and not isolated_contract_blocker and not model_ceiling:
                 saga_expected_version = int(item.version)
                 saga_expected_versions = {item.task_id: saga_expected_version}
                 task_compensation_summary = self._compensate_task_no_lock(
@@ -899,7 +1006,7 @@ class LifecycleMixin(ServiceBaseMixin):
             # Route to HITL/Tri-Council when failure is terminal or requires manual handling.
             should_escalate = False
             escalate_reason = ""
-            if command.requeue_stage is None:
+            if command.requeue_stage is None and not isolated_contract_blocker and not model_ceiling:
                 should_escalate = bool(dict(command.metadata).get("escalate_to_human_review", False))
                 escalate_reason = f"task_failed:{command.error_code}"
                 task_summary_raw = item.metadata.get("saga_task_compensation")
@@ -930,6 +1037,29 @@ class LifecycleMixin(ServiceBaseMixin):
                 "fail", (time.monotonic() - t0) * 1000.0, stage=item.stage, task_id=item.task_id, trace_id=item.trace_id
             )
             return self._result_from_item(item, reason=reason)
+
+    def next_local_retry_delay(self, workspace: str, stage: str) -> float | None:
+        """Return the exact durable wake delay for the next deferred local retry."""
+
+        with self._workspace_lock(workspace):
+            items = self._get_store(workspace).load_items()
+            current_epoch = now_epoch()
+            deadlines: list[float] = []
+            for item in items.values():
+                if item.stage != stage or item.status != stage:
+                    continue
+                schedule = item.metadata.get(TASK_LOCAL_RETRY_SCHEDULE_METADATA_KEY)
+                if not isinstance(schedule, Mapping) or str(schedule.get("stage") or "") != stage:
+                    continue
+                try:
+                    deadline = float(schedule.get("not_before_epoch") or 0.0)
+                except (TypeError, ValueError):
+                    continue
+                if deadline > current_epoch:
+                    deadlines.append(deadline)
+            if not deadlines:
+                return None
+            return max(0.0, min(deadlines) - current_epoch)
 
     # ---- Owner rework ------------------------------------------------------
 
@@ -1201,8 +1331,7 @@ class LifecycleMixin(ServiceBaseMixin):
                 # structured post-commit warning instead of returning a false
                 # operation failure that would trigger duplicate routing.
                 logger.error(
-                    "Owner-rework Cognitive Runtime projection failed after commit: "
-                    "task_id=%s handoff_id=%s error=%s",
+                    "Owner-rework Cognitive Runtime projection failed after commit: task_id=%s handoff_id=%s error=%s",
                     requester.task_id,
                     command.handoff_id,
                     exc,
@@ -1242,6 +1371,26 @@ class LifecycleMixin(ServiceBaseMixin):
             items = store.load_items()
             item = self._require_item(items, command.task_id)
 
+            if command.idempotency_key:
+                raw_receipts = dict(item.metadata).get(TASK_REQUEUE_RECEIPTS_METADATA_KEY)
+                receipt_records = dict(raw_receipts) if isinstance(raw_receipts, dict) else {}
+                existing_record = receipt_records.get(command.idempotency_key)
+                if isinstance(existing_record, dict):
+                    try:
+                        existing_receipt = self._task_requeue_receipt_from_record(
+                            workspace=command.workspace,
+                            task_id=item.task_id,
+                            record=existing_record,
+                        )
+                    except (TypeError, ValueError):
+                        return self._result_from_item(item, ok=False, reason="idempotency_receipt_invalid")
+                    if (
+                        existing_receipt.idempotency_fingerprint != command.idempotency_fingerprint
+                        or existing_receipt.effect_hash != command.effect_hash
+                    ):
+                        return self._result_from_item(item, ok=False, reason="idempotency_conflict")
+                    return self._result_from_item(item, reason="already_requeued")
+
             if item.status in {"rejected", "dead_letter"}:
                 return self._result_from_item(item, ok=False, reason="terminal_status")
             resolved_reopen_source = ""
@@ -1267,7 +1416,8 @@ class LifecycleMixin(ServiceBaseMixin):
             item.metadata = dict(item.metadata)
             item.metadata["requeue_reason"] = command.reason
             item.metadata["requeue_metadata"] = requeue_metadata
-            item.metadata["requeued_at"] = now_iso()
+            requeued_at = now_iso()
+            item.metadata["requeued_at"] = requeued_at
             if previous_status == "resolved":
                 item.metadata["reopen_count"] = self._safe_reopen_count(item.metadata) + 1
                 if resolved_reopen_source:
@@ -1280,6 +1430,33 @@ class LifecycleMixin(ServiceBaseMixin):
                 }
             item.version += 1
             item.updated_at = now_iso()
+
+            if command.idempotency_key:
+                receipt = TaskRequeueReceiptV1(
+                    workspace=command.workspace,
+                    task_id=item.task_id,
+                    idempotency_key=command.idempotency_key,
+                    idempotency_fingerprint=command.idempotency_fingerprint,
+                    effect_hash=command.effect_hash,
+                    target_stage=command.target_stage,
+                    reason=command.reason,
+                    transition_version=item.version,
+                    accepted_at=requeued_at,
+                )
+                raw_receipts = item.metadata.get(TASK_REQUEUE_RECEIPTS_METADATA_KEY)
+                receipt_records = dict(raw_receipts) if isinstance(raw_receipts, dict) else {}
+                receipt_records[command.idempotency_key] = {
+                    "idempotency_key": receipt.idempotency_key,
+                    "idempotency_fingerprint": receipt.idempotency_fingerprint,
+                    "effect_hash": receipt.effect_hash,
+                    "target_stage": receipt.target_stage,
+                    "reason": receipt.reason,
+                    "transition_version": receipt.transition_version,
+                    "accepted_at": receipt.accepted_at,
+                    "status": receipt.status,
+                    "receipt_hash": receipt.receipt_hash,
+                }
+                item.metadata[TASK_REQUEUE_RECEIPTS_METADATA_KEY] = receipt_records
 
             items[item.task_id] = item
 
@@ -1338,6 +1515,56 @@ class LifecycleMixin(ServiceBaseMixin):
 
             self._observe("requeue", (time.monotonic() - t0) * 1000.0, stage=command.target_stage, task_id=item.task_id)
             return self._result_from_item(item, reason="requeued")
+
+    def query_task_requeue_receipt(
+        self,
+        query: QueryTaskRequeueReceiptV1,
+    ) -> TaskRequeueReceiptV1 | None:
+        """Return one durable idempotency receipt without changing task state."""
+
+        if type(query) is not QueryTaskRequeueReceiptV1:
+            raise TypeError("query must be an exact QueryTaskRequeueReceiptV1")
+        with self._workspace_lock(query.workspace):
+            store = self._get_store(query.workspace)
+            item = store.load_items().get(query.task_id)
+            if item is None:
+                return None
+            raw_receipts = dict(item.metadata).get(TASK_REQUEUE_RECEIPTS_METADATA_KEY)
+            records = dict(raw_receipts) if isinstance(raw_receipts, dict) else {}
+            record = records.get(query.idempotency_key)
+            if not isinstance(record, dict):
+                return None
+            return self._task_requeue_receipt_from_record(
+                workspace=query.workspace,
+                task_id=query.task_id,
+                record=record,
+            )
+
+    @staticmethod
+    def _task_requeue_receipt_from_record(
+        *,
+        workspace: str,
+        task_id: str,
+        record: dict[str, Any],
+    ) -> TaskRequeueReceiptV1:
+        transition_version = record.get("transition_version")
+        if type(transition_version) is not int:
+            raise TypeError("stored task requeue transition_version must be an exact integer")
+        receipt = TaskRequeueReceiptV1(
+            workspace=workspace,
+            task_id=task_id,
+            idempotency_key=str(record.get("idempotency_key") or ""),
+            idempotency_fingerprint=str(record.get("idempotency_fingerprint") or ""),
+            effect_hash=str(record.get("effect_hash") or ""),
+            target_stage=str(record.get("target_stage") or ""),
+            reason=str(record.get("reason") or ""),
+            transition_version=transition_version,
+            accepted_at=str(record.get("accepted_at") or ""),
+            status=str(record.get("status") or ""),
+        )
+        if str(record.get("receipt_hash") or "") != receipt.receipt_hash:
+            raise ValueError("stored task requeue receipt hash mismatch")
+        return receipt
 
     # ---- Dead Letter --------------------------------------------------------
 
@@ -1498,7 +1725,14 @@ class LifecycleMixin(ServiceBaseMixin):
                 dead_dep_status = ""
                 for dep_id in item.depends_on or []:
                     dep = items.get(str(dep_id))
-                    if dep is not None and dep.status in _DEPENDENCY_TERMINAL_FAILURE_STATUSES:
+                    cascade_suppressed = bool(
+                        dep is not None and dict(dep.metadata).get("dependency_terminal_cascade_suppressed", False)
+                    )
+                    if (
+                        dep is not None
+                        and dep.status in _DEPENDENCY_TERMINAL_FAILURE_STATUSES
+                        and not cascade_suppressed
+                    ):
                         dead_dep_id = dep.task_id
                         dead_dep_status = dep.status
                         break
@@ -1962,9 +2196,7 @@ class LifecycleMixin(ServiceBaseMixin):
                 code="owner_rework_handoff_state_conflict",
                 details={"task_id": item.task_id},
             )
-        serialized_handoffs = {
-            handoff_id: handoff.to_record() for handoff_id, handoff in handoffs.items()
-        }
+        serialized_handoffs = {handoff_id: handoff.to_record() for handoff_id, handoff in handoffs.items()}
         serialized_handoffs[handoff_record.handoff_id] = handoff_record.to_record()
         item.metadata[OWNER_REWORK_HANDOFFS_METADATA_KEY] = serialized_handoffs
         item.metadata["last_owner_rework_handoff"] = handoff_record.to_record()
@@ -1974,11 +2206,7 @@ class LifecycleMixin(ServiceBaseMixin):
         command: RouteOwnerReworkCommandV1,
     ) -> dict[str, Any]:
         failure = dict(command.failure_metadata)
-        error_code = str(
-            failure.get("error_code")
-            or failure.get("code")
-            or "OWNER_REWORK_REQUIRED"
-        ).strip()
+        error_code = str(failure.get("error_code") or failure.get("code") or "OWNER_REWORK_REQUIRED").strip()
         error_message = str(
             failure.get("error_message")
             or failure.get("message")

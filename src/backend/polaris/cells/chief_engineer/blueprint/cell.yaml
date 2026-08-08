@@ -23,15 +23,21 @@ public_contracts:
   - polaris.cells.chief_engineer.blueprint.public.contracts
   - polaris.cells.chief_engineer.blueprint.public.service
   commands:
+  - BuildChiefEngineerBlueprintPortfolioCommandV1
   - GenerateTaskBlueprintCommandV1
   queries:
   - GetBlueprintStatusQueryV1
   - QueryBlueprintProvenanceV1
+  - QueryProjectCompletionContractV1
   events:
   - TaskBlueprintGeneratedEventV1
   results:
+  - ChiefEngineerBlueprintPortfolioV1
+  - ProjectCompletionContractV1
+  - ProjectKindAuthorityV1
   - TaskBlueprintResultV1
   - TaskBlueprintProvenanceSnapshotV1
+  - VerificationCommandAuthorityV1
   errors:
   - ChiefEngineerBlueprintErrorV1
 depends_on:

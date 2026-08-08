@@ -345,6 +345,17 @@ class TestBuildPmMessage:
         assert "AAAA" in msg
         assert "ZZZZ" in msg
 
+    def test_requires_structured_verification_command_authority(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+
+        msg = adapter._build_pm_message([], "Build a runnable Go CLI")
+
+        assert '"verification_commands"' in msg
+        assert '"modality": "environment_prep|build|test|lint|entrypoint"' in msg
+        assert '"argv": ["executable", "arg"]' in msg
+        assert '"cwd": "."' in msg
+        assert "shell command string" in msg
+
 
 class TestBuildPmRetryMessage:
     def test_includes_quality_issues(self, tmp_path: Any) -> None:
@@ -357,6 +368,16 @@ class TestBuildPmRetryMessage:
         assert "上一版 PM 合同未通过质量门禁" not in msg
         assert "禁止输出 [TOOL_CALL]" not in msg
         assert "Previous output excerpt:" in msg
+
+    def test_retry_preserves_structured_verification_command_requirement(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        quality = {"score": 40, "critical_issues": ["verification_commands_missing"], "warnings": []}
+
+        msg = adapter._build_pm_retry_message(directive="Build it", quality=quality, previous_output="old")
+
+        assert "verification_commands" in msg
+        assert "argv" in msg
+        assert "cwd" in msg
 
 
 class TestPlanArtifactSanitization:
@@ -798,6 +819,33 @@ ts_syntax
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
 
+    def test_quality_blocks_missing_structured_verifier_authority_before_ce(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = "Build a Go CLI application with main.go, tests, and README."
+        contracts = [
+            adapter._normalize_task_contract(
+                {
+                    "id": f"TASK-{index}",
+                    "title": f"实现 Go delivery part {index}",
+                    "goal": "Deliver runnable Go code with deterministic validation",
+                    "scope_paths": [path],
+                    "target_files": [path],
+                    "steps": ["Implement the declared artifact", "Validate the artifact"],
+                    "acceptance": ["The declared artifact exists and is non-empty", "Validation passes"],
+                    "verification_commands": [],
+                },
+                index,
+                directive,
+            )
+            for index, path in enumerate(("go.mod", "main.go", "main_test.go"), start=1)
+        ]
+
+        _normalized, quality = adapter._evaluate_contract_quality(contracts, directive=directive)
+
+        assert quality["ok"] is False
+        assert "verification_commands_missing" in quality["critical_issues"]
+        assert int(quality["score"]) <= 40
+
     def test_typescript_web_root_workspace_directive_prefers_package_contracts(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         directive = """
@@ -1159,6 +1207,14 @@ ts_syntax
         assert "unlock" in serialized
         assert "polaris.delivery_plan_document.v1" in serialized
         assert "polaris.delivery_depth_contract.v1" in serialized
+        command_rows = [row for item in contracts for row in item["verification_commands"]]
+        assert {tuple(row["argv"]) for row in command_rows} >= {
+            ("go", "mod", "download"),
+            ("go", "build", "./..."),
+            ("go", "test", "./..."),
+            ("go", "run", "."),
+        }
+        assert all(set(row) == {"modality", "argv", "cwd"} for row in command_rows)
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
 
@@ -1242,6 +1298,13 @@ ts_syntax
         assert all(
             set(item.get("target_files") or []).issubset(set(item.get("scope_paths") or [])) for item in contracts
         ), "every declared task target must remain inside that task's capability scope"
+        command_rows = [row for item in contracts for row in item["verification_commands"]]
+        assert {tuple(row["argv"]) for row in command_rows} >= {
+            ("cargo", "fetch"),
+            ("cargo", "build"),
+            ("cargo", "test"),
+            ("cargo", "run"),
+        }
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
 
@@ -1514,6 +1577,34 @@ ts_syntax
                     "python src/main.py 返回成功",
                     "python -m src.main 返回成功",
                     "源码或输出覆盖 planet/weather/cloud/wind",
+                ],
+                "verification_commands": [
+                    {
+                        "modality": "environment_prep",
+                        "argv": ["python", "-m", "venv", ".venv"],
+                        "cwd": ".",
+                    },
+                    {
+                        "modality": "build",
+                        "argv": ["python", "-m", "compileall", "-q", "."],
+                        "cwd": ".",
+                    },
+                    {
+                        "modality": "test",
+                        "argv": [
+                            "python",
+                            "-m",
+                            "unittest",
+                            "discover",
+                            "-s",
+                            "tests",
+                            "-p",
+                            "test_*.py",
+                            "-v",
+                        ],
+                        "cwd": ".",
+                    },
+                    {"modality": "entrypoint", "argv": ["python", "-m", "src.main"], "cwd": "."},
                 ],
             }
         ]
@@ -2093,6 +2184,37 @@ class TestNormalizeTaskContract:
         assert result["title"] == "实现Fix bug"
         assert result["phase"] == "requirements"
         assert result["assigned_to"] == "Director"
+        assert result["verification_commands"] == []
+
+    def test_preserves_exact_structured_verification_commands(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        raw = {
+            "title": "Verify Go delivery",
+            "verification_commands": [
+                {"modality": "environment_prep", "argv": ["go", "mod", "download"], "cwd": "."},
+                {"modality": "test", "argv": ["go", "test", "./..."], "cwd": "."},
+                {"modality": "entrypoint", "argv": ["go", "run", "."], "cwd": "."},
+            ],
+        }
+
+        result = adapter._normalize_task_contract(raw, 1, "")
+
+        assert result["verification_commands"] == raw["verification_commands"]
+
+    def test_drops_malformed_verification_command_rows_fail_closed(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        raw = {
+            "title": "Verify",
+            "verification_commands": [
+                {"modality": "test", "command": "echo ok", "cwd": "."},
+                {"modality": "test", "argv": ["pytest"], "cwd": "../escape"},
+                {"modality": "fake", "argv": ["pytest"], "cwd": "."},
+            ],
+        }
+
+        result = adapter._normalize_task_contract(raw, 1, "")
+
+        assert result["verification_commands"] == []
 
     def test_title_without_action_marker_gets_prefix(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

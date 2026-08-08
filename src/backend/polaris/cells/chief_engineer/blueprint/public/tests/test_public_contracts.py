@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from pathlib import Path
 
+import polaris.cells.chief_engineer.blueprint.public as blueprint_public
 import polaris.cells.chief_engineer.blueprint.public.service as blueprint_service_module
 import pytest
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
@@ -14,7 +16,9 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
     HandoffDecisionV1,
+    ProjectKindAuthorityV1,
     QueryBlueprintProvenanceV1,
+    QueryProjectCompletionContractV1,
     RegisterRiskCommandV1,
     RegisterTechDebtCommandV1,
     RiskRecordV1,
@@ -23,6 +27,11 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
     TaskBlueprintGeneratedEventV1,
     TaskBlueprintProvenanceSnapshotV1,
     TaskBlueprintResultV1,
+    VerificationCommandAuthorityV1,
+    _ChiefEngineerPortfolioAuthorityCarrierV1,
+    _issue_chief_engineer_portfolio_authority_carrier,
+    project_completion_catalog_snapshot_hash,
+    project_completion_verifier_policy_snapshot_hash,
 )
 from polaris.cells.chief_engineer.blueprint.public.service import (
     BlueprintPersistence,
@@ -32,6 +41,8 @@ from polaris.cells.chief_engineer.blueprint.public.service import (
     get_blueprint_status,
     project_chief_engineer_task_blueprint,
     query_blueprint_provenance,
+    query_project_completion_contract,
+    validate_director_handoff_from_payload,
 )
 from polaris.cells.control_plane.run_ledger.public import stable_hash
 from polaris.kernelone.quality.file_ownership_ledger import (
@@ -39,6 +50,219 @@ from polaris.kernelone.quality.file_ownership_ledger import (
     read_file_owners,
 )
 from polaris.kernelone.storage import resolve_storage_roots
+
+_PM_CONTRACT_HASH = "a" * 64
+_VERIFIER_POLICY_HASH = "b" * 64
+
+
+def _command_authority(
+    task_id: str,
+    modality: str,
+    argv: tuple[str, ...],
+) -> VerificationCommandAuthorityV1:
+    return VerificationCommandAuthorityV1(
+        task_id=task_id,
+        modality=modality,  # type: ignore[arg-type]
+        argv=argv,
+        cwd=".",
+    )
+
+
+def _library_completion_requirements(
+    *artifact_paths: str,
+    owner_task_ids: tuple[str, ...],
+    test_path: str,
+    test_owner_task_id: str,
+) -> dict:
+    assert len(owner_task_ids) == len(artifact_paths)
+    artifact_rows = [
+        {
+            "obligation_id": f"artifact-{index}",
+            "path": path,
+            "semantic_role": "source",
+            "applicability": "required",
+            "owner_task_id": owner_task_ids[index - 1],
+        }
+        for index, path in enumerate(artifact_paths, start=1)
+    ]
+    test_artifact_id = "artifact-test"
+    artifact_rows.append(
+        {
+            "obligation_id": test_artifact_id,
+            "path": test_path,
+            "semantic_role": "test",
+            "applicability": "required",
+            "owner_task_id": test_owner_task_id,
+        }
+    )
+    return {
+        "obligations": {
+            "artifacts": artifact_rows,
+            "entrypoints": [
+                {
+                    "obligation_id": "entrypoint-library-na",
+                    "kind": "library",
+                    "applicability": "not_applicable",
+                    "owner_task_id": None,
+                    "source_path": None,
+                    "runtime_path": None,
+                    "command": None,
+                }
+            ],
+            "verification": [
+                {
+                    "obligation_id": "verify-build",
+                    "modality": "build",
+                    "command_authority_hash": _command_authority(
+                        owner_task_ids[0], "build", ("python", "-m", "compileall", "src")
+                    ).authority_hash,
+                    "applicability": "required",
+                    "covers_obligation_ids": [artifact_rows[0]["obligation_id"]],
+                    "owner_task_id": owner_task_ids[0],
+                },
+                {
+                    "obligation_id": "verify-test",
+                    "modality": "test",
+                    "command_authority_hash": _command_authority(
+                        test_owner_task_id, "test", ("pytest", "-q")
+                    ).authority_hash,
+                    "applicability": "required",
+                    "covers_obligation_ids": [test_artifact_id],
+                    "owner_task_id": test_owner_task_id,
+                },
+                {
+                    "obligation_id": "verify-environment-na",
+                    "modality": "environment_prep",
+                    "command_authority_hash": None,
+                    "applicability": "not_applicable",
+                    "covers_obligation_ids": [],
+                    "owner_task_id": None,
+                },
+            ],
+        },
+    }
+
+
+def _application_completion_requirements() -> dict:
+    return {
+        "obligations": {
+            "artifacts": [
+                {
+                    "obligation_id": "artifact-main",
+                    "path": "src/main.py",
+                    "semantic_role": "source",
+                    "applicability": "required",
+                    "owner_task_id": "TASK-A",
+                },
+                {
+                    "obligation_id": "artifact-tests",
+                    "path": "tests/test_main.py",
+                    "semantic_role": "test",
+                    "applicability": "required",
+                    "owner_task_id": "TASK-B",
+                },
+            ],
+            "entrypoints": [
+                {
+                    "obligation_id": "entrypoint-cli",
+                    "kind": "cli",
+                    "applicability": "required",
+                    "owner_task_id": "TASK-A",
+                    "source_path": "src/main.py",
+                    "runtime_path": None,
+                    "command": "python -m src.main",
+                }
+            ],
+            "verification": [
+                {
+                    "obligation_id": "verify-environment",
+                    "modality": "environment_prep",
+                    "command_authority_hash": _command_authority(
+                        "TASK-A", "environment_prep", ("python", "-m", "pip", "install", "-e", ".")
+                    ).authority_hash,
+                    "applicability": "required",
+                    "covers_obligation_ids": ["artifact-main"],
+                    "owner_task_id": "TASK-A",
+                },
+                {
+                    "obligation_id": "verify-test",
+                    "modality": "test",
+                    "command_authority_hash": _command_authority("TASK-B", "test", ("pytest", "-q")).authority_hash,
+                    "applicability": "required",
+                    "covers_obligation_ids": ["artifact-tests"],
+                    "owner_task_id": "TASK-B",
+                },
+                {
+                    "obligation_id": "verify-entrypoint",
+                    "modality": "entrypoint",
+                    "command_authority_hash": _command_authority(
+                        "TASK-A", "entrypoint", ("python", "-m", "src.main")
+                    ).authority_hash,
+                    "applicability": "required",
+                    "covers_obligation_ids": ["entrypoint-cli"],
+                    "owner_task_id": "TASK-A",
+                },
+            ],
+        },
+    }
+
+
+def _portfolio_command_authority(
+    *,
+    tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
+    project_kind: str = "application",
+    workspace: Path | None = None,
+    run_id: str = "run-portfolio-1",
+    project_id: str = "project-portfolio",
+    pm_contract_hash: str = _PM_CONTRACT_HASH,
+    catalog_snapshot_override: dict[str, str] | None = None,
+) -> dict:
+    owner_task_ids = tuple(task.task_id for task in tasks)
+    command_authority = tuple(
+        _command_authority(task_id, modality, argv)
+        for task_id in owner_task_ids
+        for modality, argv in (
+            ("environment_prep", ("python", "-m", "pip", "install", "-e", ".")),
+            ("build", ("python", "-m", "compileall", "src")),
+            ("test", ("pytest", "-q")),
+            ("entrypoint", ("python", "-m", "src.main")),
+        )
+    )
+    verifier_policy_snapshot = {
+        "schema_version": "evidence_policy.v1",
+        "source": "control_plane.verifier_policy.evidence_policy_compiler",
+        "policy_hash": _VERIFIER_POLICY_HASH,
+        "required_evidence_modalities": ["command"],
+    }
+    catalog_snapshot: dict[str, str] = dict(catalog_snapshot_override or {})
+    if project_kind == "library" and catalog_snapshot_override is None:
+        if workspace is None:
+            raise AssertionError("library portfolio test must materialize its catalog snapshot")
+        catalog_snapshot = {"project_kind": "library"}
+        catalog_path = workspace / ".polaris" / "catalog_contract.json"
+        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+        catalog_path.write_text(json.dumps(catalog_snapshot), encoding="utf-8")
+    elif catalog_snapshot_override is not None and workspace is not None:
+        catalog_path = workspace / ".polaris" / "catalog_contract.json"
+        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+        catalog_path.write_text(json.dumps(catalog_snapshot), encoding="utf-8")
+    carrier = _issue_chief_engineer_portfolio_authority_carrier(
+        workspace=str(workspace or Path("/repo")),
+        run_id=run_id,
+        project_id=project_id,
+        pm_stage_event_id=f"pm-stage-{run_id}",
+        pm_contract_hash=pm_contract_hash,
+        tasks=tasks,
+        catalog_snapshot=catalog_snapshot,
+        catalog_snapshot_hash=project_completion_catalog_snapshot_hash(catalog_snapshot),
+        verifier_policy_hash=_VERIFIER_POLICY_HASH,
+        verifier_policy_snapshot=verifier_policy_snapshot,
+        verifier_policy_snapshot_hash=project_completion_verifier_policy_snapshot_hash(verifier_policy_snapshot),
+        verification_command_authority=command_authority,
+    )
+    return {
+        "authority_carrier": carrier,
+    }
 
 
 def _producer_v1_hashable(value):
@@ -290,17 +514,588 @@ class TestChiefEngineerBlueprintPortfolio:
             ChiefEngineerPortfolioTaskV1(
                 task_id="TASK-B",
                 objective="Build the task B consumer",
-                target_files=("src/shared.py", "src/b.py"),
-                scope_paths=("src/b",),
+                target_files=("src/shared.py", "src/b.py", "tests/test_portfolio.py"),
+                scope_paths=("src/b", "tests/test_portfolio.py"),
                 dependencies=("TASK-A",),
             ),
         )
+
+    def test_public_command_rejects_caller_supplied_project_kind_authority(self, tmp_path: Path) -> None:
+        forged = ProjectKindAuthorityV1(
+            project_kind="library",
+            source_ref="factory.committed_pm_catalog",
+            source_hash="d" * 64,
+            justification="caller_forged_library_exemption",
+        )
+
+        with pytest.raises(TypeError, match="project_kind_authority"):
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-forged-kind",
+                tasks=self._tasks(),
+                project_kind_authority=forged,  # type: ignore[call-arg]
+            )
+
+    def test_authority_carrier_issuer_is_not_a_public_cell_capability(self) -> None:
+        assert not hasattr(blueprint_public, "_ChiefEngineerPortfolioAuthorityCarrierV1")
+        assert not hasattr(blueprint_public, "_issue_chief_engineer_portfolio_authority_carrier")
+
+    @pytest.mark.parametrize(
+        "forged_field, forged_value",
+        (
+            ("project_id", "forged-project"),
+            ("pm_contract_hash", "f" * 64),
+            ("catalog_snapshot", {"project_kind": "library"}),
+            ("catalog_snapshot_hash", "f" * 64),
+            ("verifier_policy_hash", "f" * 64),
+            ("verifier_policy_snapshot", {"policy_hash": "f" * 64}),
+            ("verification_command_authority", ()),
+        ),
+    )
+    def test_public_command_rejects_raw_authority_seed_fields(
+        self,
+        tmp_path: Path,
+        forged_field: str,
+        forged_value: object,
+    ) -> None:
+        kwargs = {
+            "workspace": str(tmp_path),
+            "run_id": "run-raw-authority-forge",
+            "tasks": self._tasks(),
+            forged_field: forged_value,
+        }
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            BuildChiefEngineerBlueprintPortfolioCommandV1(**kwargs)  # type: ignore[arg-type]
+
+    def test_authority_carrier_direct_construction_and_lookalike_fail_closed(self, tmp_path: Path) -> None:
+        with pytest.raises(TypeError, match="owner-issued only"):
+            _ChiefEngineerPortfolioAuthorityCarrierV1(
+                _seal=object(),
+                workspace=str(tmp_path),
+                run_id="run-direct-forge",
+                project_id="project-portfolio",
+                pm_stage_event_id="pm-stage-direct-forge",
+                pm_contract_hash=_PM_CONTRACT_HASH,
+                tasks=self._tasks(),
+                catalog_snapshot={},
+                catalog_snapshot_hash=project_completion_catalog_snapshot_hash({}),
+                verifier_policy_hash=_VERIFIER_POLICY_HASH,
+                verifier_policy_snapshot={},
+                verifier_policy_snapshot_hash="f" * 64,
+                verification_command_authority=(),
+            )
+
+        class LookalikeCarrier:
+            workspace = str(tmp_path)
+            run_id = "run-direct-forge"
+            tasks = self._tasks()
+
+        with pytest.raises(TypeError, match="exact Factory-issued authority_carrier"):
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-direct-forge",
+                tasks=self._tasks(),
+                authority_carrier=LookalikeCarrier(),
+                llm_blueprint={"project_completion_contract": _application_completion_requirements()},
+            )
+
+    def test_authority_carrier_cross_run_replay_fails_closed(self, tmp_path: Path) -> None:
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Build application entrypoint",
+                target_files=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build application tests",
+                target_files=("tests/test_main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        carrier = _portfolio_command_authority(tasks=tasks, workspace=tmp_path, run_id="run-owner-a")[
+            "authority_carrier"
+        ]
+        with pytest.raises(ValueError, match="identity does not match"):
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-owner-b",
+                tasks=tasks,
+                authority_carrier=carrier,
+                llm_blueprint={"project_completion_contract": _application_completion_requirements()},
+            )
+
+    def test_missing_catalog_defaults_to_owner_derived_application(self, tmp_path: Path) -> None:
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Build the application entrypoint",
+                target_files=("src/main.py",),
+                scope_paths=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build the application tests",
+                target_files=("tests/test_main.py",),
+                scope_paths=("tests/test_main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        portfolio_command = BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-missing-catalog",
+            tasks=tasks,
+            **_portfolio_command_authority(tasks=tasks, workspace=tmp_path, run_id="run-missing-catalog"),
+            llm_blueprint={
+                "construction_plan": {"implementation": ["Build the application"]},
+                "project_completion_contract": _application_completion_requirements(),
+            },
+        )
+        portfolio = build_chief_engineer_blueprint_portfolio(portfolio_command)
+
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        assert completion.project_kind == "application"
+        assert completion.project_kind_authority.justification == (
+            "conservative_application_without_explicit_library_authority"
+        )
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as replay_error:
+            build_chief_engineer_blueprint_portfolio(
+                BuildChiefEngineerBlueprintPortfolioCommandV1(
+                    workspace=str(tmp_path),
+                    run_id="run-missing-catalog",
+                    tasks=tasks,
+                    authority_carrier=portfolio_command.authority_carrier,
+                    llm_blueprint=portfolio_command.llm_blueprint,
+                )
+            )
+        assert replay_error.value.code == "project_completion_authority_replay"
+
+    def test_unknown_model_hash_binds_unique_pm_owner_modality_authority(self, tmp_path: Path) -> None:
+        """CE never owns opaque PM hashes; exact owner/modality resolves them safely."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Build the application entrypoint",
+                target_files=("src/main.py",),
+                scope_paths=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build the application tests",
+                target_files=("tests/test_main.py",),
+                scope_paths=("tests/test_main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        verification = requirements["obligations"]["verification"]
+        verification[0]["command_authority_hash"] = "model-invented-opaque-hash"
+        command = BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-bind-model-hash",
+            tasks=tasks,
+            **_portfolio_command_authority(
+                tasks=tasks,
+                workspace=tmp_path,
+                run_id="run-bind-model-hash",
+            ),
+            llm_blueprint={
+                "construction_plan": {"implementation": ["Build the application"]},
+                "project_completion_contract": requirements,
+            },
+        )
+
+        portfolio = build_chief_engineer_blueprint_portfolio(command)
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        verifier = next(
+            item for item in completion.obligations.verification if item.obligation_id == "verify-environment"
+        )
+        expected = _command_authority(
+            "TASK-A",
+            "environment_prep",
+            ("python", "-m", "pip", "install", "-e", "."),
+        )
+        assert verifier.command_authority_hash == expected.authority_hash
+        assert verifier.command == expected.command
+
+    def test_completion_contract_composer_repairs_cross_owner_rows_and_drops_unexecutable_entrypoints(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """PM authority, not CE guesses, owns verifier commands and executable entrypoints."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Build the application entrypoint",
+                target_files=("src/main.py",),
+                scope_paths=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build an optional browser adapter",
+                target_files=("src/web.py",),
+                scope_paths=("src/web.py",),
+                dependencies=("TASK-A",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-C",
+                objective="Build the application tests",
+                target_files=("tests/test_main.py",),
+                scope_paths=("tests/test_main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        obligations = requirements["obligations"]
+        obligations["artifacts"][1]["owner_task_id"] = "TASK-C"
+        obligations["artifacts"].append(
+            {
+                "obligation_id": "artifact-web",
+                "path": "src/web.py",
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-B",
+            }
+        )
+        obligations["entrypoints"].append(
+            {
+                "obligation_id": "entrypoint-web-advisory-only",
+                "kind": "web",
+                "applicability": "required",
+                "owner_task_id": "TASK-B",
+                "source_path": "src/web.py",
+                "runtime_path": None,
+                "command": None,
+            }
+        )
+        obligations["verification"] = [
+            row for row in obligations["verification"] if row["modality"] != "environment_prep"
+        ]
+        test_row = next(row for row in obligations["verification"] if row["modality"] == "test")
+        test_row["owner_task_id"] = "TASK-A"
+        test_row["command_authority_hash"] = None
+
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-normalize-completion-authority",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-normalize-completion-authority",
+                ),
+                llm_blueprint={
+                    "construction_plan": {"implementation": ["Build the application"]},
+                    "project_completion_contract": requirements,
+                },
+            )
+        )
+
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        assert [item.obligation_id for item in completion.obligations.entrypoints] == ["entrypoint-cli"]
+        test_verifier = next(item for item in completion.obligations.verification if item.modality == "test")
+        assert test_verifier.owner_task_id == "TASK-C"
+        assert test_verifier.command_authority_hash == _command_authority(
+            "TASK-C", "test", ("pytest", "-q")
+        ).authority_hash
+        assert "artifact-tests" in test_verifier.covers_obligation_ids
+        environment_verifier = next(
+            item for item in completion.obligations.verification if item.modality == "environment_prep"
+        )
+        assert environment_verifier.applicability == "required"
+        assert environment_verifier.command_authority_hash is not None
+
+    def test_compiled_runtime_entrypoint_derives_from_pm_owned_source(self, tmp_path: Path) -> None:
+        """Compiled output need not be a PM source target when source and command authority are exact."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Build the application entrypoint",
+                target_files=("src/main.py",),
+                scope_paths=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build application tests",
+                target_files=("tests/test_main.py",),
+                scope_paths=("tests/test_main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        requirements["obligations"]["entrypoints"][0]["runtime_path"] = "dist/main.js"
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-derived-runtime-entrypoint",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-derived-runtime-entrypoint",
+                ),
+                llm_blueprint={
+                    "construction_plan": {"implementation": ["Build the application"]},
+                    "project_completion_contract": requirements,
+                },
+            )
+        )
+
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        assert completion.obligations.entrypoints[0].source_path == "src/main.py"
+        assert completion.obligations.entrypoints[0].runtime_path == "dist/main.js"
+
+    def test_runtime_only_entrypoint_outside_pm_scope_fails_closed(self, tmp_path: Path) -> None:
+        """A runtime locator cannot create authority without a PM-owned source locator."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Build the application entrypoint",
+                target_files=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build application tests",
+                target_files=("tests/test_main.py",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        entrypoint = requirements["obligations"]["entrypoints"][0]
+        entrypoint["source_path"] = None
+        entrypoint["runtime_path"] = "dist/main.js"
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            build_chief_engineer_blueprint_portfolio(
+                BuildChiefEngineerBlueprintPortfolioCommandV1(
+                    workspace=str(tmp_path),
+                    run_id="run-runtime-only-entrypoint",
+                    tasks=tasks,
+                    **_portfolio_command_authority(
+                        tasks=tasks,
+                        workspace=tmp_path,
+                        run_id="run-runtime-only-entrypoint",
+                    ),
+                    llm_blueprint={
+                        "construction_plan": {"implementation": ["Build the application"]},
+                        "project_completion_contract": requirements,
+                    },
+                )
+            )
+
+        assert exc_info.value.code == "invalid_project_completion_contract"
+        assert BlueprintPersistence(str(tmp_path), ensure_directory=False).list_all() == []
+
+    def test_library_authority_is_bound_to_run_pm_and_catalog_snapshot(self, tmp_path: Path) -> None:
+        task = ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-LIB",
+            objective="Build the library",
+            target_files=("src/lib.py", "tests/test_lib.py"),
+            scope_paths=("src/lib.py", "tests/test_lib.py"),
+        )
+
+        def build(
+            workspace: Path,
+            *,
+            project_id: str = "project-portfolio",
+            run_id: str,
+            pm_hash: str,
+        ) -> ProjectKindAuthorityV1:
+            authority = _portfolio_command_authority(
+                tasks=(task,),
+                project_kind="library",
+                workspace=workspace,
+                run_id=run_id,
+                project_id=project_id,
+                pm_contract_hash=pm_hash,
+            )
+            portfolio = build_chief_engineer_blueprint_portfolio(
+                BuildChiefEngineerBlueprintPortfolioCommandV1(
+                    workspace=str(workspace),
+                    run_id=run_id,
+                    tasks=(task,),
+                    **authority,
+                    llm_blueprint={
+                        "construction_plan": {"implementation": ["Build the library"]},
+                        "project_completion_contract": _library_completion_requirements(
+                            "src/lib.py",
+                            owner_task_ids=("TASK-LIB",),
+                            test_path="tests/test_lib.py",
+                            test_owner_task_id="TASK-LIB",
+                        ),
+                    },
+                )
+            )
+            assert portfolio.project_completion_contract is not None
+            return portfolio.project_completion_contract.project_kind_authority
+
+        first = build(tmp_path / "first", run_id="run-library-a", pm_hash="a" * 64)
+        second = build(tmp_path / "second", run_id="run-library-b", pm_hash="a" * 64)
+        third = build(tmp_path / "third", run_id="run-library-a", pm_hash="c" * 64)
+        fourth = build(
+            tmp_path / "fourth",
+            project_id="project-portfolio-other",
+            run_id="run-library-a",
+            pm_hash="a" * 64,
+        )
+
+        assert first.project_kind == "library"
+        assert first.source_ref == "chief_engineer.committed_pm_catalog_snapshot"
+        assert len({first.source_hash, second.source_hash, third.source_hash, fourth.source_hash}) == 4
+
+    def test_live_catalog_drift_fails_before_contract_persistence(self, tmp_path: Path) -> None:
+        authority = _portfolio_command_authority(
+            tasks=self._tasks(), project_kind="library", workspace=tmp_path, run_id="run-catalog-drift"
+        )
+        catalog_path = tmp_path / ".polaris" / "catalog_contract.json"
+        catalog_path.write_text(json.dumps({"project_kind": "application"}), encoding="utf-8")
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            build_chief_engineer_blueprint_portfolio(
+                BuildChiefEngineerBlueprintPortfolioCommandV1(
+                    workspace=str(tmp_path),
+                    run_id="run-catalog-drift",
+                    tasks=self._tasks(),
+                    **authority,
+                    llm_blueprint={
+                        "construction_plan": {"implementation": ["Build the library"]},
+                        "project_completion_contract": _library_completion_requirements(
+                            "src/shared.py",
+                            "src/a.py",
+                            "src/b.py",
+                            owner_task_ids=("TASK-A", "TASK-A", "TASK-B"),
+                            test_path="tests/test_portfolio.py",
+                            test_owner_task_id="TASK-B",
+                        ),
+                    },
+                )
+            )
+
+        assert exc_info.value.code == "invalid_project_completion_contract"
+        assert "catalog drifted" in str(exc_info.value)
+
+    def test_tampered_owner_receipt_fails_before_contract_persistence(self, tmp_path: Path) -> None:
+        tasks = self._tasks()
+        carrier = _portfolio_command_authority(tasks=tasks, workspace=tmp_path, run_id="run-receipt-tamper")[
+            "authority_carrier"
+        ]
+        object.__setattr__(carrier, "catalog_receipt_hash", "f" * 64)
+        command = BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-receipt-tamper",
+            tasks=tasks,
+            authority_carrier=carrier,
+            llm_blueprint={
+                "construction_plan": {"implementation": ["Build application"]},
+                "project_completion_contract": _application_completion_requirements(),
+            },
+        )
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            build_chief_engineer_blueprint_portfolio(command)
+
+        assert exc_info.value.code == "invalid_project_completion_authority_carrier"
+        assert BlueprintPersistence(str(tmp_path), ensure_directory=False).list_all() == []
+
+    def test_catalog_toctou_after_contract_build_fails_before_persistence(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Build application entrypoint",
+                target_files=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build application tests",
+                target_files=("tests/test_main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        catalog_snapshot = {"project_id": "project-portfolio", "project_kind": "application"}
+        authority = _portfolio_command_authority(
+            tasks=tasks,
+            workspace=tmp_path,
+            run_id="run-catalog-toctou",
+            catalog_snapshot_override=catalog_snapshot,
+        )
+        original_build = blueprint_service_module._build_portfolio_completion_contract
+
+        def _build_then_drift(command, requirements):
+            contract = original_build(command, requirements)
+            catalog_path = tmp_path / ".polaris" / "catalog_contract.json"
+            catalog_path.write_text(
+                json.dumps({"project_id": "project-portfolio", "project_kind": "library"}),
+                encoding="utf-8",
+            )
+            return contract
+
+        monkeypatch.setattr(blueprint_service_module, "_build_portfolio_completion_contract", _build_then_drift)
+        command = BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-catalog-toctou",
+            tasks=tasks,
+            **authority,
+            llm_blueprint={
+                "construction_plan": {"implementation": ["Build application"]},
+                "project_completion_contract": _application_completion_requirements(),
+            },
+        )
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1, match="catalog drifted"):
+            build_chief_engineer_blueprint_portfolio(command)
+
+        assert BlueprintPersistence(str(tmp_path), ensure_directory=False).list_all() == []
+
+    def test_catalog_project_retag_is_rejected(self, tmp_path: Path) -> None:
+        catalog_snapshot = {"project_id": "other-project", "project_kind": "library"}
+        catalog_path = tmp_path / ".polaris" / "catalog_contract.json"
+        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+        catalog_path.write_text(json.dumps(catalog_snapshot), encoding="utf-8")
+        authority = _portfolio_command_authority(
+            tasks=self._tasks(),
+            workspace=tmp_path,
+            run_id="run-project-retag",
+            catalog_snapshot_override=catalog_snapshot,
+        )
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            build_chief_engineer_blueprint_portfolio(
+                BuildChiefEngineerBlueprintPortfolioCommandV1(
+                    workspace=str(tmp_path),
+                    run_id="run-project-retag",
+                    tasks=self._tasks(),
+                    **authority,
+                    llm_blueprint={
+                        "construction_plan": {"implementation": ["Build the library"]},
+                        "project_completion_contract": _application_completion_requirements(),
+                    },
+                )
+            )
+
+        assert exc_info.value.code == "invalid_project_completion_contract"
+        assert "project_id" in str(exc_info.value)
 
     def test_builds_shared_task_overlays_and_interface_bindings(self, tmp_path: Path) -> None:
         command = BuildChiefEngineerBlueprintPortfolioCommandV1(
             workspace=str(tmp_path),
             run_id="run-portfolio-1",
             tasks=self._tasks(),
+            **_portfolio_command_authority(
+                tasks=self._tasks(), project_kind="library", workspace=tmp_path, run_id="run-portfolio-1"
+            ),
             llm_blueprint={
                 "construction_plan": {
                     "preparation": ["Inspect the shared interface"],
@@ -351,6 +1146,14 @@ class TestChiefEngineerBlueprintPortfolio:
                         "mitigation": "Pin interface",
                     }
                 ],
+                "project_completion_contract": _library_completion_requirements(
+                    "src/shared.py",
+                    "src/a.py",
+                    "src/b.py",
+                    owner_task_ids=("TASK-A", "TASK-A", "TASK-B"),
+                    test_path="tests/test_portfolio.py",
+                    test_owner_task_id="TASK-B",
+                ),
             },
         )
 
@@ -365,21 +1168,31 @@ class TestChiefEngineerBlueprintPortfolio:
         interface = portfolio.project_interface_contract
         assert interface.task_file_ownership == {
             "TASK-A": ("src/shared.py", "src/a.py"),
-            "TASK-B": ("src/shared.py", "src/b.py"),
+            "TASK-B": ("src/shared.py", "src/b.py", "tests/test_portfolio.py"),
         }
         assert interface.file_task_ownership["src/shared.py"] == ("TASK-A", "TASK-B")
         assert interface.provider_declarations == ({"task_id": "TASK-A", "interface": "SharedProvider"},)
         assert interface.consumer_declarations == ({"task_id": "TASK-B", "interface": "SharedProvider"},)
         assert portfolio.project_interface_contract_hash == interface.contract_hash
         assert portfolio.project_interface_contract_ref == interface.contract_ref
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        assert completion.covered_task_ids == ("TASK-A", "TASK-B")
+        assert completion.pm_contract_hash == _PM_CONTRACT_HASH
+        assert completion.verifier_policy_hash == _VERIFIER_POLICY_HASH
+        assert portfolio.project_completion_contract_hash == completion.contract_hash
+        assert portfolio.project_completion_contract_ref == (f"{portfolio.portfolio_path}#project_completion_contract")
 
         for task_id in portfolio.task_ids:
             overlay = portfolio.task_overlays[task_id]
             assert overlay["portfolio_hash"] == portfolio.portfolio_hash
             assert overlay["project_interface_contract_hash"] == interface.contract_hash
             assert overlay["project_interface_contract_ref"] == interface.contract_ref
+            assert overlay["project_completion_contract_hash"] == completion.contract_hash
+            assert overlay["project_completion_contract_ref"] == portfolio.project_completion_contract_ref
             assert overlay["reference"]["portfolio_hash"] == portfolio.portfolio_hash
             assert overlay["reference"]["project_interface_contract_hash"] == interface.contract_hash
+            assert overlay["reference"]["project_completion_contract_hash"] == completion.contract_hash
             assert overlay["handoff_ready"] is False
             assert overlay["execution_authorized"] is False
 
@@ -416,6 +1229,27 @@ class TestChiefEngineerBlueprintPortfolio:
         assert persisted == portfolio.to_dict()
         assert persisted["project_interface_contract_hash"] == interface.contract_hash
 
+        loaded_contract = query_project_completion_contract(
+            QueryProjectCompletionContractV1(
+                workspace=str(tmp_path),
+                project_id="project-portfolio",
+                run_id="run-portfolio-1",
+                contract_hash=completion.contract_hash,
+            )
+        )
+        assert loaded_contract == completion
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            query_project_completion_contract(
+                QueryProjectCompletionContractV1(
+                    workspace=str(tmp_path),
+                    project_id="project-portfolio",
+                    run_id="run-portfolio-1",
+                    contract_hash="f" * 64,
+                )
+            )
+        assert exc_info.value.code == "project_completion_contract_not_found"
+
     def test_generate_task_blueprint_projects_portfolio_evidence_to_top_level(
         self,
         tmp_path: Path,
@@ -423,14 +1257,17 @@ class TestChiefEngineerBlueprintPortfolio:
         task = ChiefEngineerPortfolioTaskV1(
             task_id="TASK-PROJECTION",
             objective="Build project interface audit projection",
-            target_files=("src/interface_projection.py",),
-            scope_paths=("src/interface_projection.py",),
+            target_files=("src/interface_projection.py", "tests/test_interface_projection.py"),
+            scope_paths=("src/interface_projection.py", "tests/test_interface_projection.py"),
         )
         portfolio = build_chief_engineer_blueprint_portfolio(
             BuildChiefEngineerBlueprintPortfolioCommandV1(
                 workspace=str(tmp_path),
                 run_id="run-projection",
                 tasks=(task,),
+                **_portfolio_command_authority(
+                    tasks=(task,), project_kind="library", workspace=tmp_path, run_id="run-projection"
+                ),
                 llm_blueprint={
                     "construction_plan": {
                         "implementation": ["Project shared interface evidence"],
@@ -441,14 +1278,20 @@ class TestChiefEngineerBlueprintPortfolio:
                     },
                     "scope_for_apply": ["src/interface_projection.py"],
                     "risk_flags": [],
+                    "project_completion_contract": _library_completion_requirements(
+                        "src/interface_projection.py",
+                        owner_task_ids=("TASK-PROJECTION",),
+                        test_path="tests/test_interface_projection.py",
+                        test_owner_task_id="TASK-PROJECTION",
+                    ),
                 },
             )
         )
         interface_payload = portfolio.project_interface_contract.to_dict()
         context = {
             "task_title": "Project interface audit projection",
-            "target_files": ["src/interface_projection.py"],
-            "scope_paths": ["src/interface_projection.py"],
+            "target_files": ["src/interface_projection.py", "tests/test_interface_projection.py"],
+            "scope_paths": ["src/interface_projection.py", "tests/test_interface_projection.py"],
             "acceptance_criteria": ["Portfolio evidence is directly auditable"],
             "execution_checklist": ["Persist top-level portfolio evidence"],
             "delivery_plan_document": {
@@ -483,18 +1326,114 @@ class TestChiefEngineerBlueprintPortfolio:
         assert persisted["project_interface_contract_hash"] == portfolio.project_interface_contract_hash
         assert persisted["project_interface_contract"] == interface_payload
         assert persisted["context"]["project_interface_contract"] == interface_payload
-        assert persisted["target_files"] == ["src/interface_projection.py"]
-        assert persisted["scope_paths"] == ["src/interface_projection.py"]
+        assert persisted["project_completion_contract"] == portfolio.project_completion_contract.to_dict()
+        assert persisted["project_completion_contract_ref"] == portfolio.project_completion_contract_ref
+        assert persisted["project_completion_contract_hash"] == portfolio.project_completion_contract_hash
+        assert persisted["context"]["project_completion_contract"] == (portfolio.project_completion_contract.to_dict())
+        assert persisted["target_files"] == ["src/interface_projection.py", "tests/test_interface_projection.py"]
+        assert persisted["scope_paths"] == ["src/interface_projection.py", "tests/test_interface_projection.py"]
         assert "portfolio_path" not in persisted
         job_token = persisted["job_token"]
         assert job_token["token_id"].startswith("job-")
         assert job_token["run_id"] == "run-projection"
         assert job_token["stage"] == "pending_exec"
-        assert job_token["target_files"] == ["src/interface_projection.py"]
-        assert job_token["allowed_write_paths"] == ["src/interface_projection.py"]
+        assert job_token["target_files"] == ["src/interface_projection.py", "tests/test_interface_projection.py"]
+        assert job_token["allowed_write_paths"] == [
+            "src/interface_projection.py",
+            "tests/test_interface_projection.py",
+        ]
         assert job_token["capability_audit"] == {"ok": True, "issues": []}
         assert job_token["blueprint_hash"] == persisted["blueprint_hash"]
         assert persisted["capability_token"] == job_token
+
+        handoff = validate_director_handoff_from_payload(
+            str(tmp_path),
+            {"task_id": task.task_id, "blueprint_id": result.blueprint_id},
+            require_strict=True,
+        )
+        assert handoff["allowed"] is True
+        projection = handoff["task_completion_projection"]
+        assert projection["schema_version"] == "polaris.task_completion_projection.v1"
+        assert projection["task_id"] == task.task_id
+        assert projection["project_contract_hash"] == portfolio.project_completion_contract_hash
+        assert projection["project_contract_ref"] == portfolio.project_completion_contract_ref
+        assert projection["owned_artifacts"] == [
+            item.to_dict() for item in portfolio.project_completion_contract.obligations.artifacts
+        ]
+        assert projection["verification_execution_authority"]
+        for row in projection["verification_execution_authority"]:
+            verifier = next(
+                item for item in projection["owned_verification"] if item["obligation_id"] == row["obligation_id"]
+            )
+            assert row["command_authority_hash"] == verifier["command_authority_hash"]
+            assert row["owner_task_id"] == projection["task_id"]
+        assert "obligations" not in projection
+        assert projection["projection_hash"] == stable_hash(
+            {key: value for key, value in projection.items() if key != "projection_hash"}
+        )
+
+    def test_task_completion_projection_contains_only_owned_and_referenced_artifacts(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Implement application source",
+                target_files=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Implement application tests",
+                target_files=("tests/test_main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        requirements["obligations"]["verification"][1]["covers_obligation_ids"] = [
+            "artifact-main",
+            "artifact-tests",
+        ]
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-task-projection",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-task-projection",
+                ),
+                llm_blueprint={
+                    "construction_plan": {
+                        "implementation": ["Implement source and tests"],
+                        "project_interface_contract": {
+                            "provider_declarations": [],
+                            "consumer_declarations": [],
+                        },
+                    },
+                    "scope_for_apply": ["src/main.py", "tests/test_main.py"],
+                    "risk_flags": [],
+                    "project_completion_contract": requirements,
+                },
+            )
+        )
+        contract = portfolio.project_completion_contract
+        assert contract is not None
+        projection = blueprint_service_module._project_task_completion_contract(
+            {
+                "project_completion_contract": contract.to_dict(),
+                "project_completion_contract_ref": portfolio.project_completion_contract_ref,
+                "project_completion_contract_hash": portfolio.project_completion_contract_hash,
+            },
+            task_id="TASK-B",
+        )
+
+        assert [item["obligation_id"] for item in projection["owned_artifacts"]] == ["artifact-tests"]
+        assert [item["obligation_id"] for item in projection["dependency_artifacts"]] == ["artifact-main"]
+        assert [item["obligation_id"] for item in projection["owned_verification"]] == ["verify-test"]
+        assert {item["task_id"] for item in projection["verification_command_authority"]} == {"TASK-B"}
+        assert "project_completion_contract" not in projection
 
     def test_task_contract_normalizes_duplicates_and_rejects_unsafe_paths(self) -> None:
         task = ChiefEngineerPortfolioTaskV1(
@@ -537,15 +1476,160 @@ class TestChiefEngineerBlueprintPortfolio:
                 tasks=(task, task),
             )
 
+    @pytest.mark.parametrize(
+        "attack",
+        ("artifact_wrong_owner", "artifact_outside_pm_scope", "entrypoint_wrong_owner"),
+    )
+    def test_completion_paths_and_owners_must_match_exact_pm_task_authority(
+        self,
+        tmp_path: Path,
+        attack: str,
+    ) -> None:
+        requirements = _application_completion_requirements()
+        artifacts = requirements["obligations"]["artifacts"]
+        entrypoints = requirements["obligations"]["entrypoints"]
+        if attack == "artifact_wrong_owner":
+            artifacts[0]["owner_task_id"] = "TASK-B"
+        elif attack == "artifact_outside_pm_scope":
+            artifacts.append(
+                {
+                    "obligation_id": "artifact-rogue",
+                    "path": "src/rogue.py",
+                    "semantic_role": "source",
+                    "applicability": "required",
+                    "owner_task_id": "TASK-A",
+                }
+            )
+        else:
+            entrypoints[0]["owner_task_id"] = "TASK-B"
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Implement application source",
+                target_files=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Implement application tests",
+                target_files=("tests/test_main.py",),
+            ),
+        )
+        command = BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-pm-path-owner-attack",
+            tasks=tasks,
+            **_portfolio_command_authority(tasks=tasks, workspace=tmp_path, run_id="run-pm-path-owner-attack"),
+            llm_blueprint={
+                "construction_plan": {
+                    "task_plans": {
+                        "TASK-A": {"implementation": ["Implement source"]},
+                        "TASK-B": {"implementation": ["Implement tests"]},
+                    }
+                },
+                "risk_flags": [],
+                "project_completion_contract": requirements,
+            },
+        )
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            build_chief_engineer_blueprint_portfolio(command)
+
+        assert exc_info.value.code == "invalid_project_completion_contract"
+        assert BlueprintPersistence(str(tmp_path), ensure_directory=False).list_all() == []
+
+    @pytest.mark.parametrize(
+        "argv",
+        (("echo", "ok"), ("python", "--version")),
+    )
+    def test_completion_verifier_cannot_substitute_fake_semantic_command(
+        self,
+        tmp_path: Path,
+        argv: tuple[str, ...],
+    ) -> None:
+        with pytest.raises(ValueError, match="proof-of-work"):
+            _command_authority("TASK-A", "environment_prep", argv)
+        assert BlueprintPersistence(str(tmp_path), ensure_directory=False).list_all() == []
+
+    @pytest.mark.parametrize(
+        ("generated_path", "allowed"),
+        (("generated/out.py", True), ("generated2/out.py", False)),
+    )
+    def test_pm_scope_authority_uses_path_components_not_string_prefixes(
+        self,
+        tmp_path: Path,
+        generated_path: str,
+        allowed: bool,
+    ) -> None:
+        requirements = _library_completion_requirements(
+            "pyproject.toml",
+            generated_path,
+            owner_task_ids=("TASK-A", "TASK-A"),
+            test_path="tests/test_generated.py",
+            test_owner_task_id="TASK-B",
+        )
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Generate scoped source",
+                target_files=("pyproject.toml",),
+                scope_paths=("generated",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Verify generated source",
+                target_files=("tests/test_generated.py",),
+            ),
+        )
+        command = BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id=f"run-scope-components-{allowed}",
+            tasks=tasks,
+            **_portfolio_command_authority(
+                tasks=tasks,
+                project_kind="library",
+                workspace=tmp_path,
+                run_id=f"run-scope-components-{allowed}",
+            ),
+            llm_blueprint={
+                "construction_plan": {
+                    "task_plans": {
+                        "TASK-A": {"implementation": ["Generate source"]},
+                        "TASK-B": {"implementation": ["Verify source"]},
+                    }
+                },
+                "risk_flags": [],
+                "project_completion_contract": requirements,
+            },
+        )
+
+        if allowed:
+            assert build_chief_engineer_blueprint_portfolio(command).project_completion_contract
+        else:
+            with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+                build_chief_engineer_blueprint_portfolio(command)
+            assert exc_info.value.code == "invalid_project_completion_contract"
+
     def test_unknown_llm_task_plan_fails_closed(self, tmp_path: Path) -> None:
         command = BuildChiefEngineerBlueprintPortfolioCommandV1(
             workspace=str(tmp_path),
             run_id="run-unknown-plan",
             tasks=self._tasks(),
+            **_portfolio_command_authority(
+                tasks=self._tasks(), project_kind="library", workspace=tmp_path, run_id="run-unknown-plan"
+            ),
             llm_blueprint={
                 "construction_plan": {"task_plans": {"TASK-UNKNOWN": {"implementation": ["Do not run"]}}},
                 "scope_for_apply": [],
                 "risk_flags": [],
+                "project_completion_contract": _library_completion_requirements(
+                    "src/shared.py",
+                    "src/a.py",
+                    "src/b.py",
+                    owner_task_ids=("TASK-A", "TASK-A", "TASK-B"),
+                    test_path="tests/test_portfolio.py",
+                    test_owner_task_id="TASK-B",
+                ),
             },
         )
 
@@ -555,6 +1639,170 @@ class TestChiefEngineerBlueprintPortfolio:
         assert exc_info.value.code == "unknown_blueprint_portfolio_task_plan"
         assert exc_info.value.details["unknown_task_ids"] == ["TASK-UNKNOWN"]
         assert BlueprintPersistence(str(tmp_path), ensure_directory=False).list_all() == []
+
+    def test_advisory_portfolio_without_project_completion_contract_fails_closed(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        command = BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-missing-completion-contract",
+            tasks=self._tasks(),
+            **_portfolio_command_authority(
+                tasks=self._tasks(), workspace=tmp_path, run_id="run-missing-completion-contract"
+            ),
+            llm_blueprint={
+                "construction_plan": {
+                    "task_plans": {
+                        "TASK-A": {"implementation": ["Implement A"]},
+                        "TASK-B": {"implementation": ["Implement B"]},
+                    },
+                    "project_interface_contract": {
+                        "provider_declarations": [],
+                        "consumer_declarations": [],
+                    },
+                },
+                "risk_flags": [],
+            },
+        )
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            build_chief_engineer_blueprint_portfolio(command)
+
+        assert exc_info.value.code == "invalid_project_completion_contract"
+        assert BlueprintPersistence(str(tmp_path), ensure_directory=False).list_all() == []
+
+    def test_llm_cannot_supply_project_completion_authority_fields(self, tmp_path: Path) -> None:
+        completion_requirements = _library_completion_requirements(
+            "src/shared.py",
+            "src/a.py",
+            "src/b.py",
+            owner_task_ids=("TASK-A", "TASK-A", "TASK-B"),
+            test_path="tests/test_portfolio.py",
+            test_owner_task_id="TASK-B",
+        )
+        completion_requirements["pm_contract_hash"] = "c" * 64
+        command = BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-authority-injection",
+            tasks=self._tasks(),
+            **_portfolio_command_authority(
+                tasks=self._tasks(), project_kind="library", workspace=tmp_path, run_id="run-authority-injection"
+            ),
+            llm_blueprint={
+                "construction_plan": {
+                    "task_plans": {
+                        "TASK-A": {"implementation": ["Implement A"]},
+                        "TASK-B": {"implementation": ["Implement B"]},
+                    },
+                    "project_interface_contract": {
+                        "provider_declarations": [],
+                        "consumer_declarations": [],
+                    },
+                },
+                "risk_flags": [],
+                "project_completion_contract": completion_requirements,
+            },
+        )
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            build_chief_engineer_blueprint_portfolio(command)
+
+        assert exc_info.value.code == "invalid_project_completion_contract"
+        assert "pm_contract_hash" in exc_info.value.details["unknown_fields"]
+
+    def test_provider_cannot_choose_or_downgrade_factory_project_kind(self, tmp_path: Path) -> None:
+        completion_requirements = _application_completion_requirements()
+        completion_requirements["project_kind"] = "library"
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Implement runnable application source",
+                target_files=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Implement application tests",
+                target_files=("tests/test_main.py",),
+            ),
+        )
+        command = BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-project-kind-downgrade",
+            tasks=tasks,
+            **_portfolio_command_authority(tasks=tasks, workspace=tmp_path, run_id="run-project-kind-downgrade"),
+            llm_blueprint={
+                "construction_plan": {
+                    "task_plans": {
+                        "TASK-A": {"implementation": ["Implement source"]},
+                        "TASK-B": {"implementation": ["Implement tests"]},
+                    }
+                },
+                "risk_flags": [],
+                "project_completion_contract": completion_requirements,
+            },
+        )
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            build_chief_engineer_blueprint_portfolio(command)
+
+        assert exc_info.value.code == "invalid_project_completion_contract"
+        assert "project_kind" in exc_info.value.details["unknown_fields"]
+
+    def test_project_completion_context_tamper_fails_before_task_blueprint_persistence(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        task = ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-TAMPER",
+            objective="Reject a tampered completion contract",
+            target_files=("src/tamper.py", "tests/test_tamper.py"),
+        )
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-tamper",
+                tasks=(task,),
+                **_portfolio_command_authority(
+                    tasks=(task,), project_kind="library", workspace=tmp_path, run_id="run-tamper"
+                ),
+                llm_blueprint={
+                    "construction_plan": {
+                        "task_plans": {"TASK-TAMPER": {"implementation": ["Implement"]}},
+                        "project_interface_contract": {
+                            "provider_declarations": [],
+                            "consumer_declarations": [],
+                        },
+                    },
+                    "risk_flags": [],
+                    "project_completion_contract": _library_completion_requirements(
+                        "src/tamper.py",
+                        owner_task_ids=("TASK-TAMPER",),
+                        test_path="tests/test_tamper.py",
+                        test_owner_task_id="TASK-TAMPER",
+                    ),
+                },
+            )
+        )
+        context = {
+            "target_files": ["src/tamper.py", "tests/test_tamper.py"],
+            **portfolio.to_task_blueprint_context(),
+        }
+        context["project_completion_contract_hash"] = "f" * 64
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            generate_task_blueprint(
+                GenerateTaskBlueprintCommandV1(
+                    task_id=task.task_id,
+                    workspace=str(tmp_path),
+                    objective=task.objective,
+                    run_id="run-tamper",
+                    context=context,
+                    llm_blueprint=project_chief_engineer_task_blueprint(portfolio, task.task_id),
+                )
+            )
+
+        assert exc_info.value.code == "invalid_blueprint_portfolio_context"
 
     def test_no_llm_portfolio_is_stable_offline_diagnostic_only(self, tmp_path: Path) -> None:
         command = BuildChiefEngineerBlueprintPortfolioCommandV1(
@@ -582,6 +1830,9 @@ class TestChiefEngineerBlueprintPortfolio:
         assert first.execution_authorized is False
         assert first.project_interface_contract.provider_declarations == ()
         assert first.project_interface_contract.consumer_declarations == ()
+        assert first.project_completion_contract is None
+        assert first.project_completion_contract_ref is None
+        assert first.project_completion_contract_hash is None
         overlay = first.task_overlays["TASK-OFFLINE"]
         assert overlay["portfolio_hash"] == first.portfolio_hash
         assert overlay["project_interface_contract_hash"] == first.project_interface_contract_hash

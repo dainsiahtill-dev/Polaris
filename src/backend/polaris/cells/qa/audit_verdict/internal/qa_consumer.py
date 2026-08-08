@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-import subprocess
+import shlex
 import threading
 from typing import Any
 
@@ -17,6 +17,14 @@ from polaris.cells.qa.audit_verdict.internal.evidence_commit import (
 from polaris.cells.qa.audit_verdict.internal.qa_service import QAService
 from polaris.cells.qa.audit_verdict.internal.verdict_engine import (
     classify_qa_audit_failure,
+)
+from polaris.cells.runtime.execution_broker.public import (
+    ProjectVerificationReceiptV1,
+    QueryProjectVerificationReceiptV1,
+    ResolveProjectVerificationAuthorityQueryV1,
+    authorize_project_verification_command,
+    query_project_verification_receipt,
+    run_project_verification,
 )
 from polaris.cells.runtime.task_market.public.contracts import (
     AcknowledgeTaskStageCommandV1,
@@ -164,6 +172,159 @@ def _qa_control_plane_metadata(
     if lineage:
         metadata["control_plane_lineage"] = lineage
     return metadata
+
+
+def _qa_local_repair_context(
+    *,
+    task_id: str,
+    payload: dict[str, Any],
+    audit_result: dict[str, Any],
+    engine_payload: dict[str, Any],
+    verdict_receipt: dict[str, str],
+) -> dict[str, Any]:
+    """Project compact QA evidence for one same-contract Director repair turn."""
+
+    classification = _mapping_copy(engine_payload.get("classification"))
+    projection = _mapping_copy(payload.get("task_completion_projection"))
+    findings = [str(item).strip() for item in list(audit_result.get("findings") or []) if str(item).strip()][
+        :_QA_FEEDBACK_MAX_FINDINGS
+    ]
+    evidence_refs = [str(item).strip() for item in list(engine_payload.get("evidence_refs") or []) if str(item).strip()][
+        :_QA_FEEDBACK_MAX_FINDINGS
+    ]
+    failed_verifier = _mapping_copy(payload.get("qa_failed_verifier"))
+    exact_receipt = bool(
+        str(failed_verifier.get("receipt_hash") or "").strip()
+        and str(failed_verifier.get("receipt_ref") or "").strip()
+    )
+    authority_kind = "exact_verifier_receipt" if exact_receipt else "diagnostic_effect"
+    return {
+        "schema_version": "qa.local_repair_context.v1",
+        "task_id": task_id,
+        "failure_class": str(classification.get("failure_class") or "").strip(),
+        "responsible_layer": str(classification.get("responsible_layer") or "").strip(),
+        "reason": str(classification.get("reason") or "").strip()[:_QA_FEEDBACK_MAX_CHARS],
+        "findings": findings,
+        "evidence_refs": evidence_refs,
+        "qa_verdict_content_hash": str(engine_payload.get("content_hash") or "").strip(),
+        "qa_verdict_receipt": dict(verdict_receipt),
+        "repair_authority_kind": authority_kind,
+        "failed_verifier": failed_verifier,
+        "diagnostic_effect_authority": (
+            {}
+            if exact_receipt
+            else {
+                "schema_version": "qa.local-repair-diagnostic-effect.v1",
+                "diagnostic_kind": "non_executable_qa_diagnostic",
+                "authority_source": "qa_canonical_verdict",
+                "executable_verifier_observed": False,
+                "task_id": task_id,
+                "failure_class": str(classification.get("failure_class") or "").strip(),
+                "responsible_layer": str(classification.get("responsible_layer") or "").strip(),
+                "qa_verdict_content_hash": str(engine_payload.get("content_hash") or "").strip(),
+                "task_completion_projection_hash": str(projection.get("projection_hash") or "").strip(),
+                "requires_material_effect": True,
+                "revalidate_in_qa": True,
+            }
+        ),
+        "task_completion_projection_hash": str(projection.get("projection_hash") or "").strip(),
+        "project_completion_contract_hash": str(
+            projection.get("project_contract_hash") or payload.get("completion_contract_hash") or ""
+        ).strip(),
+        "repair_policy": {
+            "same_task_only": True,
+            "reuse_existing_context_snapshot": True,
+            "automatic_upstream_replan": False,
+            "automatic_escalation": False,
+            "rerun_exact_failed_verifier": exact_receipt,
+            "require_material_effect": True,
+            "return_to_qa": True,
+        },
+    }
+
+
+def _project_verification_receipt_projection(receipt: ProjectVerificationReceiptV1) -> dict[str, Any]:
+    """Project the immutable exact-verifier identity needed by one repair turn."""
+
+    return {
+        "schema_version": "qa.failed-verifier-receipt.v1",
+        "project_id": receipt.project_id,
+        "run_id": receipt.run_id,
+        "completion_contract_hash": receipt.completion_contract_hash,
+        "obligation_id": receipt.obligation_id,
+        "owner_task_id": receipt.owner_task_id,
+        "modality": receipt.modality,
+        "argv": list(receipt.argv),
+        "cwd": receipt.cwd,
+        "command_authority_hash": receipt.command_authority_hash,
+        "executable_path": receipt.executable_path,
+        "executable_realpath": receipt.executable_realpath,
+        "executable_hash": receipt.executable_hash,
+        "input_artifact_hash": receipt.input_artifact_hash,
+        "exit_code": receipt.exit_code,
+        "timed_out": receipt.timed_out,
+        "output_hash": receipt.output_hash,
+        "proof_satisfied": receipt.proof_satisfied,
+        "proof_evidence_hash": receipt.proof_evidence_hash,
+        "process_pid": receipt.process_pid,
+        "process_start_token": receipt.process_start_token,
+        "readiness_probe_kind": receipt.readiness_probe_kind,
+        "readiness_satisfied": receipt.readiness_satisfied,
+        "controlled_termination": receipt.controlled_termination,
+        "receipt_hash": receipt.receipt_hash,
+        "receipt_ref": receipt.receipt_ref,
+    }
+
+
+def _step_verification_obligation(payload: dict[str, Any], verify: str) -> dict[str, Any]:
+    """Resolve one exact task-local verifier mapping from the CE projection."""
+
+    projection = _mapping_copy(payload.get("task_completion_projection"))
+    raw_rows = projection.get("verification_execution_authority")
+    rows = [dict(row) for row in raw_rows if isinstance(row, dict)] if isinstance(raw_rows, list) else []
+    matches = [row for row in rows if str(row.get("command") or "").strip() == verify]
+    if len(matches) != 1:
+        raise ValueError("step verify must match exactly one CE-projected project verifier obligation")
+    return matches[0]
+
+
+def _qa_contract_authority_blocker(
+    *,
+    task_id: str,
+    payload: dict[str, Any],
+    engine_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a non-escalating terminal blocker for a true contract contradiction."""
+
+    job_token = _extract_control_plane_job_token(payload)
+    projection = _mapping_copy(payload.get("task_completion_projection"))
+    identity = {
+        "task_id": str(task_id or "").strip(),
+        "run_id": str(
+            engine_payload.get("run_id") or payload.get("run_id") or job_token.get("run_id") or "missing"
+        ).strip(),
+        "trace_id": str(payload.get("trace_id") or job_token.get("trace_id") or "missing").strip(),
+        "blueprint_id": str(payload.get("blueprint_id") or "missing").strip(),
+        "completion_contract_hash": str(
+            projection.get("project_contract_hash")
+            or payload.get("completion_contract_hash")
+            or job_token.get("contract_hash")
+            or "missing"
+        ).strip(),
+    }
+    missing = [key for key, value in identity.items() if value == "missing" or not value]
+    return {
+        "schema_version": "qa.contract_authority_blocker.v1",
+        "blocker_kind": "contract_or_authority_contradiction",
+        **identity,
+        "identity_complete": not missing,
+        "missing_identity_fields": missing,
+        "classification": _mapping_copy(engine_payload.get("classification")),
+        "qa_verdict_content_hash": str(engine_payload.get("content_hash") or "").strip(),
+        "automatic_upstream_replan": False,
+        "automatic_escalation": False,
+        "retry_same_contract": False,
+    }
 
 
 def _qa_findings_count(findings: Any) -> int:
@@ -819,7 +980,8 @@ class QAConsumer:
             self._work_event.clear()
             results = self.poll_once()
             if not results:
-                self._work_event.wait()
+                retry_delay = self._svc.next_local_retry_delay(self._workspace, "pending_qa")
+                self._work_event.wait(timeout=retry_delay)
 
     def stop(self) -> None:
         """Signal the consumer to stop after the current cycle."""
@@ -827,7 +989,7 @@ class QAConsumer:
         self._work_event.set()
 
     def _run_step_verify(self, payload: dict[str, Any]) -> str:
-        """Run a construction step's machine verify in the workspace.
+        """Run a CE-authorized verifier through the sandboxed execution broker.
 
         Returns '' when there is no step verify or it passes; otherwise a
         teaching failure message for the requeue. The verify command comes
@@ -837,39 +999,106 @@ class QAConsumer:
         step = payload.get("construction_step")
         if not isinstance(step, dict):
             return ""
-        from polaris.kernelone.quality.step_verify import (
-            assess_legacy_step_verify_command_safety,
-            normalize_step_verify,
-        )
+        from polaris.kernelone.quality.step_verify import normalize_step_verify
 
         verify = normalize_step_verify(step.get("verify"))
         if not verify:
             return ""
-        safety = assess_legacy_step_verify_command_safety(verify)
-        if not safety.allowed:
-            return f"step verify command rejected by safety policy: {safety.reason} :: {verify!r}"
         try:
-            proc = subprocess.run(
-                verify,
-                shell=True,
-                cwd=self._workspace,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                check=False,
+            authority = _step_verification_obligation(payload, verify)
+            projection = _mapping_copy(payload.get("task_completion_projection"))
+            command = authorize_project_verification_command(
+                ResolveProjectVerificationAuthorityQueryV1(
+                    workspace=self._workspace,
+                    project_id=str(projection.get("project_id") or "").strip(),
+                    run_id=str(projection.get("run_id") or "").strip(),
+                    completion_contract_hash=str(projection.get("project_contract_hash") or "").strip(),
+                    obligation_id=str(authority.get("obligation_id") or "").strip(),
+                )
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return f"step verify could not run: {exc} :: {verify!r}"
-        if proc.returncode == 0:
+            expected_authority = (
+                str(authority.get("owner_task_id") or "").strip(),
+                str(authority.get("modality") or "").strip(),
+                tuple(str(item) for item in list(authority.get("argv") or [])),
+                str(authority.get("cwd") or "").strip(),
+                str(authority.get("command_authority_hash") or "").strip(),
+            )
+            actual_authority = (
+                command.owner_task_id,
+                command.modality,
+                command.argv,
+                command.cwd,
+                command.command_authority_hash,
+            )
+            if actual_authority != expected_authority:
+                raise ValueError("execution broker authority differs from CE task-local projection")
+            result = run_project_verification(command)
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            payload["qa_failed_verifier"] = {
+                "schema_version": "qa.failed_verifier.v2",
+                "command": verify[:_QA_FEEDBACK_MAX_CHARS],
+                "failure_kind": "command_authority_rejected",
+                "reason": str(exc)[:_QA_FEEDBACK_MAX_CHARS],
+            }
+            return f"step verify command lacks exact execution authority: {exc}"
+        receipt = result.receipt
+        if type(receipt) is not ProjectVerificationReceiptV1:
+            payload["qa_failed_verifier"] = {
+                "schema_version": "qa.failed_verifier.v2",
+                "command": verify[:_QA_FEEDBACK_MAX_CHARS],
+                "failure_kind": "execution_error",
+                "reason": str(result.code)[:_QA_FEEDBACK_MAX_CHARS],
+            }
+            return f"step verify produced no authoritative receipt: {result.code}"
+        current_receipt = query_project_verification_receipt(
+            QueryProjectVerificationReceiptV1(
+                workspace=command.workspace,
+                project_id=command.project_id,
+                run_id=command.run_id,
+                completion_contract_hash=command.completion_contract_hash,
+                obligation_id=command.obligation_id,
+                owner_task_id=command.owner_task_id,
+                modality=command.modality,
+                argv=command.argv,
+                cwd=command.cwd,
+                command_authority_hash=command.command_authority_hash,
+                input_artifacts=command.input_artifacts,
+                timeout_seconds=command.timeout_seconds,
+                job_token_id=command.job_token_id,
+                job_token_set_hash=command.job_token_set_hash,
+                execution_policy_hash=command.execution_policy_hash,
+                authority_revision=command.authority_revision,
+                policy_profile_id=command.policy_profile_id,
+                policy_decision_hash=command.policy_decision_hash,
+                executable_path=command.executable_path,
+                executable_realpath=command.executable_realpath,
+                executable_hash=command.executable_hash,
+            )
+        )
+        if current_receipt != receipt:
+            payload["qa_failed_verifier"] = {
+                "schema_version": "qa.failed_verifier.v2",
+                "command": verify[:_QA_FEEDBACK_MAX_CHARS],
+                "failure_kind": "authority_changed_after_run",
+                "reason": "execution authority or input closure changed before QA acceptance",
+            }
+            return "step verify receipt is no longer current under execution authority"
+        receipt_projection = _project_verification_receipt_projection(receipt)
+        if receipt.succeeded:
+            payload.pop("qa_failed_verifier", None)
+            payload["qa_verifier_receipt"] = receipt_projection
             return ""
-        output_tail = ((proc.stdout or "") + (proc.stderr or ""))[-400:]
-        clause_detail = _first_failing_verify_clause(verify, cwd=self._workspace)
-        # The actionable clause goes FIRST: downstream teaching channels
-        # truncate (fail_task_stage 600 chars, blueprint step card 240) and a
-        # long verify command would push the diagnosis off the visible end.
-        if clause_detail:
-            return f"step verify failed (exit {proc.returncode}) | {clause_detail} | full: {verify!r} :: {output_tail}".strip()
-        return f"step verify failed (exit {proc.returncode}): {verify!r} :: {output_tail}".strip()
+        payload["qa_failed_verifier"] = {
+            **receipt_projection,
+            "schema_version": "qa.failed_verifier.v2",
+            "command": shlex.join(receipt.argv),
+            "failure_kind": "timeout" if receipt.timed_out else "proof_or_exit_failure",
+        }
+        return (
+            f"step verify failed: obligation={receipt.obligation_id!r} "
+            f"exit={receipt.exit_code!r} timed_out={receipt.timed_out} "
+            f"receipt={receipt.receipt_ref}"
+        )
 
     def _run_syntax_gate(self, payload: dict[str, Any]) -> str:
         """Return a precise, weak-model-fixable message when a declared/changed
@@ -1003,6 +1232,7 @@ class QAConsumer:
                     error_code="QA_verdict_commit_failed",
                     error_message=str(exc),
                     requeue_stage="pending_qa",
+                    failure_disposition="same_task_local_retry",
                     metadata=failure_metadata,
                 )
             )
@@ -1024,7 +1254,89 @@ class QAConsumer:
             metadata[_QA_FEEDBACK_COUNTERS_KEY] = dict(feedback_counters)
         metadata = _qa_control_plane_metadata(payload, metadata)
 
-        if next_stage in {"pending_design", "pending_exec", "pending_qa"}:
+        classification = _mapping_copy(engine_payload.get("classification"))
+        failed_verifier = _mapping_copy(payload.get("qa_failed_verifier"))
+        if next_stage == "pending_exec" and failed_verifier and not (
+            str(failed_verifier.get("receipt_hash") or "").strip()
+            and str(failed_verifier.get("receipt_ref") or "").strip()
+        ):
+            # A missing physical receipt is an execution/control-plane outage,
+            # not proof that the immutable project contract is contradictory.
+            # Keep the task at QA with durable bounded backoff; never send the
+            # Director an unauthorised shell command and never poison the task
+            # as an isolated contract blocker.
+            metadata["qa_verifier_control_plane_diagnostic"] = {
+                "schema_version": "qa.verifier-control-plane-diagnostic.v1",
+                "task_id": task_id,
+                "failure_kind": str(failed_verifier.get("failure_kind") or "receipt_unavailable"),
+                "reason": str(failed_verifier.get("reason") or "")[:_QA_FEEDBACK_MAX_CHARS],
+                "task_completion_projection_hash": str(
+                    _mapping_copy(payload.get("task_completion_projection")).get("projection_hash") or ""
+                ).strip(),
+                "retry_owner": "qa",
+            }
+            transition = self._svc.fail_task_stage(
+                FailTaskStageCommandV1(
+                    workspace=self._workspace,
+                    task_id=task_id,
+                    lease_token=lease_token,
+                    error_code="QA_VERIFIER_CONTROL_PLANE_UNAVAILABLE",
+                    error_message="QA verifier authority produced no execution-broker receipt",
+                    requeue_stage="pending_qa",
+                    failure_disposition="same_task_local_retry",
+                    metadata=metadata,
+                )
+            )
+            return {
+                "task_id": task_id,
+                "ok": False,
+                "verdict": verdict,
+                "status": str(transition.status or "rejected"),
+                "reason": "qa_verifier_control_plane_unavailable",
+            }
+        if next_stage == "pending_exec":
+            counters = _normalize_feedback_counters(metadata.get(_QA_FEEDBACK_COUNTERS_KEY))
+            counters["qa_local_repair_rounds"] = counters.get("qa_local_repair_rounds", 0) + 1
+            metadata[_QA_FEEDBACK_COUNTERS_KEY] = counters
+            metadata["qa_local_repair_context"] = _qa_local_repair_context(
+                task_id=task_id,
+                payload=payload,
+                audit_result=audit_result,
+                engine_payload=engine_payload,
+                verdict_receipt=final_receipt,
+            )
+
+        # QA never sends a failed implementation back to PM/CE. A true
+        # contract/authority contradiction terminates only this task with
+        # structured evidence; changing the contract requires an explicit
+        # operator-authored command outside this automatic loop.
+        if next_stage in {"pending_design", "waiting_human"}:
+            metadata["structured_blocker"] = _qa_contract_authority_blocker(
+                task_id=task_id,
+                payload=payload,
+                engine_payload=engine_payload,
+            )
+            transition = self._svc.fail_task_stage(
+                FailTaskStageCommandV1(
+                    workspace=self._workspace,
+                    task_id=task_id,
+                    lease_token=lease_token,
+                    error_code="QA_CONTRACT_AUTHORITY_BLOCKED",
+                    error_message=str(classification.get("reason") or "QA contract authority blocked"),
+                    requeue_stage=None,
+                    failure_disposition="isolated_contract_blocker",
+                    metadata=metadata,
+                )
+            )
+            return {
+                "task_id": task_id,
+                "ok": False,
+                "verdict": verdict,
+                "status": str(transition.status or "rejected"),
+                "reason": "qa_contract_authority_blocked",
+            }
+
+        if next_stage in {"pending_exec", "pending_qa"}:
             transition = self._svc.fail_task_stage(
                 FailTaskStageCommandV1(
                     workspace=self._workspace,
@@ -1033,6 +1345,7 @@ class QAConsumer:
                     error_code=f"QA_{verdict}_canonical_route",
                     error_message=_format_qa_requeue_feedback(audit_result, verdict),
                     requeue_stage=next_stage,
+                    failure_disposition="same_task_local_retry",
                     metadata=metadata,
                 )
             )
@@ -1057,9 +1370,7 @@ class QAConsumer:
                 "metrics": dict(audit_result.get("metrics") or {}),
             },
         }
-        if next_stage == "waiting_human":
-            command_kwargs["next_stage"] = next_stage
-        elif terminal_status in {"resolved", "rejected"}:
+        if terminal_status in {"resolved", "rejected"}:
             command_kwargs["terminal_status"] = terminal_status
         else:
             transition = self._svc.fail_task_stage(
@@ -1070,6 +1381,7 @@ class QAConsumer:
                     error_code="QA_canonical_route_missing",
                     error_message="Canonical QA envelope did not authorize a valid transition",
                     requeue_stage="pending_qa",
+                    failure_disposition="same_task_local_retry",
                     metadata=metadata,
                 )
             )
@@ -1296,6 +1608,7 @@ class QAConsumer:
                     error_code="QA_audit_failed",
                     error_message=str(exc),
                     requeue_stage="pending_qa",
+                    failure_disposition="same_task_local_retry",
                     metadata=_qa_control_plane_metadata(payload),
                 )
             )

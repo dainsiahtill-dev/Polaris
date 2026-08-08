@@ -687,13 +687,14 @@ def _orchestration_task_rows(snapshot: Any) -> tuple[list[dict[str, Any]], dict[
 
 
 async def _list_recent_orchestration_runs(workspace: str, limit: int = 50) -> list[Any]:
-    from polaris.cells.orchestration.workflow_runtime.public.service import get_orchestration_service
+    from polaris.cells.runtime.projection.internal.workflow_runtime_owner import (
+        workflow_runtime_projection_owner_port,
+    )
 
-    service = await get_orchestration_service()
-    scoped_runs = await service.list_runs(workspace=workspace, limit=limit)
-    if scoped_runs:
-        return list(scoped_runs)
-    return list(await service.list_runs(limit=limit))
+    return await workflow_runtime_projection_owner_port().list_runs(
+        workspace=workspace,
+        limit=limit,
+    )
 
 
 async def get_active_director_orchestration_status(workspace: str) -> dict[str, Any] | None:

@@ -338,7 +338,11 @@ class QualityChecker:
     def _json_required_keys_for_role(role: str | None) -> tuple[str, ...]:
         normalized = str(role or "").strip().lower()
         if normalized == "chief_engineer":
-            return ("construction_plan", "scope_for_apply", "risk_flags")
+            # ``scope_for_apply`` is non-authoritative CE advice. PM
+            # ``target_files`` / ``scope_paths`` remain the apply authority,
+            # so omission must not invalidate an otherwise complete CE
+            # portfolio. Keep construction and risk assessment fail-closed.
+            return ("construction_plan", "risk_flags")
         if normalized == "pm":
             return ("tasks",)
         if normalized == "qa":
@@ -445,8 +449,9 @@ class QualityChecker:
         - wrapped object: ``{"llm_blueprint": {...}}``
 
         Explicit ``scope_for_apply`` / ``risk_flags`` fields may be lifted from
-        ``construction_plan`` for the wrapped shape. Missing contract fields
-        are never synthesized: quality validation must remain fail-closed.
+        ``construction_plan`` for the wrapped shape. ``scope_for_apply`` is
+        optional advisory data; it is never synthesized because PM scope is
+        authoritative. Risk assessment remains required and fail-closed.
         """
 
         if not isinstance(candidate, dict):
@@ -468,9 +473,10 @@ class QualityChecker:
         scope = normalized.get("scope_for_apply")
         if not isinstance(scope, list):
             nested_scope = plan_map.get("scope_for_apply")
-            if not isinstance(nested_scope, list):
-                return None
-            normalized["scope_for_apply"] = list(nested_scope)
+            if isinstance(nested_scope, list):
+                normalized["scope_for_apply"] = list(nested_scope)
+            else:
+                normalized.pop("scope_for_apply", None)
 
         risks = normalized.get("risk_flags")
         if not isinstance(risks, list):
@@ -479,9 +485,9 @@ class QualityChecker:
                 return None
             normalized["risk_flags"] = list(nested_risks)
 
-        if not all(key in normalized for key in ("construction_plan", "scope_for_apply", "risk_flags")):
+        if not all(key in normalized for key in ("construction_plan", "risk_flags")):
             return None
-        if not isinstance(normalized.get("scope_for_apply"), list):
+        if "scope_for_apply" in normalized and not isinstance(normalized.get("scope_for_apply"), list):
             return None
         if not isinstance(normalized.get("risk_flags"), list):
             return None

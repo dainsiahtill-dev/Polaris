@@ -1,124 +1,63 @@
-"""VerificationGuard Cell - Agent Documentation
+# factory.verification_guard
 
-## Overview
+## Owner boundary
 
-The VerificationGuard Cell implements the **"Verification Before Completion"** pattern,
-inspired by Superpowers design principles. It ensures that no completion claim is
-accepted without fresh, verifiable evidence.
+This Cell owns two deliberately separate capabilities:
 
-## Core Principle
+1. `verify_completion(VerifyCompletionCommandV1)` runs a caller-requested,
+   allow-listed single-claim verifier. It is not project-completion authority.
+2. `query_project_completion_diagnostics(QueryProjectCompletionDiagnosticsV1)`
+   returns owner-bound residual diagnostics for one exact CE completion
+   contract. The query contains only `(workspace, project_id, run_id,
+   completion_contract_hash)`.
 
-> **"没有新鲜验证证据就不能声称完成"**
-> (No fresh verification evidence, no completion claim.)
+The project diagnostic path never accepts caller evidence, coverage status, or
+source-tool authorization. During bootstrap,
+`polaris.bootstrap.project_completion_diagnostics_owner` binds an observation
+port that re-reads public owner projections from:
 
-## Architecture
+- `chief_engineer.blueprint`: immutable completion contract and exact
+  `owner_task_id` per active obligation;
+- `runtime.task_runtime`: task state for the exact Factory run;
+- `control_plane.run_ledger`: TaskBoundary/verifier prerequisites plus the
+  committed current JobToken set used to authorize physical dispatch;
+- `runtime.execution_broker`: owner-sealed artifact and command receipts bound
+  to exact input bytes and physical process results;
+- `director.runtime`: read-only coverage plus plan-probe evidence, with no
+  caller-selected source tool.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    VerificationGuard Cell                    │
-├─────────────────────────────────────────────────────────────┤
-│  Public Contracts (contracts.py)                             │
-│  ├── VerificationClaim      - Completion claim with evidence │
-│  ├── VerificationReport     - Detailed verification result   │
-│  ├── VerifyCompletionCommandV1 - Entry point command         │
-│  └── VerifyCompletionResultV1  - Canonical result            │
-│  Public Service (service.py)                                  │
-│  └── verify_completion()    - Public RPC adapter             │
-├─────────────────────────────────────────────────────────────┤
-│  Internal Components                                         │
-│  ├── verification_engine.py - Core verification logic        │
-│  │   ├── verify()           - Main entry point               │
-│   │   ├── _match_outcome()  - Fuzzy outcome matching         │
-│   │   └── _collect_evidence() - Evidence collection          │
-│  └── safe_executor.py       - Security-focused execution     │
-│      ├── validate_command_safety() - Whitelist validation    │
-│      └── execute()          - Timeout-enforced execution     │
-└─────────────────────────────────────────────────────────────┘
-```
+The same-Cell authority layer validates exact types and identities, then seals
+an immutable `ProjectCompletionOwnerEvidenceBundleV1`. The deterministic
+evaluator accepts only that sealed bundle. Evidence hashes bind workspace,
+project, run, contract, obligation, owner task, owner module, status, receipt,
+and exit code. `dataclasses.replace` cannot retag the sealed bundle or result.
 
-## Workflow
+## Fail-closed invariants
 
-1. **识别 (Identify)**: Parse the completion claim
-2. **运行 (Run)**: Execute verification commands safely
-3. **读取 (Read)**: Collect evidence from specified paths
-4. **验证 (Verify)**: Match claimed outcome against actual results
-5. **声明 (Declare)**: Generate PASS/FAIL/BLOCKED/TIMEOUT report
-
-## Security Features
-
-- **Command Whitelist**: Only pre-approved commands allowed
-  - Allowed: `pytest`, `python -m`, `ruff`, `mypy`, `npm test`, etc.
-  - Blocked: `rm`, `sudo`, `curl | sh`, `eval`, `exec`
-- **Shell Injection Detection**: Prevents command chaining attacks
-- **Path Traversal Protection**: Evidence paths restricted to workspace
-- **Timeout Enforcement**: Default 60s, configurable per claim
-- **Output Size Limits**: Prevents memory exhaustion from large outputs
-
-## Usage Example
-
-```python
-from polaris.cells.factory.verification_guard.public.contracts import (
-    VerificationClaim,
-    VerifyCompletionCommandV1,
-)
-from polaris.cells.factory.verification_guard.internal.verification_engine import (
-    VerificationEngine,
-)
-
-# Create a claim
-claim = VerificationClaim(
-    claim_id="task-123",
-    claimed_outcome="tests pass",
-    verification_commands=["pytest tests/ -v"],
-    evidence_paths=["test_report.xml"],
-    timeout_seconds=60,
-)
-
-# Verify the claim
-engine = VerificationEngine()
-report = engine.verify(claim, workspace="/path/to/project")
-
-if report.status == VerificationStatus.PASS:
-    print("✓ Verification passed - completion accepted")
-else:
-    print(f"✗ Verification failed: {report.execution_summary}")
-    for detail in report.mismatch_details:
-        print(f"  - {detail}")
-```
-
-## Integration Points
-
-- **Current**: Standalone Cell with public contracts and public service adapter
-- **Future**: `TurnTransactionController` will call this Cell before `commit()`
-- **Events**: Emits `VerificationCompletedEventV1` for audit trails
-
-## Testing
-
-Run tests:
-```bash
-pytest polaris/cells/factory/verification_guard/tests/ -v
-```
-
-Test coverage includes:
-- Normal scenarios (successful verification)
-- Boundary scenarios (empty inputs, timeouts, whitelist violations)
-- Exception scenarios (command failures, resource exhaustion)
-- Regression scenarios (false completion detection)
-
-## Cell Metadata
-
-- **ID**: `factory.verification_guard`
-- **Kind**: `capability`
-- **Owner**: `factory`
-- **Visibility**: `public`
-- **Stateful**: `false`
-
-## Dependencies
-
-- `factory.pipeline` - For workflow integration
-- `policy.workspace_guard` - For workspace boundary enforcement
+- Active obligations without a CE-authored `owner_task_id` are invalid.
+- Missing evidence and failed evidence remain disjoint.
+- Artifact and entrypoint obligations cannot pass without one current-run
+  owner-sealed receipt bound to workspace, project, run, contract, owner task,
+  obligation, path, and current artifact hash.
+- Verification cannot pass without one typed receipt additionally bound to the
+  exact modality, canonical argv/cwd, CE command-authority hash, input artifact
+  hash, committed JobToken/policy hash, exit code, timeout state, and output
+  hash. Artifact changes invalidate an earlier command receipt.
+- `RunProjectCompletionEvidenceCommandV1` contains identity only. Caller cannot
+  supply argv, evidence, status, runner, or verdict. Entrypoint obligations need
+  a real typed `entrypoint` probe; absent API remains fail-closed.
+- TaskRuntime completion, TaskBoundary `completed_verified`, disk existence,
+  arbitrary evidence refs, and Run Ledger gate summaries are auxiliary facts;
+  none can replace that receipt. No receipt means `missing`; a present nonzero
+  or timed-out physical receipt means `failed`.
+- Repair is schedulable only when `director.runtime` coverage and plan-probe
+  produce one executable runtime source tool.
+- Diagnostic dependencies must reference this result and form a full DAG.
+- Diagnostics are residuals, not a competing project completion verdict.
 
 ## Verification
 
-- **Tests**: `polaris/cells/factory/verification_guard/tests/test_verification_guard.py`
-- **Smoke**: `pytest polaris/cells/factory/verification_guard/tests/ -v`
+```bash
+python -m pytest -q polaris/cells/factory/verification_guard/tests
+python -m pytest -q polaris/tests/unit/bootstrap/test_project_completion_diagnostics_owner.py
+```

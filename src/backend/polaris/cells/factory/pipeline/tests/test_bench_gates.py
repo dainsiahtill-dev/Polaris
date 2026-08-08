@@ -184,12 +184,8 @@ def test_canonical_projection_requires_task_runtime_fact_authority() -> None:
     assert projection["execution"]["reason_code"] == "task_runtime_projection_not_authoritative"
 
 
-def test_r181_bench_runtime_superseded_by_completed_verified_boundary() -> None:
-    """Failed TASK-3 runtime row must not force task_runtime_not_completed.
-
-    Mirrors L1-01 r181: real_run green, TASK-1/2 completed_verified, TASK-3
-    failed without tools, package/src already delivery-complete.
-    """
+def test_bench_completed_verified_boundary_does_not_override_failed_runtime() -> None:
+    """Bench projection preserves independent TaskRuntime lifecycle authority."""
 
     ledger = _canonical_run_ledger_projection()
     ledger["task_boundary"] = {
@@ -265,10 +261,55 @@ def test_r181_bench_runtime_superseded_by_completed_verified_boundary() -> None:
     projection = bench_gates.build_canonical_bench_projection(record)
 
     assert projection["runtime"]["authoritative"] is True
-    assert projection["runtime"]["completed"] is True
-    assert projection["runtime"]["incomplete_task_ids"] == []
-    assert projection["execution"]["ok"] is True
-    assert projection["execution"]["reason_code"] == "completed_verified"
+    assert projection["runtime"]["completed"] is False
+    assert projection["runtime"]["incomplete_task_ids"] == ["3"]
+    assert projection["execution"]["ok"] is False
+    assert projection["execution"]["reason_code"] == "task_runtime_not_completed"
+
+
+def test_bench_completed_verified_boundary_does_not_override_active_runtime() -> None:
+    """Bench keeps an in-progress TaskRuntime row incomplete despite a green boundary."""
+
+    ledger = _canonical_run_ledger_projection()
+    ledger["task_boundary"] = {
+        "ok": True,
+        "verdict_count": 1,
+        "failed": [],
+        "latest": {"task_id": "TASK-2", "status": "completed_verified", "ok": True},
+        "latest_by_task": {
+            "TASK-2": {"task_id": "TASK-2", "status": "completed_verified", "ok": True},
+        },
+    }
+    runtime = {
+        "schema_version": "task_runtime.observable_task_rows_authority.v1",
+        "source": "task_runtime.execution_fact",
+        "authoritative": True,
+        "degraded": False,
+        "row_count": 1,
+        "rows": [
+            {
+                "task_id": "2",
+                "status": "pending",
+                "execution_state": "in_progress",
+                "fact_event_seq": 4,
+                "source": "task_runtime.execution_fact",
+                "status_source": "task_runtime.execution_fact",
+            },
+        ],
+        "readiness": {"ready": True, "blocking_reasons": []},
+    }
+
+    projection = bench_gates.build_canonical_bench_projection(
+        {
+            "run_ledger_projection": ledger,
+            "task_runtime_projection": runtime,
+        }
+    )
+
+    assert projection["runtime"]["completed"] is False
+    assert projection["runtime"]["incomplete_task_ids"] == ["2"]
+    assert projection["execution"]["ok"] is False
+    assert projection["execution"]["reason_code"] == "task_runtime_not_completed"
 
 
 def test_r181_bench_failed_runtime_without_boundary_still_incomplete() -> None:

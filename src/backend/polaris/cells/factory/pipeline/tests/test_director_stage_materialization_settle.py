@@ -222,19 +222,9 @@ def test_r181_recover_director_stage_authority_after_delivery_settle(
         context={"project_id": "L1-01"},
         prior_authority=prior,
     )
-    assert recovered is not None
-    assert recovered.director_stage_authorized is True
-    assert appends, "recovery must append completed_verified boundary for failed task"
-    # Dual-write N + TASK-N under the director child workflow run id.
-    written_run_ids = {str(getattr(cmd, "run_id", "") or "") for cmd in appends}
-    assert "director-task-3" in written_run_ids
-    written_task_ids: set[str] = set()
-    for cmd in appends:
-        event = getattr(cmd, "event", {}) or {}
-        written_task_ids.add(str(event.get("task_id") or ""))
-    assert "3" in written_task_ids
-    assert "TASK-3" in written_task_ids
-    assert loads["n"] >= 2
+    assert recovered is None
+    assert appends == []
+    assert loads["n"] == 0
 
 
 def test_recover_director_stage_authority_orphan_blocked_uses_sibling_director_run(
@@ -345,13 +335,8 @@ def test_recover_director_stage_authority_orphan_blocked_uses_sibling_director_r
         context={"project_id": "L1-01"},
         prior_authority=prior,
     )
-    assert recovered is not None
-    assert recovered.director_stage_authorized is True
-    written_run_ids = {str(getattr(cmd, "run_id", "") or "") for cmd in appends}
-    assert "director-task-1" in written_run_ids
-    written_task_ids = {str((getattr(cmd, "event", {}) or {}).get("task_id") or "") for cmd in appends}
-    assert "3" in written_task_ids
-    assert "TASK-3" in written_task_ids
+    assert recovered is None
+    assert appends == []
 
 
 @pytest.mark.asyncio
@@ -420,7 +405,11 @@ async def test_run_director_stage_materialization_quality_settle_invokes_schedul
         ),
         patch.object(executor, "_apply_workspace_quality_repairs", side_effect=_fake_apply),
         patch.object(executor, "_collect_director_stage_materialization_diagnostics", return_value=[]),
-        patch.object(executor, "_settle_director_stage_materialization_attempt"),
+        patch.object(
+            executor,
+            "_settle_director_stage_materialization_attempt",
+            return_value={"success": True},
+        ),
         patch(
             "polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge."
             "commit_materialization_deferred_repairs",
@@ -453,6 +442,101 @@ async def test_run_director_stage_materialization_quality_settle_invokes_schedul
     assert job_token.get("capability_audit", {}).get("ok") is True
     assert len(str(job_token.get("execution_envelope_hash") or "")) == 64
     assert "tests/verify.test.ts" in (commit_ctx.get("allowed_paths") or [])
+
+
+@pytest.mark.asyncio
+async def test_materialization_settle_reports_deferred_commit_failure(
+    tmp_path: Path,
+) -> None:
+    """A deferred batch with no terminal receipts must fail, not report ok=True."""
+
+    (tmp_path / "package.json").write_text('{"name":"x"}\n', encoding="utf-8")
+    executor = OrchestrationStageExecutor(tmp_path)
+    run = _run(tmp_path)
+    fake_attempt = SimpleNamespace(workspace=str(tmp_path), task_id=1, external_task_id="settle-x")
+    deferred_results = [
+        {
+            "tool": "deferred_director_repair",
+            "success": True,
+            "result": {
+                "status": "deferred_repair_effects_pending",
+                "deferred_request": object(),
+            },
+        }
+    ]
+
+    with (
+        patch.object(
+            executor,
+            "_claim_director_stage_materialization_settle_attempt",
+            return_value=("settle-x", 1, fake_attempt),
+        ),
+        patch.object(
+            executor,
+            "_apply_workspace_quality_repairs",
+            return_value=(deferred_results, {"ok": True}),
+        ),
+        patch.object(executor, "_collect_director_stage_materialization_diagnostics", return_value=[]),
+        patch.object(
+            executor,
+            "_settle_director_stage_materialization_attempt",
+            return_value={"success": True},
+        ) as settle_attempt,
+        patch(
+            "polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge."
+            "commit_materialization_deferred_repairs",
+            return_value=[],
+        ),
+        patch(
+            "polaris.cells.runtime.task_runtime.public.create_task_runtime_execution_attempt_authority",
+            return_value=object(),
+        ),
+    ):
+        settle = await executor._run_director_stage_materialization_quality_settle(
+            run=run,
+            stage_status="failed",
+            error_code="director.dispatch_timeout",
+        )
+
+    assert settle["ok"] is False
+    assert settle["reason"] == "deferred_repair_commit_failed"
+    assert settle["committed_receipt_count"] == 0
+    assert settle["failed_receipt_count"] == 0
+    assert settle_attempt.call_args.kwargs["stage_status"] == "failed"
+
+
+def test_materialization_settle_close_failure_is_returned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from polaris.cells.runtime.task_runtime.public import TaskRuntimeExecutionAttemptIdentityV1
+
+    executor = OrchestrationStageExecutor(tmp_path)
+    attempt = TaskRuntimeExecutionAttemptIdentityV1(
+        workspace=str(tmp_path),
+        task_id=1,
+        external_task_id="settle-x",
+        session_id="session-x",
+        attempt=1,
+        role_id="director",
+        worker_id="director",
+        run_id="factory-x",
+        lease_expires_at="2026-08-09T00:00:00+00:00",
+    )
+
+    class _FailedTaskRuntime:
+        def settle_execution_attempt(self, _command: object) -> dict[str, object]:
+            return {"success": False, "reason": "settlement_directed_effect_unresolved"}
+
+    monkeypatch.setattr(
+        "polaris.cells.factory.pipeline.internal.factory_stage_executor.TaskRuntimeService",
+        lambda _workspace: _FailedTaskRuntime(),
+    )
+    result = executor._settle_director_stage_materialization_attempt(
+        task_row_id=1,
+        execution_attempt=attempt,
+        stage_status="failed",
+        summary="failed repair",
+    )
+
+    assert result == {"success": False, "reason": "settlement_directed_effect_unresolved"}
 
 
 def test_claim_director_stage_materialization_settle_attempt_mints_unique_external_ids(
@@ -556,7 +640,11 @@ async def test_run_director_stage_materialization_quality_settle_forwards_tsc_di
             "_collect_director_stage_materialization_diagnostics",
             return_value=diags,
         ),
-        patch.object(executor, "_settle_director_stage_materialization_attempt"),
+        patch.object(
+            executor,
+            "_settle_director_stage_materialization_attempt",
+            return_value={"success": True},
+        ),
         patch(
             "polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge."
             "commit_materialization_deferred_repairs",

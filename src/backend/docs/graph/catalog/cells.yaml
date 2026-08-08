@@ -175,12 +175,15 @@ cells:
         - polaris.cells.control_plane.verifier_policy.public.contracts
         - polaris.cells.control_plane.verifier_policy.public.service
       commands:
+        - ConsumeProjectVerificationCapabilityCommandV1
         - UpdateVerifierPolicyCommandV1
       queries:
         - ReadVerifierPolicyQueryV1
+        - EvaluateVerifierCommandPolicyQueryV1
       events: []
       results:
         - VerifierPolicyResultV1
+        - VerifierCommandPolicyDecisionV1
       errors:
         - ControlPlaneVerifierPolicyV1Error
     depends_on: []
@@ -196,8 +199,9 @@ cells:
         - polaris/cells/control_plane/verifier_policy/tests/test_public_service.py
         - polaris/tests/unit/delivery/http/routers/test_control_plane_router.py
       gaps:
-        - Verifier execution providers are not wired in this slice; this cell
-          only owns user policy and platform projection.
+        - Command policy decisions are evidence, never spawn capabilities;
+          runtime.execution_broker must re-evaluate the exact query while
+          atomically consuming its one-use fenced launch lease.
 
   - id: control_plane.verifier_execution
     title: Control Plane Verifier Execution
@@ -647,6 +651,7 @@ cells:
         - MoveTaskToDeadLetterCommandV1
       queries:
         - QueryTaskMarketStatusV1
+        - QueryTaskRequeueReceiptV1
       events:
         - TaskWorkItemPublishedEventV1
         - TaskLeaseGrantedEventV1
@@ -656,6 +661,7 @@ cells:
         - TaskWorkItemResultV1
         - TaskLeaseRenewResultV1
         - TaskMarketStatusResultV1
+        - TaskRequeueReceiptV1
       errors:
         - TaskMarketErrorV1
     depends_on:
@@ -685,14 +691,18 @@ cells:
     title: Runtime Execution Broker
     kind: capability
     visibility: public
-    stateful: false
+    stateful: true
     owner: runtime
     purpose: >
       Provide unified process, async task, and blocking I/O execution submission
       for business cells through one cell-level facade backed by KernelOne
       execution runtime.
     current_modules:
+      - polaris.cells.runtime.execution_broker.public.bootstrap
       - polaris.cells.runtime.execution_broker.public.service
+      - polaris.cells.runtime.execution_broker.public.project_verification
+      - polaris.cells.runtime.execution_broker.internal.project_verification_authority
+      - polaris.cells.runtime.execution_broker.internal.project_verification_sandbox
       - polaris.cells.runtime.execution_broker.internal.service
       - polaris.kernelone.runtime.execution_facade
     owned_paths:
@@ -700,31 +710,57 @@ cells:
     public_contracts:
       modules:
         - polaris.cells.runtime.execution_broker.public.contracts
+        - polaris.cells.runtime.execution_broker.public.bootstrap
+        - polaris.cells.runtime.execution_broker.public.project_verification
       commands:
+        - AppendManagedProcessReceiptCommandV1
         - LaunchExecutionProcessCommandV1
+        - RecordProjectArtifactCommandV1
+        - RunProjectVerificationCommandV1
       queries:
         - GetExecutionProcessStatusQueryV1
+        - GetManagedProcessReceiptQueryV1
+        - QueryProjectArtifactReceiptV1
+        - QueryProjectVerificationReceiptV1
+        - ResolveProjectArtifactAuthorityQueryV1
+        - ResolveProjectVerificationAuthorityQueryV1
       events: []
       results:
         - ExecutionProcessLaunchResultV1
         - ExecutionProcessWaitResultV1
+        - ProjectArtifactReceiptV1
+        - ProjectArtifactExecutionAuthorityV1
+        - ProjectVerificationCapabilityConsumptionV1
+        - ProjectVerificationExecutionAuthorityV1
+        - ProjectVerificationExecutionResultV1
+        - ProjectVerificationReceiptV1
       errors:
         - ExecutionBrokerErrorV1
     depends_on:
+      - control_plane.verifier_policy
       - runtime.state_owner
       - policy.workspace_guard
       - audit.evidence
     subgraphs:
       - execution_governance_pipeline
-    state_owners: []
+    state_owners:
+      - runtime/evidence/project_verification_receipts.sqlite3
+      - config/execution_broker/project_verification_receipt_hmac.key
+      - config/execution_broker/verifier_snapshots/*
     effects_allowed:
       - process.spawn:runtime/*
       - fs.write:runtime/logs/*
       - fs.write:runtime/events/*
+      - fs.write:runtime/evidence/*
+      - fs.read:runtime/evidence/*
+      - fs.read:config/execution_broker/*
+      - fs.write:config/execution_broker/*
       - ws.outbound:runtime/*
     verification:
       tests:
         - polaris/cells/runtime/execution_broker/tests/test_service.py
+        - polaris/cells/runtime/execution_broker/tests/test_project_verification_receipts.py
+        - polaris/cells/runtime/execution_broker/tests/test_project_verification_sandbox.py
       gaps:
         - Legacy sync call sites are still converging to async-first broker contracts.
 
@@ -742,6 +778,7 @@ cells:
       - polaris.cells.runtime.projection.internal.director_status_owner
       - polaris.cells.runtime.projection.internal.project_outcome
       - polaris.cells.runtime.projection.internal.project_outcome_factory_owner
+      - polaris.cells.runtime.projection.internal.workflow_runtime_owner
       - polaris.cells.runtime.projection.public.bootstrap
       - polaris.cells.runtime.projection.public.contracts
       - polaris.cells.runtime.projection.public.service
@@ -776,7 +813,6 @@ cells:
     depends_on:
       - runtime.task_runtime
       - runtime.state_owner
-      - runtime.task_market
       - audit.evidence
       - control_plane.run_ledger
       - events.fact_stream
@@ -794,7 +830,6 @@ cells:
       # This is a stateless aggregation mapping - no business logic is owned by projection.
       - docs.court_workflow
       - orchestration.pm_planning
-      - orchestration.workflow_runtime
       - qa.audit_verdict
       - resident.autonomy
       - runtime.artifact_store
@@ -2680,15 +2715,21 @@ cells:
         - polaris.cells.chief_engineer.blueprint.public.contracts
         - polaris.cells.chief_engineer.blueprint.public.service
       commands:
+        - BuildChiefEngineerBlueprintPortfolioCommandV1
         - GenerateTaskBlueprintCommandV1
       queries:
         - GetBlueprintStatusQueryV1
         - QueryBlueprintProvenanceV1
+        - QueryProjectCompletionContractV1
       events:
         - TaskBlueprintGeneratedEventV1
       results:
+        - ChiefEngineerBlueprintPortfolioV1
+        - ProjectCompletionContractV1
+        - ProjectKindAuthorityV1
         - TaskBlueprintResultV1
         - TaskBlueprintProvenanceSnapshotV1
+        - VerificationCommandAuthorityV1
       errors:
         - ChiefEngineerBlueprintErrorV1
     depends_on:
@@ -3617,29 +3658,43 @@ cells:
     owner: orchestration
     purpose: >
       Own workflow engine runtime, activity/workflow registration, and workflow
-      state persistence for PM/Director/QA execution orchestration.
+      state persistence for PM/Director/QA execution orchestration. Its typed
+      project-completion cursor durably registers nonterminal identity and
+      bounded limits for process-restart recovery.
     current_modules:
       - polaris.cells.orchestration.workflow_runtime.internal
+      - polaris.cells.orchestration.workflow_runtime.public.model_ceiling
+      - polaris.cells.orchestration.workflow_runtime.public.project_completion_cursor
       - polaris.infrastructure.db.repositories.workflow_runtime_store
     owned_paths:
       - polaris/cells/orchestration/workflow_runtime/internal/**
+      - polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py
+      - polaris/cells/orchestration/workflow_runtime/public/model_ceiling_bootstrap.py
+      - polaris/cells/orchestration/workflow_runtime/public/project_completion_cursor.py
       - polaris/infrastructure/db/repositories/workflow_runtime_store.py
     public_contracts:
       modules:
         - polaris.cells.orchestration.workflow_runtime.public.contracts
+        - polaris.cells.orchestration.workflow_runtime.public.model_ceiling
+        - polaris.cells.orchestration.workflow_runtime.public.project_completion_cursor
       commands:
         - StartWorkflowCommandV1
         - CancelWorkflowCommandV1
       queries:
         - QueryWorkflowStatusV1
         - QueryWorkflowEventsV1
+        - ModelCeilingCandidateV1
       events:
         - WorkflowExecutionStartedEventV1
         - WorkflowExecutionCompletedEventV1
       results:
         - WorkflowExecutionResultV1
+        - ModelCeilingTerminalResultV1
+        - ProjectCompletionCursorRegistrationV1
       errors:
         - WorkflowRuntimeErrorV1
+        - ModelCeilingOwnerObservationError
+        - ProjectCompletionCursorConflictError
     depends_on:
       - runtime.state_owner
       - runtime.execution_broker
@@ -3773,16 +3828,25 @@ cells:
       Owns the OrchestrationService public contract, RuntimeOrchestrator port, ProcessLauncher port,
       and EventStream port.  Depends on workflow_runtime for the WorkflowEngine instance and
       workflow_activity for concrete workflow/activity definitions.  Coordinates workflow submission,
-      signals, cancellation, and progress tracking.
+      signals, cancellation, and progress tracking. Project-completion
+      supervision recovers from the durable cursor through public owner/action
+      ports; local process events are latency hints only. Bootstrap composition
+      may bind those ports to TaskMarket and replay its transactional outbox
+      without making TaskMarket a Cell dependency.
+    current_modules:
+      - polaris.cells.orchestration.workflow_orchestration.public.contracts
+      - polaris.cells.orchestration.workflow_orchestration.public.project_completion
     owned_paths:
       - polaris/cells/orchestration/workflow_orchestration/**
     public_contracts:
       modules:
         - polaris.cells.orchestration.workflow_orchestration.public.contracts
+        - polaris.cells.orchestration.workflow_orchestration.public.project_completion
         - polaris.cells.orchestration.workflow_runtime.public.contracts
       commands:
         - StartWorkflowCommandV1
         - CancelWorkflowCommandV1
+        - AdvanceProjectCompletionCommandV1
       queries:
         - QueryWorkflowStatusV1
         - QueryWorkflowEventsV1
@@ -3791,6 +3855,7 @@ cells:
         - WorkflowExecutionCompletedEventV1
       results:
         - WorkflowExecutionResultV1
+        - ProjectCompletionAdvanceResultV1
       errors:
         - WorkflowRuntimeError
     depends_on:
@@ -3798,6 +3863,8 @@ cells:
       - orchestration.workflow_runtime
       - orchestration.workflow_activity
       - runtime.execution_broker
+      - runtime.projection
+      - factory.verification_guard
       - runtime.state_owner
       - policy.workspace_guard
       - audit.evidence
@@ -3812,6 +3879,7 @@ cells:
     verification:
       tests:
         - polaris/tests/orchestration/test_workflow_engine.py
+        - polaris/cells/orchestration/workflow_orchestration/tests/test_project_completion_convergence.py
       gaps:
         - Orchestration service unit tests not yet separated from integration tests.
         - RuntimeOrchestrator subprocess lifecycle coverage pending.
@@ -4068,12 +4136,17 @@ cells:
     stateful: false
     owner: factory
     purpose: >
-      Implements "Verification Before Completion" pattern to ensure all completion
-      claims are verified before acceptance. Provides safe command execution with
-      whitelist validation, timeout enforcement, and detailed verification reports.
+      Verifies individual claims and projects owner-bound residual diagnostics for
+      an exact CE completion contract. Production completion diagnostics accept no
+      caller evidence or repair claims; bootstrap joins owner prerequisites but
+      emits evidence only from an exact typed current-run per-obligation receipt.
     current_modules:
       - polaris.cells.factory.verification_guard.public.contracts
       - polaris.cells.factory.verification_guard.public.service
+      - polaris.cells.factory.verification_guard.public.bootstrap
+      - polaris.cells.factory.verification_guard.internal.project_completion_authority
+      - polaris.cells.factory.verification_guard.internal.project_completion_diagnostics
+      - polaris.cells.factory.verification_guard.internal.project_physical_evidence
       - polaris.cells.factory.verification_guard.internal.verification_engine
       - polaris.cells.factory.verification_guard.internal.safe_executor
     tags:
@@ -4087,18 +4160,21 @@ cells:
         - polaris.cells.factory.verification_guard.public.contracts
         - polaris.cells.factory.verification_guard.public.service
       commands:
+        - RunProjectCompletionEvidenceCommandV1
         - VerifyCompletionCommandV1
-      queries: []
+      queries:
+        - QueryProjectCompletionDiagnosticsV1
       events:
         - VerificationCompletedEventV1
       results:
         - VerifyCompletionResultV1
         - VerificationReport
+        - ProjectCompletionDiagnosticsV1
+        - RunProjectCompletionEvidenceResultV1
       errors:
         - VerificationGuardErrorV1
-    depends_on:
-      - factory.pipeline
-      - policy.workspace_guard
+        - ProjectCompletionOwnerObservationV1Error
+    depends_on: []
     subgraphs: []
     state_owners: []
     effects_allowed:
@@ -4107,6 +4183,9 @@ cells:
     verification:
       tests:
         - polaris/cells/factory/verification_guard/tests/test_verification_guard.py
+        - polaris/cells/factory/verification_guard/tests/test_project_completion_diagnostics.py
+        - polaris/cells/factory/verification_guard/tests/test_project_physical_evidence.py
+        - polaris/tests/unit/bootstrap/test_project_completion_diagnostics_owner.py
       gaps:
         - Integration with TurnTransactionController pending
         - Metrics and telemetry collection not implemented

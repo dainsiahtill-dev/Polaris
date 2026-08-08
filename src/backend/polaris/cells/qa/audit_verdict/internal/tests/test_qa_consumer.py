@@ -53,7 +53,11 @@ def _canonical_engine_payload(
         "classification": {
             "failure_class": None if verdict == "PASS" else "IMPLEMENTATION_DEFECT",
             "route": terminal_status or next_stage,
+            "reason": "repair the current task",
+            "responsible_layer": "director",
+            "evidence_refs": ["receipt://qa/evidence"],
         },
+        "evidence_refs": ["receipt://qa/evidence"],
     }
 
 
@@ -497,8 +501,23 @@ class TestQAConsumerPollOnce:
         mock_svc.acknowledge_task_stage.assert_not_called()
         fail_call = mock_svc.fail_task_stage.call_args[0][0]
         assert fail_call.requeue_stage == "pending_exec"
+        assert fail_call.failure_disposition == "same_task_local_retry"
         assert "missing artifact evidence" in fail_call.error_message
         assert fail_call.metadata["job_token"]["token_id"] == "token-qa-requeue"
+        repair_context = fail_call.metadata["qa_local_repair_context"]
+        assert repair_context["task_id"] == "task-qa-2"
+        assert repair_context["failure_class"] == "IMPLEMENTATION_DEFECT"
+        assert repair_context["repair_policy"] == {
+            "same_task_only": True,
+            "reuse_existing_context_snapshot": True,
+            "automatic_upstream_replan": False,
+            "automatic_escalation": False,
+            "rerun_exact_failed_verifier": False,
+            "require_material_effect": True,
+            "return_to_qa": True,
+        }
+        assert repair_context["repair_authority_kind"] == "diagnostic_effect"
+        assert fail_call.metadata["feedback_counters"]["qa_local_repair_rounds"] == 1
         commit_kwargs = commit_evidence.call_args.kwargs
         assert commit_kwargs["run_id"] == "run-qa-requeue"
         assert commit_kwargs["gate_name"] == "qa_evidence"
@@ -507,7 +526,57 @@ class TestQAConsumerPollOnce:
         assert len(commit_kwargs["audit_result"]["findings"]) == 1
 
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
-    def test_requeue_design_verdict_preserves_findings_as_last_failure(self, mock_get_svc: MagicMock) -> None:
+    def test_missing_verifier_receipt_stays_bounded_in_qa_not_contract_blocked(
+        self, mock_get_svc: MagicMock
+    ) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        claim = MagicMock(
+            ok=True,
+            task_id="task-no-receipt",
+            lease_token="lease-no-receipt",
+            payload={"title": "Verify task", "job_token": _qa_job_token(run_id="run-no-receipt")},
+        )
+        mock_svc.claim_work_item.side_effect = [claim, MagicMock(ok=False)]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_qa")
+        consumer = QAConsumer(workspace="/test", worker_id="qa-no-receipt")
+
+        def no_receipt(payload: dict[str, Any]) -> str:
+            payload["qa_failed_verifier"] = {
+                "schema_version": "qa.failed_verifier.v2",
+                "failure_kind": "command_authority_rejected",
+                "reason": "execution broker authority unavailable",
+            }
+            return "step verify command lacks exact execution authority"
+
+        with (
+            patch.object(consumer, "_run_step_verify", side_effect=no_receipt),
+            patch.object(
+                consumer,
+                "_build_canonical_verdict_projection",
+                return_value=_canonical_engine_payload(verdict="FAIL", next_stage="pending_exec"),
+            ),
+            patch.object(qa_consumer_module, "commit_qa_evidence") as commit_evidence,
+            patch.object(qa_consumer_module, "commit_qa_verdict") as commit_verdict,
+        ):
+            commit_evidence.return_value.to_dict.return_value = {
+                "run_id": "run-no-receipt",
+                "append_id": "append-no-receipt",
+                "event_hash": "hash-no-receipt",
+            }
+            commit_verdict.return_value = _final_commit_receipt(verdict="FAIL")
+            result = consumer.poll_once()[0]
+
+        assert result["status"] == "pending_qa"
+        assert result["reason"] == "qa_verifier_control_plane_unavailable"
+        failed = mock_svc.fail_task_stage.call_args[0][0]
+        assert failed.error_code == "QA_VERIFIER_CONTROL_PLANE_UNAVAILABLE"
+        assert failed.requeue_stage == "pending_qa"
+        assert failed.failure_disposition == "same_task_local_retry"
+        assert "structured_blocker" not in failed.metadata
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_requeue_design_verdict_becomes_isolated_contract_blocker(self, mock_get_svc: MagicMock) -> None:
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc
 
@@ -523,7 +592,7 @@ class TestQAConsumerPollOnce:
         no_claim = MagicMock()
         no_claim.ok = False
         mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
-        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_design")
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="rejected")
 
         consumer = QAConsumer(workspace="/test", worker_id="qa-design")
         with (
@@ -554,11 +623,15 @@ class TestQAConsumerPollOnce:
 
         assert len(results) == 1
         assert results[0]["ok"] is False
-        assert results[0]["status"] == "pending_design"
+        assert results[0]["status"] == "rejected"
+        assert results[0]["reason"] == "qa_contract_authority_blocked"
         mock_svc.acknowledge_task_stage.assert_not_called()
         fail_call = mock_svc.fail_task_stage.call_args[0][0]
-        assert fail_call.requeue_stage == "pending_design"
-        assert "acceptance criteria" in fail_call.error_message
+        assert fail_call.requeue_stage is None
+        assert fail_call.failure_disposition == "isolated_contract_blocker"
+        blocker = fail_call.metadata["structured_blocker"]
+        assert blocker["automatic_upstream_replan"] is False
+        assert blocker["automatic_escalation"] is False
 
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
     def test_audit_exception_requeues_pending_qa(self, mock_get_svc: MagicMock) -> None:
@@ -948,8 +1021,8 @@ class TestContractGate:
                 consumer,
                 "_build_canonical_verdict_projection",
                 return_value=_canonical_engine_payload(
-                    verdict="BLOCKED",
-                    next_stage="pending_qa",
+                    verdict="FAIL",
+                    next_stage="pending_exec",
                 ),
             ),
             patch.object(qa_consumer_module, "commit_qa_evidence") as commit_evidence,
@@ -960,14 +1033,16 @@ class TestContractGate:
                 "append_id": "append-contract",
                 "event_hash": "hash-contract",
             }
-            commit_verdict.return_value = _final_commit_receipt(verdict="BLOCKED")
+            commit_verdict.return_value = _final_commit_receipt(verdict="FAIL")
             results = consumer.poll_once()
 
         assert results[0]["reason"] == "canonical_qa_route"
         mock_svc.acknowledge_task_stage.assert_not_called()
         fail_call = mock_svc.fail_task_stage.call_args[0][0]
-        assert fail_call.error_code == "QA_BLOCKED_canonical_route"
-        assert fail_call.requeue_stage == "pending_qa"
+        assert fail_call.error_code == "QA_FAIL_canonical_route"
+        assert fail_call.requeue_stage == "pending_exec"
+        assert fail_call.failure_disposition == "same_task_local_retry"
+        assert fail_call.metadata["qa_local_repair_context"]["repair_authority_kind"] == "diagnostic_effect"
         assert "placeholder" in fail_call.error_message
 
 
@@ -983,6 +1058,52 @@ class TestSyntaxGate:
         msg = consumer._run_syntax_gate({"construction_step": {"target_file": "mod.py"}})
         assert msg
         assert "语法检查失败" in msg
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_syntax_failure_enters_diagnostic_local_repair(self, mock_get_svc: MagicMock, tmp_path: Path) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        (tmp_path / "mod.py").write_text("def f(:\n    pass\n", encoding="utf-8")
+        claim = MagicMock(
+            ok=True,
+            task_id="task-syntax",
+            lease_token="lease-syntax",
+            payload={
+                "title": "Repair syntax",
+                "construction_step": {"target_file": "mod.py"},
+                "changed_files": ["mod.py"],
+                "job_token": _qa_job_token(run_id="run-qa-syntax"),
+                "task_completion_projection": {
+                    "projection_hash": "9" * 64,
+                    "project_contract_hash": "c" * 64,
+                },
+            },
+        )
+        mock_svc.claim_work_item.side_effect = [claim, MagicMock(ok=False)]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-syntax")
+        with (
+            patch.object(
+                consumer,
+                "_build_canonical_verdict_projection",
+                return_value=_canonical_engine_payload(verdict="FAIL", next_stage="pending_exec"),
+            ),
+            patch.object(qa_consumer_module, "commit_qa_evidence") as commit_evidence,
+            patch.object(qa_consumer_module, "commit_qa_verdict") as commit_verdict,
+        ):
+            commit_evidence.return_value.to_dict.return_value = {
+                "run_id": "run-qa-syntax",
+                "append_id": "append-syntax",
+                "event_hash": "hash-syntax",
+            }
+            commit_verdict.return_value = _final_commit_receipt(verdict="FAIL")
+            results = consumer.poll_once()
+
+        assert results[0]["status"] == "pending_exec"
+        failed = mock_svc.fail_task_stage.call_args[0][0]
+        assert failed.failure_disposition == "same_task_local_retry"
+        assert failed.metadata["qa_local_repair_context"]["repair_authority_kind"] == "diagnostic_effect"
+        assert failed.metadata["qa_local_repair_context"]["repair_policy"]["require_material_effect"] is True
 
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
     def test_clean_python_target_passes(self, mock_get_svc: MagicMock, tmp_path: Path) -> None:

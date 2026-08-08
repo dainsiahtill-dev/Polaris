@@ -38,9 +38,11 @@ from polaris.cells.roles.kernel.public.directed_effect_contracts import (
 )
 from polaris.cells.runtime.task_runtime.public import (
     CommitDirectedEffectReceiptCommandV1,
+    DeadLetterDirectedEffectOperationCommandV1,
     DirectedEffectOperationResultV1,
     MarkDirectedEffectRecoveryPendingCommandV1,
     commit_directed_effect_receipt,
+    dead_letter_directed_effect_operation,
     mark_directed_effect_recovery_pending,
 )
 
@@ -374,8 +376,16 @@ def _attempt_physical_effect_recovery(
     *,
     reason: str,
     evidence: DirectedEffectImmutableItemsV1,
+    terminalize_declared_failure: bool = False,
 ) -> DirectedEffectOperationResultV1 | None:
-    """Try the durable recovery append and emit diagnostics if it cannot land."""
+    """Persist recovery; terminalize only an executor-declared failure.
+
+    Exceptions and post-state ambiguity remain ``RECOVERY_PENDING`` because the
+    physical side effect may have happened.  A returned ``ok=False`` is a
+    completed, typed physical outcome: after fencing it into recovery, close it
+    as ``DEAD_LETTER`` so the failed Director attempt can settle and a fresh
+    attempt can inspect current disk state before planning another edit.
+    """
 
     try:
         result = _mark_physical_effect_recovery(context, reason=reason, evidence=evidence)
@@ -392,6 +402,62 @@ def _attempt_physical_effect_recovery(
             result.code,
         )
         return None
+    if terminalize_declared_failure:
+        source_head_seq = result.evidence.get("source_head_seq")
+        if (
+            result.state != "RECOVERY_PENDING"
+            or result.operation is None
+            or result.version is None
+            or isinstance(source_head_seq, bool)
+            or not isinstance(source_head_seq, int)
+            or source_head_seq < 1
+        ):
+            logger.error(
+                "TaskRuntime declared physical failure recovery lacked terminalization evidence: "
+                "context_id=%s state=%s version=%s source_head_seq=%s",
+                context.context_id,
+                result.state,
+                result.version,
+                source_head_seq,
+            )
+            return result
+        grant = context.claim_grant
+        resolution_evidence = (*evidence, ("recovery_event_id", str(result.evidence.get("event_id") or "")))
+        try:
+            terminal = dead_letter_directed_effect_operation(
+                DeadLetterDirectedEffectOperationCommandV1(
+                    workspace=grant.execution_attempt.workspace,
+                    task_id=grant.execution_attempt.task_id,
+                    execution_attempt=grant.execution_attempt,
+                    parent_binding=grant.parent_binding,
+                    tool_call_id=grant.operation.tool_call_id,
+                    effect_id=grant.operation.effect_id,
+                    expected_version=result.version,
+                    expected_seq=source_head_seq + 1,
+                    actor="roles.adapters.director",
+                    intended_effect_fingerprint=grant.member.intended_effect_fingerprint,
+                    policy_verdict_hash=grant.member.policy_verdict_hash,
+                    expected_receipt_binding_hash=grant.member.expected_receipt_binding_hash,
+                    reason="physical executor returned a declared non-success result",
+                    resolution_evidence_ref=f"dead-letter://director/{context.context_id}",
+                    resolution_evidence_hash=hash_directed_effect_arguments(resolution_evidence),
+                )
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            logger.exception(
+                "TaskRuntime dead-letter append raised after declared physical failure: context_id=%s",
+                context.context_id,
+            )
+            return result
+        if not terminal.ok or terminal.state != "DEAD_LETTER":
+            logger.error(
+                "TaskRuntime dead-letter append failed after declared physical failure: context_id=%s code=%s state=%s",
+                context.context_id,
+                terminal.code,
+                terminal.state,
+            )
+            return result
+        return terminal
     return result
 
 
@@ -621,6 +687,7 @@ class _DirectorDirectedEffectMutationPort:
                     ("physical_error", nested_error[:400]),
                     ("physical_error_type", nested_type[:80]),
                 ),
+                terminalize_declared_failure=True,
             )
             return None, _failed(
                 recovery,

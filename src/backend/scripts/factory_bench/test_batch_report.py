@@ -109,7 +109,7 @@ class TestBatchReport(unittest.TestCase):
             )
             counts = _classify_chain_log(log)
             self.assertEqual(counts.get("[platform_fixable  ] single_batch_contract_violation"), 1)
-            self.assertEqual(counts.get("[model_ceiling     ] reasoning_truncation_reask"), 1)
+            self.assertEqual(counts.get("[model_output_candidate] reasoning_truncation_reask"), 1)
             self.assertEqual(counts.get("[working_as_intended] PreWriteGuard_blocked"), 1)
             self.assertEqual(counts.get("[post_failure_noise] Instructor_fallback"), 1)
             # The dark-launched symbol-coherence error must be detected

@@ -207,12 +207,8 @@ def test_canonical_authority_rejects_partial_task_runtime_convergence() -> None:
     assert authority.missing_task_boundary_ids == ("TASK-2",)
 
 
-def test_r181_failed_runtime_superseded_by_completed_verified_boundary() -> None:
-    """Failed TASK-3 must not force task_runtime_not_converged when boundary is green.
-
-    Mirrors r181: rows 1/2/4/5 completed, row 3 failed, but delivery already
-    completed_verified on disk after settle/sibling materialization.
-    """
+def test_completed_verified_boundary_does_not_override_failed_runtime() -> None:
+    """TaskBoundary delivery evidence cannot rewrite TaskRuntime lifecycle."""
 
     projection = _canonical_projection()
     task_runtime = projection["task_runtime_projection"]
@@ -262,16 +258,10 @@ def test_r181_failed_runtime_superseded_by_completed_verified_boundary() -> None
         sequence_barrier_satisfied=True,
     )
 
-    assert authority.task_runtime_converged is True
-    assert authority.incomplete_runtime_task_ids == ()
-    assert authority.director_stage_authorized is True
-    assert authority.reason_code in {
-        "canonical_projection_authorized",
-        "qa_verdict_missing",
-        "canonical_sequence_barrier_unsatisfied",
-    }
-    # Director stage only needs boundary+runtime; QA is quality stage.
-    assert authority.director_stage_authorized is True
+    assert authority.task_runtime_converged is False
+    assert authority.incomplete_runtime_task_ids == ("3",)
+    assert authority.director_stage_authorized is False
+    assert authority.reason_code == "task_runtime_not_converged"
 
 
 def test_r181_failed_runtime_without_boundary_still_incomplete() -> None:
@@ -301,8 +291,8 @@ def test_r181_failed_runtime_without_boundary_still_incomplete() -> None:
     assert "3" in authority.incomplete_runtime_task_ids or "3" in authority.incomplete_task_ids
 
 
-def test_r181_pending_runtime_superseded_by_completed_verified_after_timeout() -> None:
-    """Timeout-abandoned pending rows converge when boundary is completed_verified."""
+def test_completed_verified_boundary_does_not_override_active_runtime() -> None:
+    """A green boundary cannot convert pending/in-progress execution to completed."""
 
     projection = _canonical_projection()
     task_runtime = projection["task_runtime_projection"]
@@ -335,9 +325,10 @@ def test_r181_pending_runtime_superseded_by_completed_verified_after_timeout() -
         "failed": [],
     }
     authority = evaluate_canonical_factory_authority(projection, sequence_barrier_satisfied=True)
-    assert authority.task_runtime_converged is True
-    assert authority.incomplete_runtime_task_ids == ()
-    assert authority.director_stage_authorized is True
+    assert authority.task_runtime_converged is False
+    assert authority.incomplete_runtime_task_ids == ("2",)
+    assert authority.director_stage_authorized is False
+    assert authority.reason_code == "task_runtime_not_converged"
 
 
 def test_canonical_projection_filters_task_rows_to_current_run(

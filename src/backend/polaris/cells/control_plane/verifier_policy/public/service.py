@@ -10,17 +10,26 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
+import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.control_plane.verifier_policy.internal.trusted_command_profiles import (
+    evaluate_builtin_proof,
+    resolve_builtin_profile,
+)
 from polaris.cells.control_plane.verifier_policy.public.contracts import (
     OPTIONAL_VERIFIER_MODALITIES,
     SUPPORTED_EVIDENCE_MODALITIES,
     CompileEvidencePolicyCommandV1,
     ControlPlaneVerifierPolicyV1Error,
+    EvaluateVerifierCommandPolicyQueryV1,
     EvidencePolicyResultV1,
     ReadVerifierPolicyQueryV1,
     UpdateVerifierPolicyCommandV1,
+    VerifierCommandPolicyDecisionV1,
     VerifierPolicyResultV1,
 )
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
@@ -28,6 +37,7 @@ from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 SCHEMA_VERSION = 1
 POLICY_SOURCE = "control_plane.verifier_policy"
 POLICY_RELATIVE_PATH = ".polaris/verifier_policy.json"
+_EPHEMERAL_EXECUTABLE_ROOTS = tuple(Path(item).resolve() for item in ("/tmp", "/var/tmp", "/dev/shm"))
 
 
 def _policy_path(workspace: Path) -> Path:
@@ -69,6 +79,170 @@ def _stable_hash(value: Any) -> str:
     return hashlib.sha256(_stable_json(value).encode("utf-8")).hexdigest()
 
 
+def _is_within(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
+def _configured_trusted_executable_roots() -> tuple[Path, ...]:
+    roots = [Path(item).resolve() for item in ("/bin", "/sbin", "/usr", "/opt") if Path(item).exists()]
+    for item in (sys.prefix, sys.base_prefix):
+        root = Path(item).expanduser().resolve()
+        if root.exists() and root not in roots:
+            roots.append(root)
+    raw = os.environ.get("KERNELONE_VERIFIER_TRUSTED_EXECUTABLE_ROOTS", "")
+    for item in raw.split(os.pathsep):
+        if not item:
+            continue
+        root = Path(item).expanduser().resolve(strict=True)
+        if not root.is_dir():
+            raise ControlPlaneVerifierPolicyV1Error("trusted executable root must be a directory")
+        if any(_is_within(root, ephemeral) for ephemeral in _EPHEMERAL_EXECUTABLE_ROOTS):
+            raise ControlPlaneVerifierPolicyV1Error("trusted executable root must not be ephemeral")
+        if root not in roots:
+            roots.append(root)
+    return tuple(roots)
+
+
+def _resolve_executable_identity(
+    query: EvaluateVerifierCommandPolicyQueryV1,
+    *,
+    custom_script: bool,
+) -> tuple[str, str, str, str]:
+    """Resolve an exact executable call path, realpath and digest.
+
+    Bare command names intentionally consume the operator-controlled PATH;
+    explicit paths are accepted only below built-in/configured trusted roots.
+    A hash-pinned custom script is the sole workspace executable exception.
+    """
+
+    raw = query.argv[0]
+    workspace = Path(query.workspace).expanduser().resolve()
+    cwd = workspace if query.cwd == "." else (workspace / query.cwd).resolve()
+    explicit = "/" in raw.replace("\\", "/")
+    if explicit:
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        selected = candidate.absolute()
+    else:
+        located = shutil.which(raw)
+        if not located:
+            return "", "", "", "trusted_verifier_executable_missing"
+        selected = Path(located).expanduser().absolute()
+    try:
+        realpath = selected.resolve(strict=True)
+    except OSError:
+        return "", "", "", "trusted_verifier_executable_missing"
+    if not realpath.is_file():
+        return "", "", "", "trusted_verifier_executable_missing"
+    in_workspace = _is_within(selected, workspace) or _is_within(realpath, workspace)
+    ephemeral = any(
+        _is_within(selected, root) or _is_within(realpath, root) for root in _EPHEMERAL_EXECUTABLE_ROOTS
+    )
+    custom_workspace_executable = custom_script and explicit and len(query.argv) == 1
+    if ephemeral or (custom_workspace_executable and not in_workspace) or (not custom_workspace_executable and in_workspace):
+        return "", "", "", "untrusted_verifier_executable"
+    if (
+        explicit
+        and not custom_workspace_executable
+        and not any(_is_within(realpath, root) for root in _configured_trusted_executable_roots())
+    ):
+        return "", "", "", "untrusted_verifier_executable"
+    try:
+        executable_hash = hashlib.sha256(realpath.read_bytes()).hexdigest()
+    except OSError:
+        return "", "", "", "trusted_verifier_executable_unreadable"
+    return str(selected), str(realpath), executable_hash, ""
+
+
+def _node_script_name(argv: tuple[str, ...]) -> str:
+    executable = Path(argv[0].replace("\\", "/")).name.casefold()
+    if executable not in {"npm", "pnpm", "yarn", "bun"} or len(argv) < 2:
+        return ""
+    if argv[1] in {"test", "start", "build", "lint", "dev"}:
+        return argv[1]
+    if len(argv) >= 3 and argv[1] in {"run", "run-script"}:
+        return argv[2]
+    return ""
+
+
+def _node_script_content_evidence(query: EvaluateVerifierCommandPolicyQueryV1) -> tuple[str, str]:
+    """Bind package-script authority to current manifest bytes and reject no-op scripts."""
+
+    script_name = _node_script_name(query.argv)
+    if not script_name:
+        return "", ""
+    manifest_path = Path(query.workspace) / query.cwd / "package.json"
+    try:
+        raw = manifest_path.read_bytes()
+        manifest = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return "", "untrusted_package_script"
+    scripts = manifest.get("scripts") if isinstance(manifest, dict) else None
+    script = scripts.get(script_name) if isinstance(scripts, dict) else None
+    if not isinstance(script, str) or not script.strip():
+        return "", "untrusted_package_script"
+    normalized = " ".join(script.casefold().split())
+    no_op_prefixes = ("echo ", "true", "exit 0", ":", "printf ")
+    no_op_tokens = ("--collect-only", "--watch", "--watchall", "--fix")
+    if normalized in {"echo", "true", "exit 0", ":"} or normalized.startswith(no_op_prefixes) or any(
+        token in normalized for token in no_op_tokens
+    ):
+        return "", "non_proving_package_script"
+    try:
+        tokens = tuple(shlex.split(script, posix=True))
+    except ValueError:
+        return "", "non_proving_package_script"
+    if not _node_script_matches_proof_runner(query.modality, tokens):
+        return "", "non_proving_package_script"
+    return hashlib.sha256(raw).hexdigest(), ""
+
+
+def _node_script_matches_proof_runner(modality: str, tokens: tuple[str, ...]) -> bool:
+    """Allow one direct, proof-producing runner; reject shell/program wrappers."""
+
+    if not tokens or any(token in {";", "&&", "||", "|", "&"} for token in tokens):
+        return False
+    executable = Path(tokens[0].replace("\\", "/")).name.casefold()
+    arguments = tuple(item.casefold() for item in tokens[1:])
+    option_names = {item.split("=", 1)[0] for item in arguments if item.startswith("-")}
+    if option_names.intersection(
+        {"--collect-only", "--watch", "--watchall", "--fix", "--fix-dry-run", "--unsafe-fixes", "--no-run"}
+    ):
+        return False
+    allowed: dict[str, dict[str, frozenset[str]]] = {
+        "test": {
+            "pytest": frozenset(),
+            "py.test": frozenset(),
+            "vitest": frozenset({"run"}),
+            "jest": frozenset(),
+            "mocha": frozenset(),
+            "ava": frozenset(),
+            "tap": frozenset(),
+        },
+        "build": {
+            "tsc": frozenset(),
+            "vite": frozenset({"build"}),
+            "webpack": frozenset(),
+            "rollup": frozenset(),
+            "esbuild": frozenset(),
+        },
+        "lint": {
+            "eslint": frozenset(),
+            "biome": frozenset({"check", "lint"}),
+            "prettier": frozenset({"--check"}),
+        },
+        "entrypoint": {
+            "vite": frozenset({"preview"}),
+            "next": frozenset({"start"}),
+        },
+    }
+    runner = allowed.get(modality, {}).get(executable)
+    if runner is None:
+        return False
+    return not runner or (bool(arguments) and arguments[0] in runner)
+
+
 def _available_from_env(name: str) -> bool:
     return str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
@@ -80,6 +254,15 @@ def _normalize_script_path(value: Any) -> str:
     if raw.startswith("/") or raw.startswith("../") or "/../" in raw or raw == "..":
         raise ControlPlaneVerifierPolicyV1Error("custom script path must be workspace-relative")
     return raw.lstrip("./")
+
+
+def _normalize_optional_sha256(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    if len(raw) != 64 or any(character not in "0123456789abcdef" for character in raw):
+        raise ControlPlaneVerifierPolicyV1Error("custom script content_sha256 must be a SHA-256 hex digest")
+    return raw
 
 
 def _normalize_custom_scripts(value: Any) -> list[dict[str, Any]]:
@@ -98,6 +281,7 @@ def _normalize_custom_scripts(value: Any) -> list[dict[str, Any]]:
                 "modality": modality or "custom_script",
                 "enabled": _bool_value(raw_item.get("enabled"), True),
                 "required": _bool_value(raw_item.get("required"), False),
+                "content_sha256": _normalize_optional_sha256(raw_item.get("content_sha256") or raw_item.get("sha256")),
             }
         )
     return scripts
@@ -430,6 +614,168 @@ def compile_evidence_policy(command: CompileEvidencePolicyCommandV1) -> Evidence
     return EvidencePolicyResultV1(policy=policy)
 
 
+def _rejected_command_policy(
+    query: EvaluateVerifierCommandPolicyQueryV1,
+    *,
+    error_code: str,
+    detail: str,
+) -> VerifierCommandPolicyDecisionV1:
+    return VerifierCommandPolicyDecisionV1(
+        authorized=False,
+        error_code=error_code,
+        detail=detail,
+        profile_id="",
+        normalized_argv=query.argv,
+        normalized_cwd=query.cwd,
+        input_obligation_ids=query.input_obligation_ids,
+        executable_path="",
+        executable_realpath="",
+        executable_hash="",
+        policy_decision_hash="",
+    )
+
+
+def _custom_script_profile(
+    query: EvaluateVerifierCommandPolicyQueryV1,
+    policy: dict[str, Any],
+) -> tuple[str, str, str]:
+    """Return custom profile id, error code, and bound content hash."""
+
+    if not _available_from_env("KERNELONE_CUSTOM_VERIFIER_SCRIPTS_ENABLED"):
+        return "", "untrusted_verifier_command", ""
+    if "custom_script" not in _string_list(policy.get("enabled_modalities")):
+        return "", "untrusted_verifier_command", ""
+    argv = query.argv
+    executable = Path(argv[0].replace("\\", "/")).name.casefold()
+    if executable in {"python", "python3", "py", "node", "bash", "sh", "pwsh", "powershell"}:
+        candidate = argv[1] if len(argv) == 2 else ""
+    else:
+        candidate = argv[0] if len(argv) == 1 else ""
+    if not candidate:
+        return "", "untrusted_verifier_command", ""
+    try:
+        candidate_path = _normalize_script_path(candidate)
+    except ControlPlaneVerifierPolicyV1Error:
+        return "", "untrusted_verifier_command", ""
+    if query.cwd != ".":
+        candidate_path = _normalize_script_path(f"{query.cwd}/{candidate_path}")
+    scripts = policy.get("custom_scripts")
+    rows = scripts if isinstance(scripts, list) else []
+    for row in rows:
+        if not isinstance(row, dict) or not bool(row.get("enabled", True)):
+            continue
+        if str(row.get("modality") or "custom_script").strip().lower() not in {"custom_script", query.modality}:
+            continue
+        if str(row.get("path") or "") != candidate_path:
+            continue
+        expected_hash = _normalize_optional_sha256(row.get("content_sha256"))
+        if not expected_hash:
+            return "", "custom_verifier_unpinned", ""
+        absolute_path = (Path(query.workspace).expanduser().resolve() / candidate_path).resolve()
+        workspace = Path(query.workspace).expanduser().resolve()
+        if workspace not in absolute_path.parents or not absolute_path.is_file():
+            return "", "custom_verifier_missing", ""
+        actual_hash = hashlib.sha256(absolute_path.read_bytes()).hexdigest()
+        if actual_hash != expected_hash:
+            return "", "custom_verifier_content_drift", actual_hash
+        return f"custom_script:{row.get('id') or Path(candidate_path).stem!s}", "", actual_hash
+    return "", "untrusted_verifier_command", ""
+
+
+def evaluate_verifier_command_policy(
+    query: EvaluateVerifierCommandPolicyQueryV1,
+) -> VerifierCommandPolicyDecisionV1:
+    """Evaluate a command proposal without minting execution authority.
+
+    The decision binds the immutable completion identity and complete declared
+    verifier input closure. ExecutionBroker must re-evaluate this query while
+    atomically consuming its own one-use launch capability.
+    """
+
+    if type(query) is not EvaluateVerifierCommandPolicyQueryV1:
+        raise TypeError("query must be exact EvaluateVerifierCommandPolicyQueryV1")
+    profile_id, error_code = resolve_builtin_profile(query.modality, query.argv)
+    policy = read_verifier_policy(ReadVerifierPolicyQueryV1(workspace=query.workspace)).policy
+    custom_content_hash = ""
+    package_manifest_hash, package_script_error = _node_script_content_evidence(query)
+    if profile_id and package_script_error:
+        return _rejected_command_policy(
+            query,
+            error_code=package_script_error,
+            detail="package script is absent, mutable-only, watch-mode, or non-proving",
+        )
+    if not profile_id and error_code != "non_proving_verifier_command":
+        profile_id, custom_error, custom_content_hash = _custom_script_profile(query, policy)
+        if profile_id:
+            error_code = ""
+        elif custom_error != "untrusted_verifier_command":
+            error_code = custom_error
+    if not profile_id:
+        return _rejected_command_policy(
+            query,
+            error_code=error_code or "untrusted_verifier_command",
+            detail="verifier command does not match an enabled platform-owned proof profile",
+        )
+    executable_path, executable_realpath, executable_hash, executable_error = _resolve_executable_identity(
+        query,
+        custom_script=profile_id.startswith("custom_script:"),
+    )
+    if executable_error:
+        return _rejected_command_policy(
+            query,
+            error_code=executable_error,
+            detail="verifier executable is missing, ephemeral, target-controlled, or outside trusted roots",
+        )
+    decision_payload = {
+        "schema_version": "verifier_command_policy_decision.v1",
+        "source": POLICY_SOURCE,
+        "workspace": str(Path(query.workspace).expanduser().resolve()),
+        "project_id": query.project_id,
+        "run_id": query.run_id,
+        "task_id": query.task_id,
+        "completion_contract_hash": query.completion_contract_hash,
+        "verifier_obligation_id": query.verifier_obligation_id,
+        "command_authority_hash": query.command_authority_hash,
+        "modality": query.modality,
+        "argv": list(query.argv),
+        "cwd": query.cwd,
+        "input_obligation_ids": list(query.input_obligation_ids),
+        "profile_id": profile_id,
+        "executable_path": executable_path,
+        "executable_realpath": executable_realpath,
+        "executable_hash": executable_hash,
+        "custom_content_hash": custom_content_hash,
+        "package_manifest_hash": package_manifest_hash,
+        "persisted_policy_hash": _stable_hash(policy),
+    }
+    return VerifierCommandPolicyDecisionV1(
+        authorized=True,
+        error_code="",
+        detail="verifier command matches a platform-owned proof profile",
+        profile_id=profile_id,
+        normalized_argv=query.argv,
+        normalized_cwd=query.cwd,
+        input_obligation_ids=query.input_obligation_ids,
+        executable_path=executable_path,
+        executable_realpath=executable_realpath,
+        executable_hash=executable_hash,
+        policy_decision_hash=_stable_hash(decision_payload),
+    )
+
+
+def evaluate_verifier_proof(
+    *,
+    profile_id: str,
+    modality: str,
+    exit_code: int | None,
+    timed_out: bool,
+    output_bytes: bytes,
+) -> bool:
+    """Evaluate physical verifier output using platform-owned profile semantics."""
+
+    return evaluate_builtin_proof(profile_id, modality, exit_code, timed_out, output_bytes)
+
+
 def _write_config(workspace: Path, config: dict[str, Any]) -> None:
     fs = KernelFileSystem(str(workspace), get_default_adapter())
     fs.workspace_write_text_atomic(
@@ -477,6 +823,8 @@ __all__ = [
     "POLICY_RELATIVE_PATH",
     "POLICY_SOURCE",
     "compile_evidence_policy",
+    "evaluate_verifier_command_policy",
+    "evaluate_verifier_proof",
     "read_verifier_policy",
     "update_verifier_policy",
     "verifier_policy_to_gate_policy",

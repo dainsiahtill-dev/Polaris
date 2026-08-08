@@ -20,8 +20,30 @@ from polaris.kernelone.workflow.base import WorkflowSnapshot
 logger = logging.getLogger(__name__)
 
 _TERMINAL_TASK_STATES = {"completed", "failed", "cancelled", "blocked", "skipped"}
+_PROJECT_COMPLETION_CURSOR_AUTHORITY_TOKEN = object()
+_PROJECT_COMPLETION_EVENT_PREFIX = "project_completion."
 
 _SQL_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
+class WorkflowEventVersionConflictError(RuntimeError):
+    """Raised when a durable workflow event CAS observes a stale cursor."""
+
+    def __init__(
+        self,
+        *,
+        workflow_id: str,
+        expected_previous_seq: int,
+        actual_previous_seq: int,
+    ) -> None:
+        super().__init__(
+            "workflow event cursor version conflict: "
+            f"workflow_id={workflow_id!r} expected={expected_previous_seq} "
+            f"actual={actual_previous_seq}"
+        )
+        self.workflow_id = workflow_id
+        self.expected_previous_seq = expected_previous_seq
+        self.actual_previous_seq = actual_previous_seq
 
 
 def _validate_sql_identifier(name: str, identifier_type: str = "identifier") -> None:
@@ -307,7 +329,20 @@ class SqliteRuntimeStore:
         workflow_id: str,
         event_type: str,
         payload: dict[str, Any],
+        *,
+        expected_previous_seq: int | None = None,
+        _authority_token: object | None = None,
     ) -> WorkflowEvent:
+        if event_type.startswith(_PROJECT_COMPLETION_EVENT_PREFIX) and (
+            _authority_token is not _PROJECT_COMPLETION_CURSOR_AUTHORITY_TOKEN
+        ):
+            raise PermissionError("project_completion transitions require typed cursor authority")
+        if expected_previous_seq is not None and (
+            isinstance(expected_previous_seq, bool)
+            or not isinstance(expected_previous_seq, int)
+            or expected_previous_seq < 0
+        ):
+            raise ValueError("expected_previous_seq must be a non-negative int or None")
         write_lock = self._get_write_lock(workflow_id)
         async with write_lock:
             now = self._now()
@@ -339,6 +374,15 @@ class SqliteRuntimeStore:
                         )
                     else:
                         seq = int(row["next_seq"])
+                    actual_previous_seq = seq - 1
+                    if expected_previous_seq is not None and actual_previous_seq != expected_previous_seq:
+                        conn.rollback()
+                        raise WorkflowEventVersionConflictError(
+                            workflow_id=workflow_id,
+                            expected_previous_seq=expected_previous_seq,
+                            actual_previous_seq=actual_previous_seq,
+                        )
+                    if row is not None:
                         conn.execute(
                             "UPDATE workflow_event_sequence SET next_seq = ? WHERE workflow_id = ?",
                             (seq + 1, workflow_id),
@@ -457,7 +501,10 @@ class SqliteRuntimeStore:
         result: dict[str, Any] | None = None,
         close_time: str | None = None,
         metadata: dict[str, Any] | None = None,
+        clear_close_time: bool = False,
     ) -> None:
+        if clear_close_time and close_time is not None:
+            raise ValueError("close_time and clear_close_time are mutually exclusive")
         write_lock = self._get_write_lock(workflow_id)
         async with write_lock:
             now = self._now()
@@ -489,6 +536,15 @@ class SqliteRuntimeStore:
                         WHERE workflow_id = ?
                         """,
                         (close_time, now, workflow_id),
+                    )
+                elif clear_close_time:
+                    conn.execute(
+                        """
+                        UPDATE workflow_execution
+                        SET close_time = NULL, updated_at = ?
+                        WHERE workflow_id = ?
+                        """,
+                        (now, workflow_id),
                     )
                 if metadata is not None:
                     conn.execute(

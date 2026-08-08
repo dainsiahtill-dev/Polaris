@@ -92,15 +92,6 @@ _SIGNATURE_HINTS: tuple[tuple[str, str], ...] = (
     ("delivery_depth", "M09_four_pillars_gates"),
 )
 
-_MODEL_CEILING_HINTS: tuple[str, ...] = (
-    "tools_executed=0",
-    "tools_executed_0",
-    "no_tool_calls",
-    "model_ceiling",
-    "provider_stream_timeout",
-    "reasoning_truncat",
-)
-
 
 @dataclass(frozen=True, slots=True)
 class ResidualAttributionV1:
@@ -114,7 +105,6 @@ class ResidualAttributionV1:
     ladder_matched_hints: tuple[str, ...]
     forbidden_same_round: tuple[str, ...]
     gate_commands: tuple[str, ...]
-    is_model_ceiling: bool
     delivery_status: str
     preconditions: dict[str, bool | str | int]
     status: str
@@ -165,10 +155,6 @@ def _match_module_from_text(blob: str) -> tuple[str | None, tuple[str, ...]]:
     return module_id, matched
 
 
-def _looks_like_model_ceiling(blob: str) -> bool:
-    return any(hint in blob for hint in _MODEL_CEILING_HINTS)
-
-
 def _gate_commands_for(module_id: str) -> tuple[str, ...]:
     return (
         f"python src/backend/scripts/platform_modules/run_module_gates.py --module {module_id}",
@@ -211,7 +197,6 @@ def attribute_residual(
             *reasons,
         ]
     )
-    is_ceiling = _looks_like_model_ceiling(blob)
     module_id, matched = _match_module_from_text(blob)
 
     # r181: real_run green + control-plane boundary/runtime language → M06 wins
@@ -254,11 +239,7 @@ def attribute_residual(
     )
 
     subtype = _stable_token(error_code or root_cause_signature or (matched[0] if matched else "unknown"))
-    next_action = (
-        "model_ceiling: bind stronger model / forced tool surface; do not expand M10 rules"
-        if is_ceiling
-        else (f"run module gate for {module_id}, then cascade, then one isolated L1-01 only if cascade green")
-    )
+    next_action = f"run module gate for {module_id}; workflow owner decides later scheduling"
     preconditions: dict[str, bool | str | int] = {
         "effect_ladder_applied": True,
         "single_module_required": True,
@@ -276,7 +257,6 @@ def attribute_residual(
         ladder_matched_hints=matched,
         forbidden_same_round=_forbidden_peers(module_id),
         gate_commands=_gate_commands_for(module_id),
-        is_model_ceiling=is_ceiling,
         delivery_status=delivery_status,
         preconditions=preconditions,
         status="attributed",

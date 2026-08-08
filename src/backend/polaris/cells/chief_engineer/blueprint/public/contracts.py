@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+import secrets
+import shlex
 import unicodedata
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
 _PROVENANCE_MAX_IDENTITY_BYTES = 256
@@ -14,6 +19,53 @@ _PROVENANCE_MAX_TARGET_FILES = 512
 _PROVENANCE_BLUEPRINT_SCHEMA = "chief_engineer.blueprint.v1"
 _PROVENANCE_SNAPSHOT_SCHEMA = "chief_engineer.blueprint_provenance.v1"
 _PROVENANCE_HASH_SCHEME = "chief_engineer.blueprint_hash.v1"
+_PROJECT_COMPLETION_CONTRACT_SCHEMA_V1: Literal["polaris.project_completion_contract.v1"] = (
+    "polaris.project_completion_contract.v1"
+)
+_PROJECT_COMPLETION_CONTRACT_ID_PREFIX = "project-completion-"
+_PROJECT_COMPLETION_MAX_TOKEN_BYTES = 128
+_PROJECT_COMPLETION_MAX_COMMAND_BYTES = 4096
+_PROJECT_COMPLETION_MAX_TASK_IDS = 256
+_PROJECT_COMPLETION_MAX_ARTIFACTS = 512
+_PROJECT_COMPLETION_MAX_ENTRYPOINTS = 32
+_PROJECT_COMPLETION_MAX_VERIFICATIONS = 64
+_PROJECT_COMPLETION_MAX_VERIFIER_REFS = _PROJECT_COMPLETION_MAX_ARTIFACTS + _PROJECT_COMPLETION_MAX_ENTRYPOINTS
+
+
+def project_completion_verifier_policy_snapshot_hash(snapshot: Mapping[str, Any]) -> str:
+    """Bind the exact Factory-compiled verifier-policy snapshot without reimplementing its owner hash."""
+
+    if not isinstance(snapshot, Mapping) or not snapshot:
+        raise ValueError("verifier_policy_snapshot must be a non-empty mapping")
+    try:
+        encoded = json.dumps(
+            {"domain": "polaris.ce.verifier_policy_snapshot.v1", "snapshot": dict(snapshot)},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("verifier_policy_snapshot must be canonical JSON") from exc
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def project_completion_catalog_snapshot_hash(snapshot: Mapping[str, Any]) -> str:
+    """Hash the exact platform catalog snapshot consumed by CE authority derivation."""
+
+    if not isinstance(snapshot, Mapping):
+        raise TypeError("catalog_snapshot must be a mapping")
+    try:
+        encoded = json.dumps(
+            {"domain": "polaris.ce.project_catalog_snapshot.v1", "snapshot": dict(snapshot)},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("catalog_snapshot must be canonical JSON") from exc
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _require_non_empty(name: str, value: str) -> str:
@@ -27,6 +79,162 @@ def _require_exact_non_empty(name: str, value: str) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise ValueError(f"{name} must be an exact non-empty string")
     return value
+
+
+def _require_completion_token(name: str, value: object) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError(f"{name} must be an exact non-empty string")
+    if any(unicodedata.category(character).startswith("C") for character in value):
+        raise ValueError(f"{name} must not contain control characters")
+    if len(value.encode("utf-8")) > _PROJECT_COMPLETION_MAX_TOKEN_BYTES:
+        raise ValueError(f"{name} exceeds {_PROJECT_COMPLETION_MAX_TOKEN_BYTES} UTF-8 bytes")
+    return value
+
+
+def _optional_completion_command(name: str, value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError(f"{name} must be an exact non-empty string")
+    if len(value.splitlines()) != 1:
+        raise ValueError(f"{name} must be single-line")
+    if any(unicodedata.category(character).startswith("C") for character in value):
+        raise ValueError(f"{name} must not contain control characters")
+    if len(value.encode("utf-8")) > _PROJECT_COMPLETION_MAX_COMMAND_BYTES:
+        raise ValueError(f"{name} exceeds {_PROJECT_COMPLETION_MAX_COMMAND_BYTES} UTF-8 bytes")
+    return value
+
+
+def _require_verifier_argv(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)) or not value:
+        raise ValueError("verification command argv must be a non-empty list or tuple")
+    argv = tuple(_require_completion_token(f"argv[{index}]", item) for index, item in enumerate(value))
+    if len(argv) > 128:
+        raise ValueError("verification command argv must contain at most 128 items")
+    return argv
+
+
+def _require_verifier_cwd(value: object) -> str:
+    if value == ".":
+        return "."
+    return _require_provenance_path("cwd", value)
+
+
+def _verification_command_authority_hash(*, task_id: str, modality: str, argv: tuple[str, ...], cwd: str) -> str:
+    encoded = json.dumps(
+        {
+            "domain": "polaris.project_completion_verification_command_authority.v1",
+            "task_id": task_id,
+            "modality": modality,
+            "argv": list(argv),
+            "cwd": cwd,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _project_kind_authority_hash(
+    *,
+    project_kind: str,
+    source_ref: str,
+    source_hash: str,
+    justification: str,
+) -> str:
+    encoded = json.dumps(
+        {
+            "domain": "polaris.project_completion_project_kind_authority.v1",
+            "project_kind": project_kind,
+            "source_ref": source_ref,
+            "source_hash": source_hash,
+            "justification": justification,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+_NON_PROOF_EXECUTABLES = frozenset(
+    {
+        ":",
+        "echo",
+        "false",
+        "noop",
+        "no-op",
+        "printf",
+        "true",
+        "pwd",
+        "which",
+        "where",
+        "whereis",
+    }
+)
+_INTROSPECTION_ARGUMENTS = frozenset({"--help", "-h", "help", "--version", "-V", "version"})
+_INTROSPECTION_TOOL_EXECUTABLES = frozenset(
+    {
+        "bun",
+        "cargo",
+        "cmake",
+        "deno",
+        "dotnet",
+        "go",
+        "java",
+        "javac",
+        "mvn",
+        "node",
+        "npm",
+        "npx",
+        "php",
+        "pip",
+        "pip3",
+        "pnpm",
+        "pytest",
+        "python",
+        "python3",
+        "ruby",
+        "ruff",
+        "rustc",
+        "tsc",
+        "yarn",
+    }
+)
+_SHORT_VERSION_EXECUTABLES = frozenset(
+    {"bun", "deno", "go", "java", "node", "npm", "php", "python", "python3", "ruby", "rustc"}
+)
+_INLINE_INTERPRETER_FLAGS = frozenset({"-c", "-e", "--eval"})
+_NOOP_INLINE_PROGRAMS = frozenset(
+    {
+        "0",
+        "pass",
+        "print('ok')",
+        'print("ok")',
+        "exit(0)",
+        "sys.exit(0)",
+        "console.log('ok')",
+        'console.log("ok")',
+    }
+)
+
+
+def _require_verification_command_proof(argv: tuple[str, ...]) -> None:
+    """Reject commands that can succeed without proving any delivery work."""
+
+    executable = PurePosixPath(argv[0].replace("\\", "/")).name.casefold()
+    if executable in _NON_PROOF_EXECUTABLES:
+        raise ValueError("verification command must provide proof-of-work, not a no-op")
+    introspection_requested = any(argument in _INTROSPECTION_ARGUMENTS for argument in argv[1:])
+    if introspection_requested and (len(argv) == 2 or executable in _INTROSPECTION_TOOL_EXECUTABLES):
+        raise ValueError("verification command must provide proof-of-work, not help/version introspection")
+    if len(argv) == 2 and argv[1] == "-v" and executable in _SHORT_VERSION_EXECUTABLES:
+        raise ValueError("verification command must provide proof-of-work, not version introspection")
+    if len(argv) >= 3 and argv[1] in _INLINE_INTERPRETER_FLAGS:
+        inline_program = " ".join(argv[2:]).strip().casefold().rstrip(";")
+        if inline_program in _NOOP_INLINE_PROGRAMS:
+            raise ValueError("verification command must provide proof-of-work, not an inline no-op")
 
 
 def _require_provenance_text(name: str, value: object, *, max_utf8_bytes: int) -> str:
@@ -362,13 +570,204 @@ class ChiefEngineerPortfolioTaskV1:
         }
 
 
+_PORTFOLIO_AUTHORITY_CARRIER_SEAL = object()
+_PORTFOLIO_AUTHORITY_SIGNING_KEY = secrets.token_bytes(32)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class _ChiefEngineerPortfolioAuthorityCarrierV1:
+    """Opaque, one-run authority issued only by the Factory owner path.
+
+    This type is intentionally absent from the public Cell exports.  Its
+    constructor requires a module-private identity seal, so public callers
+    cannot replace committed PM/catalog/verifier evidence with self-consistent
+    hashes.  The CE owner still revalidates mutable catalog state immediately
+    before persistence.
+    """
+
+    workspace: str
+    run_id: str
+    project_id: str
+    pm_stage_event_id: str
+    pm_contract_hash: str
+    tasks: tuple[ChiefEngineerPortfolioTaskV1, ...]
+    catalog_snapshot: Mapping[str, Any]
+    catalog_snapshot_hash: str
+    catalog_version: str
+    catalog_receipt_hash: str
+    verifier_policy_hash: str
+    verifier_policy_snapshot: Mapping[str, Any]
+    verifier_policy_snapshot_hash: str
+    verifier_policy_receipt_hash: str
+    verification_command_authority: tuple[VerificationCommandAuthorityV1, ...]
+    authority_signature: str
+
+    def __init__(
+        self,
+        *,
+        _seal: object,
+        workspace: str,
+        run_id: str,
+        project_id: str,
+        pm_stage_event_id: str,
+        pm_contract_hash: str,
+        tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
+        catalog_snapshot: Mapping[str, Any],
+        catalog_snapshot_hash: str,
+        verifier_policy_hash: str,
+        verifier_policy_snapshot: Mapping[str, Any],
+        verifier_policy_snapshot_hash: str,
+        verification_command_authority: tuple[VerificationCommandAuthorityV1, ...],
+    ) -> None:
+        if _seal is not _PORTFOLIO_AUTHORITY_CARRIER_SEAL:
+            raise TypeError("Chief Engineer portfolio authority carrier is owner-issued only")
+        normalized_workspace = _require_non_empty("workspace", workspace)
+        normalized_run_id = _require_completion_token("run_id", run_id)
+        normalized_project_id = _require_completion_token("project_id", project_id)
+        normalized_pm_event = _require_completion_token("pm_stage_event_id", pm_stage_event_id)
+        normalized_pm_hash = _require_provenance_sha256("pm_contract_hash", pm_contract_hash)
+        normalized_catalog = deepcopy(dict(catalog_snapshot))
+        normalized_catalog_hash = _require_provenance_sha256("catalog_snapshot_hash", catalog_snapshot_hash)
+        if project_completion_catalog_snapshot_hash(normalized_catalog) != normalized_catalog_hash:
+            raise ValueError("catalog_snapshot_hash does not bind catalog_snapshot")
+        normalized_policy = deepcopy(dict(verifier_policy_snapshot))
+        normalized_policy_hash = _require_provenance_sha256("verifier_policy_hash", verifier_policy_hash)
+        normalized_policy_snapshot_hash = _require_provenance_sha256(
+            "verifier_policy_snapshot_hash", verifier_policy_snapshot_hash
+        )
+        if project_completion_verifier_policy_snapshot_hash(normalized_policy) != normalized_policy_snapshot_hash:
+            raise ValueError("verifier_policy_snapshot_hash does not bind verifier_policy_snapshot")
+        if normalized_policy.get("policy_hash") != normalized_policy_hash:
+            raise ValueError("verifier_policy_snapshot policy_hash does not match verifier_policy_hash")
+        if normalized_policy.get("schema_version") != "evidence_policy.v1" or (
+            normalized_policy.get("source") != "control_plane.verifier_policy.evidence_policy_compiler"
+        ):
+            raise ValueError("verifier_policy_snapshot is not an evidence policy compiler snapshot")
+        required_modalities = normalized_policy.get("required_evidence_modalities")
+        if not isinstance(required_modalities, list) or "command" not in required_modalities:
+            raise ValueError("verifier_policy_snapshot must require command evidence")
+        normalized_tasks = tuple(tasks)
+        if not normalized_tasks or any(type(task) is not ChiefEngineerPortfolioTaskV1 for task in normalized_tasks):
+            raise TypeError("authority carrier tasks must be exact ChiefEngineerPortfolioTaskV1 values")
+        normalized_commands = tuple(verification_command_authority)
+        if not normalized_commands or any(type(item) is not VerificationCommandAuthorityV1 for item in normalized_commands):
+            raise TypeError("authority carrier commands must be exact VerificationCommandAuthorityV1 values")
+        task_ids = {task.task_id for task in normalized_tasks}
+        if any(item.task_id not in task_ids for item in normalized_commands):
+            raise ValueError("verification command authority task_id is outside carrier tasks")
+        catalog_receipt_hash = _portfolio_authority_receipt_hash(
+            domain="catalog",
+            workspace=normalized_workspace,
+            run_id=normalized_run_id,
+            project_id=normalized_project_id,
+            pm_stage_event_id=normalized_pm_event,
+            pm_contract_hash=normalized_pm_hash,
+            evidence_hash=normalized_catalog_hash,
+        )
+        verifier_policy_receipt_hash = _portfolio_authority_receipt_hash(
+            domain="verifier_policy",
+            workspace=normalized_workspace,
+            run_id=normalized_run_id,
+            project_id=normalized_project_id,
+            pm_stage_event_id=normalized_pm_event,
+            pm_contract_hash=normalized_pm_hash,
+            evidence_hash=normalized_policy_snapshot_hash,
+        )
+        for name, value in (
+            ("workspace", normalized_workspace),
+            ("run_id", normalized_run_id),
+            ("project_id", normalized_project_id),
+            ("pm_stage_event_id", normalized_pm_event),
+            ("pm_contract_hash", normalized_pm_hash),
+            ("tasks", normalized_tasks),
+            ("catalog_snapshot", normalized_catalog),
+            ("catalog_snapshot_hash", normalized_catalog_hash),
+            ("catalog_version", f"sha256:{normalized_catalog_hash}"),
+            ("catalog_receipt_hash", catalog_receipt_hash),
+            ("verifier_policy_hash", normalized_policy_hash),
+            ("verifier_policy_snapshot", normalized_policy),
+            ("verifier_policy_snapshot_hash", normalized_policy_snapshot_hash),
+            ("verifier_policy_receipt_hash", verifier_policy_receipt_hash),
+            ("verification_command_authority", normalized_commands),
+        ):
+            object.__setattr__(self, name, value)
+        object.__setattr__(self, "authority_signature", _portfolio_authority_carrier_signature(self))
+
+
+def _portfolio_authority_receipt_hash(
+    *,
+    domain: str,
+    workspace: str,
+    run_id: str,
+    project_id: str,
+    pm_stage_event_id: str,
+    pm_contract_hash: str,
+    evidence_hash: str,
+) -> str:
+    seed = {
+        "schema_version": "polaris.ce_portfolio_authority_receipt.v1",
+        "domain": domain,
+        "workspace": str(Path(workspace).resolve()),
+        "run_id": run_id,
+        "project_id": project_id,
+        "pm_stage_event_id": pm_stage_event_id,
+        "pm_contract_hash": pm_contract_hash,
+        "evidence_hash": evidence_hash,
+    }
+    return hashlib.sha256(
+        json.dumps(seed, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _issue_chief_engineer_portfolio_authority_carrier(
+    **kwargs: Any,
+) -> _ChiefEngineerPortfolioAuthorityCarrierV1:
+    """Private Factory-owner bridge; deliberately not exported by the Cell."""
+
+    return _ChiefEngineerPortfolioAuthorityCarrierV1(_seal=_PORTFOLIO_AUTHORITY_CARRIER_SEAL, **kwargs)
+
+
+def _portfolio_authority_carrier_signature(carrier: _ChiefEngineerPortfolioAuthorityCarrierV1) -> str:
+    seed = {
+        "schema_version": "polaris.ce_portfolio_authority_carrier.v1",
+        "workspace": str(Path(carrier.workspace).resolve()),
+        "run_id": carrier.run_id,
+        "project_id": carrier.project_id,
+        "pm_stage_event_id": carrier.pm_stage_event_id,
+        "pm_contract_hash": carrier.pm_contract_hash,
+        "tasks": [task.to_dict() for task in carrier.tasks],
+        "catalog_snapshot_hash": carrier.catalog_snapshot_hash,
+        "catalog_version": carrier.catalog_version,
+        "catalog_receipt_hash": carrier.catalog_receipt_hash,
+        "verifier_policy_hash": carrier.verifier_policy_hash,
+        "verifier_policy_snapshot_hash": carrier.verifier_policy_snapshot_hash,
+        "verifier_policy_receipt_hash": carrier.verifier_policy_receipt_hash,
+        "verification_command_authority_hashes": sorted(
+            item.authority_hash for item in carrier.verification_command_authority
+        ),
+    }
+    encoded = json.dumps(seed, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hmac.new(_PORTFOLIO_AUTHORITY_SIGNING_KEY, encoded, hashlib.sha256).hexdigest()
+
+
+def _verify_chief_engineer_portfolio_authority_carrier(
+    carrier: _ChiefEngineerPortfolioAuthorityCarrierV1,
+) -> bool:
+    """Verify opaque owner signature without exposing signing material."""
+
+    if type(carrier) is not _ChiefEngineerPortfolioAuthorityCarrierV1:
+        return False
+    return hmac.compare_digest(carrier.authority_signature, _portfolio_authority_carrier_signature(carrier))
+
+
 @dataclass(frozen=True)
 class BuildChiefEngineerBlueprintPortfolioCommandV1:
-    """Build one advisory CE portfolio for a set of authoritative PM tasks."""
+    """Build one CE portfolio using an opaque Factory-issued authority carrier."""
 
     workspace: str
     run_id: str
     tasks: tuple[ChiefEngineerPortfolioTaskV1, ...]
+    authority_carrier: object | None = field(default=None, repr=False)
     llm_blueprint: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -380,17 +779,46 @@ class BuildChiefEngineerBlueprintPortfolioCommandV1:
         tasks: list[ChiefEngineerPortfolioTaskV1] = []
         seen_task_ids: set[str] = set()
         for index, task in enumerate(self.tasks):
-            if not isinstance(task, ChiefEngineerPortfolioTaskV1):
-                raise TypeError(f"tasks[{index}] must be ChiefEngineerPortfolioTaskV1")
+            if type(task) is not ChiefEngineerPortfolioTaskV1:
+                raise TypeError(f"tasks[{index}] must be exact ChiefEngineerPortfolioTaskV1")
             if task.task_id in seen_task_ids:
                 raise ValueError(f"duplicate task_id in portfolio command: {task.task_id}")
             seen_task_ids.add(task.task_id)
             tasks.append(task)
 
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
-        object.__setattr__(self, "run_id", _require_non_empty("run_id", self.run_id))
+        object.__setattr__(self, "run_id", _require_completion_token("run_id", self.run_id))
+        llm_blueprint = _to_dict_copy(self.llm_blueprint)
+        if llm_blueprint:
+            if type(self.authority_carrier) is not _ChiefEngineerPortfolioAuthorityCarrierV1:
+                raise TypeError("advisory portfolio requires exact Factory-issued authority_carrier")
+            carrier = self.authority_carrier
+            if carrier.workspace != self.workspace or carrier.run_id != self.run_id or carrier.tasks != tuple(tasks):
+                raise ValueError("authority_carrier identity does not match portfolio command")
+        elif self.authority_carrier is not None:
+            raise ValueError("offline diagnostic portfolio must not carry execution authority")
         object.__setattr__(self, "tasks", tuple(tasks))
-        object.__setattr__(self, "llm_blueprint", _to_dict_copy(self.llm_blueprint))
+        object.__setattr__(self, "llm_blueprint", llm_blueprint)
+
+
+@dataclass(frozen=True, slots=True)
+class QueryProjectCompletionContractV1:
+    """Read one persisted CE-owned completion contract by exact authority identity."""
+
+    workspace: str
+    project_id: str
+    run_id: str
+    contract_hash: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "project_id", _require_completion_token("project_id", self.project_id))
+        object.__setattr__(self, "run_id", _require_completion_token("run_id", self.run_id))
+        object.__setattr__(
+            self,
+            "contract_hash",
+            _require_provenance_sha256("contract_hash", self.contract_hash),
+        )
 
 
 @dataclass(frozen=True)
@@ -518,6 +946,9 @@ class ChiefEngineerBlueprintPortfolioV1:
     project_interface_contract: ChiefEngineerProjectInterfaceContractV1
     project_interface_contract_ref: str
     project_interface_contract_hash: str
+    project_completion_contract: ProjectCompletionContractV1 | None
+    project_completion_contract_ref: str | None
+    project_completion_contract_hash: str | None
     risk_flags: tuple[str, ...]
     llm_blueprint_consumed: bool
     usage_mode: Literal["advisory_overlay", "offline_diagnostic_only"]
@@ -566,6 +997,30 @@ class ChiefEngineerBlueprintPortfolioV1:
         if interface_hash != self.project_interface_contract.contract_hash:
             raise ValueError("project_interface_contract_hash must match the shared contract")
 
+        if not isinstance(self.llm_blueprint_consumed, bool):
+            raise TypeError("llm_blueprint_consumed must be a bool")
+        expected_usage_mode = "advisory_overlay" if self.llm_blueprint_consumed else "offline_diagnostic_only"
+        if self.usage_mode != expected_usage_mode:
+            raise ValueError(f"usage_mode must be {expected_usage_mode!r}")
+
+        completion_contract = self.project_completion_contract
+        completion_ref = self.project_completion_contract_ref
+        completion_hash = self.project_completion_contract_hash
+        if self.llm_blueprint_consumed:
+            if type(completion_contract) is not ProjectCompletionContractV1:
+                raise TypeError("advisory portfolio requires exact ProjectCompletionContractV1")
+            expected_completion_ref = f"{portfolio_path}#project_completion_contract"
+            if completion_ref != expected_completion_ref:
+                raise ValueError("project_completion_contract_ref must target the portfolio contract fragment")
+            if completion_hash != completion_contract.contract_hash:
+                raise ValueError("project_completion_contract_hash must match the project completion contract")
+            if completion_contract.run_id != self.run_id:
+                raise ValueError("project completion contract run_id must match portfolio run_id")
+            if completion_contract.covered_task_ids != tuple(sorted(task_ids)):
+                raise ValueError("project completion contract must cover the exact portfolio task set")
+        elif completion_contract is not None or completion_ref is not None or completion_hash is not None:
+            raise ValueError("offline diagnostic portfolio cannot bind a project completion contract")
+
         task_overlays: dict[str, dict[str, Any]] = {}
         scope_advisory: dict[str, dict[str, Any]] = {}
         required_overlay_keys = {
@@ -579,6 +1034,8 @@ class ChiefEngineerBlueprintPortfolioV1:
             "portfolio_path",
             "project_interface_contract_hash",
             "project_interface_contract_ref",
+            "project_completion_contract_hash",
+            "project_completion_contract_ref",
             "reference",
             "risk_flags",
             "scope_for_apply",
@@ -603,6 +1060,10 @@ class ChiefEngineerBlueprintPortfolioV1:
                 raise ValueError(f"task_overlays[{task_id!r}] interface ref binding mismatch")
             if overlay.get("project_interface_contract_hash") != interface_hash:
                 raise ValueError(f"task_overlays[{task_id!r}] interface hash binding mismatch")
+            if overlay.get("project_completion_contract_ref") != completion_ref:
+                raise ValueError(f"task_overlays[{task_id!r}] completion ref binding mismatch")
+            if overlay.get("project_completion_contract_hash") != completion_hash:
+                raise ValueError(f"task_overlays[{task_id!r}] completion hash binding mismatch")
             if overlay.get("authority") != "advisory_only":
                 raise ValueError(f"task_overlays[{task_id!r}] authority must be advisory_only")
             if overlay.get("llm_blueprint_consumed") is not self.llm_blueprint_consumed:
@@ -625,6 +1086,8 @@ class ChiefEngineerBlueprintPortfolioV1:
                 "portfolio_hash": portfolio_hash,
                 "project_interface_contract_ref": interface_ref,
                 "project_interface_contract_hash": interface_hash,
+                "project_completion_contract_ref": completion_ref,
+                "project_completion_contract_hash": completion_hash,
             }
             if dict(reference) != expected_reference:
                 raise ValueError(f"task_overlays[{task_id!r}].reference binding mismatch")
@@ -648,6 +1111,8 @@ class ChiefEngineerBlueprintPortfolioV1:
                 "portfolio_hash": portfolio_hash,
                 "project_interface_contract_ref": interface_ref,
                 "project_interface_contract_hash": interface_hash,
+                "project_completion_contract_ref": completion_ref,
+                "project_completion_contract_hash": completion_hash,
                 "reference": expected_reference,
                 "llm_blueprint_consumed": self.llm_blueprint_consumed,
                 "usage_mode": self.usage_mode,
@@ -661,11 +1126,6 @@ class ChiefEngineerBlueprintPortfolioV1:
                 raise TypeError(f"scope_advisory[{task_id!r}] must be a mapping")
             scope_advisory[task_id] = _json_safe_mapping(advisory)
 
-        if not isinstance(self.llm_blueprint_consumed, bool):
-            raise TypeError("llm_blueprint_consumed must be a bool")
-        expected_usage_mode = "advisory_overlay" if self.llm_blueprint_consumed else "offline_diagnostic_only"
-        if self.usage_mode != expected_usage_mode:
-            raise ValueError(f"usage_mode must be {expected_usage_mode!r}")
         if self.authority != "advisory_only":
             raise ValueError("authority must be 'advisory_only'")
         if self.immutable is not True:
@@ -685,9 +1145,11 @@ class ChiefEngineerBlueprintPortfolioV1:
         object.__setattr__(self, "scope_advisory", scope_advisory)
         object.__setattr__(self, "project_interface_contract_ref", interface_ref)
         object.__setattr__(self, "project_interface_contract_hash", interface_hash)
+        object.__setattr__(self, "project_completion_contract_ref", completion_ref)
+        object.__setattr__(self, "project_completion_contract_hash", completion_hash)
         object.__setattr__(self, "risk_flags", _strict_unique_string_tuple("risk_flags", self.risk_flags))
 
-    def to_reference(self) -> dict[str, str]:
+    def to_reference(self) -> dict[str, Any]:
         """Return the durable identity needed by downstream projections."""
 
         return {
@@ -697,10 +1159,12 @@ class ChiefEngineerBlueprintPortfolioV1:
             "portfolio_hash": self.portfolio_hash,
             "project_interface_contract_ref": self.project_interface_contract_ref,
             "project_interface_contract_hash": self.project_interface_contract_hash,
+            "project_completion_contract_ref": self.project_completion_contract_ref,
+            "project_completion_contract_hash": self.project_completion_contract_hash,
         }
 
     @property
-    def reference(self) -> dict[str, str]:
+    def reference(self) -> dict[str, Any]:
         """Return a fresh immutable-portfolio reference mapping."""
 
         return self.to_reference()
@@ -714,6 +1178,11 @@ class ChiefEngineerBlueprintPortfolioV1:
             "project_interface_contract_ref": self.project_interface_contract_ref,
             "project_interface_contract_hash": self.project_interface_contract_hash,
             "project_interface_contract": self.project_interface_contract.to_dict(),
+            "project_completion_contract_ref": self.project_completion_contract_ref,
+            "project_completion_contract_hash": self.project_completion_contract_hash,
+            "project_completion_contract": (
+                self.project_completion_contract.to_dict() if self.project_completion_contract is not None else None
+            ),
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -733,6 +1202,11 @@ class ChiefEngineerBlueprintPortfolioV1:
             "project_interface_contract": self.project_interface_contract.to_dict(),
             "project_interface_contract_ref": self.project_interface_contract_ref,
             "project_interface_contract_hash": self.project_interface_contract_hash,
+            "project_completion_contract": (
+                self.project_completion_contract.to_dict() if self.project_completion_contract is not None else None
+            ),
+            "project_completion_contract_ref": self.project_completion_contract_ref,
+            "project_completion_contract_hash": self.project_completion_contract_hash,
             "risk_flags": list(self.risk_flags),
             "llm_blueprint_consumed": self.llm_blueprint_consumed,
             "usage_mode": self.usage_mode,
@@ -2102,11 +2576,938 @@ class CeHandoffDecisionV1:
         }
 
 
+ArtifactSemanticRoleV1 = Literal[
+    "source",
+    "manifest",
+    "test",
+    "entrypoint",
+    "config",
+    "docs",
+    "assets",
+]
+ObligationApplicabilityV1 = Literal["required", "optional", "not_applicable"]
+EntrypointKindV1 = Literal["cli", "web", "api", "library"]
+VerificationModalityV1 = Literal["environment_prep", "build", "test", "lint", "entrypoint"]
+ProjectKindV1 = Literal["application", "library"]
+
+_ARTIFACT_SEMANTIC_ROLES = frozenset({"source", "manifest", "test", "entrypoint", "config", "docs", "assets"})
+_OBLIGATION_APPLICABILITIES = frozenset({"required", "optional", "not_applicable"})
+_ENTRYPOINT_KINDS = frozenset({"cli", "web", "api", "library"})
+_VERIFICATION_MODALITIES = frozenset({"environment_prep", "build", "test", "lint", "entrypoint"})
+_PROJECT_KINDS = frozenset({"application", "library"})
+
+
+def _require_literal(name: str, value: str, allowed: frozenset[str]) -> str:
+    token = _require_exact_non_empty(name, value)
+    if token not in allowed:
+        raise ValueError(f"{name} must be one of {sorted(allowed)}")
+    return token
+
+
+def _canonicalize_completion_id_tuple(
+    name: str,
+    values: object,
+    *,
+    require_items: bool = False,
+    max_items: int | None = None,
+) -> tuple[str, ...]:
+    if not isinstance(values, (list, tuple)):
+        raise TypeError(f"{name} must be a list or tuple of strings")
+    if max_items is not None and len(values) > max_items:
+        raise ValueError(f"{name} must contain at most {max_items} items")
+    normalized = tuple(_require_completion_token(f"{name}[{index}]", value) for index, value in enumerate(values))
+    result = tuple(sorted(set(normalized)))
+    if require_items and not result:
+        raise ValueError(f"{name} must contain at least one item")
+    return result
+
+
+def _canonical_project_completion_contract_seed(
+    *,
+    schema_version: str,
+    project_id: str,
+    run_id: str,
+    project_kind: str,
+    project_kind_authority: ProjectKindAuthorityV1,
+    pm_contract_hash: str,
+    covered_task_ids: tuple[str, ...],
+    obligations: Mapping[str, Any],
+    completion_predicate_version: str,
+    verifier_policy_hash: str,
+    verifier_policy_snapshot_hash: str,
+    verification_command_authority: tuple[VerificationCommandAuthorityV1, ...],
+) -> dict[str, Any]:
+    return {
+        "schema_version": schema_version,
+        "project_id": project_id,
+        "run_id": run_id,
+        "project_kind": project_kind,
+        "project_kind_authority": project_kind_authority.to_dict(),
+        "pm_contract_hash": pm_contract_hash,
+        "covered_task_ids": list(covered_task_ids),
+        "obligations": dict(obligations),
+        "completion_predicate_version": completion_predicate_version,
+        "verifier_policy_hash": verifier_policy_hash,
+        "verifier_policy_snapshot_hash": verifier_policy_snapshot_hash,
+        "verification_command_authority": [item.to_dict() for item in verification_command_authority],
+    }
+
+
+def _project_completion_contract_hash(seed: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        dict(seed),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _project_completion_contract_id(contract_hash: str) -> str:
+    return f"{_PROJECT_COMPLETION_CONTRACT_ID_PREFIX}{contract_hash[:24]}"
+
+
+@dataclass(frozen=True)
+class ArtifactObligationV1:
+    """One required, optional, or explicitly inapplicable project artifact."""
+
+    obligation_id: str
+    path: str
+    semantic_role: ArtifactSemanticRoleV1
+    applicability: ObligationApplicabilityV1
+    owner_task_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "obligation_id",
+            _require_completion_token("obligation_id", self.obligation_id),
+        )
+        object.__setattr__(self, "path", _require_provenance_path("path", self.path))
+        object.__setattr__(
+            self,
+            "semantic_role",
+            _require_literal("semantic_role", self.semantic_role, _ARTIFACT_SEMANTIC_ROLES),
+        )
+        object.__setattr__(
+            self,
+            "applicability",
+            _require_literal("applicability", self.applicability, _OBLIGATION_APPLICABILITIES),
+        )
+        owner_task_id = (
+            _require_completion_token("owner_task_id", self.owner_task_id) if self.owner_task_id is not None else None
+        )
+        object.__setattr__(self, "owner_task_id", owner_task_id)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "obligation_id": self.obligation_id,
+            "path": self.path,
+            "semantic_role": self.semantic_role,
+            "applicability": self.applicability,
+            "owner_task_id": self.owner_task_id,
+        }
+
+
+@dataclass(frozen=True)
+class EntrypointObligationV1:
+    """One language-neutral executable or explicitly N/A entrypoint."""
+
+    obligation_id: str
+    kind: EntrypointKindV1
+    applicability: ObligationApplicabilityV1
+    owner_task_id: str | None = None
+    source_path: str | None = None
+    runtime_path: str | None = None
+    command: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "obligation_id",
+            _require_completion_token("obligation_id", self.obligation_id),
+        )
+        object.__setattr__(self, "kind", _require_literal("kind", self.kind, _ENTRYPOINT_KINDS))
+        applicability = _require_literal(
+            "applicability",
+            self.applicability,
+            _OBLIGATION_APPLICABILITIES,
+        )
+        object.__setattr__(self, "applicability", applicability)
+        owner_task_id = (
+            _require_completion_token("owner_task_id", self.owner_task_id) if self.owner_task_id is not None else None
+        )
+        source_path = (
+            _require_provenance_path("source_path", self.source_path) if self.source_path is not None else None
+        )
+        runtime_path = (
+            _require_provenance_path("runtime_path", self.runtime_path) if self.runtime_path is not None else None
+        )
+        command = _optional_completion_command("command", self.command)
+        if applicability == "not_applicable":
+            if source_path is not None or runtime_path is not None or command is not None:
+                raise ValueError("not_applicable entrypoint must not declare a locator")
+        elif source_path is None and runtime_path is None:
+            raise ValueError("active entrypoint must declare source_path or runtime_path")
+        object.__setattr__(self, "source_path", source_path)
+        object.__setattr__(self, "runtime_path", runtime_path)
+        object.__setattr__(self, "command", command)
+        object.__setattr__(self, "owner_task_id", owner_task_id)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "obligation_id": self.obligation_id,
+            "kind": self.kind,
+            "applicability": self.applicability,
+            "owner_task_id": self.owner_task_id,
+            "source_path": self.source_path,
+            "runtime_path": self.runtime_path,
+            "command": self.command,
+        }
+
+
+@dataclass(frozen=True)
+class ProjectKindAuthorityV1:
+    """Factory-owned application/library classification and its immutable source."""
+
+    project_kind: ProjectKindV1
+    source_ref: str
+    source_hash: str
+    justification: str
+    authority_hash: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        project_kind = _require_literal("project_kind", self.project_kind, _PROJECT_KINDS)
+        source_ref = _require_provenance_text(
+            "source_ref",
+            self.source_ref,
+            max_utf8_bytes=_PROVENANCE_MAX_PATH_BYTES,
+        )
+        source_hash = _require_provenance_sha256("source_hash", self.source_hash)
+        justification = _require_provenance_text(
+            "justification",
+            self.justification,
+            max_utf8_bytes=512,
+        )
+        object.__setattr__(self, "project_kind", project_kind)
+        object.__setattr__(self, "source_ref", source_ref)
+        object.__setattr__(self, "source_hash", source_hash)
+        object.__setattr__(self, "justification", justification)
+        object.__setattr__(
+            self,
+            "authority_hash",
+            _project_kind_authority_hash(
+                project_kind=project_kind,
+                source_ref=source_ref,
+                source_hash=source_hash,
+                justification=justification,
+            ),
+        )
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "project_kind": self.project_kind,
+            "source_ref": self.source_ref,
+            "source_hash": self.source_hash,
+            "justification": self.justification,
+            "authority_hash": self.authority_hash,
+        }
+
+
+@dataclass(frozen=True)
+class VerificationCommandAuthorityV1:
+    """One exact PM-owned verifier command and its declared semantic modality."""
+
+    task_id: str
+    modality: VerificationModalityV1
+    argv: tuple[str, ...]
+    cwd: str = "."
+    command: str = field(init=False)
+    authority_hash: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "task_id", _require_completion_token("task_id", self.task_id))
+        object.__setattr__(
+            self,
+            "modality",
+            _require_literal("modality", self.modality, _VERIFICATION_MODALITIES),
+        )
+        argv = _require_verifier_argv(self.argv)
+        _require_verification_command_proof(argv)
+        cwd = _require_verifier_cwd(self.cwd)
+        command = _optional_completion_command("command", shlex.join(argv))
+        if command is None:  # pragma: no cover - argv is non-empty by construction.
+            raise ValueError("verification command must be non-empty")
+        object.__setattr__(self, "argv", argv)
+        object.__setattr__(self, "cwd", cwd)
+        object.__setattr__(self, "command", command)
+        object.__setattr__(
+            self,
+            "authority_hash",
+            _verification_command_authority_hash(
+                task_id=self.task_id,
+                modality=self.modality,
+                argv=argv,
+                cwd=cwd,
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "modality": self.modality,
+            "argv": list(self.argv),
+            "cwd": self.cwd,
+            "command": self.command,
+            "authority_hash": self.authority_hash,
+        }
+
+
+@dataclass(frozen=True)
+class VerificationObligationV1:
+    """One command-backed verifier or explicit N/A verifier modality."""
+
+    obligation_id: str
+    modality: VerificationModalityV1
+    command: str | None
+    applicability: ObligationApplicabilityV1
+    covers_obligation_ids: tuple[str, ...] = field(default_factory=tuple)
+    owner_task_id: str | None = None
+    command_authority_hash: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "obligation_id",
+            _require_completion_token("obligation_id", self.obligation_id),
+        )
+        object.__setattr__(
+            self,
+            "modality",
+            _require_literal("modality", self.modality, _VERIFICATION_MODALITIES),
+        )
+        applicability = _require_literal(
+            "applicability",
+            self.applicability,
+            _OBLIGATION_APPLICABILITIES,
+        )
+        object.__setattr__(self, "applicability", applicability)
+        owner_task_id = (
+            _require_completion_token("owner_task_id", self.owner_task_id) if self.owner_task_id is not None else None
+        )
+        command = _optional_completion_command("command", self.command)
+        covers_obligation_ids = _canonicalize_completion_id_tuple(
+            "covers_obligation_ids",
+            self.covers_obligation_ids,
+            max_items=_PROJECT_COMPLETION_MAX_VERIFIER_REFS,
+        )
+        if applicability == "not_applicable":
+            if command is not None:
+                raise ValueError("not_applicable verification must not declare a command")
+            if covers_obligation_ids:
+                raise ValueError("not_applicable verification must not cover obligations")
+            if self.command_authority_hash is not None:
+                raise ValueError("not_applicable verification must not declare command authority")
+        elif command is None:
+            raise ValueError("active verification obligation requires a command")
+        command_authority_hash = (
+            _require_provenance_sha256("command_authority_hash", self.command_authority_hash)
+            if self.command_authority_hash is not None
+            else None
+        )
+        # Standalone obligation values may be assembled before the PM authority table is
+        # available. ProjectCompletionContractV1 is the authoritative boundary and rejects
+        # every active verifier whose exact command_authority_hash is absent or mismatched.
+        object.__setattr__(self, "command", command)
+        object.__setattr__(self, "covers_obligation_ids", covers_obligation_ids)
+        object.__setattr__(self, "owner_task_id", owner_task_id)
+        object.__setattr__(self, "command_authority_hash", command_authority_hash)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "obligation_id": self.obligation_id,
+            "modality": self.modality,
+            "command": self.command,
+            "applicability": self.applicability,
+            "covers_obligation_ids": list(self.covers_obligation_ids),
+            "owner_task_id": self.owner_task_id,
+            "command_authority_hash": self.command_authority_hash,
+        }
+
+
+@dataclass(frozen=True)
+class ProjectCompletionObligationsV1:
+    """Canonical obligation set; it contains no execution or lifecycle status."""
+
+    artifacts: tuple[ArtifactObligationV1, ...]
+    entrypoints: tuple[EntrypointObligationV1, ...]
+    verification: tuple[VerificationObligationV1, ...]
+
+    def __post_init__(self) -> None:
+        collection_caps = (
+            ("artifacts", self.artifacts, _PROJECT_COMPLETION_MAX_ARTIFACTS),
+            ("entrypoints", self.entrypoints, _PROJECT_COMPLETION_MAX_ENTRYPOINTS),
+            ("verification", self.verification, _PROJECT_COMPLETION_MAX_VERIFICATIONS),
+        )
+        for name, collection_values, max_items in collection_caps:
+            if not isinstance(collection_values, (list, tuple)):
+                raise TypeError(f"{name} must be a list or tuple")
+            if len(collection_values) > max_items:
+                raise ValueError(f"{name} must contain at most {max_items} obligations")
+
+        groups: tuple[tuple[str, object, type[Any]], ...] = (
+            ("artifacts", self.artifacts, ArtifactObligationV1),
+            ("entrypoints", self.entrypoints, EntrypointObligationV1),
+            ("verification", self.verification, VerificationObligationV1),
+        )
+        for name, group_values, expected_type in groups:
+            if not isinstance(group_values, (list, tuple)):
+                raise TypeError(f"{name} must be a list or tuple")
+            if any(type(value) is not expected_type for value in group_values):
+                raise TypeError(f"{name} contains a non-exact obligation type")
+
+        artifacts = tuple(sorted(self.artifacts, key=lambda value: value.obligation_id))
+        entrypoints = tuple(sorted(self.entrypoints, key=lambda value: value.obligation_id))
+        verification = tuple(sorted(self.verification, key=lambda value: value.obligation_id))
+        all_ids = (
+            [item.obligation_id for item in artifacts]
+            + [item.obligation_id for item in entrypoints]
+            + [item.obligation_id for item in verification]
+        )
+        if len(all_ids) != len(set(all_ids)):
+            raise ValueError("duplicate obligation_id across project completion obligations")
+
+        artifact_paths = [item.path for item in artifacts]
+        if len(artifact_paths) != len(set(artifact_paths)):
+            raise ValueError("duplicate artifact path across project completion obligations")
+
+        object.__setattr__(self, "artifacts", artifacts)
+        object.__setattr__(self, "entrypoints", entrypoints)
+        object.__setattr__(self, "verification", verification)
+
+    def to_dict(self) -> dict[str, list[dict[str, Any]]]:
+        return {
+            "artifacts": [item.to_dict() for item in self.artifacts],
+            "entrypoints": [item.to_dict() for item in self.entrypoints],
+            "verification": [item.to_dict() for item in self.verification],
+        }
+
+
+@dataclass(frozen=True)
+class ProjectCompletionContractV1:
+    """Immutable CE-owned obligations required for project completion.
+
+    This contract deliberately contains no progress, pass/fail, or lifecycle
+    fields.  Runtime owners bind evidence to its content hash; they do not
+    rewrite the obligations while work is in flight.
+    """
+
+    project_id: str
+    run_id: str
+    project_kind: ProjectKindV1
+    project_kind_authority: ProjectKindAuthorityV1
+    pm_contract_hash: str
+    covered_task_ids: tuple[str, ...]
+    obligations: ProjectCompletionObligationsV1
+    completion_predicate_version: str
+    verifier_policy_hash: str
+    verifier_policy_snapshot_hash: str
+    verification_command_authority: tuple[VerificationCommandAuthorityV1, ...]
+    schema_version: Literal["polaris.project_completion_contract.v1"] = _PROJECT_COMPLETION_CONTRACT_SCHEMA_V1
+    contract_id: str = field(init=False)
+    contract_hash: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if self.schema_version != _PROJECT_COMPLETION_CONTRACT_SCHEMA_V1:
+            raise ValueError(f"schema_version must equal {_PROJECT_COMPLETION_CONTRACT_SCHEMA_V1!r}")
+        object.__setattr__(
+            self,
+            "project_id",
+            _require_completion_token("project_id", self.project_id),
+        )
+        object.__setattr__(self, "run_id", _require_completion_token("run_id", self.run_id))
+        project_kind = _require_literal("project_kind", self.project_kind, _PROJECT_KINDS)
+        object.__setattr__(self, "project_kind", project_kind)
+        if type(self.project_kind_authority) is not ProjectKindAuthorityV1:
+            raise TypeError("project_kind_authority must be exact ProjectKindAuthorityV1")
+        if self.project_kind_authority.project_kind != project_kind:
+            raise ValueError("project_kind must match Factory-owned project_kind_authority")
+        object.__setattr__(
+            self,
+            "pm_contract_hash",
+            _require_provenance_sha256("pm_contract_hash", self.pm_contract_hash),
+        )
+        object.__setattr__(
+            self,
+            "covered_task_ids",
+            _canonicalize_completion_id_tuple(
+                "covered_task_ids",
+                self.covered_task_ids,
+                require_items=True,
+                max_items=_PROJECT_COMPLETION_MAX_TASK_IDS,
+            ),
+        )
+        if type(self.obligations) is not ProjectCompletionObligationsV1:
+            raise TypeError("obligations must be exact ProjectCompletionObligationsV1")
+        object.__setattr__(
+            self,
+            "completion_predicate_version",
+            _require_completion_token(
+                "completion_predicate_version",
+                self.completion_predicate_version,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "verifier_policy_hash",
+            _require_provenance_sha256("verifier_policy_hash", self.verifier_policy_hash),
+        )
+        object.__setattr__(
+            self,
+            "verifier_policy_snapshot_hash",
+            _require_provenance_sha256(
+                "verifier_policy_snapshot_hash",
+                self.verifier_policy_snapshot_hash,
+            ),
+        )
+        if not isinstance(self.verification_command_authority, (list, tuple)):
+            raise TypeError("verification_command_authority must be a list or tuple")
+        command_authority: list[VerificationCommandAuthorityV1] = []
+        command_authority_hashes: set[str] = set()
+        for index, item in enumerate(self.verification_command_authority):
+            if type(item) is not VerificationCommandAuthorityV1:
+                raise TypeError(f"verification_command_authority[{index}] must be exact VerificationCommandAuthorityV1")
+            if item.authority_hash in command_authority_hashes:
+                continue
+            command_authority_hashes.add(item.authority_hash)
+            command_authority.append(item)
+        command_authority.sort(key=lambda item: item.authority_hash)
+        if not command_authority:
+            raise ValueError("project completion contract requires verification command authority")
+        object.__setattr__(self, "verification_command_authority", tuple(command_authority))
+
+        required_artifacts = tuple(item for item in self.obligations.artifacts if item.applicability == "required")
+        if not required_artifacts:
+            raise ValueError("project completion contract requires at least one required artifact")
+
+        required_delivery_verifiers = tuple(
+            item
+            for item in self.obligations.verification
+            if item.applicability == "required" and item.modality in {"build", "test", "lint"}
+        )
+        if not required_delivery_verifiers:
+            raise ValueError("project completion contract requires a real required build/test/lint verifier")
+
+        test_artifact_declarations = tuple(item for item in self.obligations.artifacts if item.semantic_role == "test")
+        if not test_artifact_declarations:
+            raise ValueError("project completion contract requires a test artifact declaration")
+        required_test_artifacts = tuple(item for item in test_artifact_declarations if item.applicability == "required")
+        explicit_na_test_artifacts = tuple(
+            item for item in test_artifact_declarations if item.applicability == "not_applicable"
+        )
+        test_verifier_declarations = tuple(item for item in self.obligations.verification if item.modality == "test")
+        if not test_verifier_declarations:
+            raise ValueError("project completion contract requires a test verifier declaration")
+        required_tests = tuple(item for item in test_verifier_declarations if item.applicability == "required")
+        explicit_na_tests = tuple(item for item in test_verifier_declarations if item.applicability == "not_applicable")
+        if bool(required_test_artifacts) != bool(required_tests):
+            raise ValueError("required test artifact and required test verifier must be declared together")
+        if bool(explicit_na_test_artifacts) != bool(explicit_na_tests):
+            raise ValueError("not_applicable test artifact and test verifier must be declared together")
+        if required_test_artifacts and (explicit_na_test_artifacts or explicit_na_tests):
+            raise ValueError("test obligations cannot be both required and not_applicable")
+        if not required_test_artifacts and not explicit_na_test_artifacts:
+            raise ValueError("test artifact and verifier must be required together or explicitly not_applicable")
+
+        environment_declarations = tuple(
+            item for item in self.obligations.verification if item.modality == "environment_prep"
+        )
+        if not environment_declarations:
+            raise ValueError("project completion contract requires an environment_prep declaration")
+
+        if project_kind == "application":
+            if not required_test_artifacts or not required_tests:
+                raise ValueError("application project requires a required test artifact and required test verifier")
+            if explicit_na_test_artifacts or explicit_na_tests:
+                raise ValueError("application test obligations cannot be not_applicable")
+            required_environment_preparation = tuple(
+                item
+                for item in self.obligations.verification
+                if item.modality == "environment_prep" and item.applicability == "required"
+            )
+            if not required_environment_preparation:
+                raise ValueError("application project requires a command-backed required environment_prep verifier")
+            if any(item.applicability == "not_applicable" for item in environment_declarations):
+                raise ValueError("application environment_prep cannot be both required and not_applicable")
+            required_entrypoints = tuple(
+                item
+                for item in self.obligations.entrypoints
+                if item.applicability == "required" and item.kind != "library"
+            )
+            if not required_entrypoints:
+                raise ValueError("application project requires a required entrypoint")
+            invalid_executable_entrypoints = tuple(
+                item
+                for item in required_entrypoints
+                if item.command is None or (item.source_path is None and item.runtime_path is None)
+            )
+            if invalid_executable_entrypoints:
+                raise ValueError(
+                    "every required application entrypoint must be an executable probe "
+                    "with command and source_path or runtime_path; invalid obligation_ids="
+                    f"{[item.obligation_id for item in invalid_executable_entrypoints]}"
+                )
+        else:
+            library_requires_environment_preparation = any(
+                item.applicability == "required" for item in environment_declarations
+            )
+            library_environment_preparation_na = any(
+                item.applicability == "not_applicable" for item in environment_declarations
+            )
+            if not library_requires_environment_preparation and not library_environment_preparation_na:
+                raise ValueError("library environment_prep must be required or explicitly not_applicable")
+            if library_requires_environment_preparation and library_environment_preparation_na:
+                raise ValueError("library environment_prep cannot be both required and not_applicable")
+            explicit_na_entrypoint = any(
+                item.kind == "library" and item.applicability == "not_applicable"
+                for item in self.obligations.entrypoints
+            )
+            if not explicit_na_entrypoint:
+                raise ValueError("library project requires an explicit not_applicable entrypoint")
+
+            active_entrypoints = tuple(
+                item for item in self.obligations.entrypoints if item.applicability != "not_applicable"
+            )
+            if active_entrypoints:
+                raise ValueError("library project explicit N/A contract forbids active entrypoint obligations")
+
+        artifact_ids = {item.obligation_id for item in self.obligations.artifacts}
+        artifact_paths = {item.path for item in self.obligations.artifacts}
+        entrypoint_ids = {item.obligation_id for item in self.obligations.entrypoints}
+        known_obligation_ids = artifact_ids | entrypoint_ids
+        covered_task_ids = set(self.covered_task_ids)
+        unknown_command_authority_tasks = {
+            item.task_id for item in self.verification_command_authority if item.task_id not in covered_task_ids
+        }
+        if unknown_command_authority_tasks:
+            raise ValueError(
+                "verification command authority task_id is outside covered_task_ids; "
+                f"task_ids={sorted(unknown_command_authority_tasks)}"
+            )
+        all_obligations: tuple[
+            ArtifactObligationV1 | EntrypointObligationV1 | VerificationObligationV1,
+            ...,
+        ] = (
+            *self.obligations.artifacts,
+            *self.obligations.entrypoints,
+            *self.obligations.verification,
+        )
+        for obligation in all_obligations:
+            if obligation.applicability == "not_applicable":
+                if obligation.owner_task_id is not None:
+                    raise ValueError(
+                        f"not_applicable obligation {obligation.obligation_id!r} must not declare owner_task_id"
+                    )
+                continue
+            if obligation.owner_task_id is None:
+                raise ValueError(f"active obligation {obligation.obligation_id!r} requires owner_task_id")
+            if obligation.owner_task_id not in covered_task_ids:
+                raise ValueError(f"obligation {obligation.obligation_id!r} owner_task_id is outside covered_task_ids")
+        required_test_artifact_ids = {
+            item.obligation_id
+            for item in self.obligations.artifacts
+            if item.semantic_role == "test" and item.applicability == "required"
+        }
+
+        for entrypoint in self.obligations.entrypoints:
+            if entrypoint.applicability != "not_applicable" and (
+                entrypoint.source_path is None and entrypoint.runtime_path is None
+            ):
+                raise ValueError(f"active entrypoint {entrypoint.obligation_id!r} requires source_path or runtime_path")
+            # Source entrypoints must bind declared delivery artifacts.
+            # Runtime locators may name compiler-generated output (for example
+            # ``src/main.ts`` -> ``dist/main.js``), so they derive from the
+            # declared source artifact and exact PM-authorized command instead
+            # of pretending generated output is a PM source target. A
+            # runtime-only entrypoint still requires a declared artifact.
+            if entrypoint.source_path is not None and entrypoint.source_path not in artifact_paths:
+                raise ValueError(
+                    f"entrypoint {entrypoint.obligation_id!r} references undeclared artifact path "
+                    f"{entrypoint.source_path!r}"
+                )
+            if (
+                entrypoint.source_path is None
+                and entrypoint.runtime_path is not None
+                and entrypoint.runtime_path not in artifact_paths
+            ):
+                raise ValueError(
+                    f"entrypoint {entrypoint.obligation_id!r} references undeclared artifact path "
+                    f"{entrypoint.runtime_path!r}"
+                )
+
+        active_entrypoints = tuple(
+            item for item in self.obligations.entrypoints if item.applicability != "not_applicable"
+        )
+        entrypoint_verifiers = tuple(
+            item
+            for item in self.obligations.verification
+            if item.applicability != "not_applicable" and item.modality == "entrypoint"
+        )
+        for entrypoint in active_entrypoints:
+            if not any(
+                entrypoint.obligation_id in verifier.covers_obligation_ids
+                and entrypoint.owner_task_id == verifier.owner_task_id
+                and entrypoint.command == verifier.command
+                for verifier in entrypoint_verifiers
+            ):
+                raise ValueError(
+                    f"active entrypoint {entrypoint.obligation_id!r} requires an exact PM-authorized "
+                    "entrypoint verifier with the same owner and command"
+                )
+
+        authority_by_hash = {item.authority_hash: item for item in self.verification_command_authority}
+        for verifier in self.obligations.verification:
+            covered_ids = set(verifier.covers_obligation_ids)
+            unknown_ids = covered_ids - known_obligation_ids
+            if unknown_ids:
+                raise ValueError(
+                    f"verifier {verifier.obligation_id!r} references unknown obligation ids {sorted(unknown_ids)}"
+                )
+            if verifier.applicability == "not_applicable":
+                continue
+            authority = authority_by_hash.get(str(verifier.command_authority_hash))
+            if authority is None:
+                raise ValueError(f"verifier {verifier.obligation_id!r} command_authority_hash is not PM-authorized")
+            if (
+                authority.task_id != verifier.owner_task_id
+                or authority.modality != verifier.modality
+                or authority.command != verifier.command
+            ):
+                raise ValueError(
+                    f"verifier {verifier.obligation_id!r} does not match its exact PM argv/cwd/modality owner authority"
+                )
+            if verifier.modality == "entrypoint":
+                if not covered_ids or not covered_ids.issubset(entrypoint_ids):
+                    raise ValueError(
+                        f"entrypoint verifier {verifier.obligation_id!r} must cover entrypoint obligation ids only"
+                    )
+                continue
+            if verifier.applicability == "required" and not covered_ids.intersection(artifact_ids):
+                raise ValueError(
+                    f"required non-entrypoint verifier {verifier.obligation_id!r} must cover owned artifact obligations"
+                )
+            if (
+                verifier.modality == "test"
+                and verifier.applicability == "required"
+                and not covered_ids.intersection(required_test_artifact_ids)
+            ):
+                raise ValueError(
+                    f"required test verifier {verifier.obligation_id!r} must cover at least one required test artifact"
+                )
+
+        contract_hash = _project_completion_contract_hash(self.to_seed_dict())
+        object.__setattr__(self, "contract_hash", contract_hash)
+        object.__setattr__(self, "contract_id", _project_completion_contract_id(contract_hash))
+
+    def to_seed_dict(self) -> dict[str, Any]:
+        """Return the canonical hash seed, excluding derived id and hash."""
+
+        return _canonical_project_completion_contract_seed(
+            schema_version=self.schema_version,
+            project_id=self.project_id,
+            run_id=self.run_id,
+            project_kind=self.project_kind,
+            project_kind_authority=self.project_kind_authority,
+            pm_contract_hash=self.pm_contract_hash,
+            covered_task_ids=self.covered_task_ids,
+            obligations=self.obligations.to_dict(),
+            completion_predicate_version=self.completion_predicate_version,
+            verifier_policy_hash=self.verifier_policy_hash,
+            verifier_policy_snapshot_hash=self.verifier_policy_snapshot_hash,
+            verification_command_authority=self.verification_command_authority,
+        )
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> ProjectCompletionContractV1:
+        """Strictly reconstruct and verify one persisted completion contract."""
+
+        if not isinstance(payload, Mapping):
+            raise TypeError("project completion contract must be a mapping")
+        expected_fields = {
+            "schema_version",
+            "project_id",
+            "run_id",
+            "project_kind",
+            "project_kind_authority",
+            "pm_contract_hash",
+            "covered_task_ids",
+            "obligations",
+            "completion_predicate_version",
+            "verifier_policy_hash",
+            "verifier_policy_snapshot_hash",
+            "verification_command_authority",
+            "contract_id",
+            "contract_hash",
+        }
+        if set(payload) != expected_fields:
+            raise ValueError("project completion contract fields must match the canonical schema exactly")
+
+        project_kind_authority_payload = payload.get("project_kind_authority")
+        if not isinstance(project_kind_authority_payload, Mapping) or set(project_kind_authority_payload) != {
+            "project_kind",
+            "source_ref",
+            "source_hash",
+            "justification",
+            "authority_hash",
+        }:
+            raise ValueError("project_kind_authority fields must match the canonical schema exactly")
+        project_kind_authority = ProjectKindAuthorityV1(
+            project_kind=project_kind_authority_payload["project_kind"],
+            source_ref=project_kind_authority_payload["source_ref"],
+            source_hash=project_kind_authority_payload["source_hash"],
+            justification=project_kind_authority_payload["justification"],
+        )
+        if project_kind_authority_payload["authority_hash"] != project_kind_authority.authority_hash:
+            raise ValueError("project_kind_authority derived identity is invalid")
+
+        obligations_payload = payload.get("obligations")
+        if not isinstance(obligations_payload, Mapping) or set(obligations_payload) != {
+            "artifacts",
+            "entrypoints",
+            "verification",
+        }:
+            raise ValueError("project completion obligations fields must match the canonical schema exactly")
+
+        def exact_rows(name: str, fields: set[str]) -> list[Mapping[str, Any]]:
+            value = obligations_payload.get(name)
+            if not isinstance(value, list):
+                raise TypeError(f"obligations.{name} must be a list")
+            rows: list[Mapping[str, Any]] = []
+            for index, item in enumerate(value):
+                if not isinstance(item, Mapping) or set(item) != fields:
+                    raise ValueError(f"obligations.{name}[{index}] fields are invalid")
+                rows.append(item)
+            return rows
+
+        artifacts = tuple(
+            ArtifactObligationV1(
+                obligation_id=item["obligation_id"],
+                path=item["path"],
+                semantic_role=item["semantic_role"],
+                applicability=item["applicability"],
+                owner_task_id=item["owner_task_id"],
+            )
+            for item in exact_rows(
+                "artifacts",
+                {"obligation_id", "path", "semantic_role", "applicability", "owner_task_id"},
+            )
+        )
+        entrypoints = tuple(
+            EntrypointObligationV1(
+                obligation_id=item["obligation_id"],
+                kind=item["kind"],
+                applicability=item["applicability"],
+                owner_task_id=item["owner_task_id"],
+                source_path=item["source_path"],
+                runtime_path=item["runtime_path"],
+                command=item["command"],
+            )
+            for item in exact_rows(
+                "entrypoints",
+                {
+                    "obligation_id",
+                    "kind",
+                    "applicability",
+                    "owner_task_id",
+                    "source_path",
+                    "runtime_path",
+                    "command",
+                },
+            )
+        )
+        verification = tuple(
+            VerificationObligationV1(
+                obligation_id=item["obligation_id"],
+                modality=item["modality"],
+                command=item["command"],
+                applicability=item["applicability"],
+                covers_obligation_ids=item["covers_obligation_ids"],
+                owner_task_id=item["owner_task_id"],
+                command_authority_hash=item["command_authority_hash"],
+            )
+            for item in exact_rows(
+                "verification",
+                {
+                    "obligation_id",
+                    "modality",
+                    "command",
+                    "applicability",
+                    "covers_obligation_ids",
+                    "owner_task_id",
+                    "command_authority_hash",
+                },
+            )
+        )
+        command_authority_payload = payload.get("verification_command_authority")
+        if not isinstance(command_authority_payload, list):
+            raise TypeError("verification_command_authority must be a list")
+        verification_command_authority_rows: list[VerificationCommandAuthorityV1] = []
+        for index, item in enumerate(command_authority_payload):
+            if not isinstance(item, Mapping) or set(item) != {
+                "task_id",
+                "modality",
+                "argv",
+                "cwd",
+                "command",
+                "authority_hash",
+            }:
+                raise ValueError(f"verification_command_authority[{index}] fields are invalid")
+            authority = VerificationCommandAuthorityV1(
+                task_id=item["task_id"],
+                modality=item["modality"],
+                argv=item["argv"],
+                cwd=item["cwd"],
+            )
+            if item["command"] != authority.command or item["authority_hash"] != authority.authority_hash:
+                raise ValueError(f"verification_command_authority[{index}] derived identity is invalid")
+            verification_command_authority_rows.append(authority)
+        verification_command_authority = tuple(verification_command_authority_rows)
+        contract = cls(
+            schema_version=payload["schema_version"],
+            project_id=payload["project_id"],
+            run_id=payload["run_id"],
+            project_kind=payload["project_kind"],
+            project_kind_authority=project_kind_authority,
+            pm_contract_hash=payload["pm_contract_hash"],
+            covered_task_ids=payload["covered_task_ids"],
+            obligations=ProjectCompletionObligationsV1(
+                artifacts=artifacts,
+                entrypoints=entrypoints,
+                verification=verification,
+            ),
+            completion_predicate_version=payload["completion_predicate_version"],
+            verifier_policy_hash=payload["verifier_policy_hash"],
+            verifier_policy_snapshot_hash=payload["verifier_policy_snapshot_hash"],
+            verification_command_authority=verification_command_authority,
+        )
+        if payload["contract_id"] != contract.contract_id or payload["contract_hash"] != contract.contract_hash:
+            raise ValueError("project completion contract derived identity is invalid")
+        return contract
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = self.to_seed_dict()
+        payload["contract_id"] = self.contract_id
+        payload["contract_hash"] = self.contract_hash
+        return payload
+
+
 __all__ = [
     "ADREventV1",
     "ADRRecordV1",
     "ADRStatus",
     "ArchitectureDecisionV1",
+    "ArtifactObligationV1",
+    "ArtifactSemanticRoleV1",
     "BuildChiefEngineerBlueprintPortfolioCommandV1",
     "CeHandoffDecisionBindingsV1",
     "CeHandoffDecisionV1",
@@ -2115,6 +3516,8 @@ __all__ = [
     "ChiefEngineerBlueprintPortfolioV1",
     "ChiefEngineerPortfolioTaskV1",
     "ChiefEngineerProjectInterfaceContractV1",
+    "EntrypointKindV1",
+    "EntrypointObligationV1",
     "GenerateTaskBlueprintCommandV1",
     "GetBlueprintStatusQueryV1",
     "GovernanceSummaryV1",
@@ -2125,11 +3528,17 @@ __all__ = [
     "ListRisksQueryV1",
     "ListTechDebtQueryV1",
     "ListTechRadarQueryV1",
+    "ObligationApplicabilityV1",
     "PostMortemEventV1",
     "PostMortemRecordV1",
     "PostMortemStatus",
+    "ProjectCompletionContractV1",
+    "ProjectCompletionObligationsV1",
+    "ProjectKindAuthorityV1",
+    "ProjectKindV1",
     "QualityGateResultV1",
     "QueryBlueprintProvenanceV1",
+    "QueryProjectCompletionContractV1",
     "RegisterADRCommandV1",
     "RegisterPostMortemCommandV1",
     "RegisterRiskCommandV1",
@@ -2159,4 +3568,8 @@ __all__ = [
     "UpdateRiskStatusCommandV1",
     "UpdateTechDebtStatusCommandV1",
     "UpdateTechRadarRingCommandV1",
+    "VerificationCommandAuthorityV1",
+    "VerificationModalityV1",
+    "VerificationObligationV1",
+    "project_completion_verifier_policy_snapshot_hash",
 ]

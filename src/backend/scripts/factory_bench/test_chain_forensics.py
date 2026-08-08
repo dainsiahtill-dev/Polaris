@@ -112,12 +112,12 @@ def test_f16_wall_categorizes_correctly(tmp_path: Path) -> None:
     assert attrs["circuit_breaker"] == "platform_fixable"
 
 
-def test_empty_output_classified_as_model_ceiling(tmp_path: Path) -> None:
+def test_empty_output_classified_as_non_authoritative_model_output_candidate(tmp_path: Path) -> None:
     log = _build_log(tmp_path, scenario="empty_dir")
     report = chain_forensics.summarize(str(log))
     sigs = {e[0]: e[2] for e in report["top_errors"]}
-    assert sigs.get("reasoning-truncation re-ask") == "model_ceiling"
-    assert sigs.get("output_length=0 output_preview=''") == "model_ceiling"
+    assert sigs.get("reasoning-truncation re-ask") == "model_output_candidate"
+    assert sigs.get("output_length=0 output_preview=''") == "model_output_candidate"
     assert sigs.get(r"\[PreWriteGuard\] Blocked write") == "working_as_intended"
     assert sigs.get("single_batch_contract_violation") == "platform_fixable"
 

@@ -1912,7 +1912,8 @@ def _is_rust_missing_binary_quality_error(
 
 
 def _task_write_scope_touches_rust(task: Mapping[str, Any] | None, *, workspace_name: str = "") -> bool:
-    for candidate in _task_write_scope_candidates(task, workspace_name=workspace_name):
+    normalized_task = dict(task) if isinstance(task, Mapping) else {}
+    for candidate in _task_write_scope_candidates(normalized_task, workspace_name=workspace_name):
         normalized = str(candidate or "").strip().replace("\\", "/").lower()
         if not normalized:
             continue
@@ -3001,13 +3002,28 @@ def _context_float_value(value: Any, key: str, *, depth: int = 0) -> float | Non
 
 
 def _quality_repair_deadline_decision(context: dict[str, Any], requested_timeout_seconds: float) -> dict[str, Any]:
-    deadline_epoch = _context_float_value(context, "factory_run_deadline_epoch_seconds")
-    if deadline_epoch is None:
+    # Factory publishes both the whole-run deadline and the tighter deadline for
+    # the current Director dispatch wave.  Quality repair is part of that wave,
+    # so it must honor whichever authority expires first.  Reading only the
+    # whole-run field made live Director contexts report ``no_factory_deadline``
+    # even though ``factory_director_execution_deadline_epoch_seconds`` was
+    # present.  A late repair then started a full 180-second LLM call, consumed
+    # the settlement/verifier reserve, and left TaskRuntime active.
+    deadline_candidates = [
+        (key, value)
+        for key in (
+            "factory_run_deadline_epoch_seconds",
+            "factory_director_execution_deadline_epoch_seconds",
+        )
+        if (value := _context_float_value(context, key)) is not None
+    ]
+    if not deadline_candidates:
         return {
             "can_start": True,
             "timeout_seconds": requested_timeout_seconds,
             "reason": "no_factory_deadline",
         }
+    deadline_source, deadline_epoch = min(deadline_candidates, key=lambda item: item[1])
     safety_seconds = (
         _context_float_value(context, "factory_run_deadline_safety_seconds")
         or _QUALITY_REPAIR_DEADLINE_DEFAULT_SAFETY_SECONDS
@@ -3023,6 +3039,7 @@ def _quality_repair_deadline_decision(context: dict[str, Any], requested_timeout
             "remaining_seconds": round(remaining_seconds, 3),
             "safety_seconds": round(safety_seconds, 3),
             "minimum_llm_seconds": _QUALITY_REPAIR_DEADLINE_MIN_LLM_SECONDS,
+            "deadline_source": deadline_source,
         }
     return {
         "can_start": True,
@@ -3030,6 +3047,7 @@ def _quality_repair_deadline_decision(context: dict[str, Any], requested_timeout
         "reason": "factory_deadline_budgeted",
         "remaining_seconds": round(remaining_seconds, 3),
         "safety_seconds": round(safety_seconds, 3),
+        "deadline_source": deadline_source,
     }
 
 

@@ -190,6 +190,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     resident_autotick_task = None
     instance_watchdog_task = None
     settlement_runtime_started = False
+    project_completion_runtime = None
     try:
         if workspace:
             bootstrap_fact_stream_workspace(
@@ -203,6 +204,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         resident_autotick_task = maybe_start_resident_autotick(workspace)
         instance_watchdog_task = maybe_start_instance_watchdog()
         if workspace:
+            from polaris.bootstrap.project_completion_convergence_runtime import (
+                configure_project_completion_convergence_runtime,
+            )
+
+            project_completion_runtime = configure_project_completion_convergence_runtime(workspace)
+            await project_completion_runtime.start()
             await start_factory_settlement_runtime(
                 workspace,
                 enable_wake_bridge=nats_enabled,
@@ -212,6 +219,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         yield
     finally:
+        if project_completion_runtime is not None:
+            try:
+                await project_completion_runtime.stop()
+            except (OSError, RuntimeError, ValueError) as exc:
+                logger.error(
+                    "Project completion convergence shutdown failed for workspace=%s: %s",
+                    workspace,
+                    exc,
+                    exc_info=True,
+                )
         if instance_watchdog_task is not None:
             instance_watchdog_task.cancel()
             try:
@@ -250,15 +267,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings is None:
         settings = get_settings()
 
+    from polaris.bootstrap.project_completion_diagnostics_owner import (
+        configure_project_completion_diagnostics_owner,
+    )
     from polaris.bootstrap.runtime_projection_director_status import (
         configure_runtime_projection_director_status,
     )
     from polaris.bootstrap.runtime_projection_factory_owner import (
         configure_runtime_projection_factory_owner,
     )
+    from polaris.bootstrap.runtime_projection_project_outcome_owner import (
+        configure_runtime_projection_project_outcome_owner,
+    )
+    from polaris.bootstrap.runtime_projection_workflow_runtime_owner import (
+        configure_runtime_projection_workflow_runtime_owner,
+    )
+    from polaris.bootstrap.workflow_runtime_model_ceiling_owner import (
+        configure_workflow_runtime_model_ceiling_owner,
+    )
 
     configure_runtime_projection_factory_owner()
     configure_runtime_projection_director_status()
+    configure_runtime_projection_project_outcome_owner()
+    configure_runtime_projection_workflow_runtime_owner()
+    configure_project_completion_diagnostics_owner()
+    configure_workflow_runtime_model_ceiling_owner()
 
     # Ensure KERNELONE_TOKEN is always set. When started via bootstrap the
     # token is auto-generated, but direct uvicorn invocation may skip that

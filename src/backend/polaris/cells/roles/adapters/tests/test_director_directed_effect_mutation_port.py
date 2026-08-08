@@ -61,6 +61,8 @@ from polaris.cells.runtime.task_runtime.public import DirectedEffectOperationRes
 def _stub_task_runtime_receipt_settlement(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep adapter tests focused while requiring an explicit receipt-commit seam."""
 
+    latest_recovery: dict[str, DirectedEffectOperationResultV1] = {}
+
     def commit(
         context: DirectedEffectExecutionContextV1,
         receipt_value: object,
@@ -88,7 +90,7 @@ def _stub_task_runtime_receipt_settlement(monkeypatch: pytest.MonkeyPatch) -> No
         **_kwargs: object,
     ) -> DirectedEffectOperationResultV1:
         grant = context.claim_grant
-        return DirectedEffectOperationResultV1(
+        result = DirectedEffectOperationResultV1(
             ok=True,
             code="recovery_pending",
             operation=grant.operation,
@@ -96,8 +98,27 @@ def _stub_task_runtime_receipt_settlement(monkeypatch: pytest.MonkeyPatch) -> No
             version=grant.operation_version + 1,
             evidence={
                 "event_id": "task-runtime-recovery-event",
+                "source_head_seq": grant.operation_source_head_seq + 1,
                 "recovery_evidence_ref": f"recovery://director/{context.context_id}",
                 "recovery_evidence_hash": "9" * 64,
+            },
+        )
+        latest_recovery["result"] = result
+        return result
+
+    def dead_letter(command: object) -> DirectedEffectOperationResultV1:
+        pending = latest_recovery["result"]
+        return DirectedEffectOperationResultV1(
+            ok=True,
+            code="dead_lettered",
+            operation=pending.operation,
+            state="DEAD_LETTER",
+            version=cast(Any, command).expected_version + 1,
+            evidence={
+                "event_id": "task-runtime-dead-letter-event",
+                "source_head_seq": cast(Any, command).expected_seq,
+                "resolution_evidence_ref": cast(Any, command).resolution_evidence_ref,
+                "resolution_evidence_hash": cast(Any, command).resolution_evidence_hash,
             },
         )
 
@@ -108,6 +129,10 @@ def _stub_task_runtime_receipt_settlement(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(
         "polaris.cells.roles.adapters.internal.director.directed_effect_mutation_port._mark_physical_effect_recovery",
         recovery,
+    )
+    monkeypatch.setattr(
+        "polaris.cells.roles.adapters.internal.director.directed_effect_mutation_port.dead_letter_directed_effect_operation",
+        dead_letter,
     )
 
 
@@ -1081,6 +1106,8 @@ async def test_declared_physical_failure_is_typed_and_spends_context(
     payload = dict(result.tool_result.payload)
     assert payload.get("physical_error") == "write failed"
     assert payload.get("failure_kind") == "physical_result_failed"
+    recovery = dict(cast(DirectedEffectImmutableMapV1, payload.get("effect_recovery")).items)
+    assert recovery.get("state") == "DEAD_LETTER"
     assert replay.error_code == "deo_context_replayed"
     assert physical.calls == 1
 
@@ -1107,6 +1134,8 @@ async def test_unexpected_physical_exception_returns_durable_recovery_and_spends
     assert result.status == "failed"
     assert result.error_code == "deo_physical_execution_failed"
     assert result.tool_result is not None
+    recovery = dict(cast(DirectedEffectImmutableMapV1, dict(result.tool_result.payload).get("effect_recovery")).items)
+    assert recovery.get("state") == "RECOVERY_PENDING"
     assert replay.error_code == "deo_context_replayed"
     assert physical.calls == 1
 

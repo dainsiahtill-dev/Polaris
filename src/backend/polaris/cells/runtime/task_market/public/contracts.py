@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
+from typing import Any
 
 _VALID_QUEUE_STAGES = {
     "pending_design",
@@ -16,6 +17,12 @@ _VALID_QUEUE_STAGES = {
     "waiting_human",
 }
 _VALID_TERMINAL_STATUSES = {"resolved", "rejected", "dead_letter"}
+_VALID_FAILURE_DISPOSITIONS = {
+    "default",
+    "same_task_local_retry",
+    "isolated_contract_blocker",
+    "model_ceiling",
+}
 _VALID_PRIORITY = {"low", "medium", "high", "critical"}
 _VALID_CHANGE_ORDER_TYPES = {
     "doc_patch",
@@ -36,6 +43,8 @@ _VALID_HUMAN_RESOLUTIONS = {
 OWNER_REWORK_HANDOFFS_METADATA_KEY = "owner_rework_handoffs"
 OWNER_REWORK_ROUTE_SCHEMA_V1 = "task-market.owner-rework-route/1"
 OWNER_REWORK_RESOLVED_ONLY_DEPENDENCY_MODE = "resolved_only"
+TASK_REQUEUE_RECEIPTS_METADATA_KEY = "task_requeue_receipts"
+TASK_LOCAL_RETRY_SCHEDULE_METADATA_KEY = "local_retry_schedule"
 
 
 class TaskWorkItemState(str, Enum):
@@ -73,6 +82,52 @@ def _require_non_empty(name: str, value: str) -> str:
 
 def _copy_mapping(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(payload or {})
+
+
+def _canonical_json_value(name: str, value: Any) -> Any:
+    """Return a strict JSON value suitable for authority/effect hashing."""
+
+    if value is None or type(value) in {str, int, bool}:
+        return value
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must not contain non-finite floats")
+        return value
+    if isinstance(value, Mapping):
+        normalized: dict[str, Any] = {}
+        for key, nested in value.items():
+            if type(key) is not str or not key:
+                raise ValueError(f"{name} mapping keys must be non-empty strings")
+            normalized[key] = _canonical_json_value(f"{name}.{key}", nested)
+        return normalized
+    if isinstance(value, (list, tuple)):
+        return [_canonical_json_value(f"{name}[{index}]", nested) for index, nested in enumerate(value)]
+    raise ValueError(f"{name} must contain only canonical JSON values")
+
+
+def _task_requeue_effect_hash(
+    *,
+    target_stage: str,
+    reason: str,
+    metadata: Mapping[str, Any],
+    reopen_policy: Mapping[str, Any],
+) -> str:
+    payload = {
+        "target_stage": target_stage,
+        "reason": reason,
+        "metadata": _canonical_json_value("metadata", metadata),
+        "reopen_policy": _canonical_json_value("reopen_policy", reopen_policy),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _require_sha256(name: str, value: str) -> str:
+    token = _require_non_empty(name, value)
+    if len(token) != 64 or any(character not in "0123456789abcdef" for character in token):
+        raise ValueError(f"{name} must be a lowercase SHA-256 digest")
+    return token
 
 
 def _normalize_stage(name: str, value: str) -> str:
@@ -178,7 +233,14 @@ class PublishTaskWorkItemCommandV1:
         object.__setattr__(self, "priority", _normalize_priority(self.priority))
         if self.max_attempts < 1:
             raise ValueError("max_attempts must be >= 1")
-        object.__setattr__(self, "metadata", _copy_mapping(self.metadata))
+        metadata = _copy_mapping(self.metadata)
+        reserved_metadata = {
+            TASK_REQUEUE_RECEIPTS_METADATA_KEY,
+            TASK_LOCAL_RETRY_SCHEDULE_METADATA_KEY,
+        }.intersection(metadata)
+        if reserved_metadata:
+            raise ValueError(f"metadata keys {sorted(reserved_metadata)!r} are runtime-owned")
+        object.__setattr__(self, "metadata", metadata)
         object.__setattr__(self, "plan_id", _normalize_optional_string(self.plan_id))
         object.__setattr__(self, "plan_revision_id", _normalize_optional_string(self.plan_revision_id))
         object.__setattr__(self, "root_task_id", _normalize_optional_string(self.root_task_id))
@@ -276,6 +338,7 @@ class FailTaskStageCommandV1:
     error_message: str
     requeue_stage: str | None = None
     to_dead_letter: bool = False
+    failure_disposition: str = "default"
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -286,6 +349,18 @@ class FailTaskStageCommandV1:
         object.__setattr__(self, "error_message", _require_non_empty("error_message", self.error_message))
         if self.requeue_stage is not None:
             object.__setattr__(self, "requeue_stage", _normalize_stage("requeue_stage", self.requeue_stage))
+        disposition = str(self.failure_disposition or "").strip().lower()
+        if disposition not in _VALID_FAILURE_DISPOSITIONS:
+            raise ValueError(f"failure_disposition must be one of: {sorted(_VALID_FAILURE_DISPOSITIONS)}")
+        if disposition == "same_task_local_retry" and (
+            self.requeue_stage not in {"pending_exec", "pending_qa"} or self.to_dead_letter
+        ):
+            raise ValueError("same_task_local_retry requires pending_exec/pending_qa and forbids dead-letter")
+        if disposition == "isolated_contract_blocker" and (self.requeue_stage is not None or self.to_dead_letter):
+            raise ValueError("isolated_contract_blocker forbids requeue and dead-letter")
+        if disposition == "model_ceiling" and (self.requeue_stage is not None or self.to_dead_letter):
+            raise ValueError("model_ceiling forbids requeue and dead-letter")
+        object.__setattr__(self, "failure_disposition", disposition)
         object.__setattr__(self, "metadata", _copy_mapping(self.metadata))
 
 
@@ -297,14 +372,108 @@ class RequeueTaskCommandV1:
     reason: str
     metadata: Mapping[str, Any] = field(default_factory=dict)
     reopen_policy: Mapping[str, Any] = field(default_factory=dict)
+    idempotency_key: str = ""
+    idempotency_fingerprint: str = ""
+    effect_hash: str = field(init=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
         object.__setattr__(self, "target_stage", _normalize_stage("target_stage", self.target_stage))
         object.__setattr__(self, "reason", _require_non_empty("reason", self.reason))
-        object.__setattr__(self, "metadata", _copy_mapping(self.metadata))
-        object.__setattr__(self, "reopen_policy", _copy_mapping(self.reopen_policy))
+        metadata = _copy_mapping(self.metadata)
+        reopen_policy = _copy_mapping(self.reopen_policy)
+        object.__setattr__(self, "metadata", metadata)
+        object.__setattr__(self, "reopen_policy", reopen_policy)
+        key = _normalize_optional_string(self.idempotency_key)
+        fingerprint = _normalize_optional_string(self.idempotency_fingerprint)
+        if bool(key) is not bool(fingerprint):
+            raise ValueError("idempotency_key and idempotency_fingerprint must be supplied together")
+        if key:
+            key = _require_sha256("idempotency_key", key)
+            fingerprint = _require_sha256("idempotency_fingerprint", fingerprint)
+        object.__setattr__(self, "idempotency_key", key)
+        object.__setattr__(self, "idempotency_fingerprint", fingerprint)
+        object.__setattr__(
+            self,
+            "effect_hash",
+            _task_requeue_effect_hash(
+                target_stage=self.target_stage,
+                reason=self.reason,
+                metadata=metadata,
+                reopen_policy=reopen_policy,
+            )
+            if key
+            else "",
+        )
+
+
+@dataclass(frozen=True)
+class QueryTaskRequeueReceiptV1:
+    workspace: str
+    task_id: str
+    idempotency_key: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        object.__setattr__(self, "idempotency_key", _require_sha256("idempotency_key", self.idempotency_key))
+
+
+@dataclass(frozen=True)
+class TaskRequeueReceiptV1:
+    workspace: str
+    task_id: str
+    idempotency_key: str
+    idempotency_fingerprint: str
+    effect_hash: str
+    target_stage: str
+    reason: str
+    transition_version: int
+    accepted_at: str
+    status: str = "accepted"
+    receipt_hash: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        workspace = _require_non_empty("workspace", self.workspace)
+        task_id = _require_non_empty("task_id", self.task_id)
+        key = _require_sha256("idempotency_key", self.idempotency_key)
+        fingerprint = _require_sha256("idempotency_fingerprint", self.idempotency_fingerprint)
+        effect_hash = _require_sha256("effect_hash", self.effect_hash)
+        target_stage = _normalize_stage("target_stage", self.target_stage)
+        reason = _require_non_empty("reason", self.reason)
+        accepted_at = _require_non_empty("accepted_at", self.accepted_at)
+        if type(self.transition_version) is not int or self.transition_version < 1:
+            raise ValueError("transition_version must be a positive exact integer")
+        if self.status != "accepted":
+            raise ValueError("status must be accepted")
+        payload = {
+            "workspace": workspace,
+            "task_id": task_id,
+            "idempotency_key": key,
+            "idempotency_fingerprint": fingerprint,
+            "effect_hash": effect_hash,
+            "target_stage": target_stage,
+            "reason": reason,
+            "transition_version": self.transition_version,
+            "accepted_at": accepted_at,
+            "status": self.status,
+        }
+        object.__setattr__(self, "workspace", workspace)
+        object.__setattr__(self, "task_id", task_id)
+        object.__setattr__(self, "idempotency_key", key)
+        object.__setattr__(self, "idempotency_fingerprint", fingerprint)
+        object.__setattr__(self, "effect_hash", effect_hash)
+        object.__setattr__(self, "target_stage", target_stage)
+        object.__setattr__(self, "reason", reason)
+        object.__setattr__(self, "accepted_at", accepted_at)
+        object.__setattr__(
+            self,
+            "receipt_hash",
+            hashlib.sha256(
+                json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest(),
+        )
 
 
 @dataclass(frozen=True)
@@ -383,10 +552,7 @@ class OwnerReworkHandoffV1:
             _require_non_empty("schema_version", self.schema_version),
         )
         if self.schema_version != OWNER_REWORK_ROUTE_SCHEMA_V1:
-            raise ValueError(
-                "schema_version must be "
-                f"{OWNER_REWORK_ROUTE_SCHEMA_V1!r}"
-            )
+            raise ValueError(f"schema_version must be {OWNER_REWORK_ROUTE_SCHEMA_V1!r}")
         object.__setattr__(self, "handoff_id", _require_non_empty("handoff_id", self.handoff_id))
         object.__setattr__(self, "owner_task_id", _require_non_empty("owner_task_id", self.owner_task_id))
         object.__setattr__(
@@ -412,10 +578,7 @@ class OwnerReworkHandoffV1:
             _require_non_empty("dependency_mode", self.dependency_mode),
         )
         if self.dependency_mode != OWNER_REWORK_RESOLVED_ONLY_DEPENDENCY_MODE:
-            raise ValueError(
-                "dependency_mode must be "
-                f"{OWNER_REWORK_RESOLVED_ONLY_DEPENDENCY_MODE!r}"
-            )
+            raise ValueError(f"dependency_mode must be {OWNER_REWORK_RESOLVED_ONLY_DEPENDENCY_MODE!r}")
         failure_metadata = _copy_mapping(self.failure_metadata)
         if not failure_metadata:
             raise ValueError("failure_metadata must not be empty")
@@ -451,6 +614,18 @@ class OwnerReworkHandoffV1:
 
         if not isinstance(record, dict):
             raise ValueError("owner-rework handoff record must be a mapping")
+        owner_reopened = record.get("owner_reopened")
+        failure_metadata = record.get("failure_metadata")
+        evidence_metadata = record.get("evidence_metadata")
+        metadata = record.get("metadata")
+        if not isinstance(owner_reopened, bool):
+            raise ValueError("owner-rework handoff owner_reopened must be a bool")
+        if not isinstance(failure_metadata, dict):
+            raise ValueError("owner-rework handoff failure_metadata must be a mapping")
+        if not isinstance(evidence_metadata, dict):
+            raise ValueError("owner-rework handoff evidence_metadata must be a mapping")
+        if not isinstance(metadata, dict):
+            raise ValueError("owner-rework handoff metadata must be a mapping")
         try:
             return cls(
                 schema_version=str(record.get("schema_version") or ""),
@@ -459,11 +634,11 @@ class OwnerReworkHandoffV1:
                 requester_task_id=str(record.get("requester_task_id") or ""),
                 owner_previous_status=str(record.get("owner_previous_status") or ""),
                 requester_previous_status=str(record.get("requester_previous_status") or ""),
-                owner_reopened=record.get("owner_reopened"),
+                owner_reopened=owner_reopened,
                 dependency_mode=str(record.get("dependency_mode") or ""),
-                failure_metadata=record.get("failure_metadata"),
-                evidence_metadata=record.get("evidence_metadata"),
-                metadata=record.get("metadata"),
+                failure_metadata=failure_metadata,
+                evidence_metadata=evidence_metadata,
+                metadata=metadata,
                 routed_at=str(record.get("routed_at") or ""),
             )
         except (TypeError, ValueError) as exc:
@@ -802,6 +977,7 @@ __all__ = [
     "OWNER_REWORK_HANDOFFS_METADATA_KEY",
     "OWNER_REWORK_RESOLVED_ONLY_DEPENDENCY_MODE",
     "OWNER_REWORK_ROUTE_SCHEMA_V1",
+    "TASK_REQUEUE_RECEIPTS_METADATA_KEY",
     "AcknowledgeTaskStageCommandV1",
     "ChangeOrderResultV1",
     "ClaimStage1Result",
@@ -819,6 +995,7 @@ __all__ = [
     "QueryPendingHumanReviewsV1",
     "QueryPlanRevisionsV1",
     "QueryTaskMarketStatusV1",
+    "QueryTaskRequeueReceiptV1",
     "RegisterPlanRevisionCommandV1",
     "RenewTaskLeaseCommandV1",
     "RequestHumanReviewCommandV1",
@@ -832,6 +1009,7 @@ __all__ = [
     "TaskMarketError",
     "TaskMarketErrorV1",
     "TaskMarketStatusResultV1",
+    "TaskRequeueReceiptV1",
     "TaskStageAdvancedEventV1",
     "TaskWorkItemPublishedEventV1",
     "TaskWorkItemResultV1",

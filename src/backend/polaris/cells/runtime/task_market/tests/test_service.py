@@ -17,6 +17,7 @@ from polaris.cells.events.fact_stream.public import (
 from polaris.cells.runtime.task_market.internal.errors import FSMTransitionError, StaleLeaseTokenError
 from polaris.cells.runtime.task_market.internal.store import get_store
 from polaris.cells.runtime.task_market.public.contracts import (
+    TASK_REQUEUE_RECEIPTS_METADATA_KEY,
     AcknowledgeTaskStageCommandV1,
     ClaimTaskWorkItemCommandV1,
     FailTaskStageCommandV1,
@@ -26,6 +27,7 @@ from polaris.cells.runtime.task_market.public.contracts import (
     QueryPendingHumanReviewsV1,
     QueryPlanRevisionsV1,
     QueryTaskMarketStatusV1,
+    QueryTaskRequeueReceiptV1,
     RegisterPlanRevisionCommandV1,
     RenewTaskLeaseCommandV1,
     RequestHumanReviewCommandV1,
@@ -33,6 +35,7 @@ from polaris.cells.runtime.task_market.public.contracts import (
     ResolveHumanReviewCommandV1,
     SubmitChangeOrderCommandV1,
     TaskMarketError,
+    TaskRequeueReceiptV1,
     TaskWorkItemResultV1,
 )
 from polaris.cells.runtime.task_market.public.service import TaskMarketService
@@ -2472,6 +2475,245 @@ class TestDependencyTerminalCascade:
         by_id = {row["task_id"]: row for row in status.items}
         assert by_id["step-2"]["status"] == "dead_letter"
 
+    def test_same_task_local_retry_ignores_transport_attempt_exhaustion(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        clock = [1_000.0]
+        monkeypatch.setattr(
+            "polaris.cells.runtime.task_market.internal._service_lifecycle.now_epoch",
+            lambda: clock[0],
+        )
+        service = TaskMarketService()
+        service.publish_work_item(
+            PublishTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                trace_id="tr-local-repair",
+                run_id="run-local-repair",
+                task_id="step-1",
+                stage="pending_exec",
+                source_role="chief_engineer",
+                payload={"title": "repair current task"},
+                max_attempts=1,
+            )
+        )
+        for _round in range(3):
+            claim = self._claim_targeted(service, workspace, "step-1")
+            assert claim.ok is True
+            failed = service.fail_task_stage(
+                FailTaskStageCommandV1(
+                    workspace=str(workspace),
+                    task_id="step-1",
+                    lease_token=claim.lease_token,
+                    error_code="EXEC_TIMEOUT",
+                    error_message="repairable verifier timeout",
+                    requeue_stage="pending_exec",
+                    failure_disposition="same_task_local_retry",
+                )
+            )
+            assert failed.status == "pending_exec"
+            deferred = self._claim_targeted(service, workspace, "step-1")
+            assert deferred.ok is False
+            assert service.next_local_retry_delay(str(workspace), "pending_exec") is not None
+            clock[0] += 61.0
+
+        status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace)))
+        assert status.items[0]["attempts"] == 0
+        assert get_store(str(workspace)).load_dead_letters(limit=10) == []
+
+    def test_pending_qa_local_retry_is_deferred_without_burning_attempts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        workspace = tmp_path / "ws-qa-local-retry"
+        workspace.mkdir()
+        clock = [2_000.0]
+        monkeypatch.setattr(
+            "polaris.cells.runtime.task_market.internal._service_lifecycle.now_epoch",
+            lambda: clock[0],
+        )
+        service = TaskMarketService()
+        service.publish_work_item(
+            PublishTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                trace_id="tr-qa-local-retry",
+                run_id="run-qa-local-retry",
+                task_id="step-qa",
+                stage="pending_qa",
+                source_role="director",
+                payload={"title": "retry exact verifier"},
+                max_attempts=1,
+            )
+        )
+        claim = service.claim_work_item(
+            ClaimTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                stage="pending_qa",
+                task_id="step-qa",
+                worker_id="qa",
+                worker_role="qa",
+            )
+        )
+        assert claim.ok is True
+        failed = service.fail_task_stage(
+            FailTaskStageCommandV1(
+                workspace=str(workspace),
+                task_id="step-qa",
+                lease_token=claim.lease_token,
+                error_code="QA_TRANSIENT",
+                error_message="receipt commit unavailable",
+                requeue_stage="pending_qa",
+                failure_disposition="same_task_local_retry",
+            )
+        )
+        assert failed.status == "pending_qa"
+        assert service.next_local_retry_delay(str(workspace), "pending_qa") == pytest.approx(1.0)
+        deferred = service.claim_work_item(
+            ClaimTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                stage="pending_qa",
+                task_id="step-qa",
+                worker_id="qa",
+                worker_role="qa",
+            )
+        )
+        assert deferred.ok is False
+        status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace)))
+        assert status.items[0]["attempts"] == 0
+
+    def test_local_retry_budget_exhaustion_parks_without_dlq_or_dependency_cascade(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        workspace = tmp_path / "ws-local-retry-park"
+        workspace.mkdir()
+        clock = [3_000.0]
+        monkeypatch.setattr(
+            "polaris.cells.runtime.task_market.internal._service_lifecycle.now_epoch",
+            lambda: clock[0],
+        )
+        service = TaskMarketService()
+        service.publish_work_item(
+            PublishTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                trace_id="tr-step-1",
+                run_id="run-gate",
+                task_id="step-1",
+                stage="pending_qa",
+                source_role="director",
+                payload={"title": "step-1"},
+            )
+        )
+        self._publish(service, workspace, "step-2", depends_on=("step-1",))
+
+        def claim_qa() -> TaskWorkItemResultV1:
+            return service.claim_work_item(
+                ClaimTaskWorkItemCommandV1(
+                    workspace=str(workspace),
+                    stage="pending_qa",
+                    task_id="step-1",
+                    worker_id="qa",
+                    worker_role="qa",
+                )
+            )
+
+        for _round in range(6):
+            claim = claim_qa()
+            failed = service.fail_task_stage(
+                FailTaskStageCommandV1(
+                    workspace=str(workspace),
+                    task_id="step-1",
+                    lease_token=claim.lease_token,
+                    error_code="QA_TRANSIENT",
+                    error_message="owner receipt temporarily unavailable",
+                    requeue_stage="pending_qa",
+                    failure_disposition="same_task_local_retry",
+                )
+            )
+            assert failed.status == "pending_qa"
+            assert claim_qa().ok is False
+            clock[0] += 61.0
+
+        final_claim = claim_qa()
+        parked = service.fail_task_stage(
+            FailTaskStageCommandV1(
+                workspace=str(workspace),
+                task_id="step-1",
+                lease_token=final_claim.lease_token,
+                error_code="QA_TRANSIENT",
+                error_message="owner receipt still unavailable",
+                requeue_stage="pending_qa",
+                failure_disposition="same_task_local_retry",
+            )
+        )
+
+        assert parked.status == "rejected"
+        assert parked.reason == "control_plane_blocked"
+        status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace)))
+        by_id = {row["task_id"]: row for row in status.items}
+        park = by_id["step-1"]["metadata"]["task_local_retry_control_plane_park"]
+        assert park["status"] == "CONTROL_PLANE_BLOCKED"
+        assert park["owner_qualification_required"] is True
+        assert by_id["step-2"]["status"] == "pending_exec"
+        assert service.next_local_retry_delay(str(workspace), "pending_qa") is None
+        assert get_store(str(workspace)).load_dead_letters(limit=10) == []
+
+    def test_owner_qualified_model_ceiling_is_terminal_without_cascade(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws-model-ceiling"
+        workspace.mkdir()
+        service = TaskMarketService()
+        self._publish(service, workspace, "step-1")
+        self._publish(service, workspace, "step-2", depends_on=("step-1",))
+        claim = self._claim_targeted(service, workspace, "step-1")
+        stopped = service.fail_task_stage(
+            FailTaskStageCommandV1(
+                workspace=str(workspace),
+                task_id="step-1",
+                lease_token=claim.lease_token,
+                error_code="MODEL_CEILING_QUALIFIED",
+                error_message="owner evidence proves no executable tool use",
+                failure_disposition="model_ceiling",
+                metadata={"owner_qualification_receipt": "owner://model-ceiling/1"},
+            )
+        )
+        assert stopped.status == "rejected"
+        scan = self._scan_claim(service, workspace)
+        assert scan.ok is False
+        status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace)))
+        by_id = {row["task_id"]: row for row in status.items}
+        assert by_id["step-2"]["status"] == "pending_exec"
+        assert get_store(str(workspace)).load_dead_letters(limit=10) == []
+
+    def test_isolated_contract_blocker_never_cascades_or_compensates(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        service = TaskMarketService()
+        self._publish(service, workspace, "step-1")
+        self._publish(service, workspace, "step-2", depends_on=("step-1",))
+        claim = self._claim_targeted(service, workspace, "step-1")
+        blocked = service.fail_task_stage(
+            FailTaskStageCommandV1(
+                workspace=str(workspace),
+                task_id="step-1",
+                lease_token=claim.lease_token,
+                error_code="CONTRACT_AUTHORITY_CONTRADICTION",
+                error_message="declared scope cannot authorize requested write",
+                failure_disposition="isolated_contract_blocker",
+                metadata={"automatic_upstream_replan": False},
+            )
+        )
+        assert blocked.status == "rejected"
+        assert blocked.reason == "contract_blocked"
+
+        scan = self._scan_claim(service, workspace)
+        assert scan.ok is False
+        status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace)))
+        by_id = {row["task_id"]: row for row in status.items}
+        assert by_id["step-1"]["status"] == "rejected"
+        assert by_id["step-1"]["metadata"]["dependency_terminal_cascade_suppressed"] is True
+        assert "saga_task_compensation" not in by_id["step-1"]["metadata"]
+        assert by_id["step-2"]["status"] == "pending_exec"
+        assert get_store(str(workspace)).load_dead_letters(limit=10) == []
+
     def test_cascade_is_transitive_across_dependency_chain(self, tmp_path: Path) -> None:
         workspace = tmp_path / "ws"
         workspace.mkdir()
@@ -2896,6 +3138,308 @@ def test_requeue_task_can_teach_next_claim_without_worker_lease(tmp_path: Path) 
     assert isinstance(teaching, dict)
     assert teaching["error_code"] == "INTEGRATION_QA_FAILED"
     assert teaching["source"] == "pm_dispatch.integration_qa"
+
+
+def test_requeue_task_action_id_is_atomic_and_idempotent(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = TaskMarketService()
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="tr-project-completion",
+            run_id="run-project-completion",
+            task_id="step-owner",
+            stage="pending_exec",
+            source_role="chief_engineer_dispatch",
+            payload={"title": "owner"},
+        )
+    )
+    action_id = "a" * 64
+    fingerprint = "b" * 64
+    command = RequeueTaskCommandV1(
+        workspace=str(workspace),
+        task_id="step-owner",
+        target_stage="pending_exec",
+        reason="required verifier failed",
+        metadata={
+            "source": "project_completion.verification_failure",
+            "last_failure": {"error_code": "BUILD_FAILED", "error_message": "cargo test failed"},
+            "verification_failure_report": {"modality": "test", "exit_code": 101},
+        },
+        idempotency_key=action_id,
+        idempotency_fingerprint=fingerprint,
+    )
+
+    first = service.requeue_task(command)
+    second = service.requeue_task(command)
+    receipt = service.query_task_requeue_receipt(
+        QueryTaskRequeueReceiptV1(
+            workspace=str(workspace),
+            task_id="step-owner",
+            idempotency_key=action_id,
+        )
+    )
+
+    assert first.ok is True
+    assert first.reason == "requeued"
+    assert second.ok is True
+    assert second.reason == "already_requeued"
+    assert second.version == first.version
+    assert isinstance(receipt, TaskRequeueReceiptV1)
+    assert receipt.status == "accepted"
+    assert receipt.idempotency_key == action_id
+    assert receipt.idempotency_fingerprint == fingerprint
+    assert receipt.effect_hash == command.effect_hash
+    assert receipt.transition_version == first.version
+    assert len(receipt.receipt_hash) == 64
+
+
+def test_publish_rejects_forged_runtime_owned_requeue_receipts(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    with pytest.raises(ValueError, match="runtime-owned"):
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="tr-forged-requeue-receipt",
+            run_id="run-forged-requeue-receipt",
+            task_id="step-owner",
+            stage="pending_exec",
+            source_role="untrusted-caller",
+            payload={"title": "owner"},
+            metadata={
+                TASK_REQUEUE_RECEIPTS_METADATA_KEY: {
+                    "forged": {"status": "accepted"},
+                }
+            },
+        )
+
+
+def test_requeue_task_rejects_action_id_reuse_with_different_fingerprint(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = TaskMarketService()
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="tr-project-completion-conflict",
+            run_id="run-project-completion-conflict",
+            task_id="step-owner",
+            stage="pending_exec",
+            source_role="chief_engineer_dispatch",
+            payload={"title": "owner"},
+        )
+    )
+    action_id = "c" * 64
+    first = service.requeue_task(
+        RequeueTaskCommandV1(
+            workspace=str(workspace),
+            task_id="step-owner",
+            target_stage="pending_exec",
+            reason="verification failed",
+            metadata={"source": "project_completion.verification_failure"},
+            idempotency_key=action_id,
+            idempotency_fingerprint="d" * 64,
+        )
+    )
+    conflict = service.requeue_task(
+        RequeueTaskCommandV1(
+            workspace=str(workspace),
+            task_id="step-owner",
+            target_stage="pending_exec",
+            reason="different residual",
+            metadata={"source": "project_completion.verification_failure"},
+            idempotency_key=action_id,
+            idempotency_fingerprint="e" * 64,
+        )
+    )
+
+    assert first.ok is True
+    assert conflict.ok is False
+    assert conflict.reason == "idempotency_conflict"
+    assert conflict.version == first.version
+
+
+def test_requeue_task_rejects_same_fingerprint_for_different_effect(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = TaskMarketService()
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="tr-project-completion-effect-conflict",
+            run_id="run-project-completion-effect-conflict",
+            task_id="step-owner",
+            stage="pending_exec",
+            source_role="chief_engineer_dispatch",
+            payload={"title": "owner"},
+        )
+    )
+    action_id = "4" * 64
+    fingerprint = "5" * 64
+    first = service.requeue_task(
+        RequeueTaskCommandV1(
+            workspace=str(workspace),
+            task_id="step-owner",
+            target_stage="pending_exec",
+            reason="test verifier failed",
+            idempotency_key=action_id,
+            idempotency_fingerprint=fingerprint,
+        )
+    )
+    conflict = service.requeue_task(
+        RequeueTaskCommandV1(
+            workspace=str(workspace),
+            task_id="step-owner",
+            target_stage="pending_qa",
+            reason="pretend verifier passed",
+            idempotency_key=action_id,
+            idempotency_fingerprint=fingerprint,
+        )
+    )
+
+    assert first.ok is True
+    assert conflict.ok is False
+    assert conflict.reason == "idempotency_conflict"
+    assert conflict.version == first.version
+
+
+def test_requeue_task_effect_hash_binds_metadata_and_reopen_policy(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = TaskMarketService()
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="tr-project-completion-effect-payload",
+            run_id="run-project-completion-effect-payload",
+            task_id="step-owner",
+            stage="pending_exec",
+            source_role="chief_engineer_dispatch",
+            payload={"title": "owner"},
+        )
+    )
+    common = {
+        "workspace": str(workspace),
+        "task_id": "step-owner",
+        "target_stage": "pending_exec",
+        "reason": "verifier failed",
+        "idempotency_key": "6" * 64,
+        "idempotency_fingerprint": "7" * 64,
+    }
+    first = service.requeue_task(
+        RequeueTaskCommandV1(
+            **common,
+            metadata={"source": "verification.failure", "exit_code": 1},
+            reopen_policy={"max_reopen_count": 2},
+        )
+    )
+    metadata_conflict = service.requeue_task(
+        RequeueTaskCommandV1(
+            **common,
+            metadata={"source": "verification.failure", "exit_code": 0},
+            reopen_policy={"max_reopen_count": 2},
+        )
+    )
+    policy_conflict = service.requeue_task(
+        RequeueTaskCommandV1(
+            **common,
+            metadata={"source": "verification.failure", "exit_code": 1},
+            reopen_policy={"max_reopen_count": 3},
+        )
+    )
+
+    assert first.ok is True
+    assert metadata_conflict.ok is False
+    assert metadata_conflict.reason == "idempotency_conflict"
+    assert policy_conflict.ok is False
+    assert policy_conflict.reason == "idempotency_conflict"
+    assert metadata_conflict.version == first.version
+    assert policy_conflict.version == first.version
+
+
+def test_concurrent_requeue_wakes_consume_one_transition(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = TaskMarketService()
+    published = service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="tr-project-completion-concurrent",
+            run_id="run-project-completion-concurrent",
+            task_id="step-owner",
+            stage="pending_exec",
+            source_role="chief_engineer_dispatch",
+            payload={"title": "owner"},
+        )
+    )
+    command = RequeueTaskCommandV1(
+        workspace=str(workspace),
+        task_id="step-owner",
+        target_stage="pending_exec",
+        reason="required verifier failed",
+        metadata={"source": "project_completion.verification_failure"},
+        idempotency_key="f" * 64,
+        idempotency_fingerprint="1" * 64,
+    )
+    results: list[TaskWorkItemResultV1] = []
+    start = threading.Barrier(3)
+
+    def invoke() -> None:
+        start.wait()
+        results.append(service.requeue_task(command))
+
+    threads = [threading.Thread(target=invoke) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    start.wait()
+    for thread in threads:
+        thread.join()
+
+    assert sorted(result.reason for result in results) == ["already_requeued", "requeued"]
+    assert {result.version for result in results} == {published.version + 1}
+
+
+def test_task_projection_refresh_preserves_requeue_receipt(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = TaskMarketService()
+    publish = PublishTaskWorkItemCommandV1(
+        workspace=str(workspace),
+        trace_id="tr-refresh",
+        run_id="run-refresh",
+        task_id="step-owner",
+        stage="pending_exec",
+        source_role="chief_engineer_dispatch",
+        payload={"title": "owner"},
+    )
+    service.publish_work_item(publish)
+    action_id = "2" * 64
+    command = RequeueTaskCommandV1(
+        workspace=str(workspace),
+        task_id="step-owner",
+        target_stage="pending_exec",
+        reason="required verifier failed",
+        metadata={"source": "project_completion.verification_failure"},
+        idempotency_key=action_id,
+        idempotency_fingerprint="3" * 64,
+    )
+    service.requeue_task(command)
+
+    service.publish_work_item(publish)
+    duplicate = service.requeue_task(command)
+    receipt = service.query_task_requeue_receipt(
+        QueryTaskRequeueReceiptV1(
+            workspace=str(workspace),
+            task_id="step-owner",
+            idempotency_key=action_id,
+        )
+    )
+
+    assert duplicate.ok is True
+    assert duplicate.reason == "already_requeued"
+    assert receipt is not None
 
 
 def test_requeue_task_rejects_actively_leased_work(tmp_path: Path) -> None:

@@ -155,6 +155,9 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
                 '      "target_files": ["src/module/file.ts", "tests/module/file.test.ts"],',
                 '      "steps": ["步骤1", "步骤2"],',
                 '      "acceptance": ["可测验收1", "可测验收2"],',
+                '      "verification_commands": [',
+                '        {"modality": "environment_prep|build|test|lint|entrypoint", "argv": ["executable", "arg"], "cwd": "."}',
+                "      ],",
                 '      "phase": "requirements|implementation|verification",',
                 '      "depends_on": ["TASK-0"],',
                 '      "assigned_to": "Director",',
@@ -175,6 +178,9 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
                 "Director/ChiefEngineer 任务必须提供真实相对路径 scope_paths/target_files。",
                 "路径只能是仓库内相对文件或目录，例如 package.json、src/store、src/App.tsx、tests/spec。",
                 "禁止把自然语言描述写进 scope_paths/target_files，例如“backend API 路由、frontend 面板”。",
+                "每个任务必须显式提供 verification_commands；没有命令的任务使用空数组。",
+                "项目整体必须声明真实 environment_prep、至少一个 build/test/lint、以及应用入口命令；library 可由 CE 显式判定 entrypoint N/A。",
+                "verification_commands 只能使用 argv 数组与相对 cwd；禁止 shell command string、echo-only 或 shell -c 包装。",
             ]
         )
         return "\n".join(lines)
@@ -219,6 +225,9 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
                 "- Director/ChiefEngineer 任务必须含真实相对路径 scope_paths/target_files",
                 "- scope_paths/target_files 禁止使用自然语言句子或中文模块描述",
                 "- steps 与 acceptance 必须为非空列表",
+                "- 每个任务必须含 verification_commands 数组；行字段严格为 modality/argv/cwd",
+                "- 项目整体必须含 environment_prep、至少一个 build/test/lint，并为应用声明 entrypoint",
+                "- verification command 必须是 argv 数组，禁止 shell command string 或 shell -c",
                 "- 必须有依赖关系（depends_on）",
                 "- 只能输出 JSON 对象，禁止任何额外文字与代码块",
             ]

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 from polaris.cells.control_plane.verifier_policy.public import (
     CompileEvidencePolicyCommandV1,
     ControlPlaneVerifierPolicyV1Error,
+    EvaluateVerifierCommandPolicyQueryV1,
     ReadVerifierPolicyQueryV1,
     UpdateVerifierPolicyCommandV1,
     compile_evidence_policy,
+    evaluate_verifier_command_policy,
     read_verifier_policy,
     update_verifier_policy,
     verifier_policy_to_gate_policy,
@@ -236,3 +239,274 @@ def test_evidence_policy_compiler_maps_api_service_to_contract_and_integration(t
         policy["required_evidence_modalities"]
     )
     assert "security" in policy["advisory_modalities"]
+
+
+def _command_policy_query(
+    tmp_path: Path,
+    *,
+    modality: str,
+    argv: tuple[str, ...],
+    cwd: str = ".",
+) -> EvaluateVerifierCommandPolicyQueryV1:
+    return EvaluateVerifierCommandPolicyQueryV1(
+        workspace=str(tmp_path),
+        project_id="project-1",
+        run_id="run-1",
+        task_id="task-1",
+        completion_contract_hash="a" * 64,
+        verifier_obligation_id=f"verify-{modality}",
+        command_authority_hash="b" * 64,
+        modality=modality,
+        argv=argv,
+        cwd=cwd,
+        input_obligation_ids=("artifact-main", "artifact-tests"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("modality", "argv", "profile_id"),
+    [
+        ("environment_prep", ("npm", "ci"), "node.package_install"),
+        ("build", ("cargo", "build", "--locked"), "rust.cargo.build"),
+        ("test", ("python", "-m", "pytest", "-q"), "python.pytest"),
+        ("lint", ("ruff", "check", "."), "python.ruff_check"),
+        ("entrypoint", ("go", "run", "./cmd/app"), "go.run"),
+    ],
+)
+def test_verifier_command_policy_accepts_canonical_toolchain_profiles(
+    tmp_path: Path,
+    modality: str,
+    argv: tuple[str, ...],
+    profile_id: str,
+) -> None:
+    decision = evaluate_verifier_command_policy(_command_policy_query(tmp_path, modality=modality, argv=argv))
+
+    assert decision.authorized is True
+    assert decision.error_code == ""
+    assert decision.profile_id == profile_id
+    assert decision.policy_decision_hash
+    assert decision.normalized_argv == argv
+    assert decision.input_obligation_ids == ("artifact-main", "artifact-tests")
+    assert Path(decision.executable_path).is_absolute()
+    assert Path(decision.executable_realpath).is_file()
+    assert len(decision.executable_hash) == 64
+
+
+@pytest.mark.parametrize("argv0", ("./pytest", "/tmp/f3c-untrusted/pytest"))
+def test_verifier_command_policy_rejects_workspace_or_ephemeral_fake_executable(
+    tmp_path: Path,
+    argv0: str,
+) -> None:
+    fake = tmp_path / "pytest" if argv0.startswith("./") else Path(argv0)
+    fake.parent.mkdir(parents=True, exist_ok=True)
+    fake.write_text("#!/bin/sh\necho '1 passed in 0.01s'\n", encoding="utf-8")
+    fake.chmod(0o755)
+    try:
+        decision = evaluate_verifier_command_policy(
+            _command_policy_query(tmp_path, modality="test", argv=(argv0, "-q"))
+        )
+        assert decision.authorized is False
+        assert decision.error_code == "untrusted_verifier_executable"
+    finally:
+        if fake.is_relative_to("/tmp"):
+            fake.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    ("modality", "argv", "error_code"),
+    [
+        ("test", ("python", "-c", "print('ok')"), "untrusted_verifier_command"),
+        ("test", ("pytest", "--collect-only"), "non_proving_verifier_command"),
+        ("test", ("pytest", "--co"), "non_proving_verifier_command"),
+        ("test", ("go", "test", "./...", "-run", "^$"), "non_proving_verifier_command"),
+        ("test", ("go", "test", "./...", "-count=0"), "non_proving_verifier_command"),
+        ("test", ("cargo", "build"), "verifier_modality_mismatch"),
+        ("build", ("npx", "some-random-package"), "untrusted_verifier_command"),
+        ("entrypoint", ("sh", "-c", "exit 0"), "untrusted_verifier_command"),
+    ],
+)
+def test_verifier_command_policy_rejects_untrusted_noop_or_wrong_modality(
+    tmp_path: Path,
+    modality: str,
+    argv: tuple[str, ...],
+    error_code: str,
+) -> None:
+    decision = evaluate_verifier_command_policy(_command_policy_query(tmp_path, modality=modality, argv=argv))
+
+    assert decision.authorized is False
+    assert decision.error_code == error_code
+    assert decision.policy_decision_hash == ""
+
+
+def test_verifier_command_policy_requires_non_empty_input_closure(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="input_obligation_ids"):
+        EvaluateVerifierCommandPolicyQueryV1(
+            workspace=str(tmp_path),
+            project_id="project-1",
+            run_id="run-1",
+            task_id="task-1",
+            completion_contract_hash="a" * 64,
+            verifier_obligation_id="verify-test",
+            command_authority_hash="b" * 64,
+            modality="test",
+            argv=("pytest", "-q"),
+            cwd=".",
+            input_obligation_ids=(),
+        )
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("ruff", "format", "."),
+        ("cargo", "fmt"),
+        ("go", "fmt", "./..."),
+        ("dotnet", "format"),
+        ("dart", "format", "."),
+        ("mix", "format"),
+        ("pytest", "--watch"),
+        ("ruff", "check", "--fix", "."),
+        ("ruff", "check", "--fix=true", "."),
+        ("ruff", "check", "--unsafe-fixes", "."),
+    ],
+)
+def test_verifier_command_policy_rejects_mutating_or_nonterminal_commands(
+    tmp_path: Path,
+    argv: tuple[str, ...],
+) -> None:
+    decision = evaluate_verifier_command_policy(_command_policy_query(tmp_path, modality="lint", argv=argv))
+
+    assert decision.authorized is False
+    assert decision.error_code == "non_proving_verifier_command"
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "echo ok",
+        "true",
+        "exit 0",
+        "pytest --collect-only",
+        "node -e process.exit(0)",
+        "sh -c true",
+    ],
+)
+def test_node_package_script_must_be_current_and_proof_producing(tmp_path: Path, script: str) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":' + json.dumps(script) + '}}\n',
+        encoding="utf-8",
+    )
+
+    decision = evaluate_verifier_command_policy(
+        _command_policy_query(tmp_path, modality="test", argv=("npm", "test"))
+    )
+
+    assert decision.authorized is False
+    assert decision.error_code == "non_proving_package_script"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("cargo", "test", "--no-run"),
+        ("cargo", "test", "--doc", "--no-run"),
+    ],
+)
+def test_test_profile_rejects_compile_only_commands(tmp_path: Path, argv: tuple[str, ...]) -> None:
+    decision = evaluate_verifier_command_policy(
+        _command_policy_query(tmp_path, modality="test", argv=argv)
+    )
+
+    assert decision.authorized is False
+    assert decision.error_code == "non_proving_verifier_command"
+
+
+def test_node_package_script_decision_binds_current_manifest_content(tmp_path: Path) -> None:
+    manifest = tmp_path / "package.json"
+    manifest.write_text('{"scripts":{"test":"pytest -q"}}\n', encoding="utf-8")
+    query = _command_policy_query(tmp_path, modality="test", argv=("npm", "test"))
+
+    first = evaluate_verifier_command_policy(query)
+    manifest.write_text('{"scripts":{"test":"vitest run"}}\n', encoding="utf-8")
+    second = evaluate_verifier_command_policy(query)
+
+    assert first.authorized is True
+    assert second.authorized is True
+    assert first.policy_decision_hash != second.policy_decision_hash
+
+
+@pytest.mark.parametrize(
+    ("profile_id", "output", "expected"),
+    [
+        ("python.pytest", "1 passed in 0.01s\n", True),
+        ("python.pytest", "no tests ran in 0.01s\n", False),
+        ("rust.cargo.test", "test result: ok. 2 passed; 0 failed; 0 ignored\n", True),
+        ("rust.cargo.test", "test result: ok. 0 passed; 0 failed; 0 ignored\n", False),
+        ("go.test", "?\tpkg\t[no test files]\n", False),
+        ("go.test", "ok\tpkg\t0.01s\n", True),
+        ("node.script_test", "Test Files  1 passed (1)\nTests  2 passed (2)\n", True),
+        ("node.script_test", "Tests  no tests\n", False),
+    ],
+)
+def test_verifier_specific_proof_parser_requires_real_test_execution(
+    profile_id: str,
+    output: str,
+    expected: bool,
+) -> None:
+    from polaris.cells.control_plane.verifier_policy.internal.trusted_command_profiles import (
+        evaluate_builtin_proof,
+    )
+
+    assert evaluate_builtin_proof(profile_id, "test", 0, False, output.encode("utf-8")) is expected
+
+
+def test_verifier_command_policy_authorizes_only_hash_pinned_registered_script(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KERNELONE_CUSTOM_VERIFIER_SCRIPTS_ENABLED", "1")
+    script = tmp_path / "scripts" / "qa.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("raise SystemExit(0)\n", encoding="utf-8")
+    import hashlib
+
+    script_hash = hashlib.sha256(script.read_bytes()).hexdigest()
+    update_verifier_policy(
+        UpdateVerifierPolicyCommandV1(
+            workspace=str(tmp_path),
+            custom_script_enabled=True,
+            custom_scripts=(
+                {
+                    "id": "qa-script",
+                    "path": "scripts/qa.py",
+                    "modality": "test",
+                    "enabled": True,
+                    "content_sha256": script_hash,
+                },
+            ),
+        )
+    )
+
+    query = _command_policy_query(
+        tmp_path,
+        modality="test",
+        argv=("python", "scripts/qa.py"),
+    )
+    accepted = evaluate_verifier_command_policy(query)
+    assert accepted.authorized is True
+    assert accepted.profile_id == "custom_script:qa-script"
+
+    script.write_text("raise SystemExit(1)\n", encoding="utf-8")
+    rejected = evaluate_verifier_command_policy(query)
+    assert rejected.authorized is False
+    assert rejected.error_code == "custom_verifier_content_drift"
+
+
+def test_verifier_command_policy_hash_binds_contract_task_inputs_and_argv(tmp_path: Path) -> None:
+    first = evaluate_verifier_command_policy(_command_policy_query(tmp_path, modality="test", argv=("pytest", "-q")))
+    second_query = _command_policy_query(tmp_path, modality="test", argv=("pytest", "-q", "tests"))
+    second = evaluate_verifier_command_policy(second_query)
+
+    assert first.authorized is True
+    assert second.authorized is True
+    assert first.policy_decision_hash != second.policy_decision_hash

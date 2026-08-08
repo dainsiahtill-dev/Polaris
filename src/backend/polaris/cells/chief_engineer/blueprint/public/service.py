@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -28,6 +30,7 @@ from ..internal.chief_engineer_agent import ChiefEngineerAgent
 from ..internal.chief_engineer_preflight import run_pre_dispatch_chief_engineer
 from ..internal.handoff import build_handoff_decision
 from ..internal.post_mortem import PostMortemLog, build_post_mortem_event
+from ..internal.project_completion_contract import build_project_completion_contract
 from ..internal.quality_gate import evaluate_quality_gate
 from ..internal.release_readiness import build_release_readiness
 from ..internal.risks import RiskRegister, build_risk_event
@@ -37,6 +40,7 @@ from ..internal.tech_debt import TechDebtLedger, build_tech_debt_event
 from ..internal.tech_radar import TechRadarLedger, build_tech_radar_event
 from .contracts import (
     ADRRecordV1,
+    ArtifactObligationV1,
     BuildChiefEngineerBlueprintPortfolioCommandV1,
     CeHandoffDecisionBindingsV1,
     CeHandoffDecisionV1,
@@ -44,6 +48,7 @@ from .contracts import (
     ChiefEngineerBlueprintPortfolioV1,
     ChiefEngineerPortfolioTaskV1,
     ChiefEngineerProjectInterfaceContractV1,
+    EntrypointObligationV1,
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
     GovernanceSummaryV1,
@@ -54,7 +59,11 @@ from .contracts import (
     ListTechDebtQueryV1,
     ListTechRadarQueryV1,
     PostMortemRecordV1,
+    ProjectCompletionContractV1,
+    ProjectCompletionObligationsV1,
+    ProjectKindAuthorityV1,
     QueryBlueprintProvenanceV1,
+    QueryProjectCompletionContractV1,
     RegisterADRCommandV1,
     RegisterPostMortemCommandV1,
     RegisterRiskCommandV1,
@@ -72,11 +81,17 @@ from .contracts import (
     UpdateRiskStatusCommandV1,
     UpdateTechDebtStatusCommandV1,
     UpdateTechRadarRingCommandV1,
+    VerificationObligationV1,
+    _ChiefEngineerPortfolioAuthorityCarrierV1,
+    _portfolio_authority_receipt_hash,
     _strict_provenance_target_paths,
+    _verify_chief_engineer_portfolio_authority_carrier,
+    project_completion_catalog_snapshot_hash,
 )
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 _LOWER_SHA256_RE = re.compile(r"[0-9a-f]{64}")
+_PROJECT_COMPLETION_PREDICATE_VERSION = "polaris.project_completion_predicate.v1"
 _SEMANTIC_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*")
 _CAMEL_TOKEN_RE = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|[0-9]+")
 _WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -1580,6 +1595,7 @@ class _PortfolioLlmBlueprint:
     risk_flags: tuple[str, ...]
     provider_declarations: tuple[dict[str, Any], ...]
     consumer_declarations: tuple[dict[str, Any], ...]
+    project_completion_requirements: dict[str, Any] | None
     consumed: bool
 
 
@@ -1906,20 +1922,689 @@ def _normalize_interface_declarations(value: Any, *, field_name: str) -> tuple[d
     return tuple(rows)
 
 
+def _strict_completion_mapping(
+    value: Any,
+    *,
+    field_name: str,
+    expected_fields: set[str],
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise _portfolio_contract_error(
+            f"{field_name} must be a JSON object",
+            code="invalid_project_completion_contract",
+            details={"field": field_name, "actual_type": type(value).__name__},
+        )
+    payload = dict(value)
+    unknown_fields = sorted(str(key) for key in payload if str(key) not in expected_fields)
+    missing_fields = sorted(expected_fields - {str(key) for key in payload})
+    if unknown_fields or missing_fields:
+        raise _portfolio_contract_error(
+            f"{field_name} fields must match the completion contract schema exactly",
+            code="invalid_project_completion_contract",
+            details={
+                "field": field_name,
+                "unknown_fields": unknown_fields,
+                "missing_fields": missing_fields,
+            },
+        )
+    return payload
+
+
+def _strict_completion_rows(
+    value: Any,
+    *,
+    field_name: str,
+    expected_fields: set[str],
+) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, list):
+        raise _portfolio_contract_error(
+            f"{field_name} must be a JSON array",
+            code="invalid_project_completion_contract",
+            details={"field": field_name, "actual_type": type(value).__name__},
+        )
+    return tuple(
+        _strict_completion_mapping(
+            item,
+            field_name=f"{field_name}[{index}]",
+            expected_fields=expected_fields,
+        )
+        for index, item in enumerate(value)
+    )
+
+
+def _completion_path_is_within_scope(*, path: str, scope_path: str) -> bool:
+    """Return component-safe PM scope containment, never raw string-prefix containment."""
+
+    path_parts = PurePosixPath(path).parts
+    scope_parts = PurePosixPath(scope_path).parts
+    return len(path_parts) >= len(scope_parts) and path_parts[: len(scope_parts)] == scope_parts
+
+
+def derive_project_kind_authority_from_catalog_snapshot(
+    *,
+    project_id: str,
+    run_id: str,
+    pm_contract_hash: str,
+    catalog_snapshot: Mapping[str, Any],
+    catalog_snapshot_hash: str,
+) -> ProjectKindAuthorityV1:
+    """Derive exemption-bearing project kind from one identity-bound catalog snapshot.
+
+    The returned value is never accepted from a portfolio caller.  Both Factory and
+    this owner service derive it from the same snapshot; the portfolio service also
+    re-reads the workspace catalog before accepting the command.
+    """
+
+    snapshot = dict(catalog_snapshot)
+    observed_snapshot_hash = project_completion_catalog_snapshot_hash(snapshot)
+    if observed_snapshot_hash != catalog_snapshot_hash:
+        raise ValueError("catalog_snapshot_hash does not bind catalog_snapshot")
+    catalog_project_id = str(snapshot.get("project_id") or "").strip()
+    if catalog_project_id and catalog_project_id != project_id:
+        raise ValueError("catalog snapshot project_id does not match portfolio project_id")
+    explicit_kind = str(snapshot.get("project_kind") or "").strip().casefold()
+    project_type = str(snapshot.get("project_type") or "").strip().casefold()
+    if explicit_kind and explicit_kind not in {"application", "library"}:
+        raise ValueError("catalog project_kind must be application or library")
+
+    library_type_tokens = {"library", "package", "sdk", "crate"}
+    library_suffixes = ("_library", "_package", "_sdk", "_crate")
+    if explicit_kind:
+        project_kind = explicit_kind
+        justification = f"catalog_explicit_project_kind:{explicit_kind}"
+    elif project_type in library_type_tokens or project_type.endswith(library_suffixes):
+        project_kind = "library"
+        justification = f"catalog_explicit_library_project_type:{project_type}"
+    else:
+        project_kind = "application"
+        justification = "conservative_application_without_explicit_library_authority"
+
+    source_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "schema_version": "polaris.ce_project_kind_source.v2",
+                "project_id": project_id,
+                "run_id": run_id,
+                "pm_contract_hash": pm_contract_hash,
+                "catalog_snapshot_hash": catalog_snapshot_hash,
+                "catalog_project_id": catalog_project_id,
+                "catalog_project_kind": explicit_kind,
+                "catalog_project_type": project_type,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return ProjectKindAuthorityV1(
+        project_kind=project_kind,  # type: ignore[arg-type]
+        source_ref="chief_engineer.committed_pm_catalog_snapshot",
+        source_hash=source_hash,
+        justification=justification,
+    )
+
+
+def _read_portfolio_catalog_snapshot(workspace: str) -> dict[str, Any]:
+    catalog_path = Path(workspace) / ".polaris" / "catalog_contract.json"
+    if not catalog_path.exists():
+        return {}
+    try:
+        before = catalog_path.stat()
+        raw = catalog_path.read_text(encoding="utf-8")
+        after = catalog_path.stat()
+        before_identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+        after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+        if before_identity != after_identity:
+            raise ValueError("workspace catalog changed while being read")
+        payload = json.loads(raw)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise ValueError("workspace catalog snapshot is unreadable or invalid JSON") from exc
+    if type(payload) is not dict:
+        raise ValueError("workspace catalog snapshot must be an exact JSON object")
+    return payload
+
+
+def _revalidate_portfolio_authority_carrier(
+    command: BuildChiefEngineerBlueprintPortfolioCommandV1,
+) -> _ChiefEngineerPortfolioAuthorityCarrierV1:
+    carrier = command.authority_carrier
+    if type(carrier) is not _ChiefEngineerPortfolioAuthorityCarrierV1:
+        raise _portfolio_contract_error(
+            "portfolio completion authority was not issued by the Factory owner",
+            code="invalid_project_completion_authority_carrier",
+        )
+    if not _verify_chief_engineer_portfolio_authority_carrier(carrier):
+        raise _portfolio_contract_error(
+            "portfolio authority carrier signature is invalid",
+            code="invalid_project_completion_authority_carrier",
+        )
+    if carrier.workspace != command.workspace or carrier.run_id != command.run_id or carrier.tasks != command.tasks:
+        raise _portfolio_contract_error(
+            "portfolio authority carrier identity does not match command",
+            code="invalid_project_completion_authority_carrier",
+        )
+    expected_catalog_receipt = _portfolio_authority_receipt_hash(
+        domain="catalog",
+        workspace=carrier.workspace,
+        run_id=carrier.run_id,
+        project_id=carrier.project_id,
+        pm_stage_event_id=carrier.pm_stage_event_id,
+        pm_contract_hash=carrier.pm_contract_hash,
+        evidence_hash=carrier.catalog_snapshot_hash,
+    )
+    expected_policy_receipt = _portfolio_authority_receipt_hash(
+        domain="verifier_policy",
+        workspace=carrier.workspace,
+        run_id=carrier.run_id,
+        project_id=carrier.project_id,
+        pm_stage_event_id=carrier.pm_stage_event_id,
+        pm_contract_hash=carrier.pm_contract_hash,
+        evidence_hash=carrier.verifier_policy_snapshot_hash,
+    )
+    if carrier.catalog_receipt_hash != expected_catalog_receipt or (
+        carrier.verifier_policy_receipt_hash != expected_policy_receipt
+    ):
+        raise _portfolio_contract_error(
+            "portfolio authority receipt binding is invalid",
+            code="invalid_project_completion_authority_carrier",
+        )
+    if carrier.catalog_version != f"sha256:{carrier.catalog_snapshot_hash}":
+        raise _portfolio_contract_error(
+            "portfolio catalog version does not match owner receipt",
+            code="invalid_project_completion_authority_carrier",
+        )
+    live_catalog_snapshot = _read_portfolio_catalog_snapshot(command.workspace)
+    if live_catalog_snapshot != dict(carrier.catalog_snapshot):
+        raise _portfolio_contract_error(
+            "workspace catalog drifted after committed PM authority capture",
+            code="invalid_project_completion_contract",
+        )
+    if project_completion_catalog_snapshot_hash(live_catalog_snapshot) != carrier.catalog_snapshot_hash:
+        raise _portfolio_contract_error(
+            "workspace catalog hash no longer matches owner receipt",
+            code="invalid_project_completion_authority_carrier",
+        )
+    return carrier
+
+
+def _build_portfolio_completion_contract(
+    command: BuildChiefEngineerBlueprintPortfolioCommandV1,
+    requirements: Mapping[str, Any],
+) -> ProjectCompletionContractV1:
+    carrier = _revalidate_portfolio_authority_carrier(command)
+    try:
+        project_kind_authority = derive_project_kind_authority_from_catalog_snapshot(
+            project_id=carrier.project_id,
+            run_id=carrier.run_id,
+            pm_contract_hash=carrier.pm_contract_hash,
+            catalog_snapshot=carrier.catalog_snapshot,
+            catalog_snapshot_hash=carrier.catalog_snapshot_hash,
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        raise _portfolio_contract_error(
+            f"invalid committed project catalog authority: {exc}",
+            code="invalid_project_completion_contract",
+            details={"error_type": type(exc).__name__},
+        ) from exc
+    payload = _strict_completion_mapping(
+        requirements,
+        field_name="project_completion_contract",
+        expected_fields={"obligations"},
+    )
+    obligations_payload = _strict_completion_mapping(
+        payload["obligations"],
+        field_name="project_completion_contract.obligations",
+        expected_fields={"artifacts", "entrypoints", "verification"},
+    )
+    artifact_rows = _strict_completion_rows(
+        obligations_payload["artifacts"],
+        field_name="project_completion_contract.obligations.artifacts",
+        expected_fields={"obligation_id", "path", "semantic_role", "applicability", "owner_task_id"},
+    )
+    entrypoint_rows = _strict_completion_rows(
+        obligations_payload["entrypoints"],
+        field_name="project_completion_contract.obligations.entrypoints",
+        expected_fields={
+            "obligation_id",
+            "kind",
+            "applicability",
+            "owner_task_id",
+            "source_path",
+            "runtime_path",
+            "command",
+        },
+    )
+    verification_rows = _strict_completion_rows(
+        obligations_payload["verification"],
+        field_name="project_completion_contract.obligations.verification",
+        expected_fields={
+            "obligation_id",
+            "modality",
+            "command_authority_hash",
+            "applicability",
+            "covers_obligation_ids",
+            "owner_task_id",
+        },
+    )
+    try:
+        command_authorities = tuple(carrier.verification_command_authority)
+        command_authority_by_hash = {item.authority_hash: item for item in command_authorities}
+
+        artifact_owner_by_id = {
+            str(row["obligation_id"]): str(row["owner_task_id"])
+            for row in artifact_rows
+            if row["applicability"] != "not_applicable" and row["owner_task_id"] is not None
+        }
+
+        def authorities_for(*, modality: str, owner_task_id: str | None = None) -> tuple[Any, ...]:
+            return tuple(
+                item
+                for item in command_authorities
+                if item.modality == modality and (owner_task_id is None or item.task_id == owner_task_id)
+            )
+
+        def authority_for_row(row: Mapping[str, Any]) -> Any:
+            """Bind advisory verifier semantics to committed PM command authority.
+
+            CE owns semantic coverage; it does not own opaque hashes or command
+            authorization.  Prefer the exact hash, then exact owner/modality,
+            then an unambiguous covered-artifact owner.  The final modality-wide
+            fallback is allowed only when every PM authority exposes the same
+            argv/cwd command.  No branch can invent or widen command authority.
+            """
+
+            authority = command_authority_by_hash.get(str(row["command_authority_hash"] or ""))
+            if authority is not None:
+                if authority.modality != row["modality"]:
+                    raise ValueError(
+                        "active verification command authority modality mismatch; "
+                        f"obligation_id={row['obligation_id']!r}"
+                    )
+                return authority
+
+            owner_candidates = authorities_for(
+                modality=str(row["modality"]),
+                owner_task_id=str(row["owner_task_id"]) if row["owner_task_id"] is not None else None,
+            )
+            if len(owner_candidates) == 1:
+                return owner_candidates[0]
+
+            covered_owners = {
+                artifact_owner_by_id[obligation_id]
+                for obligation_id in row["covers_obligation_ids"]
+                if obligation_id in artifact_owner_by_id
+            }
+            if len(covered_owners) == 1:
+                covered_owner_candidates = authorities_for(
+                    modality=str(row["modality"]),
+                    owner_task_id=next(iter(covered_owners)),
+                )
+                if len(covered_owner_candidates) == 1:
+                    return covered_owner_candidates[0]
+
+            modality_candidates = authorities_for(modality=str(row["modality"]))
+            command_keys = {(item.argv, item.cwd) for item in modality_candidates}
+            if len(command_keys) == 1 and modality_candidates:
+                return sorted(modality_candidates, key=lambda item: (item.task_id, item.authority_hash))[0]
+            raise ValueError(
+                "active verification cannot be bound to one committed PM command authority; "
+                f"obligation_id={row['obligation_id']!r}; modality={row['modality']!r}; "
+                f"candidate_count={len(modality_candidates)}; command_count={len(command_keys)}"
+            )
+
+        def verification_obligation(row: Mapping[str, Any]) -> VerificationObligationV1:
+            applicability = row["applicability"]
+            authority_hash = row["command_authority_hash"]
+            if applicability == "not_applicable":
+                if authority_hash is not None:
+                    raise ValueError("not_applicable verification must use command_authority_hash=null")
+                verifier_command = None
+            else:
+                authority = authority_for_row(row)
+                authority_hash = authority.authority_hash
+                verifier_command = authority.command
+            return VerificationObligationV1(
+                obligation_id=row["obligation_id"],
+                modality=row["modality"],
+                command=verifier_command,
+                applicability=applicability,
+                covers_obligation_ids=row["covers_obligation_ids"],
+                owner_task_id=(authority.task_id if applicability != "not_applicable" else row["owner_task_id"]),
+                command_authority_hash=authority_hash,
+            )
+
+        # Entrypoints are semantic CE suggestions but executable commands are
+        # PM-owned authority.  Keep only active suggestions that can be bound
+        # exactly to a committed PM entrypoint command.  Non-executable extras
+        # (for example a library facade or browser asset without a command)
+        # must not turn a valid application entrypoint into a portfolio-wide
+        # failure.  Path/owner authority is still validated below.
+        normalized_entrypoint_rows: list[Mapping[str, Any]] = []
+        for row in entrypoint_rows:
+            if row["applicability"] == "not_applicable":
+                normalized_entrypoint_rows.append(row)
+                continue
+            matching = authorities_for(
+                modality="entrypoint",
+                owner_task_id=str(row["owner_task_id"]) if row["owner_task_id"] is not None else None,
+            )
+            if row["command"] is None or not any(item.command == row["command"] for item in matching):
+                continue
+            normalized_entrypoint_rows.append(row)
+
+        normalized_verification_rows: list[dict[str, Any]] = [
+            dict(row)
+            for row in verification_rows
+            if row["modality"] in {"build", "lint"}
+        ]
+        used_verification_ids = {str(row["obligation_id"]) for row in normalized_verification_rows}
+        required_test_seed_rows = [
+            row
+            for row in verification_rows
+            if row["modality"] == "test" and row["applicability"] == "required"
+        ]
+        known_artifact_ids = {str(row["obligation_id"]) for row in artifact_rows}
+        model_test_coverage = {
+            str(obligation_id)
+            for row in required_test_seed_rows
+            for obligation_id in row["covers_obligation_ids"]
+            if str(obligation_id) in known_artifact_ids
+        }
+
+        required_test_artifacts_by_owner: dict[str, list[str]] = {}
+        not_applicable_test_artifacts = [
+            str(row["obligation_id"])
+            for row in artifact_rows
+            if row["semantic_role"] == "test" and row["applicability"] == "not_applicable"
+        ]
+        for row in artifact_rows:
+            if row["semantic_role"] != "test" or row["applicability"] != "required":
+                continue
+            required_test_artifacts_by_owner.setdefault(str(row["owner_task_id"]), []).append(
+                str(row["obligation_id"])
+            )
+        for index, (owner_task_id, covered_ids) in enumerate(
+            sorted(required_test_artifacts_by_owner.items()),
+            start=1,
+        ):
+            test_authorities = authorities_for(modality="test", owner_task_id=owner_task_id)
+            if len(test_authorities) != 1:
+                raise ValueError(
+                    "required test artifact owner must have exactly one committed PM test authority; "
+                    f"owner_task_id={owner_task_id!r}; matches={len(test_authorities)}"
+                )
+            seed_id = (
+                str(required_test_seed_rows[0]["obligation_id"])
+                if index == 1 and required_test_seed_rows
+                else f"verification-authority-test-{index:03d}"
+            )
+            if seed_id in used_verification_ids:
+                seed_id = f"verification-authority-test-{index:03d}"
+            used_verification_ids.add(seed_id)
+            normalized_verification_rows.append(
+                {
+                    "obligation_id": seed_id,
+                    "modality": "test",
+                    "command_authority_hash": test_authorities[0].authority_hash,
+                    "applicability": "required",
+                    "covers_obligation_ids": sorted(set(covered_ids) | model_test_coverage),
+                    "owner_task_id": owner_task_id,
+                }
+            )
+        if not required_test_artifacts_by_owner and not_applicable_test_artifacts:
+            normalized_verification_rows.append(
+                {
+                    "obligation_id": "verification-authority-test-na",
+                    "modality": "test",
+                    "command_authority_hash": None,
+                    "applicability": "not_applicable",
+                    "covers_obligation_ids": [],
+                    "owner_task_id": None,
+                }
+            )
+
+        if project_kind_authority.project_kind == "application":
+            environment_candidates: list[tuple[int, str, Any, str]] = []
+            for row in artifact_rows:
+                if row["applicability"] != "required" or row["owner_task_id"] is None:
+                    continue
+                owner_task_id = str(row["owner_task_id"])
+                for authority in authorities_for(modality="environment_prep", owner_task_id=owner_task_id):
+                    semantic_priority = 0 if row["semantic_role"] in {"manifest", "config"} else 1
+                    environment_candidates.append(
+                        (semantic_priority, str(row["obligation_id"]), authority, owner_task_id)
+                    )
+            if not environment_candidates:
+                raise ValueError("application has no PM-authorized environment_prep command for a required artifact")
+            _, environment_artifact_id, environment_authority, environment_owner = sorted(
+                environment_candidates,
+                key=lambda item: (item[0], item[1], item[2].authority_hash),
+            )[0]
+            environment_seed_rows = [
+                row
+                for row in verification_rows
+                if row["modality"] == "environment_prep" and row["applicability"] == "required"
+            ]
+            environment_obligation_id = (
+                str(environment_seed_rows[0]["obligation_id"])
+                if environment_seed_rows
+                else "verification-authority-environment-001"
+            )
+            if environment_obligation_id in used_verification_ids:
+                environment_obligation_id = "verification-authority-environment-001"
+            used_verification_ids.add(environment_obligation_id)
+            normalized_verification_rows.append(
+                {
+                    "obligation_id": environment_obligation_id,
+                    "modality": "environment_prep",
+                    "command_authority_hash": environment_authority.authority_hash,
+                    "applicability": "required",
+                    "covers_obligation_ids": [environment_artifact_id],
+                    "owner_task_id": environment_owner,
+                }
+            )
+        else:
+            environment_rows = [dict(row) for row in verification_rows if row["modality"] == "environment_prep"]
+            normalized_verification_rows.extend(environment_rows)
+
+        for index, entrypoint_row in enumerate(normalized_entrypoint_rows, start=1):
+            if entrypoint_row["applicability"] == "not_applicable":
+                continue
+            entrypoint_authorities = tuple(
+                item
+                for item in authorities_for(
+                    modality="entrypoint",
+                    owner_task_id=str(entrypoint_row["owner_task_id"]),
+                )
+                if item.command == entrypoint_row["command"]
+            )
+            if len(entrypoint_authorities) != 1:
+                raise ValueError(
+                    "active entrypoint must bind exactly one committed PM entrypoint authority; "
+                    f"obligation_id={entrypoint_row['obligation_id']!r}; matches={len(entrypoint_authorities)}"
+                )
+            entrypoint_seed_rows = [
+                candidate
+                for candidate in verification_rows
+                if candidate["modality"] == "entrypoint"
+                and entrypoint_row["obligation_id"] in candidate["covers_obligation_ids"]
+            ]
+            entrypoint_obligation_id = (
+                str(entrypoint_seed_rows[0]["obligation_id"])
+                if entrypoint_seed_rows
+                else f"verification-authority-entrypoint-{index:03d}"
+            )
+            if entrypoint_obligation_id in used_verification_ids:
+                entrypoint_obligation_id = f"verification-authority-entrypoint-{index:03d}"
+            used_verification_ids.add(entrypoint_obligation_id)
+            normalized_verification_rows.append(
+                {
+                    "obligation_id": entrypoint_obligation_id,
+                    "modality": "entrypoint",
+                    "command_authority_hash": entrypoint_authorities[0].authority_hash,
+                    "applicability": "required",
+                    "covers_obligation_ids": [entrypoint_row["obligation_id"]],
+                    "owner_task_id": entrypoint_row["owner_task_id"],
+                }
+            )
+
+        obligations = ProjectCompletionObligationsV1(
+            artifacts=tuple(
+                ArtifactObligationV1(
+                    obligation_id=row["obligation_id"],
+                    path=row["path"],
+                    semantic_role=row["semantic_role"],
+                    applicability=row["applicability"],
+                    owner_task_id=row["owner_task_id"],
+                )
+                for row in artifact_rows
+            ),
+            entrypoints=tuple(
+                EntrypointObligationV1(
+                    obligation_id=row["obligation_id"],
+                    kind=row["kind"],
+                    applicability=row["applicability"],
+                    owner_task_id=row["owner_task_id"],
+                    source_path=row["source_path"],
+                    runtime_path=row["runtime_path"],
+                    command=row["command"],
+                )
+                for row in normalized_entrypoint_rows
+            ),
+            verification=tuple(verification_obligation(row) for row in normalized_verification_rows),
+        )
+        pm_target_owners: dict[str, set[str]] = {}
+        pm_scope_owners: list[tuple[str, str]] = []
+        for task in command.tasks:
+            for path in task.target_files:
+                pm_target_owners.setdefault(path, set()).add(task.task_id)
+            pm_scope_owners.extend((path, task.task_id) for path in task.scope_paths)
+
+        def owners_for_path(path: str) -> set[str]:
+            owners = set(pm_target_owners.get(path, set()))
+            owners.update(
+                task_id
+                for scope_path, task_id in pm_scope_owners
+                if _completion_path_is_within_scope(path=path, scope_path=scope_path)
+            )
+            return owners
+
+        for artifact in obligations.artifacts:
+            if artifact.applicability == "not_applicable":
+                continue
+            authorized_owners = owners_for_path(artifact.path)
+            if not authorized_owners:
+                raise ValueError(
+                    "active artifact path is outside exact PM target or component-safe scope authority; "
+                    f"obligation_id={artifact.obligation_id!r}:path={artifact.path!r}"
+                )
+            if artifact.owner_task_id not in authorized_owners:
+                raise ValueError(
+                    "active artifact owner_task_id does not own its PM target/scope path; "
+                    f"obligation_id={artifact.obligation_id!r}:path={artifact.path!r}:"
+                    f"owner_task_id={artifact.owner_task_id!r}:authorized_owners={sorted(authorized_owners)}"
+                )
+
+        for entrypoint in obligations.entrypoints:
+            if entrypoint.applicability == "not_applicable":
+                continue
+            source_owners = owners_for_path(entrypoint.source_path) if entrypoint.source_path is not None else set()
+            if entrypoint.source_path is not None:
+                if not source_owners:
+                    raise ValueError(
+                        "active entrypoint path is outside exact PM target or component-safe scope authority; "
+                        f"obligation_id={entrypoint.obligation_id!r}:source_path={entrypoint.source_path!r}"
+                    )
+                if entrypoint.owner_task_id not in source_owners:
+                    raise ValueError(
+                        "active entrypoint owner_task_id does not own its PM target/scope path; "
+                        f"obligation_id={entrypoint.obligation_id!r}:source_path={entrypoint.source_path!r}:"
+                        f"owner_task_id={entrypoint.owner_task_id!r}:"
+                        f"authorized_owners={sorted(source_owners)}"
+                    )
+
+            if entrypoint.runtime_path is not None:
+                runtime_owners = owners_for_path(entrypoint.runtime_path)
+                if runtime_owners:
+                    if entrypoint.owner_task_id not in runtime_owners:
+                        raise ValueError(
+                            "active entrypoint owner_task_id does not own its PM target/scope path; "
+                            f"obligation_id={entrypoint.obligation_id!r}:runtime_path={entrypoint.runtime_path!r}:"
+                            f"owner_task_id={entrypoint.owner_task_id!r}:"
+                            f"authorized_owners={sorted(runtime_owners)}"
+                        )
+                elif entrypoint.source_path is None or entrypoint.owner_task_id not in source_owners:
+                    # Compilers legitimately place runnable output outside PM
+                    # source targets (for example ``src/main.ts`` becomes
+                    # ``dist/main.js``). The exact PM entrypoint command was
+                    # already bound above, so a safe relative runtime locator
+                    # may derive from an owner-authorized source entrypoint.
+                    # Runtime-only guesses without such a source remain
+                    # fail-closed.
+                    raise ValueError(
+                        "active entrypoint path is outside exact PM target or component-safe scope authority; "
+                        f"obligation_id={entrypoint.obligation_id!r}:runtime_path={entrypoint.runtime_path!r}"
+                    )
+
+        required_artifact_paths = {item.path for item in obligations.artifacts if item.applicability == "required"}
+        pm_target_paths = {path for task in command.tasks for path in task.target_files}
+        missing_pm_target_paths = sorted(pm_target_paths - required_artifact_paths)
+        if missing_pm_target_paths:
+            raise ValueError(
+                "completion contract must declare every PM target file as a required artifact; "
+                f"missing={missing_pm_target_paths}"
+            )
+        return build_project_completion_contract(
+            project_id=carrier.project_id,
+            run_id=command.run_id,
+            project_kind=project_kind_authority.project_kind,
+            project_kind_authority=project_kind_authority,
+            pm_contract_hash=carrier.pm_contract_hash,
+            covered_task_ids=tuple(task.task_id for task in command.tasks),
+            obligations=obligations,
+            completion_predicate_version=_PROJECT_COMPLETION_PREDICATE_VERSION,
+            verifier_policy_hash=carrier.verifier_policy_hash,
+            verifier_policy_snapshot_hash=carrier.verifier_policy_snapshot_hash,
+            verification_command_authority=carrier.verification_command_authority,
+        )
+    except (TypeError, ValueError) as exc:
+        raise _portfolio_contract_error(
+            f"invalid project completion contract: {exc}",
+            code="invalid_project_completion_contract",
+            details={"error_type": type(exc).__name__},
+        ) from exc
+
+
 def _parse_portfolio_llm_blueprint(
     command: BuildChiefEngineerBlueprintPortfolioCommandV1,
 ) -> _PortfolioLlmBlueprint:
     raw = dict(command.llm_blueprint)
     if not raw:
-        return _PortfolioLlmBlueprint({}, {}, (), (), (), (), (), False)
+        return _PortfolioLlmBlueprint({}, {}, (), (), (), (), (), None, False)
 
-    allowed_top_level = {"construction_plan", "risk_flags", "scope_for_apply"}
+    allowed_top_level = {
+        "construction_plan",
+        "project_completion_contract",
+        "risk_flags",
+        "scope_for_apply",
+    }
     unknown_top_level = sorted(str(key) for key in raw if str(key) not in allowed_top_level)
     if unknown_top_level:
         raise _portfolio_contract_error(
             "LLM portfolio blueprint contains unknown top-level fields",
             details={"unknown_fields": unknown_top_level},
         )
+    if "project_completion_contract" not in raw:
+        raise _portfolio_contract_error(
+            "advisory CE portfolio must define project_completion_contract",
+            code="invalid_project_completion_contract",
+            details={"missing_fields": ["project_completion_contract"]},
+        )
+    completion_requirements = _strict_completion_mapping(
+        raw["project_completion_contract"],
+        field_name="project_completion_contract",
+        expected_fields={"obligations"},
+    )
 
     construction_plan = _portfolio_mapping(
         raw.get("construction_plan", {}),
@@ -1977,9 +2662,7 @@ def _parse_portfolio_llm_blueprint(
         field_name="risk_flags",
     )
     shared_plan = _mapping(_compact_llm_blueprint_value(construction_plan))
-    consumed = bool(
-        shared_plan or task_plans or scope_paths or scope_rejections or risk_flags or providers or consumers
-    )
+    consumed = True
     return _PortfolioLlmBlueprint(
         shared_plan=shared_plan,
         task_plans=task_plans,
@@ -1988,6 +2671,7 @@ def _parse_portfolio_llm_blueprint(
         risk_flags=risk_flags,
         provider_declarations=providers,
         consumer_declarations=consumers,
+        project_completion_requirements=completion_requirements,
         consumed=consumed,
     )
 
@@ -2097,6 +2781,8 @@ def _bind_portfolio_task_overlays(
     portfolio_hash: str,
     project_interface_contract_ref: str,
     project_interface_contract_hash: str,
+    project_completion_contract_ref: str | None,
+    project_completion_contract_hash: str | None,
     llm_blueprint_consumed: bool,
     usage_mode: Literal["advisory_overlay", "offline_diagnostic_only"],
 ) -> dict[str, dict[str, Any]]:
@@ -2110,6 +2796,8 @@ def _bind_portfolio_task_overlays(
             "portfolio_hash": portfolio_hash,
             "project_interface_contract_ref": project_interface_contract_ref,
             "project_interface_contract_hash": project_interface_contract_hash,
+            "project_completion_contract_ref": project_completion_contract_ref,
+            "project_completion_contract_hash": project_completion_contract_hash,
         }
         bound[task_id] = {
             "construction_plan": _mapping(overlay.get("construction_plan")),
@@ -2120,6 +2808,8 @@ def _bind_portfolio_task_overlays(
             "portfolio_hash": portfolio_hash,
             "project_interface_contract_ref": project_interface_contract_ref,
             "project_interface_contract_hash": project_interface_contract_hash,
+            "project_completion_contract_ref": project_completion_contract_ref,
+            "project_completion_contract_hash": project_completion_contract_hash,
             "reference": reference,
             "llm_blueprint_consumed": llm_blueprint_consumed,
             "usage_mode": usage_mode,
@@ -2130,7 +2820,11 @@ def _bind_portfolio_task_overlays(
     return bound
 
 
-def _persist_immutable_blueprint_portfolio(portfolio: ChiefEngineerBlueprintPortfolioV1) -> None:
+def _persist_immutable_blueprint_portfolio(
+    portfolio: ChiefEngineerBlueprintPortfolioV1,
+    *,
+    reject_existing: bool = False,
+) -> None:
     persistence = BlueprintPersistence(portfolio.workspace)
     expected_payload = portfolio.to_dict()
     try:
@@ -2165,6 +2859,12 @@ def _persist_immutable_blueprint_portfolio(portfolio: ChiefEngineerBlueprintPort
                     "existing_hash": existing_hash,
                 },
             )
+        if reject_existing:
+            raise _portfolio_contract_error(
+                "Factory-issued portfolio authority was already consumed",
+                code="project_completion_authority_replay",
+                details={"portfolio_id": portfolio.portfolio_id},
+            )
         return
 
     try:
@@ -2185,6 +2885,79 @@ def _persist_immutable_blueprint_portfolio(portfolio: ChiefEngineerBlueprintPort
         )
 
 
+def query_project_completion_contract(
+    query: QueryProjectCompletionContractV1,
+) -> ProjectCompletionContractV1:
+    """Read one exact immutable completion contract through the CE owner port."""
+
+    if type(query) is not QueryProjectCompletionContractV1:
+        raise TypeError("query must be exact QueryProjectCompletionContractV1")
+    persistence = BlueprintPersistence(query.workspace, ensure_directory=False)
+    matches: list[ProjectCompletionContractV1] = []
+    for portfolio_id in persistence.list_all():
+        payload = persistence.load(portfolio_id)
+        if not isinstance(payload, Mapping) or payload.get("kind") != "chief_engineer_blueprint_portfolio":
+            continue
+        completion_payload = payload.get("project_completion_contract")
+        if not isinstance(completion_payload, Mapping):
+            continue
+        if (
+            completion_payload.get("project_id") != query.project_id
+            or completion_payload.get("run_id") != query.run_id
+            or completion_payload.get("contract_hash") != query.contract_hash
+        ):
+            continue
+        embedded_portfolio_hash = str(payload.get("portfolio_hash") or "")
+        if _portfolio_hash(payload) != embedded_portfolio_hash:
+            raise _portfolio_contract_error(
+                "completion contract portfolio hash is invalid",
+                code="project_completion_contract_integrity_failed",
+                details={"portfolio_id": portfolio_id},
+            )
+        try:
+            contract = ProjectCompletionContractV1.from_dict(completion_payload)
+        except (TypeError, ValueError) as exc:
+            raise _portfolio_contract_error(
+                f"persisted project completion contract is invalid: {exc}",
+                code="project_completion_contract_integrity_failed",
+                details={"portfolio_id": portfolio_id},
+            ) from exc
+        expected_ref = f"{payload.get('portfolio_path')}#project_completion_contract"
+        reference = payload.get("reference")
+        if (
+            payload.get("project_completion_contract_ref") != expected_ref
+            or payload.get("project_completion_contract_hash") != contract.contract_hash
+            or not isinstance(reference, Mapping)
+            or reference.get("project_completion_contract_ref") != expected_ref
+            or reference.get("project_completion_contract_hash") != contract.contract_hash
+            or Path(str(payload.get("workspace") or "")).resolve() != Path(query.workspace).resolve()
+        ):
+            raise _portfolio_contract_error(
+                "completion contract portfolio binding is invalid",
+                code="project_completion_contract_integrity_failed",
+                details={"portfolio_id": portfolio_id},
+            )
+        matches.append(contract)
+
+    if not matches:
+        raise _portfolio_contract_error(
+            "project completion contract was not found for the exact authority identity",
+            code="project_completion_contract_not_found",
+            details={
+                "project_id": query.project_id,
+                "run_id": query.run_id,
+                "contract_hash": query.contract_hash,
+            },
+        )
+    if len(matches) != 1:
+        raise _portfolio_contract_error(
+            "multiple project completion contracts matched one authority identity",
+            code="project_completion_contract_ambiguous",
+            details={"match_count": len(matches), "contract_hash": query.contract_hash},
+        )
+    return matches[0]
+
+
 def build_chief_engineer_blueprint_portfolio(
     command: BuildChiefEngineerBlueprintPortfolioCommandV1,
 ) -> ChiefEngineerBlueprintPortfolioV1:
@@ -2196,6 +2969,8 @@ def build_chief_engineer_blueprint_portfolio(
     explicitly offline diagnostic object and never grants handoff authority.
     """
 
+    if type(command) is not BuildChiefEngineerBlueprintPortfolioCommandV1:
+        raise TypeError("command must be exact BuildChiefEngineerBlueprintPortfolioCommandV1")
     parsed = _parse_portfolio_llm_blueprint(command)
     usage_mode: Literal["advisory_overlay", "offline_diagnostic_only"] = (
         "advisory_overlay" if parsed.consumed else "offline_diagnostic_only"
@@ -2203,6 +2978,11 @@ def build_chief_engineer_blueprint_portfolio(
     task_overlays: dict[str, dict[str, Any]] = {}
     scope_advisory: dict[str, dict[str, Any]] = {}
     portfolio_risks: tuple[str, ...] = parsed.risk_flags
+    project_completion_contract = (
+        _build_portfolio_completion_contract(command, parsed.project_completion_requirements)
+        if parsed.project_completion_requirements is not None
+        else None
+    )
 
     for task in command.tasks:
         if parsed.consumed:
@@ -2250,12 +3030,19 @@ def build_chief_engineer_blueprint_portfolio(
         "scope_advisory": scope_advisory,
         "risk_flags": list(portfolio_risks),
         "project_interface_contract_hash": interface_hash,
+        "project_completion_contract_hash": (
+            project_completion_contract.contract_hash if project_completion_contract is not None else None
+        ),
         "llm_blueprint_consumed": parsed.consumed,
         "usage_mode": usage_mode,
     }
     portfolio_id = f"ce_portfolio_{stable_hash(identity_seed)[:32]}"
     portfolio_path = _blueprint_path(portfolio_id)
     interface_ref = f"{portfolio_path}#project_interface_contract"
+    completion_ref = (
+        f"{portfolio_path}#project_completion_contract" if project_completion_contract is not None else None
+    )
+    completion_hash = project_completion_contract.contract_hash if project_completion_contract is not None else None
     project_interface_contract = ChiefEngineerProjectInterfaceContractV1(
         contract_id=interface_id,
         contract_ref=interface_ref,
@@ -2281,6 +3068,8 @@ def build_chief_engineer_blueprint_portfolio(
             portfolio_hash=provisional_hash,
             project_interface_contract_ref=interface_ref,
             project_interface_contract_hash=interface_hash,
+            project_completion_contract_ref=completion_ref,
+            project_completion_contract_hash=completion_hash,
             llm_blueprint_consumed=parsed.consumed,
             usage_mode=usage_mode,
         ),
@@ -2288,6 +3077,9 @@ def build_chief_engineer_blueprint_portfolio(
         project_interface_contract=project_interface_contract,
         project_interface_contract_ref=interface_ref,
         project_interface_contract_hash=interface_hash,
+        project_completion_contract=project_completion_contract,
+        project_completion_contract_ref=completion_ref,
+        project_completion_contract_hash=completion_hash,
         risk_flags=portfolio_risks,
         llm_blueprint_consumed=parsed.consumed,
         usage_mode=usage_mode,
@@ -2307,6 +3099,8 @@ def build_chief_engineer_blueprint_portfolio(
             portfolio_hash=portfolio_hash,
             project_interface_contract_ref=interface_ref,
             project_interface_contract_hash=interface_hash,
+            project_completion_contract_ref=completion_ref,
+            project_completion_contract_hash=completion_hash,
             llm_blueprint_consumed=parsed.consumed,
             usage_mode=usage_mode,
         ),
@@ -2314,6 +3108,9 @@ def build_chief_engineer_blueprint_portfolio(
         project_interface_contract=project_interface_contract,
         project_interface_contract_ref=interface_ref,
         project_interface_contract_hash=interface_hash,
+        project_completion_contract=project_completion_contract,
+        project_completion_contract_ref=completion_ref,
+        project_completion_contract_hash=completion_hash,
         risk_flags=portfolio_risks,
         llm_blueprint_consumed=parsed.consumed,
         usage_mode=usage_mode,
@@ -2324,7 +3121,9 @@ def build_chief_engineer_blueprint_portfolio(
             code="blueprint_portfolio_hash_invariant_failed",
             details={"portfolio_id": portfolio.portfolio_id},
         )
-    _persist_immutable_blueprint_portfolio(portfolio)
+    if command.llm_blueprint:
+        _revalidate_portfolio_authority_carrier(command)
+    _persist_immutable_blueprint_portfolio(portfolio, reject_existing=bool(command.llm_blueprint))
     return portfolio
 
 
@@ -2375,6 +3174,9 @@ def _project_blueprint_portfolio_context(
         "project_interface_contract_ref",
         "project_interface_contract_hash",
         "project_interface_contract",
+        "project_completion_contract_ref",
+        "project_completion_contract_hash",
+        "project_completion_contract",
     )
     present_fields = [field for field in canonical_fields if field in context]
     if not present_fields:
@@ -2391,9 +3193,13 @@ def _project_blueprint_portfolio_context(
     portfolio_hash = str(context.get("blueprint_portfolio_hash") or "").strip()
     interface_ref = str(context.get("project_interface_contract_ref") or "").strip()
     interface_hash = str(context.get("project_interface_contract_hash") or "").strip()
+    completion_ref = str(context.get("project_completion_contract_ref") or "").strip()
+    completion_hash = str(context.get("project_completion_contract_hash") or "").strip()
     normalized_portfolio_ref, portfolio_ref_error = _normalize_portfolio_advisory_path(portfolio_ref)
     interface_path, separator, interface_fragment = interface_ref.partition("#")
     normalized_interface_path, interface_ref_error = _normalize_portfolio_advisory_path(interface_path)
+    completion_path, completion_separator, completion_fragment = completion_ref.partition("#")
+    normalized_completion_path, completion_ref_error = _normalize_portfolio_advisory_path(completion_path)
     if (
         portfolio_ref_error
         or normalized_portfolio_ref != portfolio_ref
@@ -2404,6 +3210,12 @@ def _project_blueprint_portfolio_context(
         or f"{normalized_interface_path}#project_interface_contract" != interface_ref
         or normalized_interface_path != portfolio_ref
         or not interface_hash
+        or completion_ref_error
+        or completion_separator != "#"
+        or completion_fragment != "project_completion_contract"
+        or f"{normalized_completion_path}#project_completion_contract" != completion_ref
+        or normalized_completion_path != portfolio_ref
+        or not completion_hash
     ):
         raise _portfolio_contract_error(
             "task blueprint portfolio references are invalid",
@@ -2460,6 +3272,35 @@ def _project_blueprint_portfolio_context(
             code="invalid_blueprint_portfolio_context",
             details={"task_id": task_id, "field": "task_file_ownership"},
         )
+
+    try:
+        completion_contract = ProjectCompletionContractV1.from_dict(
+            _portfolio_mapping(
+                context.get("project_completion_contract"),
+                field_name="project_completion_contract",
+            )
+        )
+    except (TypeError, ValueError) as exc:
+        raise _portfolio_contract_error(
+            f"project completion contract is invalid: {exc}",
+            code="invalid_blueprint_portfolio_context",
+            details={"task_id": task_id, "field": "project_completion_contract"},
+        ) from exc
+    if completion_contract.contract_hash != completion_hash:
+        raise _portfolio_contract_error(
+            "project completion contract hash does not match its context binding",
+            code="invalid_blueprint_portfolio_context",
+            details={"task_id": task_id, "field": "project_completion_contract_hash"},
+        )
+    if task_id not in completion_contract.covered_task_ids:
+        raise _portfolio_contract_error(
+            "project completion contract does not cover the current PM task",
+            code="blueprint_portfolio_pm_authority_mismatch",
+            details={
+                "task_id": task_id,
+                "covered_task_ids": list(completion_contract.covered_task_ids),
+            },
+        )
     owned_files = task_file_ownership.get(task_id)
     if not isinstance(owned_files, list) or tuple(_string_list(owned_files)) != tuple(target_files):
         raise _portfolio_contract_error(
@@ -2478,6 +3319,9 @@ def _project_blueprint_portfolio_context(
         "project_interface_contract_ref": interface_ref,
         "project_interface_contract_hash": interface_hash,
         "project_interface_contract": interface_contract,
+        "project_completion_contract_ref": completion_ref,
+        "project_completion_contract_hash": completion_hash,
+        "project_completion_contract": completion_contract.to_dict(),
     }
 
 
@@ -3369,6 +4213,7 @@ def _handoff_validation_result(
     blueprint_task_id: str = "",
     base_handoff_decision: HandoffDecisionV1 | None = None,
     strict_decision: CeHandoffDecisionV1 | None = None,
+    task_completion_projection: Mapping[str, Any] | None = None,
     require_strict: bool = False,
 ) -> dict[str, Any]:
     base_payload = base_handoff_decision.to_dict() if base_handoff_decision is not None else {}
@@ -3385,7 +4230,90 @@ def _handoff_validation_result(
         "require_strict": require_strict,
         "decision_payload": base_payload,
         "strict_decision_payload": strict_payload,
+        "task_completion_projection": (
+            dict(task_completion_projection) if isinstance(task_completion_projection, Mapping) else {}
+        ),
     }
+
+
+def _project_task_completion_contract(
+    blueprint: Mapping[str, Any],
+    *,
+    task_id: str,
+) -> dict[str, Any]:
+    """Return one bounded Director repair contract derived from CE authority.
+
+    Director does not need the entire project completion contract on every
+    retry.  It needs only obligations owned by the claimed task plus artifact
+    obligations referenced by those local verifiers.  The immutable project
+    contract hash remains the root authority, while ``projection_hash`` binds
+    the exact task-local slice injected into Director context.
+    """
+
+    raw_contract = blueprint.get("project_completion_contract")
+    if not isinstance(raw_contract, Mapping):
+        raise ValueError("project completion contract is missing from Chief Engineer blueprint")
+    contract = ProjectCompletionContractV1.from_dict(raw_contract)
+    if task_id not in contract.covered_task_ids:
+        raise ValueError("project completion contract does not cover Director task")
+
+    contract_hash = str(blueprint.get("project_completion_contract_hash") or "").strip()
+    contract_ref = str(blueprint.get("project_completion_contract_ref") or "").strip()
+    if contract_hash != contract.contract_hash or not contract_ref:
+        raise ValueError("Chief Engineer blueprint completion contract binding is invalid")
+
+    owned_artifacts = tuple(item for item in contract.obligations.artifacts if item.owner_task_id == task_id)
+    owned_entrypoints = tuple(item for item in contract.obligations.entrypoints if item.owner_task_id == task_id)
+    owned_verification = tuple(item for item in contract.obligations.verification if item.owner_task_id == task_id)
+    covered_ids = {obligation_id for verifier in owned_verification for obligation_id in verifier.covers_obligation_ids}
+    owned_artifact_ids = {item.obligation_id for item in owned_artifacts}
+    dependency_artifacts = tuple(
+        item
+        for item in contract.obligations.artifacts
+        if item.obligation_id in covered_ids and item.obligation_id not in owned_artifact_ids
+    )
+    command_authority = tuple(item for item in contract.verification_command_authority if item.task_id == task_id)
+    authority_by_hash = {item.authority_hash: item for item in command_authority}
+    verification_execution_authority: list[dict[str, Any]] = []
+    for verifier in owned_verification:
+        if verifier.applicability == "not_applicable":
+            continue
+        authority = authority_by_hash.get(str(verifier.command_authority_hash or ""))
+        if authority is None:
+            raise ValueError(f"task-local verifier {verifier.obligation_id!r} lacks exact command authority")
+        verification_execution_authority.append(
+            {
+                "obligation_id": verifier.obligation_id,
+                "owner_task_id": verifier.owner_task_id,
+                "modality": verifier.modality,
+                "command": verifier.command,
+                "argv": list(authority.argv),
+                "cwd": authority.cwd,
+                "command_authority_hash": authority.authority_hash,
+                "covers_obligation_ids": list(verifier.covers_obligation_ids),
+            }
+        )
+
+    seed = {
+        "schema_version": "polaris.task_completion_projection.v1",
+        "project_contract_id": contract.contract_id,
+        "project_contract_ref": contract_ref,
+        "project_contract_hash": contract.contract_hash,
+        "project_id": contract.project_id,
+        "run_id": contract.run_id,
+        "task_id": task_id,
+        "project_kind": contract.project_kind,
+        "completion_predicate_version": contract.completion_predicate_version,
+        "verifier_policy_hash": contract.verifier_policy_hash,
+        "verifier_policy_snapshot_hash": contract.verifier_policy_snapshot_hash,
+        "owned_artifacts": [item.to_dict() for item in owned_artifacts],
+        "dependency_artifacts": [item.to_dict() for item in dependency_artifacts],
+        "owned_entrypoints": [item.to_dict() for item in owned_entrypoints],
+        "owned_verification": [item.to_dict() for item in owned_verification],
+        "verification_command_authority": [item.to_dict() for item in command_authority],
+        "verification_execution_authority": verification_execution_authority,
+    }
+    return {**seed, "projection_hash": stable_hash(seed)}
 
 
 def validate_director_handoff_from_payload(
@@ -3442,6 +4370,23 @@ def validate_director_handoff_from_payload(
             require_strict=require_strict,
         )
 
+    task_completion_projection: dict[str, Any] = {}
+    if require_strict:
+        try:
+            task_completion_projection = _project_task_completion_contract(
+                blueprint,
+                task_id=task_id or blueprint_task_id,
+            )
+        except (TypeError, ValueError) as exc:
+            return _handoff_validation_result(
+                allowed=False,
+                reason=f"task-local project completion projection is invalid: {exc}",
+                task_id=task_id,
+                blueprint_id=blueprint_id,
+                blueprint_task_id=blueprint_task_id,
+                require_strict=require_strict,
+            )
+
     base_handoff_decision = evaluate_handoff_decision(
         workspace_token,
         blueprint=blueprint,
@@ -3464,6 +4409,7 @@ def validate_director_handoff_from_payload(
             blueprint_task_id=blueprint_task_id,
             base_handoff_decision=base_handoff_decision,
             strict_decision=strict_decision,
+            task_completion_projection=task_completion_projection,
             require_strict=require_strict,
         )
     if require_strict and not strict_decision.allowed:
@@ -3475,6 +4421,7 @@ def validate_director_handoff_from_payload(
             blueprint_task_id=blueprint_task_id,
             base_handoff_decision=base_handoff_decision,
             strict_decision=strict_decision,
+            task_completion_projection=task_completion_projection,
             require_strict=require_strict,
         )
     return _handoff_validation_result(
@@ -3485,6 +4432,7 @@ def validate_director_handoff_from_payload(
         blueprint_task_id=blueprint_task_id,
         base_handoff_decision=base_handoff_decision,
         strict_decision=strict_decision,
+        task_completion_projection=task_completion_projection,
         require_strict=require_strict,
     )
 

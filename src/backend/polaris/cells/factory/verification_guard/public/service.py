@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+from polaris.cells.factory.verification_guard.internal.project_completion_authority import (
+    observe_project_completion_owner,
+)
+from polaris.cells.factory.verification_guard.internal.project_completion_diagnostics import (
+    evaluate_project_completion_bundle,
+)
+from polaris.cells.factory.verification_guard.internal.project_physical_evidence import (
+    run_project_completion_evidence as _run_project_completion_evidence,
+)
 from polaris.cells.factory.verification_guard.internal.safe_executor import (
     SafeExecutor,
 )
@@ -10,6 +19,11 @@ from polaris.cells.factory.verification_guard.internal.verification_engine impor
 )
 from polaris.cells.factory.verification_guard.public.contracts import (
     IVerificationGuardService,
+    ProjectCompletionDiagnosticsV1,
+    ProjectCompletionOwnerObservationV1Error,
+    QueryProjectCompletionDiagnosticsV1,
+    RunProjectCompletionEvidenceCommandV1,
+    RunProjectCompletionEvidenceResultV1,
     VerificationStatus,
     VerifyCompletionCommandV1,
     VerifyCompletionResultV1,
@@ -36,6 +50,27 @@ class VerificationGuardService(IVerificationGuardService):
         )
         return VerifyCompletionResultV1(ok=report.status == VerificationStatus.PASS, report=report)
 
+    def query_project_completion_diagnostics(
+        self,
+        query: QueryProjectCompletionDiagnosticsV1,
+    ) -> ProjectCompletionDiagnosticsV1:
+        """Evaluate the exact CE contract against bootstrap-bound owner facts."""
+
+        if type(query) is not QueryProjectCompletionDiagnosticsV1:
+            raise ProjectCompletionOwnerObservationV1Error(
+                "invalid_project_completion_query_type",
+                "Query must be an exact QueryProjectCompletionDiagnosticsV1",
+            )
+        return evaluate_project_completion_bundle(observe_project_completion_owner(query))
+
+    def run_project_completion_evidence(
+        self,
+        command: RunProjectCompletionEvidenceCommandV1,
+    ) -> RunProjectCompletionEvidenceResultV1:
+        """Materialize one physical obligation effect without completion verdict."""
+
+        return _run_project_completion_evidence(command)
+
 
 _SERVICE_SINGLETON: VerificationGuardService | None = None
 
@@ -59,9 +94,27 @@ def verify_completion(command: VerifyCompletionCommandV1) -> VerifyCompletionRes
     return get_verification_guard_service().verify_completion(command)
 
 
+def query_project_completion_diagnostics(
+    query: QueryProjectCompletionDiagnosticsV1,
+) -> ProjectCompletionDiagnosticsV1:
+    """Query authoritative project-completion diagnostics."""
+
+    return get_verification_guard_service().query_project_completion_diagnostics(query)
+
+
+def run_project_completion_evidence(
+    command: RunProjectCompletionEvidenceCommandV1,
+) -> RunProjectCompletionEvidenceResultV1:
+    """Materialize one exact contract obligation through its physical owner."""
+
+    return get_verification_guard_service().run_project_completion_evidence(command)
+
+
 __all__ = [
     "VerificationGuardService",
     "get_verification_guard_service",
+    "query_project_completion_diagnostics",
     "reset_verification_guard_service",
+    "run_project_completion_evidence",
     "verify_completion",
 ]

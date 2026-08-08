@@ -583,6 +583,18 @@ async def test_bound_artifact_snapshot_is_reread_immediately_before_stage_append
 async def test_automatic_router_mutation_matrix_executes_real_service_owned_writes(tmp_path: Path) -> None:
     expected = {
         "summary_projection": ("store.save_run",),
+        "chief_engineer_local_rework": (
+            "store.save_run",
+            "_append_event",
+            "reconcile_stage_execution_for_reentry",
+        ),
+        "chief_engineer_local_rework_reentry": ("reconcile_stage_execution_for_reentry",),
+        "director_local_rework": (
+            "store.save_run",
+            "_append_event",
+            "reconcile_stage_execution_for_reentry",
+        ),
+        "director_local_rework_reentry": ("reconcile_stage_execution_for_reentry",),
         "quality_rework": (
             "store.save_run",
             "_append_event",
@@ -606,6 +618,8 @@ async def test_automatic_router_mutation_matrix_executes_real_service_owned_writ
     assert expected == service.automatic_router_mutation_guard_matrix()
     direct_operations = {
         "summary_projection": None,
+        "chief_engineer_local_rework": "chief_engineer_local_rework_requested",
+        "director_local_rework": "director_local_rework_requested",
         "quality_rework": "quality_rework_requested",
         "run_configuration": None,
         "delivery_loop_projection": "delivery_loop_cycle",
@@ -624,9 +638,13 @@ async def test_automatic_router_mutation_matrix_executes_real_service_owned_writ
         assert updated.metadata[metadata_key] == "persisted"
         assert persisted is not None and persisted.metadata[metadata_key] == "persisted"
     events = await service.store.get_authoritative_events(run.id)
-    assert {"quality_rework_requested", "delivery_loop_cycle", "error"}.issubset(
-        {str(event.get("type")) for event in events}
-    )
+    assert {
+        "chief_engineer_local_rework_requested",
+        "director_local_rework_requested",
+        "quality_rework_requested",
+        "delivery_loop_cycle",
+        "error",
+    }.issubset({str(event.get("type")) for event in events})
 
     for operation in set(expected).difference(direct_operations):
         with pytest.raises(RuntimeError, match="not a direct persistence family"):

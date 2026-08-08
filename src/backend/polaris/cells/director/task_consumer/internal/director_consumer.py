@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 import os
 import threading
@@ -12,29 +11,26 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, Coroutine, cast
 
 from polaris.cells.chief_engineer.blueprint.public import validate_director_handoff_from_payload
+from polaris.cells.runtime.execution_broker.public import (
+    ProjectVerificationReceiptV1,
+    QueryProjectVerificationReceiptV1,
+    ResolveProjectVerificationAuthorityQueryV1,
+    authorize_project_verification_command,
+    query_project_verification_receipt,
+    run_project_verification,
+)
 from polaris.cells.runtime.task_market.public.contracts import (
-    OWNER_REWORK_HANDOFFS_METADATA_KEY,
     AcknowledgeTaskStageCommandV1,
     ClaimTaskWorkItemCommandV1,
     FailTaskStageCommandV1,
-    OwnerReworkHandoffV1,
-    OwnerReworkRouteReasonV1,
-    OwnerReworkRouteResultV1,
     QueryTaskMarketStatusV1,
     RenewTaskLeaseCommandV1,
-    RouteOwnerReworkCommandV1,
     TaskMarketError,
 )
 from polaris.cells.runtime.task_market.public.service import get_task_market_service
-from polaris.cells.runtime.task_runtime.public.contracts import (
-    OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1,
-    OwnerReworkExecutionAuthorizationV1,
-    PrepareOwnerReworkExecutionCommandV1,
-)
-from polaris.cells.runtime.task_runtime.public.service import prepare_owner_rework_execution
 from polaris.kernelone.fs.materialization import materialized_file_paths
 from polaris.kernelone.quality import resolve_owner_handoff_routing, task_record_routing_key
 
@@ -148,7 +144,14 @@ def _attach_handoff_validation_payload(payload: dict[str, Any], validation: dict
     legacy_decision = validation.get("decision_payload")
     if isinstance(legacy_decision, dict) and legacy_decision:
         payload.setdefault("handoff_decision", dict(legacy_decision))
-    payload["director_handoff_validation"] = dict(validation)
+    task_completion_projection = validation.get("task_completion_projection")
+    if isinstance(task_completion_projection, dict) and task_completion_projection:
+        payload["task_completion_projection"] = dict(task_completion_projection)
+        payload["completion_contract_hash"] = str(task_completion_projection.get("project_contract_hash") or "")
+        payload["completion_contract_ref"] = str(task_completion_projection.get("project_contract_ref") or "")
+    validation_audit = dict(validation)
+    validation_audit.pop("task_completion_projection", None)
+    payload["director_handoff_validation"] = validation_audit
 
 
 def _job_token_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -209,6 +212,61 @@ class InterfaceContractRepairRequiredError(RuntimeError):
         self.repair_evidence = dict(repair_evidence)
 
 
+def _contract_authority_blocker(
+    *,
+    task_id: str,
+    error_code: str,
+    evidence: Mapping[str, Any],
+    payload: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Project one terminal blocker without requesting upstream replanning."""
+
+    source_payload = payload if isinstance(payload, Mapping) else {}
+    normalized_task_id = str(task_id or "").strip()
+    normalized_error_code = str(error_code or "").strip()
+    if not normalized_task_id or not normalized_error_code:
+        raise ValueError("contract authority blocker requires task_id and error_code")
+    raw_job_token = source_payload.get("job_token")
+    job_token = raw_job_token if isinstance(raw_job_token, Mapping) else {}
+    completion_contract_hash = str(
+        source_payload.get("completion_contract_hash")
+        or source_payload.get("contract_hash")
+        or job_token.get("contract_hash")
+        or "missing"
+    ).strip()
+    blueprint_id = str(source_payload.get("blueprint_id") or "missing").strip()
+    run_id = str(
+        source_payload.get("run_id") or source_payload.get("factory_run_id") or job_token.get("run_id") or "missing"
+    ).strip()
+    trace_id = str(source_payload.get("trace_id") or job_token.get("trace_id") or "missing").strip()
+    missing_identity_fields = tuple(
+        name
+        for name, value in (
+            ("completion_contract_hash", completion_contract_hash),
+            ("blueprint_id", blueprint_id),
+            ("run_id", run_id),
+            ("trace_id", trace_id),
+        )
+        if value == "missing"
+    )
+    return {
+        "schema_version": "director.contract_authority_blocker.v1",
+        "blocker_kind": "contract_or_authority_contradiction",
+        "task_id": normalized_task_id,
+        "error_code": normalized_error_code,
+        "completion_contract_hash": completion_contract_hash,
+        "blueprint_id": blueprint_id,
+        "run_id": run_id,
+        "trace_id": trace_id,
+        "identity_complete": not missing_identity_fields,
+        "missing_identity_fields": list(missing_identity_fields),
+        "automatic_upstream_replan": False,
+        "automatic_escalation": False,
+        "retry_same_contract": False,
+        "evidence": dict(evidence),
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class _OwnerHandoffFailure:
     """Typed adapter-failure evidence needed for owner-task routing."""
@@ -225,17 +283,6 @@ class _OwnerHandoffRoutingRequiredError(RuntimeError):
     def __init__(self, message: str, *, failure: _OwnerHandoffFailure) -> None:
         super().__init__(message)
         self.failure = failure
-
-
-@dataclass(frozen=True, slots=True)
-class _OwnerReworkPreparationPlan:
-    """Validated public evidence needed before TaskRuntime may reopen a task."""
-
-    command: PrepareOwnerReworkExecutionCommandV1 | None
-    error_code: str = ""
-    error_message: str = ""
-    handoff_id: str = ""
-    task_role: str = ""
 
 
 DirectorTaskExecutor = Callable[[str, dict[str, Any], str], dict[str, Any]]
@@ -742,27 +789,6 @@ def _owner_handoff_failure_from_adapter_failure(
     )
 
 
-def _owner_handoff_id(
-    *,
-    requester_task_id: str,
-    owner_task_id: str,
-    handoff_request: Mapping[str, Any],
-) -> str:
-    """Return a deterministic idempotency key for one typed handoff request."""
-
-    identity = {
-        "owner_parent": str(handoff_request.get("owner_parent") or "").strip(),
-        "owner_step_id": str(handoff_request.get("owner_step_id") or "").strip(),
-        "owner_task_id": owner_task_id,
-        "requester_task_id": requester_task_id,
-        "schema_version": str(handoff_request.get("schema_version") or "").strip(),
-        "target_file": str(handoff_request.get("target_file") or "").strip(),
-    }
-    canonical = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
-    return f"owner-handoff-{digest}"
-
-
 def _owner_handoff_failure_metadata(
     failure: _OwnerHandoffFailure,
     *,
@@ -795,32 +821,12 @@ def _owner_handoff_evidence_metadata(
     return evidence
 
 
-def _owner_handoff_route_result_summary(result: OwnerReworkRouteResultV1) -> dict[str, Any]:
-    """Project the public owner-rework result without interpreting its meaning."""
-
-    return {
-        "ok": result.ok,
-        "reason": result.reason.value,
-        "handoff_id": result.handoff_id,
-        "owner_task_id": result.owner_task_id,
-        "requester_task_id": result.requester_task_id,
-        "owner_status": result.owner_status,
-        "requester_status": result.requester_status,
-        "owner_version": result.owner_version,
-        "requester_version": result.requester_version,
-        "owner_reopened": result.owner_reopened,
-        "dependency_added": result.dependency_added,
-        "idempotent": result.idempotent,
-    }
-
-
 def _owner_handoff_failure_projection(
     failure: _OwnerHandoffFailure,
     *,
     adapter_failure_message: str,
     handoff_request: Mapping[str, Any] | None,
     routing_summary: Mapping[str, Any],
-    route_result: OwnerReworkRouteResultV1 | None = None,
     routing_error: BaseException | None = None,
 ) -> dict[str, Any]:
     """Build auditable failure metadata from typed handoff facts only."""
@@ -834,8 +840,6 @@ def _owner_handoff_failure_projection(
         handoff_request=handoff_request,
         routing_summary=routing_summary,
     )
-    if route_result is not None:
-        evidence["owner_rework_route_result"] = _owner_handoff_route_result_summary(route_result)
     if routing_error is not None:
         evidence["owner_rework_route_error"] = {
             "type": type(routing_error).__name__,
@@ -971,7 +975,7 @@ def _final_convergence_failure(
     payload: dict[str, Any],
     changed_files: list[str],
     exec_result: dict[str, Any],
-) -> tuple[str, str, str, dict[str, Any]] | None:
+) -> tuple[str, str, str | None, dict[str, Any]] | None:
     """Validate final files after all Director writes/fallbacks have settled."""
 
     scope = _final_convergence_scan_scope(
@@ -1009,10 +1013,16 @@ def _final_convergence_failure(
         ),
     }
     if evidence.contract_amendment_request is not None:
+        evidence_payload["structured_blocker"] = _contract_authority_blocker(
+            task_id=task_id,
+            error_code="FINAL_CONVERGENCE_CONTRACT_AMENDMENT_REQUIRED",
+            evidence=evidence_payload,
+            payload=payload,
+        )
         return (
             "FINAL_CONVERGENCE_CONTRACT_AMENDMENT_REQUIRED",
-            errors[0] if errors else "Final convergence requires CE interface contract amendment",
-            "pending_design",
+            errors[0] if errors else "Final convergence found a completion-contract contradiction",
+            None,
             evidence_payload,
         )
     return (
@@ -1032,6 +1042,254 @@ def _contract_amendment_scan_scope(*, payload: dict[str, Any], adapter_result: d
         scope.append(step_target)
     scope.extend(_normalize_string_list(adapter_result.get("changed_files")))
     return _dedupe_normalized_paths(scope)
+
+
+@dataclass(frozen=True, slots=True)
+class _QaLocalRepairAuthority:
+    kind: str
+    projection_hash: str
+    obligation_id: str = ""
+    prior_receipt: ProjectVerificationReceiptV1 | None = None
+
+
+def _verification_receipt_query_from_command(command: Any) -> QueryProjectVerificationReceiptV1:
+    return QueryProjectVerificationReceiptV1(
+        workspace=command.workspace,
+        project_id=command.project_id,
+        run_id=command.run_id,
+        completion_contract_hash=command.completion_contract_hash,
+        obligation_id=command.obligation_id,
+        owner_task_id=command.owner_task_id,
+        modality=command.modality,
+        argv=command.argv,
+        cwd=command.cwd,
+        command_authority_hash=command.command_authority_hash,
+        input_artifacts=command.input_artifacts,
+        timeout_seconds=command.timeout_seconds,
+        job_token_id=command.job_token_id,
+        job_token_set_hash=command.job_token_set_hash,
+        execution_policy_hash=command.execution_policy_hash,
+        authority_revision=command.authority_revision,
+        policy_profile_id=command.policy_profile_id,
+        policy_decision_hash=command.policy_decision_hash,
+        executable_path=command.executable_path,
+        executable_realpath=command.executable_realpath,
+        executable_hash=command.executable_hash,
+    )
+
+
+def _resolve_qa_local_repair_authority(
+    *, workspace: str, task_id: str, payload: dict[str, Any]
+) -> _QaLocalRepairAuthority | None:
+    """Resolve payload locators back to current owner authority before editing."""
+
+    repair_context = payload.get("qa_local_repair_context")
+    if not isinstance(repair_context, Mapping):
+        return None
+    if str(repair_context.get("task_id") or "").strip() != task_id:
+        raise ValueError("QA local repair context is owned by a different task")
+    projection = payload.get("task_completion_projection")
+    if not isinstance(projection, Mapping):
+        raise ValueError("QA local repair requires the current task completion projection")
+    projection_hash = str(projection.get("projection_hash") or "").strip()
+    if not projection_hash or projection_hash != str(repair_context.get("task_completion_projection_hash") or "").strip():
+        raise ValueError("QA local repair projection identity changed")
+    if (
+        str(projection.get("task_id") or "").strip() != task_id
+        or str(projection.get("project_contract_hash") or "").strip()
+        != str(repair_context.get("project_completion_contract_hash") or "").strip()
+    ):
+        raise ValueError("QA local repair contract/task identity changed")
+
+    authority_kind = str(repair_context.get("repair_authority_kind") or "").strip()
+    repair_policy = repair_context.get("repair_policy")
+    if not isinstance(repair_policy, Mapping) or repair_policy.get("same_task_only") is not True:
+        raise ValueError("QA local repair policy is missing same-task authority")
+    if authority_kind == "diagnostic_effect":
+        diagnostic = repair_context.get("diagnostic_effect_authority")
+        if (
+            not isinstance(diagnostic, Mapping)
+            or str(diagnostic.get("diagnostic_kind") or "").strip() != "non_executable_qa_diagnostic"
+            or diagnostic.get("executable_verifier_observed") is not False
+            or str(diagnostic.get("task_id") or "").strip() != task_id
+            or str(diagnostic.get("task_completion_projection_hash") or "").strip() != projection_hash
+            or diagnostic.get("requires_material_effect") is not True
+        ):
+            raise ValueError("QA diagnostic repair lacks current effect authority")
+        return _QaLocalRepairAuthority(kind=authority_kind, projection_hash=projection_hash)
+    if authority_kind != "exact_verifier_receipt" or repair_policy.get("rerun_exact_failed_verifier") is not True:
+        raise ValueError("QA local repair authority kind is unsupported")
+    failed = repair_context.get("failed_verifier")
+    if not isinstance(failed, Mapping):
+        raise ValueError("QA local repair requires an exact failed_verifier receipt")
+    prior_receipt_hash = str(failed.get("receipt_hash") or "").strip()
+    prior_receipt_ref = str(failed.get("receipt_ref") or "").strip()
+    if not prior_receipt_hash or not prior_receipt_ref:
+        raise ValueError("QA local repair failed_verifier lacks receipt hash/ref")
+    if str(failed.get("owner_task_id") or "").strip() != task_id:
+        raise ValueError("QA failed verifier is owned by a different task")
+    project_id = str(projection.get("project_id") or "").strip()
+    run_id = str(projection.get("run_id") or "").strip()
+    completion_contract_hash = str(projection.get("project_contract_hash") or "").strip()
+    obligation_id = str(failed.get("obligation_id") or "").strip()
+    if (
+        str(failed.get("project_id") or "").strip() != project_id
+        or str(failed.get("run_id") or "").strip() != run_id
+        or str(failed.get("completion_contract_hash") or "").strip() != completion_contract_hash
+    ):
+        raise ValueError("QA failed verifier locator belongs to another project/run/contract")
+    authorities = projection.get("verification_execution_authority")
+    rows = [row for row in authorities if isinstance(row, Mapping)] if isinstance(authorities, list) else []
+    matches = [row for row in rows if str(row.get("obligation_id") or "").strip() == obligation_id]
+    if len(matches) != 1:
+        raise ValueError("QA failed verifier obligation is absent or ambiguous in current task projection")
+    projected = matches[0]
+    command = authorize_project_verification_command(
+        ResolveProjectVerificationAuthorityQueryV1(
+            workspace=workspace,
+            project_id=project_id,
+            run_id=run_id,
+            completion_contract_hash=completion_contract_hash,
+            obligation_id=obligation_id,
+        )
+    )
+    expected_authority = (
+        str(failed.get("owner_task_id") or "").strip(),
+        str(failed.get("modality") or "").strip(),
+        tuple(str(item) for item in list(failed.get("argv") or [])),
+        str(failed.get("cwd") or "").strip(),
+        str(failed.get("command_authority_hash") or "").strip(),
+    )
+    actual_authority = (
+        command.owner_task_id,
+        command.modality,
+        command.argv,
+        command.cwd,
+        command.command_authority_hash,
+    )
+    if actual_authority != expected_authority:
+        raise ValueError("exact verifier authority changed since the QA failure receipt")
+    projected_authority = (
+        str(projected.get("owner_task_id") or "").strip(),
+        str(projected.get("modality") or "").strip(),
+        tuple(str(item) for item in list(projected.get("argv") or [])),
+        str(projected.get("cwd") or "").strip(),
+        str(projected.get("command_authority_hash") or "").strip(),
+    )
+    if actual_authority != projected_authority:
+        raise ValueError("execution broker authority differs from current task projection")
+    prior_receipt = query_project_verification_receipt(_verification_receipt_query_from_command(command))
+    if type(prior_receipt) is not ProjectVerificationReceiptV1:
+        raise ValueError("QA failed verifier receipt is not current in execution_broker")
+    if prior_receipt.receipt_hash != prior_receipt_hash or prior_receipt.receipt_ref != prior_receipt_ref:
+        raise ValueError("QA failed verifier receipt locator does not match owner receipt")
+    if str(failed.get("input_artifact_hash") or "").strip() != prior_receipt.input_artifact_hash:
+        raise ValueError("QA failed verifier input closure does not match owner receipt")
+    if prior_receipt.succeeded:
+        raise ValueError("QA local repair cannot use a successful verifier receipt as a failure locator")
+    return _QaLocalRepairAuthority(
+        kind=authority_kind,
+        projection_hash=projection_hash,
+        obligation_id=obligation_id,
+        prior_receipt=prior_receipt,
+    )
+
+
+def _task_projection_artifact_state(*, workspace: str, payload: dict[str, Any]) -> dict[str, str]:
+    projection = payload.get("task_completion_projection")
+    if not isinstance(projection, Mapping):
+        return {}
+    paths: list[str] = []
+    for key in ("owned_artifacts", "owned_entrypoints"):
+        rows = projection.get(key)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if isinstance(row, Mapping):
+                path = str(row.get("path") or "").strip().replace("\\", "/").lstrip("./")
+                if path:
+                    paths.append(path)
+    root = Path(workspace).expanduser().resolve()
+    state: dict[str, str] = {}
+    for relative in sorted(set(paths)):
+        candidate = (root / relative).resolve()
+        if candidate != root and root not in candidate.parents:
+            raise ValueError("task projection artifact escapes workspace")
+        state[relative] = hashlib.sha256(candidate.read_bytes()).hexdigest() if candidate.is_file() else "missing"
+    return state
+
+
+def _revalidate_qa_exact_verifier(
+    *,
+    workspace: str,
+    task_id: str,
+    payload: dict[str, Any],
+    authority: _QaLocalRepairAuthority | None = None,
+) -> dict[str, Any] | None:
+    """Re-run the exact QA-failed verifier after one same-task repair effect."""
+
+    resolved = authority or _resolve_qa_local_repair_authority(workspace=workspace, task_id=task_id, payload=payload)
+    if resolved is None or resolved.kind == "diagnostic_effect":
+        return None
+    prior_receipt = resolved.prior_receipt
+    if type(prior_receipt) is not ProjectVerificationReceiptV1:
+        raise ValueError("QA exact verifier authority lacks owner receipt")
+    prior_receipt = cast(ProjectVerificationReceiptV1, prior_receipt)
+    projection = payload.get("task_completion_projection")
+    if not isinstance(projection, Mapping) or str(projection.get("projection_hash") or "") != resolved.projection_hash:
+        raise ValueError("QA exact verifier projection changed during repair")
+    command = authorize_project_verification_command(
+        ResolveProjectVerificationAuthorityQueryV1(
+            workspace=workspace,
+            project_id=str(projection.get("project_id") or "").strip(),
+            run_id=str(projection.get("run_id") or "").strip(),
+            completion_contract_hash=str(projection.get("project_contract_hash") or "").strip(),
+            obligation_id=resolved.obligation_id,
+        )
+    )
+    if (
+        command.project_id,
+        command.run_id,
+        command.completion_contract_hash,
+        command.obligation_id,
+        command.owner_task_id,
+        command.modality,
+        command.argv,
+        command.cwd,
+        command.command_authority_hash,
+    ) != (
+        prior_receipt.project_id,
+        prior_receipt.run_id,
+        prior_receipt.completion_contract_hash,
+        prior_receipt.obligation_id,
+        prior_receipt.owner_task_id,
+        prior_receipt.modality,
+        prior_receipt.argv,
+        prior_receipt.cwd,
+        prior_receipt.command_authority_hash,
+    ):
+        raise ValueError("exact verifier authority changed during same-task repair")
+    result = run_project_verification(command)
+    receipt = result.receipt
+    if type(receipt) is not ProjectVerificationReceiptV1:
+        raise RuntimeError(f"exact verifier revalidation produced no receipt: {result.code}")
+    receipt = cast(ProjectVerificationReceiptV1, receipt)
+    return {
+        "schema_version": "director.qa-exact-verifier-revalidation.v1",
+        "task_id": task_id,
+        "obligation_id": receipt.obligation_id,
+        "prior_failed_receipt_hash": prior_receipt.receipt_hash,
+        "prior_failed_receipt_ref": prior_receipt.receipt_ref,
+        "revalidation_receipt_hash": receipt.receipt_hash,
+        "revalidation_receipt_ref": receipt.receipt_ref,
+        "command_authority_hash": receipt.command_authority_hash,
+        "input_artifact_hash": receipt.input_artifact_hash,
+        "proof_evidence_hash": receipt.proof_evidence_hash,
+        "exit_code": receipt.exit_code,
+        "timed_out": receipt.timed_out,
+        "succeeded": receipt.succeeded and receipt.input_artifact_hash != prior_receipt.input_artifact_hash,
+        "material_effect_observed": receipt.input_artifact_hash != prior_receipt.input_artifact_hash,
+    }
 
 
 def _dedupe_normalized_paths(paths: list[str]) -> list[str]:
@@ -1081,7 +1339,15 @@ def _build_director_adapter_input(task_id: str, payload: dict[str, Any], lease_t
         }
     )
 
-    adapter_input = dict(payload)
+    # Project-wide completion authority is intentionally not prompt material.
+    # Director receives one owner-derived task slice and the immutable root
+    # hash/ref; physical owners independently re-query the full contract.
+    project_wide_fields = {
+        "project_completion_contract",
+        "project_completion_authority",
+        "pm_task_contracts",
+    }
+    adapter_input = {key: value for key, value in payload.items() if key not in project_wide_fields}
     adapter_input.update(
         {
             "task_id": task_id,
@@ -1271,127 +1537,6 @@ class DirectorExecutionConsumer:
                 self._active_claim_task_id = ""
                 self._active_claim_started_monotonic = None
 
-    def _owner_rework_preparation_plan(
-        self,
-        *,
-        claim: Any,
-        task_id: str,
-        lease_token: str,
-    ) -> _OwnerReworkPreparationPlan:
-        """Build TaskRuntime evidence from TaskMarket's public claim projection.
-
-        This is intentionally a public-read adapter. TaskMarket retains all
-        routing and dependency authority; Director merely forwards the
-        successful claim, both published handoff copies, and no inferred
-        readiness state to TaskRuntime.
-        """
-
-        try:
-            status = self._svc.query_status(
-                QueryTaskMarketStatusV1(
-                    workspace=self._workspace,
-                    include_payload=False,
-                    limit=_OWNER_HANDOFF_TASK_RECORD_LIMIT,
-                )
-            )
-        except (OSError, RuntimeError, TaskMarketError, TypeError, ValueError) as exc:
-            return _OwnerReworkPreparationPlan(
-                command=None,
-                error_code="OWNER_REWORK_EXECUTION_EVIDENCE_UNAVAILABLE",
-                error_message=f"TaskMarket owner rework evidence is unavailable: {exc}",
-            )
-        raw_items = getattr(status, "items", ())
-        if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes, bytearray)):
-            return _OwnerReworkPreparationPlan(command=None)
-        items_by_task_id = {
-            str(item.get("task_id") or "").strip(): dict(item)
-            for item in raw_items
-            if isinstance(item, Mapping) and str(item.get("task_id") or "").strip()
-        }
-        current_item = items_by_task_id.get(task_id)
-        if current_item is None:
-            return _OwnerReworkPreparationPlan(command=None)
-        metadata = current_item.get("metadata")
-        handoff_records = metadata.get(OWNER_REWORK_HANDOFFS_METADATA_KEY) if isinstance(metadata, Mapping) else None
-        if handoff_records is None:
-            return _OwnerReworkPreparationPlan(command=None)
-        if not isinstance(handoff_records, Mapping):
-            return _OwnerReworkPreparationPlan(
-                command=None,
-                error_code="OWNER_REWORK_EXECUTION_EVIDENCE_INVALID",
-                error_message="TaskMarket owner rework handoff evidence is malformed",
-            )
-
-        candidates: list[tuple[OwnerReworkHandoffV1, str, str]] = []
-        for record in handoff_records.values():
-            try:
-                handoff = OwnerReworkHandoffV1.from_record(record)
-            except (TypeError, ValueError):
-                return _OwnerReworkPreparationPlan(
-                    command=None,
-                    error_code="OWNER_REWORK_EXECUTION_EVIDENCE_INVALID",
-                    error_message="TaskMarket owner rework handoff record is malformed",
-                )
-            if handoff.owner_task_id == task_id:
-                candidates.append((handoff, "owner", handoff.requester_task_id))
-            elif handoff.requester_task_id == task_id:
-                candidates.append((handoff, "requester", handoff.owner_task_id))
-        if len(candidates) != 1:
-            return _OwnerReworkPreparationPlan(
-                command=None,
-                error_code="OWNER_REWORK_EXECUTION_EVIDENCE_INVALID",
-                error_message="TaskMarket claim must carry exactly one matching owner rework handoff",
-            )
-
-        handoff, task_role, counterparty_task_id = candidates[0]
-        counterparty_item = items_by_task_id.get(counterparty_task_id)
-        if counterparty_item is None:
-            return _OwnerReworkPreparationPlan(
-                command=None,
-                error_code="OWNER_REWORK_EXECUTION_EVIDENCE_INVALID",
-                error_message="TaskMarket owner rework counterparty evidence is missing",
-                handoff_id=handoff.handoff_id,
-                task_role=task_role,
-            )
-        claimed_by = str(getattr(claim, "claimed_by", "") or current_item.get("claimed_by") or "").strip()
-        claim_status = str(getattr(claim, "status", "") or current_item.get("status") or "").strip()
-        claimed_item = dict(current_item)
-        claimed_item.update(
-            {
-                "task_id": task_id,
-                "status": claim_status,
-                "lease_token": lease_token,
-                "claimed_by": claimed_by,
-            }
-        )
-        try:
-            authorization = OwnerReworkExecutionAuthorizationV1(
-                schema_version=OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1,
-                workspace=self._workspace,
-                task_id=task_id,
-                lease_token=lease_token,
-                worker_id=self._worker_id,
-                worker_role="director",
-                task_role=task_role,
-                counterparty_task_id=counterparty_task_id,
-                handoff=handoff.to_record(),
-                claimed_item=claimed_item,
-                counterparty_item=counterparty_item,
-            )
-        except (TypeError, ValueError) as exc:
-            return _OwnerReworkPreparationPlan(
-                command=None,
-                error_code="OWNER_REWORK_EXECUTION_EVIDENCE_INVALID",
-                error_message=f"TaskMarket owner rework claim evidence is invalid: {exc}",
-                handoff_id=handoff.handoff_id,
-                task_role=task_role,
-            )
-        return _OwnerReworkPreparationPlan(
-            command=PrepareOwnerReworkExecutionCommandV1(authorization=authorization),
-            handoff_id=handoff.handoff_id,
-            task_role=task_role,
-        )
-
     def poll_once(self) -> list[dict[str, Any]]:
         """Poll once for PENDING_EXEC tasks."""
         results: list[dict[str, Any]] = []
@@ -1430,14 +1575,24 @@ class DirectorExecutionConsumer:
             _validated_blueprint_handoff(self._workspace, task_id, payload)
         )
         if not handoff_allowed:
+            handoff_error_code = "INVALID_BLUEPRINT_HANDOFF" if blueprint_id else "MISSING_BLUEPRINT"
             self._svc.fail_task_stage(
                 FailTaskStageCommandV1(
                     workspace=self._workspace,
                     task_id=task_id,
                     lease_token=lease_token,
-                    error_code="INVALID_BLUEPRINT_HANDOFF" if blueprint_id else "MISSING_BLUEPRINT",
+                    error_code=handoff_error_code,
                     error_message=handoff_error,
-                    to_dead_letter=True,
+                    failure_disposition="isolated_contract_blocker",
+                    metadata={
+                        "reason": "invalid_blueprint_handoff" if blueprint_id else "missing_blueprint",
+                        "structured_blocker": _contract_authority_blocker(
+                            task_id=task_id,
+                            error_code=handoff_error_code,
+                            evidence={"handoff_validation": handoff_validation, "reason": handoff_error},
+                            payload=payload,
+                        ),
+                    },
                 )
             )
             return {
@@ -1446,6 +1601,36 @@ class DirectorExecutionConsumer:
                 "reason": "invalid_blueprint_handoff" if blueprint_id else "missing_blueprint",
             }
         _attach_handoff_validation_payload(payload, handoff_validation)
+
+        try:
+            qa_repair_authority = _resolve_qa_local_repair_authority(
+                workspace=self._workspace,
+                task_id=task_id,
+                payload=payload,
+            )
+            qa_repair_before_state = (
+                _task_projection_artifact_state(workspace=self._workspace, payload=payload)
+                if qa_repair_authority is not None and qa_repair_authority.kind == "diagnostic_effect"
+                else {}
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._svc.fail_task_stage(
+                FailTaskStageCommandV1(
+                    workspace=self._workspace,
+                    task_id=task_id,
+                    lease_token=lease_token,
+                    error_code="QA_LOCAL_REPAIR_AUTHORITY_REJECTED",
+                    error_message=str(exc),
+                    failure_disposition="isolated_contract_blocker",
+                    metadata={
+                        "reason": "qa_local_repair_authority_rejected",
+                        "qa_local_repair_context": _mapping_copy(payload.get("qa_local_repair_context")),
+                        "automatic_upstream_replan": False,
+                        "automatic_escalation": False,
+                    },
+                )
+            )
+            return {"task_id": task_id, "ok": False, "reason": "qa_local_repair_authority_rejected"}
 
         # Safe parallel conflict check
         if self._enable_safe_parallel:
@@ -1460,86 +1645,10 @@ class DirectorExecutionConsumer:
                         error_code="SCOPE_CONFLICT",
                         error_message="Scope conflict with other in-progress task",
                         requeue_stage="pending_exec",
+                        failure_disposition="same_task_local_retry",
                     )
                 )
                 return {"task_id": task_id, "ok": False, "reason": "scope_conflict"}
-
-        owner_rework_plan = self._owner_rework_preparation_plan(
-            claim=claim,
-            task_id=task_id,
-            lease_token=lease_token,
-        )
-        if owner_rework_plan.error_code:
-            self._svc.fail_task_stage(
-                FailTaskStageCommandV1(
-                    workspace=self._workspace,
-                    task_id=task_id,
-                    lease_token=lease_token,
-                    error_code=owner_rework_plan.error_code,
-                    error_message=owner_rework_plan.error_message,
-                    requeue_stage="pending_exec",
-                    metadata={
-                        "handoff_id": owner_rework_plan.handoff_id,
-                        "task_role": owner_rework_plan.task_role,
-                        "reason": "owner_rework_execution_authorization_rejected",
-                    },
-                )
-            )
-            return {
-                "task_id": task_id,
-                "ok": False,
-                "reason": "owner_rework_execution_authorization_rejected",
-                "error_code": owner_rework_plan.error_code,
-            }
-        if owner_rework_plan.command is not None:
-            try:
-                owner_rework_preparation = prepare_owner_rework_execution(owner_rework_plan.command)
-            except (OSError, RuntimeError, TypeError, ValueError) as exc:
-                self._svc.fail_task_stage(
-                    FailTaskStageCommandV1(
-                        workspace=self._workspace,
-                        task_id=task_id,
-                        lease_token=lease_token,
-                        error_code="OWNER_REWORK_EXECUTION_PREPARATION_ERROR",
-                        error_message=f"TaskRuntime owner rework preparation failed: {exc}",
-                        requeue_stage="pending_exec",
-                        metadata={
-                            "handoff_id": owner_rework_plan.handoff_id,
-                            "task_role": owner_rework_plan.task_role,
-                            "reason": "owner_rework_execution_preparation_error",
-                        },
-                    )
-                )
-                return {
-                    "task_id": task_id,
-                    "ok": False,
-                    "reason": "owner_rework_execution_preparation_error",
-                }
-            if not owner_rework_preparation.ok:
-                self._svc.fail_task_stage(
-                    FailTaskStageCommandV1(
-                        workspace=self._workspace,
-                        task_id=task_id,
-                        lease_token=lease_token,
-                        error_code="OWNER_REWORK_EXECUTION_PREPARATION_REJECTED",
-                        error_message=owner_rework_preparation.reason,
-                        requeue_stage="pending_exec",
-                        metadata={
-                            "handoff_id": owner_rework_preparation.handoff_id,
-                            "task_role": owner_rework_preparation.task_role,
-                            "runtime_task_id": owner_rework_preparation.runtime_task_id,
-                            "runtime_code": owner_rework_preparation.code,
-                            "reason": "owner_rework_execution_preparation_rejected",
-                        },
-                    )
-                )
-                return {
-                    "task_id": task_id,
-                    "ok": False,
-                    "reason": "owner_rework_execution_preparation_rejected",
-                    "runtime_code": owner_rework_preparation.code,
-                }
-            payload["owner_rework_execution_preparation"] = owner_rework_preparation.to_record()
 
         heartbeat: _LeaseHeartbeat | None = None
         try:
@@ -1592,6 +1701,7 @@ class DirectorExecutionConsumer:
                             f"Write ONLY the declared target_file for this step."
                         ),
                         requeue_stage="pending_exec",
+                        failure_disposition="same_task_local_retry",
                     )
                 )
                 return {"task_id": task_id, "ok": False, "reason": "step_target_missing"}
@@ -1609,6 +1719,7 @@ class DirectorExecutionConsumer:
                             error_code="REPAIR_SHRANK_FILE",
                             error_message=shrink_error,
                             requeue_stage="pending_exec",
+                            failure_disposition="same_task_local_retry",
                         )
                     )
                     return {"task_id": task_id, "ok": False, "reason": "repair_shrank_file"}
@@ -1628,9 +1739,29 @@ class DirectorExecutionConsumer:
                         error_code=drift_code,
                         error_message=drift_message,
                         requeue_stage="pending_exec",
+                        failure_disposition="same_task_local_retry",
                     )
                 )
                 return {"task_id": task_id, "ok": False, "reason": drift_code}
+            if qa_repair_authority is not None and qa_repair_authority.kind == "diagnostic_effect":
+                qa_repair_after_state = _task_projection_artifact_state(workspace=self._workspace, payload=payload)
+                if not qa_repair_before_state or qa_repair_after_state == qa_repair_before_state:
+                    self._svc.fail_task_stage(
+                        FailTaskStageCommandV1(
+                            workspace=self._workspace,
+                            task_id=task_id,
+                            lease_token=lease_token,
+                            error_code="QA_LOCAL_REPAIR_MATERIAL_EFFECT_MISSING",
+                            error_message="Director local repair produced no task-owned artifact byte change",
+                            requeue_stage="pending_exec",
+                            failure_disposition="same_task_local_retry",
+                            metadata={
+                                "reason": "qa_local_repair_material_effect_missing",
+                                "task_completion_projection_hash": qa_repair_authority.projection_hash,
+                            },
+                        )
+                    )
+                    return {"task_id": task_id, "ok": False, "reason": "qa_local_repair_material_effect_missing"}
             final_convergence = _final_convergence_failure(
                 workspace_path=Path(self._workspace).expanduser().resolve(),
                 task_id=task_id,
@@ -1656,9 +1787,17 @@ class DirectorExecutionConsumer:
                         error_code=error_code,
                         error_message=error_message,
                         requeue_stage=requeue_stage,
+                        failure_disposition=(
+                            "same_task_local_retry" if requeue_stage == "pending_exec" else "isolated_contract_blocker"
+                        ),
                         metadata={
                             "reason": "director_final_convergence_failed",
                             "final_convergence": evidence,
+                            **(
+                                {"structured_blocker": evidence["structured_blocker"]}
+                                if isinstance(evidence.get("structured_blocker"), dict)
+                                else {}
+                            ),
                         },
                     )
                 )
@@ -1667,6 +1806,54 @@ class DirectorExecutionConsumer:
                     "ok": False,
                     "reason": "director_final_convergence_failed",
                     "requeue_stage": requeue_stage,
+                }
+            try:
+                qa_exact_revalidation = _revalidate_qa_exact_verifier(
+                    workspace=self._workspace,
+                    task_id=task_id,
+                    payload=payload,
+                    authority=qa_repair_authority,
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                self._svc.fail_task_stage(
+                    FailTaskStageCommandV1(
+                        workspace=self._workspace,
+                        task_id=task_id,
+                        lease_token=lease_token,
+                        error_code="QA_EXACT_VERIFIER_REVALIDATION_AUTHORITY_FAILED",
+                        error_message=str(exc),
+                        failure_disposition="isolated_contract_blocker",
+                        metadata={
+                            "reason": "qa_exact_verifier_revalidation_authority_failed",
+                            "qa_local_repair_context": _mapping_copy(payload.get("qa_local_repair_context")),
+                        },
+                    )
+                )
+                return {
+                    "task_id": task_id,
+                    "ok": False,
+                    "reason": "qa_exact_verifier_revalidation_authority_failed",
+                }
+            if qa_exact_revalidation is not None and not qa_exact_revalidation["succeeded"]:
+                self._svc.fail_task_stage(
+                    FailTaskStageCommandV1(
+                        workspace=self._workspace,
+                        task_id=task_id,
+                        lease_token=lease_token,
+                        error_code="QA_EXACT_VERIFIER_REVALIDATION_FAILED",
+                        error_message="same-task repair did not satisfy the exact failed verifier",
+                        requeue_stage="pending_exec",
+                        failure_disposition="same_task_local_retry",
+                        metadata={
+                            "reason": "qa_exact_verifier_revalidation_failed",
+                            "qa_exact_verifier_revalidation": qa_exact_revalidation,
+                        },
+                    )
+                )
+                return {
+                    "task_id": task_id,
+                    "ok": False,
+                    "reason": "qa_exact_verifier_revalidation_failed",
                 }
             registered_actions = self._register_compensation_actions(
                 task_id=task_id,
@@ -1703,6 +1890,11 @@ class DirectorExecutionConsumer:
                         "director_files_changed_count": len(changed_files),
                         "exec_duration_seconds": exec_result.get("duration", 0),
                         "director_adapter": adapter_summary,
+                        **(
+                            {"qa_exact_verifier_revalidation": qa_exact_revalidation}
+                            if qa_exact_revalidation is not None
+                            else {}
+                        ),
                     },
                 )
             )
@@ -1721,12 +1913,6 @@ class DirectorExecutionConsumer:
 
         except UnrecoverableExecutionError as exc:
             logger.exception("Unrecoverable execution failed for task %s: %s", task_id, exc)
-            self._svc.compensate_task(
-                workspace=self._workspace,
-                task_id=task_id,
-                reason=f"director_unrecoverable:{exc}",
-                initiator="director_consumer",
-            )
             self._svc.fail_task_stage(
                 FailTaskStageCommandV1(
                     workspace=self._workspace,
@@ -1734,10 +1920,12 @@ class DirectorExecutionConsumer:
                     lease_token=lease_token,
                     error_code="EXEC_UNRECOVERABLE",
                     error_message=str(exc),
-                    to_dead_letter=True,
+                    requeue_stage="pending_exec",
+                    failure_disposition="same_task_local_retry",
+                    metadata={"reason": "director_unrecoverable_requires_local_repair"},
                 )
             )
-            return {"task_id": task_id, "ok": False, "reason": str(exc), "dead_lettered": True}
+            return {"task_id": task_id, "ok": False, "reason": str(exc)}
 
         except TimeoutError as exc:
             logger.warning("Execution timed out for task %s: %s", task_id, exc)
@@ -1749,6 +1937,7 @@ class DirectorExecutionConsumer:
                     error_code="EXEC_TIMEOUT",
                     error_message=str(exc),
                     requeue_stage="pending_exec",
+                    failure_disposition="same_task_local_retry",
                 )
             )
             return {"task_id": task_id, "ok": False, "reason": "exec_timeout"}
@@ -1762,10 +1951,16 @@ class DirectorExecutionConsumer:
                     lease_token=lease_token,
                     error_code="INTERFACE_CONTRACT_AMENDMENT_REQUIRED",
                     error_message=str(exc),
-                    requeue_stage="pending_design",
+                    failure_disposition="isolated_contract_blocker",
                     metadata={
                         "reason": "interface_contract_amendment_required",
                         "amendment_request": exc.amendment_request,
+                        "structured_blocker": _contract_authority_blocker(
+                            task_id=task_id,
+                            error_code="INTERFACE_CONTRACT_AMENDMENT_REQUIRED",
+                            evidence=exc.amendment_request,
+                            payload=payload,
+                        ),
                     },
                 )
             )
@@ -1785,6 +1980,7 @@ class DirectorExecutionConsumer:
                     error_code="INTERFACE_CONTRACT_REPAIR_REQUIRED",
                     error_message=str(exc),
                     requeue_stage="pending_exec",
+                    failure_disposition="same_task_local_retry",
                     metadata={
                         "reason": "interface_contract_repair_required",
                         "repair_evidence": exc.repair_evidence,
@@ -1803,6 +1999,7 @@ class DirectorExecutionConsumer:
                 lease_token=lease_token,
                 failure=exc.failure,
                 adapter_failure_message=str(exc),
+                source_payload=payload,
             )
 
         except Exception as exc:
@@ -1815,6 +2012,7 @@ class DirectorExecutionConsumer:
                     error_code="EXEC_FAILED",
                     error_message=str(exc),
                     requeue_stage="pending_exec",
+                    failure_disposition="same_task_local_retry",
                 )
             )
             return {"task_id": task_id, "ok": False, "reason": str(exc)}
@@ -1829,6 +2027,7 @@ class DirectorExecutionConsumer:
         lease_token: str,
         failure: _OwnerHandoffFailure,
         adapter_failure_message: str,
+        source_payload: Mapping[str, Any],
     ) -> dict[str, Any]:
         """Route one structured owner handoff while the requester lease is held.
 
@@ -1837,7 +2036,20 @@ class DirectorExecutionConsumer:
         authority for the requester lease, dependency, and owner reopening.
         """
 
-        routing_summary: dict[str, Any] = {}
+        source_identity = {
+            key: source_payload.get(key)
+            for key in (
+                "blueprint_id",
+                "completion_contract_hash",
+                "contract_hash",
+                "run_id",
+                "factory_run_id",
+                "trace_id",
+                "job_token",
+            )
+            if source_payload.get(key) is not None
+        }
+        routing_summary: dict[str, Any] = {"source_payload_identity": source_identity}
         handoff_request: Mapping[str, Any] | None = None
         try:
             status = self._svc.query_status(
@@ -1852,7 +2064,10 @@ class DirectorExecutionConsumer:
                 raise TypeError("Task Market owner-handoff status rows must be a sequence")
             task_records = tuple(dict(row) for row in raw_task_records if isinstance(row, Mapping))
             routing = resolve_owner_handoff_routing(failure.scope_payload, task_records)
-            routing_summary = dict(routing.summary)
+            routing_summary = {
+                **dict(routing.summary),
+                "source_payload_identity": source_identity,
+            }
             routing_summary["task_record_count"] = len(task_records)
         except (OSError, TaskMarketError, TypeError, ValueError) as exc:
             logger.exception(
@@ -1885,9 +2100,9 @@ class DirectorExecutionConsumer:
                 failure=failure,
                 adapter_failure_message=adapter_failure_message,
                 error_code="OWNER_HANDOFF_UNRESOLVED",
-                error_message="Owner-handoff projection requires Chief Engineer scope resolution",
+                error_message="Owner-handoff contract scope authority is unresolved",
                 reason="owner_handoff_unresolved",
-                requeue_stage="pending_design",
+                requeue_stage=None,
                 routing_summary=routing_summary,
                 handoff_request=handoff_request,
             )
@@ -1904,7 +2119,7 @@ class DirectorExecutionConsumer:
                 error_code=error_code,
                 error_message="Owner-handoff projection did not resolve exactly one owner task",
                 reason="owner_handoff_ambiguous" if routing.owner_routing_keys else "owner_handoff_unresolved",
-                requeue_stage="pending_design",
+                requeue_stage=None,
                 routing_summary=routing_summary,
                 handoff_request=handoff_request,
             )
@@ -1925,7 +2140,7 @@ class DirectorExecutionConsumer:
                 error_code="OWNER_HANDOFF_OWNER_RECORD_INVALID",
                 error_message="Owner-handoff projection matched an invalid Task Market owner record",
                 reason="owner_handoff_owner_record_invalid",
-                requeue_stage="pending_design",
+                requeue_stage=None,
                 routing_summary=routing_summary,
                 handoff_request=handoff_request,
             )
@@ -1935,163 +2150,22 @@ class DirectorExecutionConsumer:
             "selected_owner_task_key": owner_task_key,
             "selected_owner_task_id": owner_task_id,
         }
-        handoff_id = _owner_handoff_id(
-            requester_task_id=task_id,
-            owner_task_id=owner_task_id,
-            handoff_request=handoff_request,
-        )
-        try:
-            route_result = self._svc.route_owner_rework(
-                RouteOwnerReworkCommandV1(
-                    workspace=self._workspace,
-                    owner_task_id=owner_task_id,
-                    requester_task_id=task_id,
-                    requester_lease_token=lease_token,
-                    handoff_id=handoff_id,
-                    failure_metadata=_owner_handoff_failure_metadata(
-                        failure,
-                        adapter_failure_message=adapter_failure_message,
-                    ),
-                    evidence_metadata=_owner_handoff_evidence_metadata(
-                        failure,
-                        handoff_request=handoff_request,
-                        routing_summary=routing_summary,
-                    ),
-                    metadata={
-                        "worker_id": self._worker_id,
-                        "failure_class": failure.failure_class,
-                        "responsible_layer": failure.responsible_layer,
-                    },
-                )
-            )
-        except (OSError, TaskMarketError, TypeError, ValueError) as exc:
-            logger.exception(
-                "Owner-handoff route failed: task_id=%s owner_task_id=%s handoff_id=%s error=%s",
-                task_id,
-                owner_task_id,
-                handoff_id,
-                exc,
-            )
-            return self._fail_owner_handoff(
-                task_id=task_id,
-                lease_token=lease_token,
-                failure=failure,
-                adapter_failure_message=adapter_failure_message,
-                error_code="OWNER_HANDOFF_ROUTE_ERROR",
-                error_message="Owner-handoff route operation failed",
-                reason="owner_handoff_route_error",
-                requeue_stage="pending_exec",
-                routing_summary=routing_summary,
-                handoff_request=handoff_request,
-                routing_error=exc,
-            )
-
-        if not isinstance(route_result, OwnerReworkRouteResultV1):
-            protocol_error = TypeError(
-                f"route_owner_rework returned an unexpected result type: {type(route_result).__name__}"
-            )
-            logger.error(
-                "Owner-handoff route result protocol violation: task_id=%s owner_task_id=%s handoff_id=%s",
-                task_id,
-                owner_task_id,
-                handoff_id,
-            )
-            return self._fail_owner_handoff(
-                task_id=task_id,
-                lease_token=lease_token,
-                failure=failure,
-                adapter_failure_message=adapter_failure_message,
-                error_code="OWNER_HANDOFF_ROUTE_PROTOCOL_ERROR",
-                error_message="Owner-handoff route returned an invalid result",
-                reason="owner_handoff_route_protocol_error",
-                requeue_stage="pending_exec",
-                routing_summary=routing_summary,
-                handoff_request=handoff_request,
-                routing_error=protocol_error,
-            )
-
-        route_summary = _owner_handoff_route_result_summary(route_result)
-        routing_summary = {**routing_summary, "route_result": route_summary}
-        if route_result.ok and route_result.reason in {
-            OwnerReworkRouteReasonV1.ROUTED,
-            OwnerReworkRouteReasonV1.ALREADY_ROUTED,
-        }:
-            logger.info(
-                "Owner-handoff routed: task_id=%s owner_task_id=%s handoff_id=%s reason=%s idempotent=%s",
-                task_id,
-                owner_task_id,
-                handoff_id,
-                route_result.reason.value,
-                route_result.idempotent,
-            )
-            return {
-                "task_id": task_id,
-                "ok": True,
-                "reason": route_result.reason.value,
-                "status": route_result.requester_status,
-                "owner_task_id": route_result.owner_task_id,
-                "handoff_id": route_result.handoff_id,
-                "idempotent": route_result.idempotent,
-            }
-
-        if route_result.ok:
-            protocol_error = ValueError(
-                f"route_owner_rework returned ok=True for unsupported reason={route_result.reason.value}"
-            )
-            logger.error(
-                "Owner-handoff route returned an unsupported success reason: task_id=%s reason=%s",
-                task_id,
-                route_result.reason.value,
-            )
-            return self._fail_owner_handoff(
-                task_id=task_id,
-                lease_token=lease_token,
-                failure=failure,
-                adapter_failure_message=adapter_failure_message,
-                error_code="OWNER_HANDOFF_ROUTE_PROTOCOL_ERROR",
-                error_message="Owner-handoff route returned an unsupported success reason",
-                reason="owner_handoff_route_protocol_error",
-                requeue_stage="pending_exec",
-                routing_summary=routing_summary,
-                handoff_request=handoff_request,
-                route_result=route_result,
-                routing_error=protocol_error,
-            )
-
-        if route_result.reason in {
-            OwnerReworkRouteReasonV1.REQUESTER_LEASE_MISMATCH,
-            OwnerReworkRouteReasonV1.REQUESTER_NOT_FOUND,
-            OwnerReworkRouteReasonV1.STALE_WRITE_CONFLICT,
-        }:
-            logger.warning(
-                "Owner-handoff route fenced without follow-up failure: task_id=%s reason=%s handoff_id=%s",
-                task_id,
-                route_result.reason.value,
-                handoff_id,
-            )
-            return {
-                "task_id": task_id,
-                "ok": False,
-                "reason": "owner_handoff_route_fenced",
-                "error_code": "OWNER_HANDOFF_ROUTE_FENCED",
-                "failure_class": failure.failure_class,
-                "route_reason": route_result.reason.value,
-                "handoff_id": route_result.handoff_id,
-                "owner_handoff_routing": routing_summary,
-            }
-
+        # An exact cross-task owner match is still outside the claimed task's
+        # immutable completion contract.  Director must not reopen the owner,
+        # add dependencies, or hand work back upstream.  Stop this task with a
+        # structured authority blocker; an explicit operator-authored contract
+        # revision is the only legal way to change ownership.
         return self._fail_owner_handoff(
             task_id=task_id,
             lease_token=lease_token,
             failure=failure,
             adapter_failure_message=adapter_failure_message,
-            error_code="OWNER_HANDOFF_ROUTE_REJECTED",
-            error_message=f"Owner-handoff route rejected: {route_result.reason.value}",
-            reason="owner_handoff_route_rejected",
-            requeue_stage="pending_exec",
+            error_code="OWNER_HANDOFF_CROSS_TASK_REPAIR_FORBIDDEN",
+            error_message="Current task cannot mutate an artifact owned by another task contract",
+            reason="owner_handoff_cross_task_repair_forbidden",
+            requeue_stage=None,
             routing_summary=routing_summary,
             handoff_request=handoff_request,
-            route_result=route_result,
         )
 
     def _fail_owner_handoff(
@@ -2104,22 +2178,36 @@ class DirectorExecutionConsumer:
         error_code: str,
         error_message: str,
         reason: str,
-        requeue_stage: str,
+        requeue_stage: str | None,
         routing_summary: Mapping[str, Any],
         handoff_request: Mapping[str, Any] | None = None,
-        route_result: OwnerReworkRouteResultV1 | None = None,
         routing_error: BaseException | None = None,
     ) -> dict[str, Any]:
-        """Requeue a lease-held owner-handoff failure with its typed evidence."""
+        """Settle one lease-held owner-handoff failure with typed evidence."""
 
         metadata = _owner_handoff_failure_projection(
             failure,
             adapter_failure_message=adapter_failure_message,
             handoff_request=handoff_request,
             routing_summary=routing_summary,
-            route_result=route_result,
             routing_error=routing_error,
         )
+        if requeue_stage is None:
+            owner_handoff_evidence = metadata.get("owner_handoff_evidence")
+            routing_evidence = (
+                owner_handoff_evidence.get("owner_handoff_routing")
+                if isinstance(owner_handoff_evidence, Mapping)
+                else None
+            )
+            source_identity = (
+                routing_evidence.get("source_payload_identity") if isinstance(routing_evidence, Mapping) else None
+            )
+            metadata["structured_blocker"] = _contract_authority_blocker(
+                task_id=task_id,
+                error_code=error_code,
+                evidence=metadata,
+                payload=source_identity if isinstance(source_identity, Mapping) else None,
+            )
         self._svc.fail_task_stage(
             FailTaskStageCommandV1(
                 workspace=self._workspace,
@@ -2128,6 +2216,9 @@ class DirectorExecutionConsumer:
                 error_code=error_code,
                 error_message=error_message,
                 requeue_stage=requeue_stage,
+                failure_disposition=(
+                    "same_task_local_retry" if requeue_stage is not None else "isolated_contract_blocker"
+                ),
                 metadata=metadata,
             )
         )
@@ -2139,9 +2230,6 @@ class DirectorExecutionConsumer:
             "failure_class": failure.failure_class,
             "responsible_layer": failure.responsible_layer,
         }
-        if route_result is not None:
-            result["route_reason"] = route_result.reason.value
-            result["handoff_id"] = route_result.handoff_id
         return result
 
     def _append_final_convergence_event(
@@ -2253,6 +2341,7 @@ class DirectorExecutionConsumer:
                 error_code="EXEC_NO_EVIDENCE",
                 error_message="Director execution produced no changed_files evidence",
                 requeue_stage="pending_exec",
+                failure_disposition="same_task_local_retry",
                 metadata={
                     "blueprint_id": str(blueprint_id or ""),
                     "target_files": _normalize_string_list(payload.get("target_files")),
@@ -2275,7 +2364,8 @@ class DirectorExecutionConsumer:
                 self._work_event.clear()
                 processed = self.poll_once()
                 if not processed:
-                    self._work_event.wait()
+                    retry_delay = self._svc.next_local_retry_delay(self._workspace, "pending_exec")
+                    self._work_event.wait(timeout=retry_delay)
             except Exception as exc:
                 logger.exception(
                     "Director consumer cycle failed, waiting for next wake signal: %s",
@@ -2342,6 +2432,10 @@ class DirectorExecutionConsumer:
             "verification_commands",
             "quality_commands",
             "workspace_quality_commands",
+            "task_completion_projection",
+            "qa_local_repair_context",
+            "completion_contract_hash",
+            "completion_contract_ref",
         ):
             value = payload.get(key)
             if value:

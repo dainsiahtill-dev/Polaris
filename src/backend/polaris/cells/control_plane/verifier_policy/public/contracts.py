@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 OPTIONAL_VERIFIER_MODALITIES = (
     "browser",
@@ -29,6 +29,39 @@ CORE_EVIDENCE_MODALITIES = (
     "accessibility",
 )
 SUPPORTED_EVIDENCE_MODALITIES = tuple(dict.fromkeys((*CORE_EVIDENCE_MODALITIES, *OPTIONAL_VERIFIER_MODALITIES)))
+VERIFIER_COMMAND_MODALITIES = (
+    "environment_prep",
+    "build",
+    "test",
+    "lint",
+    "entrypoint",
+)
+
+
+def _exact_token(name: str, value: object, *, max_bytes: int = 512) -> str:
+    if type(value) is not str:
+        raise TypeError(f"{name} must be a string")
+    if not value or value != value.strip() or any(ord(character) < 32 for character in value):
+        raise ValueError(f"{name} must be an exact non-empty string without control characters")
+    if len(value.encode("utf-8")) > max_bytes:
+        raise ValueError(f"{name} exceeds {max_bytes} UTF-8 bytes")
+    return value
+
+
+def _sha256(name: str, value: object) -> str:
+    token = _exact_token(name, value, max_bytes=64).lower()
+    if len(token) != 64 or any(character not in "0123456789abcdef" for character in token):
+        raise ValueError(f"{name} must be a lowercase SHA-256 hex digest")
+    return token
+
+
+def _relative_cwd(value: object) -> str:
+    token = _exact_token("cwd", value, max_bytes=1024).replace("\\", "/")
+    if token == ".":
+        return token
+    if token.startswith("/") or token == ".." or token.startswith("../") or "/../" in token:
+        raise ValueError("cwd must be workspace-relative")
+    return token.lstrip("./")
 
 
 def _clean_workspace(value: str) -> str:
@@ -123,6 +156,77 @@ class CompileEvidencePolicyCommandV1:
         object.__setattr__(self, "risk_level", str(self.risk_level or "medium").strip().lower() or "medium")
 
 
+VerifierCommandModalityV1 = Literal["environment_prep", "build", "test", "lint", "entrypoint"]
+
+
+@dataclass(frozen=True)
+class EvaluateVerifierCommandPolicyQueryV1:
+    """Evaluate one committed verifier command against platform-owned profiles.
+
+    This query is evidence, not a spawn capability. The execution owner must
+    resolve it again while atomically consuming its own fenced launch lease.
+    """
+
+    workspace: str
+    project_id: str
+    run_id: str
+    task_id: str
+    completion_contract_hash: str
+    verifier_obligation_id: str
+    command_authority_hash: str
+    modality: VerifierCommandModalityV1
+    argv: tuple[str, ...]
+    cwd: str
+    input_obligation_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _clean_workspace(self.workspace))
+        for name in ("project_id", "run_id", "task_id", "verifier_obligation_id"):
+            object.__setattr__(self, name, _exact_token(name, getattr(self, name)))
+        object.__setattr__(
+            self,
+            "completion_contract_hash",
+            _sha256("completion_contract_hash", self.completion_contract_hash),
+        )
+        object.__setattr__(
+            self,
+            "command_authority_hash",
+            _sha256("command_authority_hash", self.command_authority_hash),
+        )
+        modality = _exact_token("modality", self.modality, max_bytes=64)
+        if modality not in VERIFIER_COMMAND_MODALITIES:
+            raise ValueError(f"unsupported verifier modality: {modality}")
+        object.__setattr__(self, "modality", modality)
+        if not isinstance(self.argv, (list, tuple)) or not self.argv:
+            raise ValueError("argv must be a non-empty list or tuple")
+        argv = tuple(_exact_token(f"argv[{index}]", item, max_bytes=2048) for index, item in enumerate(self.argv))
+        if len(argv) > 128:
+            raise ValueError("argv must contain at most 128 items")
+        object.__setattr__(self, "argv", argv)
+        object.__setattr__(self, "cwd", _relative_cwd(self.cwd))
+        if not isinstance(self.input_obligation_ids, (list, tuple)) or not self.input_obligation_ids:
+            raise ValueError("input_obligation_ids must be a non-empty list or tuple")
+        input_ids = tuple(sorted({_exact_token("input_obligation_id", item) for item in self.input_obligation_ids}))
+        object.__setattr__(self, "input_obligation_ids", input_ids)
+
+
+@dataclass(frozen=True)
+class VerifierCommandPolicyDecisionV1:
+    """Owner decision for one exact command proposal; never a capability."""
+
+    authorized: bool
+    error_code: str
+    detail: str
+    profile_id: str
+    normalized_argv: tuple[str, ...]
+    normalized_cwd: str
+    input_obligation_ids: tuple[str, ...]
+    executable_path: str
+    executable_realpath: str
+    executable_hash: str
+    policy_decision_hash: str
+
+
 @dataclass(frozen=True)
 class VerifierPolicyResultV1:
     """Platform verifier policy read model."""
@@ -145,10 +249,14 @@ __all__ = [
     "CORE_EVIDENCE_MODALITIES",
     "OPTIONAL_VERIFIER_MODALITIES",
     "SUPPORTED_EVIDENCE_MODALITIES",
+    "VERIFIER_COMMAND_MODALITIES",
     "CompileEvidencePolicyCommandV1",
     "ControlPlaneVerifierPolicyV1Error",
+    "EvaluateVerifierCommandPolicyQueryV1",
     "EvidencePolicyResultV1",
     "ReadVerifierPolicyQueryV1",
     "UpdateVerifierPolicyCommandV1",
+    "VerifierCommandModalityV1",
+    "VerifierCommandPolicyDecisionV1",
     "VerifierPolicyResultV1",
 ]

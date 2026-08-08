@@ -7979,6 +7979,12 @@ class OrchestrationStageExecutor:
 
         if prior_authority.director_stage_authorized:
             return prior_authority
+        # Durable completion authority never lets a disk scan or synthetic
+        # TaskBoundary verdict override failed/pending TaskRuntime facts.  Local
+        # convergence must reopen the owning Director task and produce fresh
+        # receipts; this compatibility hook therefore cannot manufacture stage
+        # authorization from an on-disk delivery surface.
+        return None
         if not self._workspace_has_delivery_surface():
             return None
 
@@ -8543,8 +8549,8 @@ class OrchestrationStageExecutor:
         execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
         stage_status: str,
         summary: str,
-    ) -> None:
-        """Best-effort terminal close of the settle claim so leases do not stick open.
+    ) -> dict[str, Any]:
+        """Terminal-close settle claim and return authoritative TaskRuntime result.
 
         R184/M06: when settle finished without file mutations the previous path
         mapped non-success ``stage_status`` to outcome=``suspended``. That left
@@ -8577,11 +8583,17 @@ class OrchestrationStageExecutor:
                     "Director stage materialization settle attempt close failed: %s",
                     result.get("reason") or "unknown",
                 )
+            return dict(result)
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning(
                 "Director stage materialization settle attempt close failed: %s",
                 exc,
             )
+            return {
+                "success": False,
+                "reason": f"settle_exception:{type(exc).__name__}",
+                "detail": str(exc)[:500],
+            }
 
     def _director_stage_materialization_settle_target_files(
         self,
@@ -8821,24 +8833,60 @@ class OrchestrationStageExecutor:
                 "diagnostic_count": len(diagnostics),
             }
         summary_dict = dict(summary) if isinstance(summary, Mapping) else {}
-        mutated = bool(committed_receipts) or any(
+        deferred_expected = any(
+            isinstance(item, Mapping)
+            and isinstance(item.get("result"), Mapping)
+            and (
+                item["result"].get("deferred_request") is not None
+                or str(item["result"].get("status") or "").strip()
+                in {"deferred_repair_effects_pending", "deferred_command_effect_pending"}
+            )
+            for item in tool_results
+        )
+        failed_receipts = [
+            dict(item)
+            for item in committed_receipts
+            if not isinstance(item, Mapping) or item.get("success") is not True
+        ]
+        successful_receipts = [
+            dict(item) for item in committed_receipts if isinstance(item, Mapping) and item.get("success") is True
+        ]
+        commit_failed = bool(failed_receipts) or (deferred_expected and not committed_receipts)
+        mutated = bool(successful_receipts) or any(
             self._workspace_quality_repair_result_has_mutation(dict(item))
             for item in tool_results
             if isinstance(item, Mapping)
         )
+        settlement_result: dict[str, Any] = {"success": True}
         if task_row_id is not None and execution_attempt is not None:
-            # Settle procedure finished without exception. Terminal-complete the
-            # helper claim even when no files mutated — mutated=false must not
-            # leave TaskRuntime pending (R184/M06).
-            self._settle_director_stage_materialization_attempt(
+            settlement_result = self._settle_director_stage_materialization_attempt(
                 task_row_id=task_row_id,
                 execution_attempt=execution_attempt,
-                stage_status="success",
+                stage_status="failed" if commit_failed else "success",
                 summary=(
                     "director_stage_materialization_quality_settle "
-                    f"mutated={mutated} committed={len(committed_receipts)} tools={len(tool_results)}"
+                    f"mutated={mutated} committed={len(successful_receipts)} "
+                    f"failed={len(failed_receipts)} tools={len(tool_results)}"
                 ),
             )
+        settlement_failed = settlement_result.get("success") is not True
+        if commit_failed or settlement_failed:
+            return {
+                "ok": False,
+                "reason": "deferred_repair_commit_failed" if commit_failed else "settle_attempt_close_failed",
+                "detail": (
+                    "materialization deferred repair did not reach terminal TaskRuntime settlement "
+                    f"(expected={deferred_expected}, receipts={len(committed_receipts)}, "
+                    f"failed={len(failed_receipts)}, settle_reason="
+                    f"{settlement_result.get('reason') or 'unknown'!s})"
+                ),
+                "tool_result_count": len(tool_results),
+                "committed_receipt_count": len(successful_receipts),
+                "failed_receipt_count": len(failed_receipts),
+                "diagnostic_count": len(diagnostics),
+                "mutated": mutated,
+                "external_task_id": external_task_id,
+            }
         return {
             "ok": True,
             "reason": "director_stage_settle",
@@ -8848,7 +8896,8 @@ class OrchestrationStageExecutor:
                 f"committed={len(committed_receipts)}, mutated={mutated})"
             ),
             "tool_result_count": len(tool_results),
-            "committed_receipt_count": len(committed_receipts),
+            "committed_receipt_count": len(successful_receipts),
+            "failed_receipt_count": 0,
             "diagnostic_count": len(diagnostics),
             "mutated": mutated,
             "external_task_id": external_task_id,

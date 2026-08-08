@@ -40,6 +40,7 @@ depends_on:
 - events.fact_stream
 - control_plane.run_ledger
 - runtime.task_market
+- runtime.execution_broker
 - audit.evidence
 - audit.verdict
 - roles.runtime

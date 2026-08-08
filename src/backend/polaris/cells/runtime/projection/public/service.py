@@ -39,6 +39,9 @@ from polaris.cells.runtime.projection.internal.io_helpers import (
 from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
 from polaris.cells.runtime.projection.internal.memos_query_service import list_memos
 from polaris.cells.runtime.projection.internal.project_outcome import reduce_project_outcome
+from polaris.cells.runtime.projection.internal.project_outcome_authority import (
+    observe_authoritative_project_outcome,
+)
 from polaris.cells.runtime.projection.internal.project_outcome_factory_owner import (
     observe_factory_chain_owner,
 )
@@ -102,6 +105,8 @@ from polaris.cells.runtime.projection.internal.workspace_runtime_context import 
     resolve_workspace_runtime_context,
 )
 from polaris.cells.runtime.projection.public.contracts import (
+    ProjectOutcomeAuthorityBindingV1,
+    ProjectOutcomeAuthorityQueryV1,
     ProjectOutcomeFactoryOwnerBindingV1,
     ProjectOutcomeFactoryOwnerQueryV1,
     ProjectOutcomeOwnerObservationV1Error,
@@ -109,6 +114,18 @@ from polaris.cells.runtime.projection.public.contracts import (
     ProjectOutcomeV1,
     ProjectOutcomeValidationV1Error,
 )
+
+
+async def query_authoritative_project_outcome(
+    query: ProjectOutcomeAuthorityQueryV1,
+) -> ProjectOutcomeAuthorityBindingV1:
+    """Gather direct owner facts; caller cannot inject axes or evidence refs."""
+    if type(query) is not ProjectOutcomeAuthorityQueryV1:
+        raise ProjectOutcomeOwnerObservationV1Error(
+            "invalid_project_outcome_authority_query_type",
+            "query must be an exact ProjectOutcomeAuthorityQueryV1 instance",
+        )
+    return await observe_authoritative_project_outcome(query)
 
 
 async def query_project_outcome_with_factory_owner(
@@ -209,6 +226,7 @@ __all__ = [
     "list_memos",
     "load_runtime_task_rows",
     "merge_director_status",
+    "query_authoritative_project_outcome",
     "query_project_outcome",
     "query_project_outcome_with_factory_owner",
     "read_file_head",

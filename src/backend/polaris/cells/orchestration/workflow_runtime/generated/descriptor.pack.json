@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:43.523450Z",
-  "source_hash": "2b13812f527f62d6",
+  "generated_at": "2026-08-08T17:29:06.213228Z",
+  "source_hash": "d13a5fbc6248b3d0",
   "cell_id": "orchestration.workflow_runtime",
-  "workspace": "/home/dains/Documents/polaris/src/backend",
+  "workspace": "/tmp/polaris-unattended-completion-wt/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -630,6 +630,36 @@
       ]
     },
     {
+      "type": "function",
+      "name": "bind_model_ceiling_owner_observation_port",
+      "description": "Bind the process-composition adapter once.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/model_ceiling_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_result",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/model_ceiling_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_park",
+      "description": "Park incomplete owner evidence without spending attempts or escalating.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/model_ceiling_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_owner_port",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/model_ceiling_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "qualify_model_ceiling_authoritatively",
+      "description": "Recheck owner facts and derive the sole terminal model-ceiling stop.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/model_ceiling_authority.py"
+    },
+    {
       "type": "class",
       "name": "ExecutionEvent",
       "description": "Structured execution event stored in workflow query history.",
@@ -1254,6 +1284,56 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "SqliteProjectCompletionCursorV1",
+      "description": "Hide the generic event store behind a typed, identity-injecting CAS port.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/project_completion_cursor.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "ensure_cursor",
+          "doc": ""
+        },
+        {
+          "name": "load_cursor",
+          "doc": ""
+        },
+        {
+          "name": "list_resumable_cursors",
+          "doc": "Recover every nonterminal registration from the durable workflow table."
+        },
+        {
+          "name": "append_transition",
+          "doc": ""
+        },
+        {
+          "name": "repair_execution_projection",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_exact_nonempty_str",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/project_completion_cursor.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/project_completion_cursor.py"
+    },
+    {
+      "type": "function",
+      "name": "_registration_from_execution",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/project_completion_cursor.py"
     },
     {
       "type": "class",
@@ -2937,6 +3017,214 @@
       "name": "stop_adapter",
       "description": "Stop global adapter for compatibility workflows.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
+    },
+    {
+      "type": "class",
+      "name": "ModelCeilingCandidateV1",
+      "description": "Non-authoritative identity locators for a possible model ceiling.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ModelCeilingAttemptObservationV1",
+      "description": "One owner-joined repair round; no field is accepted from the caller.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py",
+      "methods": [
+        {
+          "name": "material_effect_observed",
+          "doc": ""
+        },
+        {
+          "name": "verifier_failed",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ModelCeilingOwnerObservationV1",
+      "description": "Owner-assembled facts.  Only process bootstrap may construct these.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ModelCeilingOwnerObservationError",
+      "description": "Owner evidence was absent, malformed, or could not be joined.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ModelCeilingOwnerObservationPortV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py",
+      "methods": [
+        {
+          "name": "observe_model_ceiling",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ModelCeilingQualificationV1",
+      "description": "Sealed evidence summary for the sole terminal model-ceiling stop.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ModelCeilingTerminalResultV1",
+      "description": "Sealed stop, local-repair, or parked control-plane decision.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_exact_text",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py"
+    },
+    {
+      "type": "function",
+      "name": "_lower_hex",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py"
+    },
+    {
+      "type": "function",
+      "name": "_sha256",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py"
+    },
+    {
+      "type": "function",
+      "name": "_snapshot_ref",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py"
+    },
+    {
+      "type": "function",
+      "name": "qualify_model_ceiling",
+      "description": "Qualify one identity using bootstrap-bound owner queries only.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py"
+    },
+    {
+      "type": "function",
+      "name": "bind_model_ceiling_owner_observation_port",
+      "description": "Bind the process-composition adapter; bootstrap callers only.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling_bootstrap.py"
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionCursorConflictError",
+      "description": "Expected cursor sequence lost a durable compare-and-swap race.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/project_completion_cursor.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionCursorIdentityV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/project_completion_cursor.py",
+      "methods": [
+        {
+          "name": "as_payload",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionCursorLimitsV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/project_completion_cursor.py",
+      "methods": [
+        {
+          "name": "as_payload",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionCursorEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/project_completion_cursor.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionCursorRegistrationV1",
+      "description": "One durable nonterminal convergence registration recoverable after restart.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/project_completion_cursor.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionCursorTransitionV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/project_completion_cursor.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionCursorPortV1",
+      "description": "Private typed CAS surface consumed by workflow orchestration.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/project_completion_cursor.py",
+      "methods": [
+        {
+          "name": "ensure_cursor",
+          "doc": ""
+        },
+        {
+          "name": "load_cursor",
+          "doc": ""
+        },
+        {
+          "name": "list_resumable_cursors",
+          "doc": ""
+        },
+        {
+          "name": "append_transition",
+          "doc": ""
+        },
+        {
+          "name": "repair_execution_projection",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "WorkflowEventVersionConflictError",
+      "description": "Raised when a durable workflow event CAS observes a stale cursor.",
+      "defined_in": "polaris/infrastructure/db/repositories/workflow_runtime_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "class",

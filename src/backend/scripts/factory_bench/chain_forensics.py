@@ -42,7 +42,7 @@ from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS  # noqa: E402
 #
 # (regex, mechanism, attribution) — attribution ∈
 #   platform_fixable  : harness bug with a concrete floor-safe fix locus
-#   model_ceiling     : platform did its job, weak Director just can't
+#   model_output_candidate: heuristic output symptom; never terminal authority
 #   working_as_intended : a guard/gate correctly did its job
 #   post_failure_noise : shows up AFTER the real failure, did not cause it
 #   regression        : a recent change made things WORSE — catch first
@@ -70,15 +70,27 @@ _SIGNATURES: tuple[tuple[str, str, str], ...] = (
         "platform_fixable",
     ),
     (r"BudgetExceededError", "context assembly over budget — crashes turn before any write (#46)", "platform_fixable"),
-    # model_ceiling
-    (r"reasoning-truncation re-ask", "weak Director reasoning overflowed output budget (5th floor)", "model_ceiling"),
-    (r"output_length=0 output_preview=''", "weak Director emitted empty body (5th floor / F10)", "model_ceiling"),
+    # Candidate only. workflow_runtime owner evidence decides model ceilings.
+    (
+        r"reasoning-truncation re-ask",
+        "Director output appears truncated; requires owner-evidence qualification",
+        "model_output_candidate",
+    ),
+    (
+        r"output_length=0 output_preview=''",
+        "Director emitted empty body; requires owner-evidence qualification",
+        "model_output_candidate",
+    ),
     (
         r"PreWriteGuard.*EmptyCode|F29.*EmptyCode",
         "Empty __init__.py blocked (F29) — but pre-write guard intent is sound",
-        "model_ceiling",
+        "model_output_candidate",
     ),
-    (r"tools_executed=0", "weak model emitted NO tool call — content stuck in reasoning", "model_ceiling"),
+    (
+        r"tools_executed=0",
+        "No tool effect observed; candidate only until workflow owner qualification",
+        "model_output_candidate",
+    ),
     # working_as_intended
     (r"\[PreWriteGuard\] Blocked write", "PreWriteGuard correctly blocked a syntax-bad write", "working_as_intended"),
     (

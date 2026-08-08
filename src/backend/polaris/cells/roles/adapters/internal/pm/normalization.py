@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from polaris.cells.orchestration.pm_planning.public.service import (
@@ -42,6 +42,61 @@ from .pm_text_utils import (
     _pm_split_concrete_targets_and_scopes,
     _pm_title_fragment,
 )
+
+_PM_VERIFICATION_MODALITIES = frozenset({"environment_prep", "build", "test", "lint", "entrypoint"})
+_PM_SHELL_LAUNCHERS = frozenset({"sh", "bash", "zsh", "cmd", "cmd.exe", "powershell", "pwsh"})
+
+
+def _normalize_pm_verification_commands(value: Any) -> list[dict[str, Any]]:
+    """Keep only exact argv-based verifier authority rows.
+
+    PM contract normalization never turns prose or a shell command string into
+    execution authority.  Malformed rows are dropped; the downstream
+    completion-contract preflight then fails closed when no valid authority is
+    available.
+    """
+
+    if type(value) is not list:
+        return []
+    normalized: list[dict[str, Any]] = []
+    for raw_row in value:
+        if type(raw_row) is not dict or set(raw_row) != {"modality", "argv", "cwd"}:
+            continue
+        modality = raw_row.get("modality")
+        argv_value = raw_row.get("argv")
+        cwd_value = raw_row.get("cwd")
+        if type(modality) is not str or modality not in _PM_VERIFICATION_MODALITIES:
+            continue
+        if type(argv_value) is not list or not argv_value or len(argv_value) > 128:
+            continue
+        argv: list[str] = []
+        invalid_argv = False
+        for item in argv_value:
+            if type(item) is not str or not item or item != item.strip() or "\x00" in item:
+                invalid_argv = True
+                break
+            argv.append(item)
+        if invalid_argv:
+            continue
+        executable = PurePosixPath(argv[0].replace("\\", "/")).name.lower()
+        if executable in _PM_SHELL_LAUNCHERS and any(item in {"-c", "-lc", "/c"} for item in argv[1:]):
+            continue
+        if type(cwd_value) is not str or not cwd_value or cwd_value != cwd_value.strip():
+            continue
+        if cwd_value != ".":
+            windows_path = PureWindowsPath(cwd_value)
+            posix_path = PurePosixPath(cwd_value)
+            if (
+                "\\" in cwd_value
+                or windows_path.drive
+                or windows_path.root
+                or posix_path.is_absolute()
+                or any(part in {"", ".", ".."} for part in cwd_value.split("/"))
+                or posix_path.as_posix() != cwd_value
+            ):
+                continue
+        normalized.append({"modality": modality, "argv": argv, "cwd": cwd_value})
+    return normalized
 
 
 def _directive_requires_typescript_package_contract(directive: str) -> bool:
@@ -84,6 +139,63 @@ def _pm_typescript_factory_contract_missing(contracts: list[dict[str, Any]], dir
     ):
         missing.append("tests/*.test.ts")
     return missing
+
+
+def _pm_verification_command_contract_issues(
+    contracts: list[dict[str, Any]],
+    directive: str,
+) -> list[str]:
+    """Validate PM-owned structured command authority before CE dispatch.
+
+    The PM quality loop, rather than CE, owns repair/retry for an omitted or
+    malformed verifier declaration.  Natural-language acceptance text never
+    becomes command authority.
+    """
+
+    if not str(directive or "").strip():
+        return []
+    modalities: set[str] = set()
+    for contract in contracts:
+        rows = contract.get("verification_commands")
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            modality = row.get("modality")
+            if isinstance(modality, str) and modality in _PM_VERIFICATION_MODALITIES:
+                modalities.add(modality)
+
+    issues: list[str] = []
+    if not modalities:
+        return ["verification_commands_missing"]
+    if "environment_prep" not in modalities:
+        issues.append("verification_environment_prep_missing")
+    if not modalities.intersection({"build", "test", "lint"}):
+        issues.append("verification_delivery_gate_missing")
+
+    lower_targets = {path.lower() for path in _pm_contract_target_files(contracts)}
+    conventional_entrypoint = any(
+        path
+        in {
+            "index.html",
+            "main.py",
+            "app.py",
+            "main.go",
+            "src/main.py",
+            "src/main.rs",
+            "src/main.cpp",
+            "src/index.ts",
+            "src/index.js",
+            "src/main.ts",
+            "src/main.js",
+            "src/main/java/polaris/factory/main.java",
+        }
+        for path in lower_targets
+    )
+    if conventional_entrypoint and "entrypoint" not in modalities:
+        issues.append("verification_entrypoint_missing")
+    return issues
 
 
 def _pm_contract_mapping(value: Any) -> dict[str, Any]:
@@ -348,6 +460,7 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
             "steps": steps,
             "acceptance": acceptance,
             "acceptance_criteria": acceptance,
+            "verification_commands": _normalize_pm_verification_commands(raw.get("verification_commands")),
             "phase": phase,
             "depends_on": depends_on,
             "assigned_to": assigned_to,
@@ -639,21 +752,34 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
         _raw_tasks = payload.get("tasks") if isinstance(payload, dict) else None
         tasks: list[dict[str, Any]] = _raw_tasks if isinstance(_raw_tasks, list) else []
         normalized = [_pm_reconcile_task_target_scope(item) for item in tasks if isinstance(item, dict)]
+        verification_command_issues = _pm_verification_command_contract_issues(normalized, directive)
         missing_typescript_contract = _pm_typescript_factory_contract_missing(normalized, directive)
-        if missing_typescript_contract:
+        if missing_typescript_contract or verification_command_issues:
             quality = dict(quality)
             raw_critical = quality.get("critical_issues")
             critical = list(raw_critical) if isinstance(raw_critical, list) else []
-            critical.append("factory_typescript_contract_missing:" + ",".join(missing_typescript_contract[:10]))
+            if missing_typescript_contract:
+                critical.append("factory_typescript_contract_missing:" + ",".join(missing_typescript_contract[:10]))
+            critical.extend(verification_command_issues)
             raw_warnings = quality.get("warnings")
             warnings = list(raw_warnings) if isinstance(raw_warnings, list) else []
-            warnings.append("factory TypeScript/npm directive requires package, src, engine, test, and README targets")
+            if missing_typescript_contract:
+                warnings.append(
+                    "factory TypeScript/npm directive requires package, src, engine, test, and README targets"
+                )
+            if verification_command_issues:
+                warnings.append("PM contract requires exact structured verifier argv/cwd authority before CE dispatch")
             quality["ok"] = False
             quality["score"] = min(int(quality.get("score") or 0), 40)
             quality["critical_issues"] = critical
             quality["warnings"] = warnings
             summary = str(quality.get("summary") or "").strip()
-            suffix = "factory_typescript_contract_missing=" + ",".join(missing_typescript_contract[:10])
+            suffix_parts: list[str] = []
+            if missing_typescript_contract:
+                suffix_parts.append("factory_typescript_contract_missing=" + ",".join(missing_typescript_contract[:10]))
+            if verification_command_issues:
+                suffix_parts.append("verification_command_contract=" + ",".join(verification_command_issues))
+            suffix = "; ".join(suffix_parts)
             quality["summary"] = f"{summary}; {suffix}" if summary else suffix
         return normalized, quality
 

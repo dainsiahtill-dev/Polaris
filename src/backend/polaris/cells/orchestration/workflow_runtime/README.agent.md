@@ -15,15 +15,30 @@ Own workflow engine runtime, activity and workflow registration, and workflow st
 - events: WorkflowExecutionStartedEventV1, WorkflowExecutionCompletedEventV1
 - results: WorkflowExecutionResultV1
 - errors: WorkflowRuntimeErrorV1
+- model ceiling: candidate locators are non-authoritative; only bootstrap-bound
+  direct owner queries may produce the sealed ModelCeilingTerminalResultV1.
+  Each repair round must join roles.kernel provider lifecycle, a material
+  effect, the exact runtime.execution_broker verifier failure, and direct
+  director.runtime repair coverage. Missing joins park as
+  `CONTROL_PLANE_BLOCKED`; generic receipt hashes are never authority.
+- project completion: this Cell owns only the typed durable cursor and CAS.
+  Nonterminal cursor registrations include the exact identity and bounded
+  convergence limits required for process-restart recovery. It has no
+  projection, VerificationGuard, TaskMarket, or convergence policy. Public
+  recovery data is `ProjectCompletionCursorRegistrationV1`; CAS conflicts are
+  `ProjectCompletionCursorConflictError`.
 
 ## Depends On
 
 - `runtime.state_owner`
 - `policy.workspace_guard`
 - `policy.permission`
-- `audit.evidence`
+- `context.engine`
+- `director.runtime`
 - `events.fact_stream`
 - `factory.cognitive_runtime`
+- `roles.kernel`
+- `runtime.execution_broker`
 
 ## State Ownership
 

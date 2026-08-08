@@ -144,6 +144,14 @@ class TaskWorkItemRecord:
         """
         if self.stage != stage:
             return False
+        retry_schedule = self.metadata.get("local_retry_schedule")
+        if isinstance(retry_schedule, dict) and str(retry_schedule.get("stage") or "") == stage:
+            try:
+                not_before_epoch = float(retry_schedule.get("not_before_epoch") or 0.0)
+            except (TypeError, ValueError):
+                not_before_epoch = 0.0
+            if not_before_epoch > at_epoch:
+                return False
         # If there is a non-expired lease, it is NOT claimable.
         if self.lease_token and self.lease_expires_at > at_epoch:
             return False

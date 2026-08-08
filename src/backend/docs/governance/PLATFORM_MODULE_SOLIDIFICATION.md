@@ -179,9 +179,9 @@ For **无人值守** loops, do **not** hand-pick modules from free text. Use:
 | Surface | Path |
 |---------|------|
 | Attribution API | `polaris.kernelone.platform_modules.residual_attribution` |
-| Step planner | `polaris.kernelone.platform_modules.unattended_supervisor` |
+| Completion/model terminal authority | `polaris.cells.orchestration.workflow_runtime.public` |
 | CLI | `scripts/platform_modules/attribute_factory_audit.py` |
-| Embedded in audits | `factory_audits.json` → `platform_residual_attribution` + `unattended_next_step` |
+| Embedded in audits | `factory_audits.json` → non-terminal `platform_residual_attribution` |
 | Doctrine | `PLATFORM_UNATTENDED_AUTOMATION.md` |
 
 Hard rules (same as freeze rule 4): one residual → one `module_id`; module gate → cascade → one isolated L1-01; four pillars + N-batch before L1-02.

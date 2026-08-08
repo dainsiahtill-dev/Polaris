@@ -1,9 +1,549 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:43.269051Z",
-  "source_hash": "4bdc993ad29bfe4b",
+  "generated_at": "2026-08-08T17:38:39.671211Z",
+  "source_hash": "48a1976c08ac7b65",
   "cell_id": "orchestration.workflow_orchestration",
-  "workspace": "/home/dains/Documents/polaris/src/backend",
-  "capabilities": [],
+  "workspace": "/tmp/polaris-unattended-completion-wt/src/backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "_FrozenLimits",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_ClaimState",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_CommittedActionState",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_EventState",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionConvergenceEngineV1",
+      "description": "One-tick durable convergence engine with claim-before-effect CAS.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "advance",
+          "doc": "Advance one durable transition and perform at most one owner effect."
+        },
+        {
+          "name": "_ensure_execution",
+          "doc": ""
+        },
+        {
+          "name": "_cursor_identity",
+          "doc": ""
+        },
+        {
+          "name": "_load_state",
+          "doc": ""
+        },
+        {
+          "name": "_append_transition",
+          "doc": ""
+        },
+        {
+          "name": "_query_outcome",
+          "doc": ""
+        },
+        {
+          "name": "_query_diagnostics",
+          "doc": ""
+        },
+        {
+          "name": "_query_model_ceiling",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_model_ceiling_or_park",
+          "doc": ""
+        },
+        {
+          "name": "_ready_diagnostic",
+          "doc": ""
+        },
+        {
+          "name": "_reserve_action",
+          "doc": ""
+        },
+        {
+          "name": "_resume_pending_action",
+          "doc": ""
+        },
+        {
+          "name": "_query_action_receipt",
+          "doc": ""
+        },
+        {
+          "name": "_revalidate_committed_receipts",
+          "doc": "Re-query every owner receipt before trusting committed cursor history."
+        },
+        {
+          "name": "_validate_receipt",
+          "doc": ""
+        },
+        {
+          "name": "_commit_receipt",
+          "doc": ""
+        },
+        {
+          "name": "_record_no_progress",
+          "doc": ""
+        },
+        {
+          "name": "_append_terminal",
+          "doc": ""
+        },
+        {
+          "name": "_replay_terminal",
+          "doc": ""
+        },
+        {
+          "name": "_invalidate_terminal_projection",
+          "doc": ""
+        },
+        {
+          "name": "_invalid_terminal",
+          "doc": ""
+        },
+        {
+          "name": "_terminal_result_from_payload",
+          "doc": ""
+        },
+        {
+          "name": "_repair_execution_projection",
+          "doc": ""
+        },
+        {
+          "name": "_new_claim",
+          "doc": ""
+        },
+        {
+          "name": "_aware_now",
+          "doc": ""
+        },
+        {
+          "name": "_result",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_workflow_id",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_hash",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_limits",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_limits_payload",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_payload_str",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_payload_int",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_identity_from_payload",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_event_identity",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_optional_payload_str",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_limits_from_payload",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_action_payload",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_action_from_payload",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_claim_payload",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_claim_from_payload",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_receipt_content_hash",
+      "description": "Canonical owner receipt digest; never trust a caller-supplied digest alone.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_event_state",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_binding_hash",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_model_ceiling_binding_hash",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_exact_qualified_model_ceiling",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_diagnostic_payload",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_owner_snapshot_hash",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "_action_id",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "bind_project_completion_convergence_runtime",
+      "description": "Bind one composition-root runtime without owning any upstream facts.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_project_completion_convergence_runtime",
+      "description": "Clear process-local bootstrap state; never mutates durable cursor data.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "function",
+      "name": "advance_project_completion_authoritatively",
+      "description": "Advance through the bootstrap-bound convergence engine.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_convergence.py"
+    },
+    {
+      "type": "class",
+      "name": "EventDrivenProjectCompletionSupervisorV1",
+      "description": "Advance registered projects only on explicit owner/control-plane wakes.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_supervisor.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_key",
+          "doc": ""
+        },
+        {
+          "name": "start",
+          "doc": ""
+        },
+        {
+          "name": "stop",
+          "doc": ""
+        },
+        {
+          "name": "submit",
+          "doc": ""
+        },
+        {
+          "name": "wake",
+          "doc": "Replay durable registrations, then reconsider every active identity."
+        },
+        {
+          "name": "_recover_durable_commands",
+          "doc": ""
+        },
+        {
+          "name": "last_result",
+          "doc": ""
+        },
+        {
+          "name": "_run",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "bind_project_completion_supervisor",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_supervisor.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_project_completion_supervisor",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_supervisor.py"
+    },
+    {
+      "type": "function",
+      "name": "submit_project_completion_command",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/internal/project_completion_supervisor.py"
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionIdentityV1",
+      "description": "Exact project/run/contract identity for one convergence workflow.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py",
+      "methods": [
+        {
+          "name": "as_payload",
+          "doc": "Return canonical JSON-safe identity fields."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AdvanceProjectCompletionCommandV1",
+      "description": "Advance one exact convergence workflow by at most one external effect.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionActionCommandV1",
+      "description": "One owner action with a stable production idempotency/handoff key.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionDispatchClaimV1",
+      "description": "CAS-won dispatch lease persisted before an action leaves workflow runtime.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionActionReceiptV1",
+      "description": "Owner receipt proving one action-id-bound handoff was durably accepted.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionOutcomePortV1",
+      "description": "Read the sole owner-sealed runtime.projection outcome.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py",
+      "methods": [
+        {
+          "name": "query_project_completion_outcome",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionDiagnosticsPortV1",
+      "description": "Read the owner-sealed VerificationGuard residual set.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py",
+      "methods": [
+        {
+          "name": "query_project_completion_diagnostics",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionModelCeilingPortV1",
+      "description": "Read workflow_runtime's sealed terminal decision for one diagnostic.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py",
+      "methods": [
+        {
+          "name": "query_project_completion_model_ceiling",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionActionPortV1",
+      "description": "Durable idempotent handoff port.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py",
+      "methods": [
+        {
+          "name": "query_project_completion_action_receipt",
+          "doc": ""
+        },
+        {
+          "name": "dispatch_project_completion_action",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionAdvanceResultV1",
+      "description": "Sealed convergence result; only workflow_orchestration may construct it.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_exact_text",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_sha256",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_bounded_int",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_hash",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_iso8601_utc",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "project_completion_action_receipt_hash",
+      "description": "Return the canonical digest an authoritative action owner must seal.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "advance_project_completion",
+      "description": "Advance through the bootstrap-bound workflow-runtime authority.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "notify_project_completion",
+      "description": "Submit an exact identity to the event-driven production supervisor.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "bind_project_completion_convergence_runtime",
+      "description": "Bind typed cursor and owner ports; production wiring stays in bootstrap.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion_bootstrap.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_project_completion_convergence_runtime",
+      "description": "Release process-local composition state during lifespan shutdown/tests.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion_bootstrap.py"
+    },
+    {
+      "type": "function",
+      "name": "bind_project_completion_supervisor",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion_bootstrap.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_project_completion_supervisor",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion_bootstrap.py"
+    }
+  ],
   "embedding_runtime_fingerprint": "local-v1"
 }

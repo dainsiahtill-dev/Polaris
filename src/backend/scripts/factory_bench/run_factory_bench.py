@@ -74,7 +74,6 @@ from polaris.kernelone.benchmark.factory_depth_contract import (
 from polaris.kernelone.platform_modules.residual_attribution import (
     build_factory_audits_attribution_pack,
 )
-from polaris.kernelone.platform_modules.unattended_supervisor import plan_unattended_step
 from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_roots
 from scripts.factory_bench.backend_fingerprint import (
     build_run_backend_metadata,
@@ -723,21 +722,15 @@ def _attach_platform_residual_attribution(
     *,
     source_path: str = "",
 ) -> dict[str, Any]:
-    """Embed platform residual attribution + unattended next-step into audits.
+    """Embed non-terminal platform residual attribution into audits.
 
     Does not change bench pass/fail. Supervisors read
-    ``platform_residual_attribution.primary.primary_module_id`` and
-    ``unattended_next_step.commands`` after a failed run.
+    ``platform_residual_attribution.primary.primary_module_id`` after a failed
+    run.  Bench never owns scheduling or terminal model-ceiling authority.
     """
 
     pack = build_factory_audits_attribution_pack(payload, source_path=source_path)
-    step = plan_unattended_step(
-        attribution=pack.get("primary") or {},
-        module_gate_ok=None,
-        cascade_ok=None,
-    )
     payload["platform_residual_attribution"] = pack
-    payload["unattended_next_step"] = step.to_dict()
     return payload
 
 
@@ -4430,7 +4423,7 @@ def main() -> int:
     run_success = agg["all_checks_passed"] == agg["total"]
     primary_attr = (final_payload.get("platform_residual_attribution") or {}).get("primary") or {}
     if primary_attr and not run_success:
-        # Surface machine-readable unattended next module for supervisors.
+        # Surface non-terminal residual attribution for workflow supervisors.
         _logger.info(
             "platform residual attribution primary_module_id=%s delivery_status=%s",
             primary_attr.get("primary_module_id"),
@@ -4438,8 +4431,7 @@ def main() -> int:
         )
         print(
             f"[factory-bench] residual_module={primary_attr.get('primary_module_id')} "
-            f"delivery_status={primary_attr.get('delivery_status')} "
-            f"next_phase={(final_payload.get('unattended_next_step') or {}).get('phase')}",
+            f"delivery_status={primary_attr.get('delivery_status')}",
             flush=True,
         )
     _emit_bench_event(

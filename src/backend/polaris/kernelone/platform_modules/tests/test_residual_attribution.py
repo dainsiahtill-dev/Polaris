@@ -1,17 +1,21 @@
-"""Tests for residual → module_id attribution and unattended step planning."""
+"""Tests for generic residual-to-module attribution.
+
+KernelOne deliberately owns no Polaris completion, Factory, L1 scheduling, or
+model-ceiling terminal authority.
+"""
 
 from __future__ import annotations
 
 import unittest
 from pathlib import Path
 
+import polaris.kernelone.platform_modules as platform_modules
 from polaris.kernelone.platform_modules.residual_attribution import (
     attribute_factory_audit_record,
     attribute_residual,
     build_factory_audits_attribution_pack,
     classify_delivery_status,
 )
-from polaris.kernelone.platform_modules.unattended_supervisor import plan_unattended_step
 
 
 class TestResidualAttribution(unittest.TestCase):
@@ -29,7 +33,8 @@ class TestResidualAttribution(unittest.TestCase):
         )
         self.assertEqual(attr.primary_module_id, "M06_director_multi_task")
         self.assertEqual(attr.delivery_status, "DELIVERY_VERIFIED_CHAIN_CONTROL_PLANE_FAIL")
-        self.assertFalse(attr.is_model_ceiling)
+        self.assertNotIn("is_model_ceiling", attr.to_dict())
+        self.assertNotIn("model_ceiling_evidence", attr.to_dict())
         self.assertIn("M10_materialization_semantic_quality", attr.forbidden_same_round)
         self.assertTrue(attr.gate_commands[0].endswith("M06_director_multi_task"))
 
@@ -61,6 +66,30 @@ class TestResidualAttribution(unittest.TestCase):
             chain_ok=False,
         )
         self.assertEqual(attr.primary_module_id, "M08_run_ledger_tool_lifecycle")
+
+    def test_model_like_strings_remain_non_terminal_attribution_inputs(self) -> None:
+        attr = attribute_residual(
+            director_detail="tools_executed=0 provider_stream_timeout",
+            failure_reasons=["no_tool_calls", "model_ceiling"],
+        )
+        self.assertFalse(hasattr(attr, "is_model_ceiling"))
+        self.assertFalse(hasattr(attr, "model_ceiling_evidence"))
+
+    def test_factory_mapping_cannot_import_model_terminal_authority(self) -> None:
+        attr = attribute_factory_audit_record(
+            {
+                "project_id": "L1-01",
+                "root_cause_signature": "semantic_residual_unchanged",
+                "is_model_ceiling": True,
+                "model_ceiling_evidence": {
+                    "schema_version": "platform.model_ceiling_evidence.v1",
+                    "final_request_audit_valid": True,
+                },
+            }
+        )
+        payload = attr.to_dict()
+        self.assertNotIn("is_model_ceiling", payload)
+        self.assertNotIn("model_ceiling_evidence", payload)
 
     def test_factory_audit_record_shape(self) -> None:
         record = {
@@ -102,57 +131,19 @@ class TestResidualAttribution(unittest.TestCase):
             "DELIVERY_VERIFIED_CHAIN_CONTROL_PLANE_FAIL",
         )
 
-
-class TestUnattendedSupervisor(unittest.TestCase):
-    def test_module_gate_before_cascade_before_bench(self) -> None:
-        attr = attribute_residual(
-            root_cause_signature="control_plane:task_runtime_not_completed",
-            error_code="director.canonical_task_boundary_missing",
-            real_run_gate_ok=True,
-            chain_ok=False,
-        )
-        step0 = plan_unattended_step(attribution=attr, module_gate_ok=None, cascade_ok=None)
-        self.assertEqual(step0.phase, "module_gate")
-        self.assertFalse(step0.allow_l1_01_bench)
-
-        step1 = plan_unattended_step(attribution=attr, module_gate_ok=True, cascade_ok=False)
-        self.assertEqual(step1.phase, "cascade")
-        self.assertFalse(step1.allow_l1_01_bench)
-
-        step2 = plan_unattended_step(attribution=attr, module_gate_ok=True, cascade_ok=True)
-        self.assertEqual(step2.phase, "isolated_l1_01")
-        self.assertTrue(step2.allow_l1_01_bench)
-        self.assertFalse(step2.allow_l1_02)
-
-    def test_model_ceiling_stops(self) -> None:
-        attr = attribute_residual(
-            director_detail="tools_executed=0 continuous",
-            failure_reasons=["no_tool_calls"],
-        )
-        step = plan_unattended_step(attribution=attr, module_gate_ok=True, cascade_ok=True)
-        self.assertTrue(step.stop)
-        self.assertEqual(step.phase, "model_ceiling")
-
-    def test_n_batch_unlocks_l1_02_consideration(self) -> None:
-        attr = attribute_residual(root_cause_signature="pass")
-        step = plan_unattended_step(
-            attribution=attr,
-            module_gate_ok=True,
-            cascade_ok=True,
-            last_l1_01_four_pillars_ok=True,
-            n_batch_streak=3,
-        )
-        self.assertTrue(step.allow_l1_02)
-        self.assertEqual(step.phase, "l1_01_n_batch_ready")
+    def test_kernelone_public_surface_has_no_model_or_l1_supervisor_authority(self) -> None:
+        self.assertFalse(hasattr(platform_modules, "ModelCeilingEvidenceV1"))
+        self.assertFalse(hasattr(platform_modules, "UnattendedStepPlanV1"))
+        self.assertFalse(hasattr(platform_modules, "plan_unattended_step"))
 
 
 class TestAttributeCliImport(unittest.TestCase):
-    def test_attribute_script_exists(self) -> None:
-        # Path: platform_modules/tests -> platform_modules -> kernelone -> polaris -> backend
+    def test_attribute_script_is_attribution_only(self) -> None:
         script = Path(__file__).resolve().parents[4] / "scripts" / "platform_modules" / "attribute_factory_audit.py"
         self.assertTrue(script.is_file(), msg=str(script))
         text = script.read_text(encoding="utf-8")
         self.assertIn("attribute_factory_audits_file", text)
+        self.assertNotIn("plan_unattended_step", text)
 
     def test_pack_prefers_failed_primary(self) -> None:
         pack = build_factory_audits_attribution_pack(

@@ -7,21 +7,30 @@ owner: orchestration
 purpose: 'Owns the OrchestrationService public contract, RuntimeOrchestrator port,
   ProcessLauncher port, and EventStream port.  Depends on workflow_runtime for the
   WorkflowEngine instance and workflow_activity for concrete workflow/activity definitions.  Coordinates
-  workflow submission, signals, cancellation, and progress tracking.
+  workflow submission, signals, cancellation, and progress tracking. Project-completion
+  supervision recovers from the durable cursor through public owner/action ports;
+  local process events are latency hints only. Bootstrap composition may bind those ports
+  to TaskMarket and replay its transactional outbox without making TaskMarket a Cell dependency.
+  Retry-budget exhaustion parks with the owner next action; only an exact sealed
+  workflow_runtime ModelCeilingTerminalResultV1 may terminate as model_ceiling,
+  and replay must revalidate its authority binding hash.
 
   '
 current_modules:
 - polaris.cells.orchestration.workflow_orchestration.public.contracts
+- polaris.cells.orchestration.workflow_orchestration.public.project_completion
 tags: []
 owned_paths:
 - polaris/cells/orchestration/workflow_orchestration/**
 public_contracts:
   modules:
   - polaris.cells.orchestration.workflow_orchestration.public.contracts
+  - polaris.cells.orchestration.workflow_orchestration.public.project_completion
   - polaris.cells.orchestration.workflow_runtime.public.contracts
   commands:
   - StartWorkflowCommandV1
   - CancelWorkflowCommandV1
+  - AdvanceProjectCompletionCommandV1
   queries:
   - QueryWorkflowStatusV1
   - QueryWorkflowEventsV1
@@ -30,6 +39,7 @@ public_contracts:
   - WorkflowExecutionCompletedEventV1
   results:
   - WorkflowExecutionResultV1
+  - ProjectCompletionAdvanceResultV1
   errors:
   - WorkflowRuntimeError
 depends_on:
@@ -37,6 +47,8 @@ depends_on:
 - orchestration.workflow_runtime
 - orchestration.workflow_activity
 - runtime.execution_broker
+- runtime.projection
+- factory.verification_guard
 - runtime.state_owner
 - policy.workspace_guard
 - audit.evidence
@@ -51,6 +63,7 @@ effects_allowed:
 verification:
   tests:
   - tests/orchestration/test_workflow_runtime.py
+  - polaris/cells/orchestration/workflow_orchestration/tests/test_project_completion_convergence.py
   gaps:
   - Orchestration service unit tests not yet separated from integration tests.
   - RuntimeOrchestrator subprocess lifecycle coverage pending.

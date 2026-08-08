@@ -9,6 +9,7 @@ from __future__ import annotations
 from polaris.infrastructure.db.repositories.workflow_runtime_store import (
     SqliteRuntimeStore,
     WorkflowEvent,
+    WorkflowEventVersionConflictError,
     WorkflowExecution,
     WorkflowTaskState,
 )
@@ -16,6 +17,7 @@ from polaris.infrastructure.db.repositories.workflow_runtime_store import (
 __all__ = [
     "SqliteRuntimeStore",
     "WorkflowEvent",
+    "WorkflowEventVersionConflictError",
     "WorkflowExecution",
     "WorkflowTaskState",
 ]

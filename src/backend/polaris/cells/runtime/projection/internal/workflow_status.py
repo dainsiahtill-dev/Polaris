@@ -80,11 +80,11 @@ def _jetstream_publish_enabled() -> bool:
 
 def describe_workflow_sync(workflow_id: str, config: Any) -> dict[str, Any]:
     """Module-level wrapper kept patchable for tests and adapters."""
-    from polaris.cells.orchestration.workflow_runtime.public.service import (
-        describe_workflow_sync as _describe_workflow_sync,
+    from polaris.cells.runtime.projection.internal.workflow_runtime_owner import (
+        workflow_runtime_projection_owner_port,
     )
 
-    return _describe_workflow_sync(workflow_id, config)
+    return workflow_runtime_projection_owner_port().describe_workflow(workflow_id, config)
 
 
 def query_workflow_sync(
@@ -93,11 +93,11 @@ def query_workflow_sync(
     config: Any = None,
 ) -> dict[str, Any]:
     """Module-level wrapper kept patchable for tests and adapters."""
-    from polaris.cells.orchestration.workflow_runtime.public.service import (
-        query_workflow_sync as _query_workflow_sync,
+    from polaris.cells.runtime.projection.internal.workflow_runtime_owner import (
+        workflow_runtime_projection_owner_port,
     )
 
-    return _query_workflow_sync(workflow_id, query_name, config=config)
+    return workflow_runtime_projection_owner_port().query_workflow(workflow_id, query_name, config)
 
 
 def workflow_state_path(workspace: str, cache_root: str) -> str:
@@ -1170,14 +1170,8 @@ def get_workflow_runtime_status(
     This function must remain read-only: it computes a fresher in-memory record
     but does not persist it to disk.
     """
-    # Lazy import to break circular dependency:
-    # workflow_status → orchestration/workflow_runtime/public/service
-    #   → unified_orchestration_service → workspace/integrity → runtime/projection
-    #   → workflow_status (cycle)
-    from polaris.cells.orchestration.workflow_runtime.public.service import (
-        WorkflowConfig,
-        director_workflow_id,
-        qa_workflow_id,
+    from polaris.cells.runtime.projection.internal.workflow_runtime_owner import (
+        workflow_runtime_projection_owner_port,
     )
 
     record = load_workflow_state(workspace, cache_root)
@@ -1186,7 +1180,8 @@ def get_workflow_runtime_status(
         return None
 
     with _workflow_runtime_environment(workspace, cache_root):
-        config = WorkflowConfig.from_env(force_enable=True)
+        owner_port = workflow_runtime_projection_owner_port()
+        config = owner_port.workflow_config()
         description = describe_workflow_sync(workflow_id, config)
         described_status = str(description.get("status") or "").strip().lower()
         runtime_status = described_status or str(record.get("workflow_status") or "").strip().lower()
@@ -1203,8 +1198,8 @@ def get_workflow_runtime_status(
         stage = str(runtime_snapshot.get("stage") or record.get("stage") or "").strip().lower()
 
         workflow_chain_run_id = _resolve_workflow_chain_run_id(record, runtime_snapshot)
-        child_workflow_id = director_workflow_id(workflow_chain_run_id) if workflow_chain_run_id else ""
-        qa_child_workflow_id = qa_workflow_id(workflow_chain_run_id) if workflow_chain_run_id else ""
+        child_workflow_id = owner_port.director_workflow_id(workflow_chain_run_id) if workflow_chain_run_id else ""
+        qa_child_workflow_id = owner_port.qa_workflow_id(workflow_chain_run_id) if workflow_chain_run_id else ""
         child_description: dict[str, Any] = {}
         child_snapshot_payload: dict[str, Any] = {}
         child_status = ""

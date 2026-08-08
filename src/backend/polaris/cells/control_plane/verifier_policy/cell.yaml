@@ -22,9 +22,11 @@ public_contracts:
     - UpdateVerifierPolicyCommandV1
   queries:
     - ReadVerifierPolicyQueryV1
+    - EvaluateVerifierCommandPolicyQueryV1
   events: []
   results:
     - VerifierPolicyResultV1
+    - VerifierCommandPolicyDecisionV1
   errors:
     - ControlPlaneVerifierPolicyV1Error
 depends_on: []
@@ -40,6 +42,7 @@ verification:
     - polaris/cells/control_plane/verifier_policy/tests/test_public_service.py
     - polaris/tests/unit/delivery/http/routers/test_control_plane_router.py
   gaps:
-    - This cell owns policy only. Verifier execution providers will consume
-      this policy through public contracts in a later platform slice.
+    - This Cell evaluates command proposals but never mints spawn capability;
+      runtime.execution_broker must re-evaluate the exact query while consuming
+      its own one-use fenced launch lease.
   smoke_commands: []
