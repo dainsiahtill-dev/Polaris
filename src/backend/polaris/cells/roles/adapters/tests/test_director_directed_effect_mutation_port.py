@@ -1077,6 +1077,10 @@ async def test_declared_physical_failure_is_typed_and_spends_context(
 
     assert result.status == "failed"
     assert result.error_code == "deo_physical_execution_failed"
+    assert result.tool_result is not None
+    payload = dict(result.tool_result.payload)
+    assert payload.get("physical_error") == "write failed"
+    assert payload.get("failure_kind") == "physical_result_failed"
     assert replay.error_code == "deo_context_replayed"
     assert physical.calls == 1
 

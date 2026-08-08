@@ -6,6 +6,7 @@ LLM output is treated as optional enrichment and never as single point of truth.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -19,6 +20,14 @@ from polaris.kernelone.storage import resolve_runtime_path
 
 from .base import BaseRoleAdapter
 from .runtime_dialogue import invoke_role_runtime_first
+
+_AUTHORITATIVE_EXECUTION_SCOPE_KEYS = (
+    "execution_attempt_id",
+    "turn_request_id",
+    "execution_id",
+    "task_runtime_session_id",
+)
+_QA_ROLE_INVOCATION_SCHEMA = "qa.role_invocation.v1"
 
 _CODE_EXTENSIONS = {
     ".py",
@@ -212,6 +221,125 @@ def _issue_is_factory_quality_risk(issue: str) -> bool:
     return _FACTORY_QUALITY_RISK_RE.search(str(issue or "")) is not None
 
 
+def _first_execution_scope_token(payload: dict[str, Any]) -> tuple[str, str]:
+    """Return the first authoritative execution-scope field present on a payload."""
+
+    for key in _AUTHORITATIVE_EXECUTION_SCOPE_KEYS:
+        token = str(payload.get(key) or "").strip()
+        if token:
+            return key, token
+    nested = payload.get("metadata")
+    if isinstance(nested, dict):
+        for key in _AUTHORITATIVE_EXECUTION_SCOPE_KEYS:
+            token = str(nested.get(key) or "").strip()
+            if token:
+                return key, token
+    return "", ""
+
+
+def _bind_qa_transaction_execution_identity(
+    *,
+    task_id: str,
+    run_id: str,
+    review_type: str,
+    parent_context: dict[str, Any] | None,
+    stage_label: str,
+) -> dict[str, Any]:
+    """Bind a first-class stable execution identity for QA LLM turns.
+
+    R183/M02: factory quality_gate QA runs reached TransactionKernel without
+    ``execution_attempt_id`` / ``turn_request_id`` / ``execution_id`` /
+    ``task_runtime_session_id``. Kernel correctly fail-closed with
+    ``transaction_identity_unbound`` (run/task/session fallback forbidden).
+
+    Prefer any authoritative identity already present on the parent factory /
+    orchestration context. Otherwise mint a replay-stable ``turn_request_id``
+    (same class as PM route-probe binding) so QA judgement is a real physical
+    Provider attempt under a first-class scope — not a run_id fallback.
+    """
+
+    parent = dict(parent_context) if isinstance(parent_context, dict) else {}
+    parent_meta = dict(parent.get("metadata") or {}) if isinstance(parent.get("metadata"), dict) else {}
+    scope_kind, scope_id = _first_execution_scope_token(parent)
+    if not scope_id:
+        scope_kind, scope_id = _first_execution_scope_token(parent_meta)
+
+    normalized_task = str(task_id or "").strip() or "task-0-qa"
+    normalized_run = str(run_id or parent.get("run_id") or parent_meta.get("run_id") or "").strip()
+    normalized_review = str(review_type or "quality_gate").strip() or "quality_gate"
+    normalized_stage = str(stage_label or "judgement").strip() or "judgement"
+
+    if not scope_id:
+        identity_material = "\n".join(
+            (
+                _QA_ROLE_INVOCATION_SCHEMA,
+                normalized_run,
+                normalized_task,
+                normalized_review,
+            )
+        ).encode("utf-8")
+        scope_kind = "turn_request_id"
+        scope_id = f"qa-{normalized_review[:24]}-{hashlib.sha256(identity_material).hexdigest()[:24]}"
+
+    # Child LLM calls under one QA execute share parent scope; each stage still
+    # gets a distinct turn_request_id for attempt binding / replay.
+    if scope_kind == "turn_request_id":
+        turn_request_id = scope_id if normalized_stage == "judgement" else f"{scope_id}-{normalized_stage}"
+    else:
+        stage_material = "\n".join(
+            (
+                _QA_ROLE_INVOCATION_SCHEMA,
+                scope_kind,
+                scope_id,
+                normalized_stage,
+            )
+        ).encode("utf-8")
+        turn_request_id = f"qa-{normalized_stage[:20]}-{hashlib.sha256(stage_material).hexdigest()[:24]}"
+
+    evidence = {
+        "schema_version": _QA_ROLE_INVOCATION_SCHEMA,
+        "parent_execution_scope_kind": scope_kind,
+        "parent_execution_scope_id": scope_id,
+        "stage_label": normalized_stage,
+        "turn_request_id": turn_request_id,
+        "review_type": normalized_review,
+    }
+    metadata: dict[str, Any] = {
+        "native_tool_mode": "disabled",
+        "response_format_mode": "json",
+        "qa_output_contract": "json_only_verdict",
+        "turn_request_id": turn_request_id,
+        "qa_role_invocation": evidence,
+    }
+    # Preserve parent authoritative fields when present (must agree on one id).
+    if scope_kind != "turn_request_id":
+        metadata[scope_kind] = scope_id
+    for key in _AUTHORITATIVE_EXECUTION_SCOPE_KEYS:
+        if key == "turn_request_id":
+            continue
+        token = str(parent.get(key) or parent_meta.get(key) or "").strip()
+        if token:
+            metadata[key] = token
+
+    payload: dict[str, Any] = {
+        "task_id": normalized_task,
+        "run_id": normalized_run,
+        "review_type": normalized_review,
+        "turn_request_id": turn_request_id,
+        "metadata": metadata,
+        "qa_role_invocation": dict(evidence),
+    }
+    if scope_kind != "turn_request_id":
+        payload[scope_kind] = scope_id
+    for key in _AUTHORITATIVE_EXECUTION_SCOPE_KEYS:
+        if key == "turn_request_id":
+            continue
+        token = str(parent.get(key) or parent_meta.get(key) or "").strip()
+        if token:
+            payload[key] = token
+    return payload
+
+
 class QAAdapter(BaseRoleAdapter):
     """QA adapter."""
 
@@ -250,19 +378,17 @@ class QAAdapter(BaseRoleAdapter):
             prompt_target = _sanitize_qa_target_for_prompt(target)
             message = self._build_qa_message(review_type, prompt_target, review_result=review_result)
             prompt_appendix = self._build_qa_prompt_appendix()
+            llm_context = _bind_qa_transaction_execution_identity(
+                task_id=task_id,
+                run_id=run_id,
+                review_type=review_type,
+                parent_context=context if isinstance(context, dict) else None,
+                stage_label="judgement",
+            )
+            llm_context["target"] = prompt_target
             response = await self._call_role_llm(
                 message=message,
-                context={
-                    "task_id": task_id,
-                    "run_id": run_id,
-                    "review_type": review_type,
-                    "target": prompt_target,
-                    "metadata": {
-                        "native_tool_mode": "disabled",
-                        "response_format_mode": "json",
-                        "qa_output_contract": "json_only_verdict",
-                    },
-                },
+                context=llm_context,
                 prompt_appendix=prompt_appendix,
                 validate_output=False,
                 max_retries=1,
@@ -281,20 +407,18 @@ class QAAdapter(BaseRoleAdapter):
                     review_result=review_result,
                     previous_output=raw_content,
                 )
+                repair_context = _bind_qa_transaction_execution_identity(
+                    task_id=task_id,
+                    run_id=run_id,
+                    review_type=review_type,
+                    parent_context=context if isinstance(context, dict) else None,
+                    stage_label="json_repair",
+                )
+                repair_context["target"] = prompt_target
+                repair_context["qa_retry"] = "strict_json_verdict"
                 repair_response = await self._call_role_llm(
                     message=repair_message,
-                    context={
-                        "task_id": task_id,
-                        "run_id": run_id,
-                        "review_type": review_type,
-                        "target": prompt_target,
-                        "qa_retry": "strict_json_verdict",
-                        "metadata": {
-                            "native_tool_mode": "disabled",
-                            "response_format_mode": "json",
-                            "qa_output_contract": "json_only_verdict",
-                        },
-                    },
+                    context=repair_context,
                     validate_output=False,
                     max_retries=1,
                     prompt_appendix=self._build_qa_json_repair_prompt_appendix(),
@@ -326,21 +450,23 @@ class QAAdapter(BaseRoleAdapter):
             )
 
             self._update_task_progress(task_id, "completed")
-            return self._with_task_runtime_transition_failure_evidence({
-                "success": bool(review_result.get("passed")),
-                "stage": "qa",
-                "review_type": review_type,
-                "target": target,
-                "passed": bool(review_result.get("passed")),
-                "score": int(review_result.get("score") or 0),
-                "critical_issues": review_result.get("critical_issues", []),
-                "major_issues": review_result.get("major_issues", []),
-                "warnings": review_result.get("warnings", []),
-                "suggestions": review_result.get("suggestions", []),
-                "artifacts": [str(report_path)],
-                "taskboard_qa_update": taskboard_update,
-                "content_length": len(raw_content),
-            })
+            return self._with_task_runtime_transition_failure_evidence(
+                {
+                    "success": bool(review_result.get("passed")),
+                    "stage": "qa",
+                    "review_type": review_type,
+                    "target": target,
+                    "passed": bool(review_result.get("passed")),
+                    "score": int(review_result.get("score") or 0),
+                    "critical_issues": review_result.get("critical_issues", []),
+                    "major_issues": review_result.get("major_issues", []),
+                    "warnings": review_result.get("warnings", []),
+                    "suggestions": review_result.get("suggestions", []),
+                    "artifacts": [str(report_path)],
+                    "taskboard_qa_update": taskboard_update,
+                    "content_length": len(raw_content),
+                }
+            )
 
         except (RuntimeError, ValueError) as exc:
             run_id = str(context.get("run_id") or "").strip() if isinstance(context, dict) else ""
@@ -374,21 +500,23 @@ class QAAdapter(BaseRoleAdapter):
                 context=context,
             )
             self._update_task_progress(task_id, "completed")
-            return self._with_task_runtime_transition_failure_evidence({
-                "success": bool(finalized.get("passed")),
-                "stage": "qa",
-                "review_type": review_type,
-                "target": target,
-                "passed": bool(finalized.get("passed")),
-                "score": int(finalized.get("score") or 0),
-                "critical_issues": finalized.get("critical_issues", []),
-                "major_issues": finalized.get("major_issues", []),
-                "warnings": finalized.get("warnings", []),
-                "suggestions": finalized.get("suggestions", []),
-                "artifacts": [str(report_path)],
-                "taskboard_qa_update": taskboard_update,
-                "error": str(exc),
-            })
+            return self._with_task_runtime_transition_failure_evidence(
+                {
+                    "success": bool(finalized.get("passed")),
+                    "stage": "qa",
+                    "review_type": review_type,
+                    "target": target,
+                    "passed": bool(finalized.get("passed")),
+                    "score": int(finalized.get("score") or 0),
+                    "critical_issues": finalized.get("critical_issues", []),
+                    "major_issues": finalized.get("major_issues", []),
+                    "warnings": finalized.get("warnings", []),
+                    "suggestions": finalized.get("suggestions", []),
+                    "artifacts": [str(report_path)],
+                    "taskboard_qa_update": taskboard_update,
+                    "error": str(exc),
+                }
+            )
 
     async def _call_role_llm(
         self,

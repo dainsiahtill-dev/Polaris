@@ -3352,6 +3352,28 @@ def _npm_script_entrypoint_after_command(tokens: list[str], command_index: int) 
     return ""
 
 
+_TYPESCRIPT_TYPECHECK_DETAIL_MAX_LINES = 40
+_TYPESCRIPT_TYPECHECK_DETAIL_MAX_CHARS = 4000
+
+
+def _typescript_typecheck_diagnostic_detail(raw_output: str, returncode: int) -> str:
+    """Capture enough tsc output to preserve TS error codes for repair matching.
+
+    L1-01 m03-r23: the previous single-line + 400-char truncation stripped the
+    TS error codes (TS2584/TS2304) and DOM-global messages that the repair
+    coverage needs to match the ``tsconfig_lib`` / ``tsconfig_dom_*`` rules.
+    With only a generic ``typescript_project_typecheck_failed`` code reaching
+    coverage, no DOM-lib repair fired and the build died on ~19000 missing-lib
+    errors. Preserve the first N non-empty lines (bounded) so the existing
+    DOM-lib repair can match and add ``lib: ['DOM']``.
+    """
+    lines = [line for line in str(raw_output or "").splitlines() if line.strip()]
+    detail = "\n".join(lines[:_TYPESCRIPT_TYPECHECK_DETAIL_MAX_LINES])
+    if not detail:
+        detail = f"tsc --noEmit exited with code {returncode}"
+    return detail[:_TYPESCRIPT_TYPECHECK_DETAIL_MAX_CHARS]
+
+
 def _typescript_project_typecheck_issue(
     *,
     error: str,
@@ -3408,17 +3430,16 @@ def _scan_typescript_project_typecheck_evidence(
         return _FileArtifactQualityEvidence()
     if proc.returncode == 0:
         return _FileArtifactQualityEvidence()
-    detail = _first_nonempty_line(f"{proc.stdout}\n{proc.stderr}")
-    if not detail:
-        detail = f"tsc --noEmit exited with code {proc.returncode}"
-    trimmed_detail = detail[:400]
-    error = f"Artifact quality scan failed: TypeScript project typecheck failed: {trimmed_detail}"
+    detail = _typescript_typecheck_diagnostic_detail(
+        f"{proc.stdout}\n{proc.stderr}", proc.returncode
+    )
+    error = f"Artifact quality scan failed: TypeScript project typecheck failed: {detail}"
     return _FileArtifactQualityEvidence(
         errors=(error,),
         issues=(
             _typescript_project_typecheck_issue(
                 error=error,
-                detail=trimmed_detail,
+                detail=detail,
                 exit_code=proc.returncode,
             ),
         ),

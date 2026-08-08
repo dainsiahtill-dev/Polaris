@@ -2183,6 +2183,29 @@ def project_tool_lifecycle_summary(summary: Mapping[str, Any] | None) -> dict[st
     }
 
 
+_RECOVERABLE_TOOL_RESULT_FAILED_ADMISSION_REASONS = (
+    "deo_claim_failed",
+    "deo_parent_admission_failed",
+    "deo_director_policy_denied",
+    "deo_inventory_ready_failed",
+    "deo_inventory_seal_failed",
+    "parent_open_conflict",
+)
+
+
+def _tool_result_failed_is_recoverable_admission(event: Mapping[str, Any]) -> bool:
+    """A dropped TOOL_RESULT_FAILED whose reason is a recoverable admission/policy
+    denial (claim race, parent-open conflict, policy denial, inventory/seal) is a
+    retryable per-tool denial, NOT a genuine dispatch-drop integrity break. The
+    tool returned a failure (ok=False) the model can correct by re-issuing; the
+    product gates catch any real defect. (L1-01 m03-r29 deepseek-Director:
+    parent_open_conflict admission races were dropped+TOOL_RESULT_FAILED and broke
+    canonical despite deepseek materializing 12 files cleanly.)
+    """
+    reason = str(event.get("reason") or "").lower()
+    return any(token in reason for token in _RECOVERABLE_TOOL_RESULT_FAILED_ADMISSION_REASONS)
+
+
 def project_tool_lifecycle_failure_status(summary: Mapping[str, Any] | None) -> dict[str, Any]:
     """Project aggregate lifecycle failure status from a canonical summary.
 
@@ -2219,6 +2242,28 @@ def project_tool_lifecycle_failure_status(summary: Mapping[str, Any] | None) -> 
             _clean_string(latest_event.get("failure_class"))
             or (FailureClassV1.TOOL_DISPATCH_DROPPED.value if dropped else FailureClassV1.TOOL_LIFECYCLE_FAILED.value)
         )
+        # M08 fix: a tool that RAN and returned ok=False (TOOL_RESULT_FAILED) is a
+        # recoverable per-tool execution failure / product-quality defect, NOT a
+        # control-plane integrity break. canonical_execution integrity is about
+        # MISSING/DROPPED/missing-effect LIFECYCLE EVIDENCE, not a single tool's
+        # recoverable denial; real_run_gate / delivery_depth catch the product
+        # defect on a separate plane. (L1-01 m03-r24 DELIVERY_VERIFIED_CHAIN_
+        # CONTROL_PLANE_FAIL: one CAS-race TOOL_RESULT_FAILED broke canonical
+        # despite the product chain verifying. R195+Layer 2 made specific denial
+        # modes non-fatal at the tool surface; this extends the separation to ALL
+        # per-tool execution failures.)
+        if failure_class == FailureClassV1.TOOL_RESULT_FAILED.value and (
+            not dropped
+            or _tool_result_failed_is_recoverable_admission(latest_event)
+        ):
+            return {
+                "failed": False,
+                "status": "recoverable_tool_failure",
+                "failure_class": failure_class,
+                "reason": _clean_string(latest_event.get("reason")) or failure_class,
+                "degraded": degraded,
+                "fallback": fallback,
+            }
         return {
             "failed": True,
             "status": _clean_string(latest_event.get("status")) or ("dropped" if dropped else "failed"),

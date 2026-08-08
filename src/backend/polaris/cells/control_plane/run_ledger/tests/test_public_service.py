@@ -3461,3 +3461,30 @@ def test_read_run_provenance_bundle_exposes_missing_authority_hashes(tmp_path: P
     assert bundle["ce_blueprint_hash"] == "missing:ce_blueprint_hash"
     assert bundle["handoff_decision_hash"] == "missing:handoff_decision_hash"
     assert bundle["execution_envelope_hash"] == "missing:execution_envelope_hash"
+
+
+
+def test_summarize_run_ledger_projection_tool_result_failed_is_recoverable_not_integrity() -> None:
+    """M08 (caller side): summarize_run_ledger_projection must respect failure_status.failed.
+    A recoverable TOOL_RESULT_FAILED (tool ran, ok=False) is product-quality, not integrity.
+    L1-01 r27 still died on TOOL_RESULT_FAILED because this caller checked the summary's
+    raw ok flag instead of the M08 failed verdict.
+    """
+    from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import build_tool_call_lifecycle_receipt, project_tool_lifecycle_event
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-1", task_id="TASK-1", turn_id="turn-1", role="director",
+        native_tool_calls_count=1, decoded_tool_calls_count=1, dispatched_tool_calls_count=1,
+        receipts=[{"batch_id": "batch-1", "failure_count": 1, "results": [{"tool_name": "write_file", "status": "failed", "reason": "deo_director_policy_denied"}]}],
+        reason="deo_director_policy_denied",
+    ).to_dict()
+    projection = build_run_ledger_projection(
+        [
+            {"event_type": "gate_evaluated", "stage": "director", "gate": {"name": "director", "ok": True, "summary": "started"},
+             "job_token": {"token_id": "token-1", "project_id": "P1", "capability_audit": {"ok": True, "issues": []}, "gate_policy": {}}, "physical_evidence": {}},
+            {"event_type": "tool_call_lifecycle", "tool_call_lifecycle_receipt": receipt},
+        ]
+    )
+    summary = summarize_run_ledger_projection(projection)
+    assert projection["tool_lifecycle"]["ok"] is False
+    assert summary["ok"] is True  # recoverable per M08, not integrity break
+    assert summary["failed_control_plane_events"] == []

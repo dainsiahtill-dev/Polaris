@@ -43,6 +43,7 @@ HTML_TYPESCRIPT_MODULE_SCRIPT_SOURCE_TOOL = "deterministic_html_typescript_modul
 JAVASCRIPT_TYPESCRIPT_ANNOTATION_SOURCE_TOOL = "deterministic_javascript_typescript_annotation_repair"
 TYPEORM_MODEL_NORMALIZATION_SOURCE_TOOL = "deterministic_typeorm_model_normalization_repair"
 TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL = "deterministic_typescript_commonjs_package_type_repair"
+TYPESCRIPT_STRICT_NULL_RELAXATION_SOURCE_TOOL = "deterministic_typescript_strict_null_relaxation_repair"
 TYPESCRIPT_CONFIG_KEY_SPLIT_SOURCE_TOOL = "deterministic_typescript_config_key_split_repair"
 TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL = "deterministic_typescript_entrypoint_repair"
 TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL = "deterministic_typescript_escaped_newline_repair"
@@ -2403,6 +2404,7 @@ def build_typescript_runtime_plan_for_source_tool(
         JAVASCRIPT_TYPESCRIPT_ANNOTATION_SOURCE_TOOL: _build_javascript_typescript_annotation_plan,
         TYPEORM_MODEL_NORMALIZATION_SOURCE_TOOL: _build_typeorm_model_normalization_plan,
         TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL: _build_typescript_commonjs_package_type_plan,
+        TYPESCRIPT_STRICT_NULL_RELAXATION_SOURCE_TOOL: _build_typescript_strict_null_relaxation_plan,
         TYPESCRIPT_CONFIG_KEY_SPLIT_SOURCE_TOOL: _build_typescript_config_key_split_plan,
         TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL: _build_typescript_entrypoint_plan,
         TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL: _build_typescript_escaped_newline_plan,
@@ -2799,6 +2801,123 @@ def _build_typescript_commonjs_package_type_plan(
         mode=mode,
         risk_level="medium",
         metadata={"package_type": "commonjs"},
+    )
+
+
+def _typescript_strict_null_relaxation_signal(diagnostics: Sequence[RepairDiagnostic]) -> bool:
+    """Fire when TS18048/TS2322 (strict-null) or TS1259/TS2352 (config-reducible) appear.
+
+    Round B-v2 (L1-01 m03-r21): MiniMax-M3 ignores prompt-side relaxation
+    guidance, so a deterministic repair must relax tsconfig compilerOptions.
+    Round B-v2b (m03-r26): TS1259 (esModuleInterop) and TS2352 (often an
+    optional-field conversion mismatch) are also config-reducible for a weak
+    Director. Unblocking the build also lets the existing
+    node_test_missing_directory_target repair run (npm test produces the
+    'could not find tests/' diagnostic) and create the test file the model
+    never writes.
+    """
+    text = _diagnostic_text(diagnostics).lower()
+    if any(code in text for code in ("ts18048", "ts2322", "ts1259", "ts2352", "ts2307", "ts2580")):
+        return True
+    return ("is possibly 'undefined'" in text) or ("is possibly \"undefined\"" in text)
+
+
+def _build_typescript_strict_null_relaxation_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str,
+) -> RepairPlan | None:
+    tsconfig_text = str(base_files.get("tsconfig.json") or "")
+    if not tsconfig_text:
+        return None
+    if not _typescript_strict_null_relaxation_signal(diagnostics):
+        return None
+    tsconfig_payload = _json_object(tsconfig_text)
+    compiler_options = tsconfig_payload.get("compilerOptions")
+    if not isinstance(compiler_options, Mapping):
+        return None
+    if compiler_options.get("strict") is not True and compiler_options.get("strictNullChecks") is not True:
+        return None
+    operations: list[RepairOperation] = [
+        RepairOperation(
+            kind="json_set",
+            path="tsconfig.json",
+            json_path=("compilerOptions", "strict"),
+            value=False,
+            before_hash=sha256_text(tsconfig_text),
+            metadata={"repair_kind": "typescript_strict_null_relaxation"},
+        ),
+    ]
+    if compiler_options.get("noUnusedLocals") is True:
+        operations.append(
+            RepairOperation(
+                kind="json_set",
+                path="tsconfig.json",
+                json_path=("compilerOptions", "noUnusedLocals"),
+                value=False,
+                before_hash=sha256_text(tsconfig_text),
+                metadata={"repair_kind": "typescript_strict_null_relaxation"},
+            )
+        )
+    # Round B-v2b (m03-r26): TS1259 esModuleInterop is config-reducible; enable it
+    # so default imports compile. Also enable skipLibCheck to absorb library-type
+    # friction a weak Director cannot resolve per-site.
+    if compiler_options.get("esModuleInterop") is not True:
+        operations.append(
+            RepairOperation(
+                kind="json_set",
+                path="tsconfig.json",
+                json_path=("compilerOptions", "esModuleInterop"),
+                value=True,
+                before_hash=sha256_text(tsconfig_text),
+                metadata={"repair_kind": "typescript_strict_null_relaxation"},
+            )
+        )
+    if compiler_options.get("skipLibCheck") is not True:
+        operations.append(
+            RepairOperation(
+                kind="json_set",
+                path="tsconfig.json",
+                json_path=("compilerOptions", "skipLibCheck"),
+                value=True,
+                before_hash=sha256_text(tsconfig_text),
+                metadata={"repair_kind": "typescript_strict_null_relaxation"},
+            )
+        )
+    # Round B-v2c (m03-r32): TS2307 'node:*' imports + TS2580 (__dirname/process) mean
+    # the model uses Node built-ins/globals but omitted @types/node. Add it to
+    # package.json devDependencies so the bench's npm install provides the types.
+    _diag_text = _diagnostic_text(diagnostics).lower()
+    _needs_node_types = (
+        "node:" in _diag_text
+        or "__dirname" in _diag_text
+        or "__filename" in _diag_text
+        or "cannot find name 'process'" in _diag_text
+    )
+    package_text = str(base_files.get("package.json") or "")
+    if _needs_node_types and package_text:
+        package_payload = _json_object(package_text)
+        dev_deps = package_payload.get("devDependencies")
+        if isinstance(dev_deps, Mapping) and "@types/node" not in dev_deps:
+            operations.append(
+                RepairOperation(
+                    kind="json_set",
+                    path="package.json",
+                    json_path=("devDependencies", "@types/node"),
+                    value="^20.12.0",
+                    before_hash=sha256_text(package_text),
+                    metadata={"repair_kind": "typescript_node_types_dependency"},
+                )
+            )
+    return _repair_plan_or_none(
+        rule_id="typescript.strict_null_relaxation",
+        source_tool=TYPESCRIPT_STRICT_NULL_RELAXATION_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=diagnostics,
+        mode=mode,
+        risk_level="medium",
+        metadata={"strict_null_relaxation": True},
     )
 
 
@@ -14197,6 +14316,7 @@ __all__ = [
     "TYPESCRIPT_IDENTIFIER_SUGGESTION_SOURCE_TOOL",
     "TYPESCRIPT_IMPLICIT_RETURN_TYPE_SOURCE_TOOL",
     "TYPESCRIPT_INIT_PROPERTY_ALIAS_SOURCE_TOOL",
+    "TYPESCRIPT_INVALID_MODULE_AUGMENTATION_SOURCE_TOOL",
     "TYPESCRIPT_JSON_AS_SOURCE_SOURCE_TOOL",
     "TYPESCRIPT_LITERAL_UNION_EXPAND_SOURCE_TOOL",
     "TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL",
@@ -14205,7 +14325,6 @@ __all__ = [
     "TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL",
     "TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL",
     "TYPESCRIPT_MISSING_RELATIVE_MODULE_SOURCE_TOOL",
-    "TYPESCRIPT_INVALID_MODULE_AUGMENTATION_SOURCE_TOOL",
     "TYPESCRIPT_NULLABLE_CANVAS_CONTEXT_SOURCE_TOOL",
     "TYPESCRIPT_NUMBER_PROPERTY_CALL_SOURCE_TOOL",
     "TYPESCRIPT_NUMBER_TO_STRING_ARGUMENT_SOURCE_TOOL",

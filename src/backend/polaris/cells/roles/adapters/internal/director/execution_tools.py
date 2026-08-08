@@ -39,6 +39,9 @@ from polaris.kernelone.llm.toolkit.executor.handlers.filesystem_guards import (
 from polaris.kernelone.llm.toolkit.tool_normalization import (
     normalize_patch_like_write_content,
 )
+from polaris.kernelone.llm.toolkit.tool_normalization.normalizers._shared import (
+    recover_write_body_string,
+)
 from polaris.kernelone.llm.toolkit.write_policy import validate_tool_write_policy
 
 from .helpers import _MIN_FILES_PATTERN, _MIN_LINES_PATTERN
@@ -107,6 +110,30 @@ def _coerce_policy_scope_list(value: Any) -> list[str]:
     if isinstance(value, (list, tuple, set)):
         return [str(item) for item in value if str(item or "").strip()]
     return []
+
+
+def _recover_write_body_or_none(value: Any) -> str | None:
+    """Recover a plain UTF-8 string from a structured tool argument body.
+
+    R195/M03: weak Directors (e.g. MiniMax-M3) sometimes emit ``content`` /
+    ``search`` / ``replace`` as a structured ``$text`` continuation map or a list
+    of fragments rather than a plain string. The physical write/edit tools must
+    never silently ``str()`` such a body into a file — that leaks the Python repr
+    into source (L1-01 m03-r17 ``src/main.ts:111`` leaked ``{'$text': ...}`` and
+    broke the build with TS1005).
+
+    Returns:
+        * the original string when ``value`` is already a ``str``;
+        * ``""`` when ``value`` is ``None`` (missing arg);
+        * the recovered string for a structured body (R138 ``$text`` / list);
+        * ``None`` when ``value`` is a non-string body that cannot be safely
+          recovered — the caller must fail-closed so the repr is never written.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return recover_write_body_string(value)
 
 
 def _director_write_allowed_scope(tool_kwargs: dict[str, Any] | None) -> list[str]:
@@ -461,7 +488,15 @@ class DirectorToolExecutor:
         """写入文件工具"""
         raw_file_path = args.get("file") or args.get("path") or args.get("filepath")
         file_path = str(raw_file_path or "").strip()
-        content = str(args.get("content", ""))
+        content = _recover_write_body_or_none(args.get("content"))
+        if content is None:
+            # R195/M03: a non-string content body that cannot be recovered to text
+            # must fail-closed rather than be str()-serialized into the file.
+            return {
+                "ok": False,
+                "error": "write_file content must be a UTF-8 string or recoverable text body",
+                "error_type": "invalid_source_content",
+            }
 
         if not file_path:
             return {"ok": False, "error": "Missing file path"}
@@ -829,15 +864,36 @@ class DirectorToolExecutor:
         """编辑文件工具（搜索替换）"""
         raw_file_path = args.get("file") or args.get("path") or args.get("filepath")
         file_path = str(raw_file_path or "").strip()
-        search = str(args.get("search") or args.get("old_string") or args.get("oldText") or "")
-        replace = str(args.get("replace") or args.get("new_string") or args.get("newText") or "")
+        search = _recover_write_body_or_none(args.get("search") or args.get("old_string") or args.get("oldText"))
+        replace = _recover_write_body_or_none(args.get("replace") or args.get("new_string") or args.get("newText"))
 
         if not file_path:
             return {"ok": False, "error": "Missing file path"}
         if "\n" in file_path or "\r" in file_path:
             return {"ok": False, "error": f"Invalid file path contains newline: {file_path!r}"}
+        if search is None or replace is None:
+            # R195/M03: an unrecoverable structured search/replace body must
+            # fail-closed rather than be str()-serialized into the file.
+            return {
+                "ok": False,
+                "error": "edit_file search/replace must be a UTF-8 string or recoverable text body",
+                "error_type": "invalid_source_content",
+            }
         if search == "":
-            return {"ok": False, "error": "Search text must not be empty"}
+            # R195/M03: an empty search is a recoverable arg-shape no-op, NOT a
+            # control-plane integrity break. Previously this returned ok=False ->
+            # deo_physical_execution_failed -> TOOL_RESULT_FAILED ->
+            # run_ledger_integrity_failed -> DELIVERY_FAILED (L1-01 m03-r17: two
+            # such calls killed the whole delivery). Allow it as a no-op so the
+            # DEO batch is not dropped; the file is preserved (R193/R194 no-wipe),
+            # the turn continues, and product-quality gates catch any genuine
+            # downstream defect on a separate plane.
+            return {
+                "ok": True,
+                "no_op": True,
+                "reason": "edit_file_empty_search",
+                "file": file_path,
+            }
 
         try:
             target = (workspace / file_path).resolve()
@@ -1087,7 +1143,27 @@ class DirectorToolExecutor:
         """验证命令安全性"""
         if TOOLING_SECURITY_AVAILABLE:
             if is_command_blocked(command):
-                return {"ok": False, "error": "Command blocked: matches dangerous pattern"}
+                # Layer 2 / R195-pattern (L1-01 r15 + r22 recurring killer): a
+                # command blocked for compound/restricted shell metacharacters is
+                # a RECOVERABLE denial, not a control-plane integrity break. The
+                # security guard is PRESERVED -- the command is never executed --
+                # but returning ok=False projected as deo_physical_execution_failed
+                # -> TOOL_RESULT_FAILED -> run_ledger_integrity_failed and killed
+                # the whole delivery. Return a non-fatal no-op with corrective
+                # feedback so the model can re-issue single commands and the
+                # ledger stays clean; product-quality gates catch unverified builds.
+                return {
+                    "ok": True,
+                    "no_op": True,
+                    "blocked": True,
+                    "reason": "command_blocked_compound_or_restricted",
+                    "output": (
+                        "Command not executed: matches a compound/restricted shell "
+                        "pattern. Re-issue as separate single commands, one per call "
+                        "(e.g. 'npm run build', then 'npm test')."
+                    ),
+                    "exit_code": 0,
+                }
             if not is_command_allowed(command, ALLOWED_EXECUTION_COMMANDS):
                 return {"ok": False, "error": "Command not in allowed whitelist"}
         else:

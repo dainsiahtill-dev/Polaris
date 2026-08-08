@@ -427,9 +427,14 @@ async def _run_managed_process_async(
         "terminate_count": terminate_count,
     }
     raw_exit = receipt.get("exit_code")
-    resolved_exit: int = (
-        (1 if timed_out or not process_ok else 0) if raw_exit is None else int(raw_exit)  # type: ignore[arg-type]
-    )
+    if isinstance(raw_exit, bool):
+        resolved_exit = int(raw_exit)
+    elif isinstance(raw_exit, int):
+        resolved_exit = raw_exit
+    elif isinstance(raw_exit, str) and raw_exit.strip().lstrip("-").isdigit():
+        resolved_exit = int(raw_exit)
+    else:
+        resolved_exit = 1 if timed_out or not process_ok else 0
     receipt["exit_code"] = resolved_exit
 
     code = (

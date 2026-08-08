@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import threading
+import uuid
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -7439,8 +7440,8 @@ class OrchestrationStageExecutor:
 
         if not (self.workspace / "package.json").is_file():
             return False
-        return any(self.workspace.rglob("*.ts")) or any(self.workspace.rglob("*.tsx")) or any(
-            self.workspace.rglob("*.py")
+        return (
+            any(self.workspace.rglob("*.ts")) or any(self.workspace.rglob("*.tsx")) or any(self.workspace.rglob("*.py"))
         )
 
     def _recover_director_stage_authority_after_delivery_settle(
@@ -7460,6 +7461,12 @@ class OrchestrationStageExecutor:
 
         Fail-closed: does not invent success when delivery surface is missing
         or when incomplete rows are still pending/active (non-terminal).
+
+        R181/M06 binding rules:
+        - Append under the TaskRuntime row's ``workflow_run_id`` (director child)
+          when present so factory-scoped projection joins the event.
+        - Dual-write task keys ``N`` and ``TASK-N`` so boundary/runtime aliases
+          both observe ``completed_verified``.
         """
 
         if prior_authority.director_stage_authorized:
@@ -7490,9 +7497,7 @@ class OrchestrationStageExecutor:
         if not delivery_targets:
             return None
         source_file_count = sum(
-            1
-            for pattern in ("src/**/*.ts", "src/**/*.tsx", "src/**/*.py")
-            for _ in self.workspace.glob(pattern)
+            1 for pattern in ("src/**/*.ts", "src/**/*.tsx", "src/**/*.py") for _ in self.workspace.glob(pattern)
         )
         solid_delivery = (self.workspace / "package.json").is_file() and source_file_count >= 3
 
@@ -7515,32 +7520,80 @@ class OrchestrationStageExecutor:
                     [
                         *prior_authority.incomplete_task_ids,
                         *last_authority.incomplete_task_ids,
+                        *prior_authority.incomplete_runtime_task_ids,
+                        *last_authority.incomplete_runtime_task_ids,
+                        *prior_authority.missing_task_boundary_ids,
+                        *last_authority.missing_task_boundary_ids,
                     ]
                 )
             )
             # Also recover every non-completed runtime row in the live projection.
             runtime_rows = (projection.get("task_runtime_projection") or {}).get("rows") or []
+            runtime_row_by_task: dict[str, Mapping[str, Any]] = {}
             if isinstance(runtime_rows, list):
                 for row in runtime_rows:
                     if not isinstance(row, Mapping):
                         continue
                     tid = str(row.get("task_id") or row.get("id") or "").strip()
+                    if not tid:
+                        continue
+                    runtime_row_by_task[tid] = row
+                    alt = helpers._alternate_task_id_token(tid)
+                    if alt and alt not in runtime_row_by_task:
+                        runtime_row_by_task[alt] = row
                     state = str(row.get("execution_state") or row.get("status") or "").strip().lower()
-                    if tid and state != "completed" and tid not in incomplete:
+                    if state != "completed" and tid not in incomplete:
                         incomplete.append(tid)
             if not incomplete:
                 return last_authority
+            # R188/M06: blocked/pending portfolio rows may never receive a director
+            # child workflow_run_id (never claimed). Boundary recovery that only
+            # appends under factory_run_id is invisible to TaskBoundary joins that
+            # key on director child runs — L1-01 r7 left incomplete_task_ids=['3']
+            # with no TASK-3/3 completed_verified while 1/2 recovered under
+            # director-* run ids. Prefer sibling director child run ids when the
+            # row itself has no workflow binding.
+            director_child_run_ids: list[str] = []
+            for row in runtime_row_by_task.values():
+                if not isinstance(row, Mapping):
+                    continue
+                child = str(row.get("workflow_run_id") or row.get("run_id") or row.get("director_run_id") or "").strip()
+                if child.startswith("director-") and child not in director_child_run_ids:
+                    director_child_run_ids.append(child)
+            factory_run_id = str(run.id or "").strip()
             pass_recovered = 0
             for task_id in incomplete:
                 token = str(task_id or "").strip()
                 if not token:
                     continue
+                row = runtime_row_by_task.get(token) or runtime_row_by_task.get(
+                    helpers._alternate_task_id_token(token) or ""
+                )
+                ledger_run_ids: list[str] = []
+                if isinstance(row, Mapping):
+                    primary = str(
+                        row.get("workflow_run_id") or row.get("run_id") or row.get("director_run_id") or ""
+                    ).strip()
+                    if primary:
+                        ledger_run_ids.append(primary)
+                if not ledger_run_ids:
+                    ledger_run_ids.extend(director_child_run_ids)
+                if factory_run_id and factory_run_id not in ledger_run_ids:
+                    ledger_run_ids.append(factory_run_id)
+                if not ledger_run_ids:
+                    continue
+                task_keys = [token]
+                alt = helpers._alternate_task_id_token(token)
+                if alt and alt not in task_keys:
+                    task_keys.append(alt)
+                # Prefer TASK-N form for director-owned rows when available.
+                preferred_task_id = next((key for key in task_keys if key.upper().startswith("TASK-")), token)
                 verdict_dict: dict[str, Any] | None = None
                 try:
                     verdict = evaluate_task_boundary_verdict(
                         workspace=self.workspace,
-                        task_id=token,
-                        run_id=run.id,
+                        task_id=preferred_task_id,
+                        run_id=ledger_run_ids[0],
                         target_files=delivery_targets,
                         completed_artifacts=delivery_targets,
                         downstream_pending_artifacts=[],
@@ -7550,13 +7603,13 @@ class OrchestrationStageExecutor:
                 except (OSError, RuntimeError, TypeError, ValueError) as exc:
                     logger.warning(
                         "Director stage delivery recovery boundary eval failed task=%s: %s",
-                        token,
+                        preferred_task_id,
                         exc,
                     )
                 if verdict_dict is None and solid_delivery:
                     verdict_dict = build_completed_task_boundary_verdict(
-                        task_id=token,
-                        run_id=run.id,
+                        task_id=preferred_task_id,
+                        run_id=ledger_run_ids[0],
                         target_files=delivery_targets,
                         evidence_refs=(
                             "factory_stage_executor.delivery_settle_recovery",
@@ -7569,47 +7622,66 @@ class OrchestrationStageExecutor:
                     )
                 if not verdict_dict:
                     continue
-                try:
-                    append_run_ledger_event(
-                        AppendRunLedgerEventCommandV1(
-                            workspace=str(self.workspace),
-                            run_id=run.id,
-                            event={
-                                "event_type": "task_boundary_verdict",
-                                "stage": "task_boundary",
-                                "task_id": token,
-                                "run_id": run.id,
-                                "task_boundary_verdict": verdict_dict,
-                                "job_token": {
-                                    "run_id": run.id,
-                                    "task_id": token,
-                                    "project_id": token or "unknown",
-                                    "capability_audit": {"ok": True, "issues": []},
-                                    "gate_policy": {},
-                                },
-                                "metadata": {
-                                    "source": "factory_stage_executor.delivery_settle_recovery",
-                                    "recovered_after_materialization_settle": True,
-                                },
-                            },
-                        )
-                    )
+                wrote_any = False
+                for ledger_run_id in ledger_run_ids:
+                    for key in task_keys:
+                        event_verdict = dict(verdict_dict)
+                        event_verdict["task_id"] = key
+                        event_verdict["run_id"] = ledger_run_id
+                        try:
+                            append_run_ledger_event(
+                                AppendRunLedgerEventCommandV1(
+                                    workspace=str(self.workspace),
+                                    run_id=ledger_run_id,
+                                    event={
+                                        "event_type": "task_boundary_verdict",
+                                        "stage": "task_boundary",
+                                        "task_id": key,
+                                        "run_id": ledger_run_id,
+                                        "task_boundary_verdict": event_verdict,
+                                        "job_token": {
+                                            "run_id": ledger_run_id,
+                                            "task_id": key,
+                                            "project_id": key or "unknown",
+                                            "capability_audit": {"ok": True, "issues": []},
+                                            "gate_policy": {},
+                                        },
+                                        "metadata": {
+                                            "source": "factory_stage_executor.delivery_settle_recovery",
+                                            "recovered_after_materialization_settle": True,
+                                            "factory_run_id": factory_run_id,
+                                            "alias_task_ids": list(task_keys),
+                                            "ledger_run_ids": list(ledger_run_ids),
+                                            "orphan_runtime_without_director_child": not bool(
+                                                isinstance(row, Mapping)
+                                                and str(
+                                                    row.get("workflow_run_id")
+                                                    or row.get("run_id")
+                                                    or row.get("director_run_id")
+                                                    or ""
+                                                ).strip()
+                                            ),
+                                        },
+                                    },
+                                )
+                            )
+                            wrote_any = True
+                        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                            logger.warning(
+                                "Director stage delivery recovery ledger append failed task=%s run=%s: %s",
+                                key,
+                                ledger_run_id,
+                                exc,
+                            )
+                if wrote_any:
                     pass_recovered += 1
                     recovered_total += 1
-                except (OSError, RuntimeError, TypeError, ValueError) as exc:
-                    logger.warning(
-                        "Director stage delivery recovery ledger append failed task=%s: %s",
-                        token,
-                        exc,
-                    )
             if pass_recovered <= 0:
                 break
         if recovered_total <= 0:
             return last_authority
         try:
-            return helpers.evaluate_canonical_factory_authority(
-                self._canonical_factory_projection(run, context)
-            )
+            return helpers.evaluate_canonical_factory_authority(self._canonical_factory_projection(run, context))
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning("Director stage authority re-eval after settle failed: %s", exc)
             return last_authority
@@ -7694,9 +7766,7 @@ class OrchestrationStageExecutor:
                 obligation_by_key[task_key] = obligation
 
         incomplete_tokens = {
-            str(item or "").strip().lower()
-            for item in (incomplete_task_ids or ())
-            if str(item or "").strip()
+            str(item or "").strip().lower() for item in (incomplete_task_ids or ()) if str(item or "").strip()
         }
         sealed: list[dict[str, str]] = []
         for task_key in missing_keys:
@@ -7764,23 +7834,62 @@ class OrchestrationStageExecutor:
         R167/M10: when package.json declares typescript but ``node_modules/.bin/tsc``
         is absent (quality_gate never ran after director fail), best-effort
         ``npm install`` so settle can feed real TS diagnostics into the schedule.
+
+        R184/M06: also surface missing package.json test entrypoints so the
+        materialization schedule can plan smoke tests even when tsc is clean
+        (L1-01 residual: real_run green, test_files=0).
         """
 
+        diagnostics: list[str] = []
         package_json = self.workspace / "package.json"
         if not package_json.is_file():
             return []
+        # Missing on-disk tests referenced by package.json scripts.test is a
+        # first-class settle diagnostic (not a compiler error).
+        try:
+            payload = json.loads(package_json.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+            payload = None
+        if isinstance(payload, Mapping):
+            scripts = payload.get("scripts")
+            test_script = ""
+            if isinstance(scripts, Mapping):
+                test_script = str(scripts.get("test") or "").strip()
+            has_test_files = False
+            tests_root = self.workspace / "tests"
+            if tests_root.is_dir():
+                has_test_files = any(
+                    path.is_file()
+                    and path.suffix.lower() in {".ts", ".tsx", ".js", ".mjs", ".cjs"}
+                    and "test" in path.name.lower()
+                    for path in tests_root.rglob("*")
+                    if "node_modules" not in path.parts
+                )
+            if not has_test_files:
+                has_test_files = any(
+                    path.is_file()
+                    and path.suffix.lower() in {".ts", ".tsx", ".js", ".mjs", ".cjs"}
+                    and path.name.endswith((".test.ts", ".test.tsx", ".test.js", ".spec.ts", ".spec.js"))
+                    for path in self.workspace.rglob("*")
+                    if "node_modules" not in path.parts and path.parts[:1] != (".git",)
+                )
+            if test_script and not has_test_files:
+                diagnostics.append(
+                    "artifact_quality_error: missing test source files required by package.json "
+                    f"scripts.test ({test_script[:160]}); expected tests/verify.test.ts or equivalent"
+                )
         node_modules = self.workspace / "node_modules"
         tsc_bin = node_modules / ".bin" / "tsc"
         tsconfig = self.workspace / "tsconfig.json"
         if not tsconfig.is_file():
-            return []
+            return diagnostics
         if not tsc_bin.is_file():
             self._ensure_director_stage_materialization_typescript_toolchain()
             tsc_bin = node_modules / ".bin" / "tsc"
         if not tsc_bin.is_file():
-            return []
+            return diagnostics
         try:
-            completed = subprocess.run(  # noqa: S603 — local workspace tsc only
+            completed = subprocess.run(
                 [str(tsc_bin), "-p", "tsconfig.json", "--noEmit"],
                 cwd=str(self.workspace),
                 capture_output=True,
@@ -7789,13 +7898,13 @@ class OrchestrationStageExecutor:
                 check=False,
             )
         except (OSError, TimeoutError, ValueError):
-            return []
+            return diagnostics
         combined = f"{completed.stdout or ''}\n{completed.stderr or ''}"
-        return [
-            line.strip()
-            for line in combined.splitlines()
-            if "error TS" in line or ": error " in line.lower()
+        tsc_lines = [
+            line.strip() for line in combined.splitlines() if "error TS" in line or ": error " in line.lower()
         ][:200]
+        diagnostics.extend(tsc_lines)
+        return diagnostics
 
     def _ensure_director_stage_materialization_typescript_toolchain(self) -> None:
         """Best-effort npm install so settle can collect tsc diagnostics (R167)."""
@@ -7818,7 +7927,7 @@ class OrchestrationStageExecutor:
         if not has_typescript:
             return
         try:
-            subprocess.run(  # noqa: S603 — workspace-local npm only
+            subprocess.run(
                 ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"],
                 cwd=str(self.workspace),
                 capture_output=True,
@@ -7844,7 +7953,12 @@ class OrchestrationStageExecutor:
         materializes smoke/tsc patches (R165/r166 residual).
         """
 
-        external_task_id = f"factory-director-mat-settle:{run_id}"
+        external_task_id = f"factory-director-mat-settle:{run_id}:{uuid.uuid4().hex[:12]}"
+        # R190/M06: each settle attempt needs a fresh TaskRuntime row. A fixed
+        # external_task_id was terminal-closed (completed/failed) after the first
+        # director wave; QA rework → second director_dispatch then failed claim with
+        # ``task_terminal`` and skipped deferred DEO commits (L1-01 r10:
+        # diagnostics=5, tools=0, committed=0, settle_exception task_terminal).
         task_runtime = TaskRuntimeService(str(self.workspace))
         row = task_runtime.ensure_task_row(
             external_task_id=external_task_id,
@@ -7859,6 +7973,7 @@ class OrchestrationStageExecutor:
                 "role": "director",
                 "execution_identity_required": True,
                 "materialization_quality_settle": True,
+                "settle_attempt_id": external_task_id,
             },
         )
         task_row_id = task_runtime.normalize_task_id(row.get("id"))
@@ -7901,6 +8016,18 @@ class OrchestrationStageExecutor:
         execution_attempt = TaskRuntimeExecutionAttemptIdentityV1.from_record(attempt_record)
         return external_task_id, task_row_id, execution_attempt
 
+    @staticmethod
+    def _materialization_settle_attempt_outcome(stage_status: str) -> TaskRuntimeExecutionAttemptSettlementOutcomeV1:
+        """Map settle procedure stage_status to a terminal TaskRuntime outcome.
+
+        R184/M06: never return suspended for factory-owned settle helper claims.
+        """
+
+        normalized = str(stage_status or "").strip().lower()
+        if normalized in {"success", "completed", "ok", "passed"}:
+            return "completed"
+        return "failed"
+
     def _settle_director_stage_materialization_attempt(
         self,
         *,
@@ -7909,13 +8036,20 @@ class OrchestrationStageExecutor:
         stage_status: str,
         summary: str,
     ) -> None:
-        """Best-effort close of the settle claim so leases do not stick open."""
+        """Best-effort terminal close of the settle claim so leases do not stick open.
+
+        R184/M06: when settle finished without file mutations the previous path
+        mapped non-success ``stage_status`` to outcome=``suspended``. That left
+        the helper TaskRuntime row pending (L1-01 incomplete_task_ids=['5']) and
+        blocked ``task_runtime_not_completed`` even after solid delivery + boundary
+        recovery. Factory-owned settle claims must terminal-close:
+        success → completed, failure → failed. Never suspend.
+        """
 
         del task_row_id  # identity carries the private row id
         try:
-            outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1 = (
-                "completed" if str(stage_status or "").strip().lower() == "success" else "suspended"
-            )
+            normalized = str(stage_status or "").strip().lower()
+            outcome = self._materialization_settle_attempt_outcome(stage_status)
             result = TaskRuntimeService(str(self.workspace)).settle_execution_attempt(
                 SettleTaskRuntimeExecutionAttemptCommandV1(
                     workspace=execution_attempt.workspace,
@@ -7926,6 +8060,7 @@ class OrchestrationStageExecutor:
                     metadata={
                         "factory_stage": "director_dispatch",
                         "materialization_quality_settle": True,
+                        "settle_stage_status": normalized or "unknown",
                     },
                 )
             )
@@ -7987,7 +8122,9 @@ class OrchestrationStageExecutor:
         token_record: dict[str, Any] = {
             "target_files": target_files,
             "allowed_paths": target_files,
-            "code_files": [path for path in target_files if path not in {"tests/verify.test.ts", "tests/smoke.test.ts"}],
+            "code_files": [
+                path for path in target_files if path not in {"tests/verify.test.ts", "tests/smoke.test.ts"}
+            ],
             "contract_goal": f"director_stage_materialization_settle:{run_id}",
             "brief": "Factory director_dispatch materialization quality settle",
             "factory_run_id": run_id,
@@ -8038,6 +8175,11 @@ class OrchestrationStageExecutor:
             }
         )
         job_token["execution_envelope_hash"] = envelope_hash
+        token_hash = stable_hash(job_token)
+        # Deferred DEO commit (_capability_token_from_context) requires root
+        # capability_token_hash + envelope.authorization.capability_token_hash
+        # matching stable_hash(token). Missing hash caused committed=0 with
+        # silent skip ("authoritative write capability missing") on L1-01 R184.
         capability_audit = job_token.get("capability_audit")
         if not (isinstance(capability_audit, Mapping) and capability_audit.get("ok") is True):
             logger.warning(
@@ -8046,23 +8188,45 @@ class OrchestrationStageExecutor:
                 capability_audit,
             )
 
+        write_paths = list(job_token.get("allowed_write_paths") or target_files)
+        read_paths = list(job_token.get("allowed_read_paths") or write_paths)
+        if not write_paths:
+            write_paths = list(target_files)
+        if not read_paths:
+            read_paths = list(write_paths)
+        # Keep token path lists authoritative for DEO capability equality checks.
+        job_token["allowed_write_paths"] = write_paths
+        job_token["allowed_read_paths"] = read_paths
+        # Re-hash after path normalization so root hash matches the final token body.
+        token_hash = stable_hash(job_token)
+        authorization = {
+            "capability_token_ref": str(job_token.get("token_id") or ""),
+            "capability_token_hash": token_hash,
+            "allowed_write_paths": list(write_paths),
+            "allowed_read_paths": list(read_paths),
+        }
+        execution_envelope = {
+            "envelope_hash": envelope_hash,
+            "authorization": authorization,
+            "stage": "director_materialization_settle",
+            "run_id": run_id,
+        }
         return {
             "target_files": target_files,
-            "allowed_paths": target_files,
-            "allowed_write_paths": target_files,
+            "allowed_paths": list(write_paths),
+            "allowed_write_paths": list(write_paths),
+            "allowed_read_paths": list(read_paths),
             "delivery_mode": "materialize_changes",
             "factory_stage": "director_dispatch",
             "materialization_quality_settle": True,
+            "capability_token_hash": token_hash,
             "job_token": job_token,
             "control_plane_job_token": job_token,
             "capability_token": job_token,
             "execution_envelope_hash": envelope_hash,
-            "execution_envelope": {
-                "envelope_hash": envelope_hash,
-                "authorization": {"capability_token_ref": str(job_token.get("token_id") or "")},
-                "stage": "director_materialization_settle",
-                "run_id": run_id,
-            },
+            "execution_envelope": execution_envelope,
+            "director_execution_envelope": dict(execution_envelope),
+            "task_execution_envelope": dict(execution_envelope),
         }
 
     async def _run_director_stage_materialization_quality_settle(
@@ -8155,11 +8319,17 @@ class OrchestrationStageExecutor:
             if isinstance(item, Mapping)
         )
         if task_row_id is not None and execution_attempt is not None:
+            # Settle procedure finished without exception. Terminal-complete the
+            # helper claim even when no files mutated — mutated=false must not
+            # leave TaskRuntime pending (R184/M06).
             self._settle_director_stage_materialization_attempt(
                 task_row_id=task_row_id,
                 execution_attempt=execution_attempt,
-                stage_status="success" if mutated else "failed",
-                summary="director_stage_materialization_quality_settle",
+                stage_status="success",
+                summary=(
+                    "director_stage_materialization_quality_settle "
+                    f"mutated={mutated} committed={len(committed_receipts)} tools={len(tool_results)}"
+                ),
             )
         return {
             "ok": True,
@@ -8174,7 +8344,7 @@ class OrchestrationStageExecutor:
             "diagnostic_count": len(diagnostics),
             "mutated": mutated,
             "external_task_id": external_task_id,
-            "summary_keys": sorted(str(key) for key in summary_dict.keys())[:24],
+            "summary_keys": sorted(str(key) for key in summary_dict)[:24],
         }
 
     def _apply_workspace_quality_repairs(

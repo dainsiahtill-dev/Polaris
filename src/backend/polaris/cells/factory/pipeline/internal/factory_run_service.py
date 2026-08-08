@@ -1045,9 +1045,24 @@ class FactoryRunService:
 
     @staticmethod
     def _stage_result_releases_execution_claim(result: StageResult) -> bool:
-        if str(result.status or "").strip().lower() in {"failed", "cancelled"}:
+        """Whether a finished stage may release the durable stage-execution claim.
+
+        R187/M07: director_dispatch can finish ``status=success`` after timeout
+        settle grace while metadata still carries ``inflight_run_continues=true``
+        (child observation). The previous rule treated that flag as a hard hold
+        and refused claim release, so quality_gate failed with
+        ``factory_stage_execution_conflict`` / \"Another Factory stage execution
+        already holds the durable claim\" even though delivery settle already
+        committed tests (L1-01 r6). Success stages must release when child
+        sessions are settled so the PM→CE→Director→QA chain can advance.
+        """
+
+        status = str(result.status or "").strip().lower()
+        if status in {"failed", "cancelled"}:
             return False
         metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        if status == "success":
+            return metadata.get("child_sessions_settled") is not False
         if metadata.get("inflight_run_continues") is True:
             return False
         return metadata.get("child_sessions_settled") is not False
@@ -1765,8 +1780,10 @@ class FactoryRunService:
         *,
         fencing_token: int,
     ) -> None:
+        # R189/M05: renew first, then sleep. Sleeping before the first renew left
+        # a full interval with no heartbeat after stage claim — under loop
+        # starvation the lease could expire before any renew ran.
         while True:
-            await asyncio.sleep(interval_seconds)
             # Workspace ownership is security-critical and must not depend on
             # the observability projection below. A transient Factory Run
             # Store/Event lock failure previously terminated this sole
@@ -1793,18 +1810,19 @@ class FactoryRunService:
                     stage,
                     renew_exc,
                 )
-                continue
-            try:
-                await self._emit_stage_heartbeat(run_id, stage)
-            except asyncio.CancelledError:
-                raise
-            except Exception as projection_exc:  # noqa: BLE001 — projection is non-authoritative
-                logger.warning(
-                    "Factory stage heartbeat projection failed after durable lease renewal for run %s stage %s: %s",
-                    run_id,
-                    stage,
-                    projection_exc,
-                )
+            else:
+                try:
+                    await self._emit_stage_heartbeat(run_id, stage)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as projection_exc:  # noqa: BLE001 — projection is non-authoritative
+                    logger.warning(
+                        "Factory stage heartbeat projection failed after durable lease renewal for run %s stage %s: %s",
+                        run_id,
+                        stage,
+                        projection_exc,
+                    )
+            await asyncio.sleep(interval_seconds)
 
     async def _emit_stage_heartbeat(self, run_id: str, stage: str) -> None:
         run_lock = self._get_run_lock(run_id)

@@ -1004,6 +1004,73 @@ def _normalize_file_reference_path(raw_path: str) -> str:
     return normalized
 
 
+_MUTATION_PATH_ARGUMENT_KEYS: tuple[str, ...] = (
+    "path",
+    "file_path",
+    "target",
+    "filename",
+    "file",
+    "filepath",
+)
+
+
+def _mutation_target_path_key(invocation: ToolInvocation) -> str | None:
+    """Return a collapse key for file mutations, or None for pathless tools."""
+
+    arguments = invocation.arguments if isinstance(getattr(invocation, "arguments", None), dict) else {}
+    for key in _MUTATION_PATH_ARGUMENT_KEYS:
+        raw = arguments.get(key)
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        normalized = _normalize_file_reference_path(raw).lstrip("./")
+        if normalized:
+            return normalized
+    return None
+
+
+def _collapse_last_write_wins_mutations(
+    mutations: list[ToolInvocation],
+) -> tuple[list[ToolInvocation], list[tuple[str, str, str]]]:
+    """Keep the last mutation per target path; soft-drop superseded earlier writes.
+
+    R192/M03: L1-01 r12 sealed a 12-member write batch, committed 11 receipts,
+    then denied the Nth claim with ``deo_current_policy_evidence_unavailable``
+    because ``policy_target`` no longer matched prepare-time baseline content
+    after an earlier same-path member already wrote the file. Last-write-wins
+    preserves model intent while keeping DEO claim baselines coherent.
+    """
+
+    last_index_by_path: dict[str, int] = {}
+    pathless_indexes: list[int] = []
+    for index, invocation in enumerate(mutations):
+        path_key = _mutation_target_path_key(invocation)
+        if path_key is None:
+            pathless_indexes.append(index)
+        else:
+            last_index_by_path[path_key] = index
+    keep_indexes = set(last_index_by_path.values()) | set(pathless_indexes)
+    collapsed: list[ToolInvocation] = []
+    dropped: list[tuple[str, str, str]] = []
+    for index, invocation in enumerate(mutations):
+        if index in keep_indexes:
+            collapsed.append(invocation)
+            continue
+        dropped.append(
+            (
+                str(invocation.call_id or ""),
+                str(invocation.tool_name or invocation.raw_tool_name or "unknown_tool"),
+                "deo_same_path_superseded_by_later_write",
+            )
+        )
+    if dropped:
+        logger.info(
+            "DEO last-write-wins collapsed %s superseded same-path mutation(s); kept=%s",
+            len(dropped),
+            len(collapsed),
+        )
+    return collapsed, dropped
+
+
 def _is_path_within_workspace(*, workspace_real: str, candidate_real: str) -> bool:
     try:
         return os.path.commonpath([workspace_real, candidate_real]) == workspace_real
@@ -1548,6 +1615,11 @@ class ToolBatchExecutor:
         mutations = [invocation for invocation in canonical if invocation.effect_type is not ToolEffectType.READ]
         if not mutations:
             return canonical, None
+        mutations, path_superseded_drops = _collapse_last_write_wins_mutations(mutations)
+        if not mutations:
+            # All mutations were pathless-empty or collapsed away; fail closed.
+            first_error = path_superseded_drops[0][2] if path_superseded_drops else "directed_effect_policy_denied"
+            raise RuntimeError(first_error)
         if not self.directed_effect_required:
             return canonical, None
         runtime = self.directed_effect_runtime
@@ -1571,7 +1643,7 @@ class ToolBatchExecutor:
 
         candidates: list[DirectedEffectLifecycleCandidateV1] = []
         restrictions: list[tuple[str, DirectedEffectImmutableItemsV1]] = []
-        dropped_members: list[tuple[str, str, str]] = []
+        dropped_members: list[tuple[str, str, str]] = list(path_superseded_drops)
         # R140: one malformed/out-of-scope mutation must not abort authorized
         # siblings (e.g. edit_file with path + valid blocks next to search/replace
         # missing file). Soft-deny members and renumber inventory ordinals.

@@ -1261,6 +1261,54 @@ def test_project_tool_lifecycle_failure_status_reports_non_dropped_failure() -> 
     }
 
 
+def test_project_tool_lifecycle_failure_status_tool_result_failed_is_recoverable_not_integrity() -> None:
+    """M08 fix: a tool that RAN and returned ok=False (TOOL_RESULT_FAILED) is a
+    product-quality defect caught by real_run_gate/delivery_depth, NOT a control-
+    plane integrity break.
+
+    Per the M03 tool-denial blueprint ('a single per-tool failure should not
+    equal ledger-integrity failure'), only MISSING/DROPPED/missing-effect
+    LIFECYCLE evidence breaks canonical_execution. L1-01 r24 was
+    DELIVERY_VERIFIED_CHAIN_CONTROL_PLANE_FAIL: product chain verified, but one
+    tool's recoverable CAS race (deo_inventory_ready_failed:guarded_receipt_mismatch,
+    classified TOOL_RESULT_FAILED) broke canonical. R195+Layer 2 made specific
+    denial modes non-fatal at the tool surface; this M08 projection fix extends
+    the separation to ALL per-tool execution failures (TOOL_RESULT_FAILED).
+    """
+    failed_receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[
+            {
+                "batch_id": "batch-1",
+                "failure_count": 1,
+                "results": [
+                    {
+                        "tool_name": "write_file",
+                        "status": "failed",
+                        "reason": "deo_inventory_ready_failed:guarded_receipt_mismatch",
+                    }
+                ],
+            }
+        ],
+        reason="deo_inventory_ready_failed:guarded_receipt_mismatch",
+    ).to_dict()
+
+    summary = summarize_tool_lifecycle_events([project_tool_lifecycle_event(failed_receipt)])
+    failure_status = project_tool_lifecycle_failure_status(summary)
+
+    # TOOL_RESULT_FAILED is a recoverable per-tool execution failure, not an
+    # integrity break. canonical_execution must stay green; the product defect
+    # is caught by real_run_gate / delivery_depth on a separate plane.
+    assert failure_status["failure_class"] == FailureClassV1.TOOL_RESULT_FAILED.value
+    assert failure_status["failed"] is False
+
+
 def test_merge_tool_lifecycle_summaries_centralizes_multi_project_projection() -> None:
     failure_evidence = {"failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value}
     merged = merge_tool_lifecycle_summaries(
@@ -1625,7 +1673,11 @@ def test_project_tool_lifecycle_failure_status_marks_legacy_fallback_degraded() 
         }
     )
 
-    assert status["failed"] is True
+    # M08 fix: TOOL_RESULT_FAILED (tool ran, returned ok=False) is a recoverable
+    # per-tool execution failure / product-quality defect, NOT a control-plane
+    # integrity break; canonical_execution stays green, degraded/fallback still
+    # projected. (Previously failed:True.)
+    assert status["failed"] is False
     assert status["degraded"] is True
     assert status["fallback"] == "legacy_event_rows"
 

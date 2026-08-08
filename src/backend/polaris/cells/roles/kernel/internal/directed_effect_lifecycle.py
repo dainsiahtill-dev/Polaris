@@ -550,25 +550,43 @@ class DirectedEffectLifecycleService:
                 operation_stream.code,
             )
 
+        seal_command = SealDirectedEffectInventoryCommandV1(
+            workspace=execution_attempt.workspace,
+            task_id=execution_attempt.task_id,
+            execution_attempt=execution_attempt,
+            parent_binding=parent_binding,
+            intents=typed_intents,
+            expected_registry_version=parent_binding.registry_version,
+            expected_registry_seq=parent_binding.registry_version + 1,
+            expected_operation_head_seq=0,
+            actor="roles.kernel",
+        )
         try:
             sealed_result = _canonical_port_result(
-                self._ports.seal_inventory(
-                    SealDirectedEffectInventoryCommandV1(
-                        workspace=execution_attempt.workspace,
-                        task_id=execution_attempt.task_id,
-                        execution_attempt=execution_attempt,
-                        parent_binding=parent_binding,
-                        intents=typed_intents,
-                        expected_registry_version=parent_binding.registry_version,
-                        expected_registry_seq=parent_binding.registry_version + 1,
-                        expected_operation_head_seq=0,
-                        actor="roles.kernel",
-                    )
-                ),
+                self._ports.seal_inventory(seal_command),
                 DirectedEffectInventoryResultV1,
             )
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             return _port_exception("inventory_seal", "deo_inventory_seal_failed", exc)
+        # R191/M03: L1-01 r11 TASK-3 dropped write_file batch (tests/verify.test.ts,
+        # README.md, src/verify.ts) with
+        # deo_inventory_seal_failed:guarded_receipt_mismatch:result_not_ok,
+        # unexpected_code:guarded_receipt_mismatch,projection_missing.
+        # DEO may fail exact-replay receipt confirmation under fact-stream lock
+        # pressure even after the seal fact is durable. One immediate re-seal
+        # recovers via inventory_seal_idempotent_replay when the seal landed.
+        if (
+            not sealed_result.ok
+            and str(sealed_result.code or "").strip() == "guarded_receipt_mismatch"
+            and sealed_result.projection is None
+        ):
+            try:
+                sealed_result = _canonical_port_result(
+                    self._ports.seal_inventory(seal_command),
+                    DirectedEffectInventoryResultV1,
+                )
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                return _port_exception("inventory_seal", "deo_inventory_seal_failed", exc)
         sealed = sealed_result.projection
         # R155 live L1-01: TASK-2 write batch dropped with opaque
         # deo_inventory_seal_failed:inventory_seal_idempotent_replay while seal
@@ -648,6 +666,10 @@ class DirectedEffectLifecycleService:
                 seal_fail_reasons.append("member_field_mismatch")
         if seal_fail_reasons:
             detail = f"{sealed_result.code or 'unknown'}:{','.join(seal_fail_reasons)}"
+            seal_evidence = sealed_result.evidence if isinstance(sealed_result.evidence, Mapping) else {}
+            seal_reason = str(seal_evidence.get("reason") or "").strip()
+            if seal_reason:
+                detail = f"{detail}:seal_reason:{seal_reason}"
             return _denied("inventory_seal", "deo_inventory_seal_failed", detail)
 
         policy_bindings = []
@@ -689,9 +711,7 @@ class DirectedEffectLifecycleService:
         # members (head == len). Re-admit from seq 0 so each member hits
         # idempotent_replay rather than inventing seq beyond the stream.
         operation_head = (
-            0
-            if is_seal_replay and sealed.operation_source_head_seq > 0
-            else sealed.operation_source_head_seq
+            0 if is_seal_replay and sealed.operation_source_head_seq > 0 else sealed.operation_source_head_seq
         )
         for member, binding in zip(sealed.members, policy_bindings, strict=True):
             expected_operation_seq = operation_head + 1

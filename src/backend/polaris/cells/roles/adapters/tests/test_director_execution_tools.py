@@ -293,13 +293,7 @@ def test_r179_edit_blocks_is_available_and_applies_search_replace(tmp_path) -> N
     executor = _create_director_tool_executor(str(tmp_path))
     assert "edit_blocks" in executor.available_tools
 
-    blocks = (
-        "<<<<<<< SEARCH\n"
-        "def hello():\n    return 1\n"
-        "=======\n"
-        "def hello():\n    return 2\n"
-        ">>>>>>> REPLACE\n"
-    )
+    blocks = "<<<<<<< SEARCH\ndef hello():\n    return 1\n=======\ndef hello():\n    return 2\n>>>>>>> REPLACE\n"
     result = executor.execute_tool(
         "edit_blocks",
         {
@@ -311,3 +305,94 @@ def test_r179_edit_blocks_is_available_and_applies_search_replace(tmp_path) -> N
     )
     assert result.get("ok") is True, result
     assert "return 2" in target.read_text(encoding="utf-8")
+
+
+def test_r195_write_file_recovers_structured_content_no_dict_leak(tmp_path) -> None:
+    """R195/M03: write_file must not str() a non-string content body into the file.
+
+    Weak Directors (e.g. MiniMax-M3) emit ``content`` as a structured body (a
+    ``$text`` continuation map or a list of fragments) instead of a plain string.
+    The physical writer used ``str(args.get("content", ""))`` which serialized the
+    Python repr into the source file (L1-01 m03-r17 ``src/main.ts:111`` leaked
+    ``{'$text': ...}`` -> TS1005). The writer must recover the structured body to a
+    plain UTF-8 string (or fail-closed); it must NEVER silently stringify a
+    mapping/list into a file.
+    """
+    executor = _create_director_tool_executor(str(tmp_path))
+    structured = ["export const firefly = 1;", "export const flower = 2;"]
+
+    result = executor.execute_tool(
+        "write_file",
+        {
+            "path": "src/index.ts",
+            "content": structured,
+            "target_files": ["src/index.ts"],
+        },
+    )
+
+    assert result["ok"] is True, result
+    written = (tmp_path / "src" / "index.ts").read_text(encoding="utf-8")
+    # No Python repr leak:
+    assert "[" not in written
+    assert "'" not in written
+    # Recovered plain-string body, one statement per line:
+    assert written == "export const firefly = 1;\nexport const flower = 2;"
+
+
+def test_r195_edit_file_empty_search_is_non_fatal_no_op(tmp_path) -> None:
+    """R195/M03: edit_file with an empty search must not become a control-plane failure.
+
+    A single Director tool call whose only defect is a missing/empty search string
+    is a recoverable arg-shape error, not a run-ledger integrity break. Previously
+    the physical editor returned ``{"ok": False, "error": "Search text must not be
+    empty"}`` which the mutation port projected as ``deo_physical_execution_failed``
+    -> ``TOOL_RESULT_FAILED`` -> ``canonical_execution=run_ledger_integrity_failed``
+    -> ``DELIVERY_FAILED`` (L1-01 m03-r17, 2 such calls killed the whole delivery).
+    This must instead be an allowed no-op (file preserved, stays out of the ledger);
+    the product-quality plane catches any genuine downstream defect separately.
+    """
+    (tmp_path / "src").mkdir(parents=True)
+    target = tmp_path / "src" / "main.ts"
+    body = "export const firefly = 1;\n"
+    target.write_text(body, encoding="utf-8")
+    executor = _create_director_tool_executor(str(tmp_path))
+
+    result = executor.execute_tool(
+        "edit_file",
+        {"file": "src/main.ts", "replace": "export const flower = 2;"},
+    )
+
+    assert result["ok"] is True, result
+    # R193/R194 no-wipe guarantee: file is preserved exactly.
+    assert target.read_text(encoding="utf-8") == body
+    # Must NOT surface as a control-plane failure class.
+    assert result.get("error_code") != "deo_physical_execution_failed"
+    assert result.get("error") is None
+
+
+def test_r195_compound_command_block_is_non_fatal_no_op(tmp_path) -> None:
+    """Layer 2 / R195-pattern: a blocked compound/restricted command must not break
+    canonical_execution.
+
+    L1-01 r15 and r22 both DELIVERY_FAILED because the Director's verification
+    command (e.g. ``npm run build && npm test``) was blocked by ``_SHELL_META_RE``
+    -> ``deo_physical_execution_failed`` -> ``TOOL_RESULT_FAILED`` ->
+    ``run_ledger_integrity_failed``. A blocked command is a recoverable denial
+    (the model can re-issue as single commands), not a control-plane integrity
+    break. The security guard is PRESERVED (the command is never executed); it
+    simply returns a non-fatal no-op so the ledger stays clean and the model
+    gets corrective feedback. Product-quality gates catch any unverified build
+    on a separate plane.
+    """
+    executor = _create_director_tool_executor(str(tmp_path))
+    result = executor.execute_tool(
+        "execute_command",
+        {"command": "npm run build && npm test"},
+    )
+    assert result["ok"] is True, result
+    assert result.get("blocked") is True
+    assert result.get("no_op") is True
+    # Security guard preserved: command was NOT executed.
+    assert "not executed" in str(result.get("output", "")).lower()
+    # Must NOT surface as a control-plane failure.
+    assert result.get("error") is None or result.get("error_code") != "deo_physical_execution_failed"

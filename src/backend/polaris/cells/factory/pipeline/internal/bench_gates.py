@@ -40,6 +40,10 @@ from polaris.cells.control_plane.verifier_policy.public import (
 )
 from polaris.kernelone.events.final_request_evidence import normalize_context_snapshot_ref
 
+from .factory_stage_helpers import (
+    _alternate_task_id_token,
+    _runtime_row_delivery_complete,
+)
 from .native_validation_sandbox import (
     NativeValidationContractError,
     NativeValidationSandboxError,
@@ -3463,8 +3467,54 @@ def _first_mapping(source: Mapping[str, Any], *keys: str) -> dict[str, Any]:
     return {}
 
 
+def _boundary_verdicts_by_task_id(record: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    """Collect latest task-boundary verdicts keyed by TASK-N and bare N.
+
+    R181/M06: bench canonical execution must use the same delivery-complete
+    supersede rule as Factory stage authority. Boundary verdicts may live on
+    the run-ledger projection or the top-level audit record.
+    """
+
+    ledger = _mapping_copy(record.get("run_ledger_projection"))
+    candidates: list[Mapping[str, Any]] = []
+    for source in (
+        _mapping_copy(ledger.get("task_boundary")),
+        _mapping_copy(record.get("task_boundary")),
+        _mapping_copy(record.get("task_boundary_verdict")),
+    ):
+        if source:
+            candidates.append(source)
+    verdicts: dict[str, Mapping[str, Any]] = {}
+    for boundary in candidates:
+        latest_by_task = boundary.get("latest_by_task")
+        if isinstance(latest_by_task, Mapping):
+            for task_id, verdict in latest_by_task.items():
+                token = str(task_id or "").strip()
+                if token and isinstance(verdict, Mapping) and token not in verdicts:
+                    verdicts[token] = verdict
+        latest = boundary.get("latest")
+        if isinstance(latest, Mapping):
+            token = str(latest.get("task_id") or latest.get("task_key") or "").strip()
+            if token and token not in verdicts:
+                verdicts[token] = latest
+    # Alias TASK-3 ↔ 3 so multi-task runtime rows match boundary keys.
+    aliased: dict[str, Mapping[str, Any]] = dict(verdicts)
+    for task_id, verdict in list(verdicts.items()):
+        alt = _alternate_task_id_token(task_id)
+        if alt and alt not in aliased:
+            aliased[alt] = verdict
+    return aliased
+
+
 def _project_runtime_status(record: Mapping[str, Any]) -> dict[str, Any]:
-    """Project TaskRuntime authority from its explicit typed audit surface."""
+    """Project TaskRuntime authority from its explicit typed audit surface.
+
+    R181/M06: a failed/timeout-abandoned TaskRuntime row is delivery-complete
+    for the bench canonical axis when the latest task-boundary verdict is
+    ``completed_verified``. This mirrors ``evaluate_canonical_factory_authority``
+    and prevents real-run-green / boundary-green runs from staying
+    ``task_runtime_not_completed`` solely because a sibling task row failed.
+    """
 
     task_runtime_projection = _mapping_copy(record.get("task_runtime_projection"))
     readiness = _mapping_copy(task_runtime_projection.get("readiness"))
@@ -3486,10 +3536,16 @@ def _project_runtime_status(record: Mapping[str, Any]) -> dict[str, Any]:
         and readiness.get("ready") is True
         and rows_authoritative
     )
+    boundary_by_task = _boundary_verdicts_by_task_id(record)
     incomplete_task_ids = [
         str(row.get("task_id") or "").strip()
         for row in rows
-        if str(row.get("execution_state") or row.get("status") or "").strip().lower() != "completed"
+        if str(row.get("task_id") or "").strip()
+        and not _runtime_row_delivery_complete(
+            row,
+            boundary_by_task.get(str(row.get("task_id") or "").strip())
+            or boundary_by_task.get(_alternate_task_id_token(str(row.get("task_id") or "").strip()) or ""),
+        )
     ]
     completed = authoritative and bool(rows) and not incomplete_task_ids
     status = "completed" if completed else "incomplete"

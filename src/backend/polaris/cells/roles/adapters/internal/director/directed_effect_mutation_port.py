@@ -98,11 +98,39 @@ def _recovery_tool_result(
 
 def _failed(
     recovery: DirectedEffectOperationResultV1 | None = None,
+    *,
+    failure_kind: str = "",
+    physical_error: str = "",
+    physical_error_type: str = "",
 ) -> DirectedEffectMutationPortResultV1:
+    """Build a failed mutation result with nested physical-error evidence.
+
+    R182/M03: bare ``deo_physical_execution_failed`` left Run Ledger / residual
+    attribution without the executor's concrete error (destructive shrink, path
+    shape, CAS deny, etc.). Surface a compact detail payload so lifecycle reason
+    and failure_evidence can carry the nested cause without inventing success.
+    """
+
+    detail: dict[str, object] = {
+        "schema_version": "roles.adapters.directed_effect_physical_failure.v1",
+        "error_code": "deo_physical_execution_failed",
+        "failure_kind": str(failure_kind or "").strip() or "physical_result_failed",
+        "physical_error": str(physical_error or "").strip()[:800],
+        "physical_error_type": str(physical_error_type or "").strip()[:120],
+    }
+    recovery_result = _recovery_tool_result(recovery)
+    if recovery_result is not None:
+        thawed = {key: _thaw_value(value) for key, value in recovery_result.payload}
+        if "effect_recovery" in thawed:
+            detail["effect_recovery"] = thawed["effect_recovery"]
+    try:
+        tool_result = _freeze_tool_result(detail)
+    except TypeError:
+        tool_result = recovery_result
     return DirectedEffectMutationPortResultV1(
         ok=False,
         status="failed",
-        tool_result=_recovery_tool_result(recovery),
+        tool_result=tool_result,
         error_code="deo_physical_execution_failed",
     )
 
@@ -568,10 +596,21 @@ class _DirectorDirectedEffectMutationPort:
                     ("context_id", prepared.context.context_id),
                     ("failure_kind", failure_kind),
                     ("exception_type", type(exc).__name__),
+                    ("exception_message", str(exc)[:400]),
                 ),
             )
-            return None, _failed(recovery)
+            return None, _failed(
+                recovery,
+                failure_kind=failure_kind,
+                physical_error=str(exc),
+                physical_error_type=type(exc).__name__,
+            )
         if not isinstance(raw_result, Mapping) or raw_result.get("ok") is not True:
+            nested_error = ""
+            nested_type = ""
+            if isinstance(raw_result, Mapping):
+                nested_error = str(raw_result.get("error") or raw_result.get("message") or "").strip()
+                nested_type = str(raw_result.get("error_type") or "").strip()
             recovery = _attempt_physical_effect_recovery(
                 prepared.context,
                 reason="physical executor returned a non-success result after fence consumption",
@@ -579,9 +618,16 @@ class _DirectorDirectedEffectMutationPort:
                     ("context_id", prepared.context.context_id),
                     ("failure_kind", "physical_result_failed"),
                     ("result_type", type(raw_result).__name__),
+                    ("physical_error", nested_error[:400]),
+                    ("physical_error_type", nested_type[:80]),
                 ),
             )
-            return None, _failed(recovery)
+            return None, _failed(
+                recovery,
+                failure_kind="physical_result_failed",
+                physical_error=nested_error,
+                physical_error_type=nested_type,
+            )
         return raw_result, None
 
     async def _observe_post_state(

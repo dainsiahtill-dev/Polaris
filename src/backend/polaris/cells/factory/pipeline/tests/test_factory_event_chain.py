@@ -985,6 +985,8 @@ async def test_first_admission_fresh_anchor_contention_times_out_without_factory
 
     monkeypatch.setattr(service, "_publish_factory_event", publish)
     monkeypatch.setattr(factory_store_module, "_FACTORY_EVENT_LOCK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(factory_store_module, "_FACTORY_EVENT_LOCK_ACQUIRE_ATTEMPTS", 1)
+    monkeypatch.setattr(factory_store_module, "_FACTORY_EVENT_LOCK_RETRY_SLEEP_SECONDS", 0.0)
     monkeypatch.setattr(locked_regular_file_module, "_flock", contend_fresh_anchor)
 
     started = time.monotonic()
@@ -1002,11 +1004,18 @@ async def test_first_admission_fresh_anchor_contention_times_out_without_factory
     assert published == []
 
 
-def test_authoritative_append_obeys_five_second_cross_process_lock_timeout(tmp_path: Path) -> None:
+def test_authoritative_append_obeys_configured_cross_process_lock_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     base_dir = tmp_path / "factory"
     run_id = "lock-timeout-run"
     ready = tmp_path / "ready"
     release = tmp_path / "release"
+    # Keep the contention budget short for unit time; production default is higher (R186).
+    monkeypatch.setattr(factory_store_module, "_FACTORY_EVENT_LOCK_TIMEOUT_SECONDS", 5.0)
+    monkeypatch.setattr(factory_store_module, "_FACTORY_EVENT_LOCK_ACQUIRE_ATTEMPTS", 1)
+    monkeypatch.setattr(factory_store_module, "_FACTORY_EVENT_LOCK_RETRY_SLEEP_SECONDS", 0.0)
     store = FactoryStore(base_dir)
     asyncio.run(store.append_authoritative_event(run_id, _admission_event(run_id=run_id)))
     script = """
@@ -1070,7 +1079,7 @@ with LockedRegularFileSetV1.acquire(
 
 
 @pytest.mark.asyncio
-async def test_first_admission_uses_one_five_second_budget_while_other_stream_holds_anchor(
+async def test_first_admission_uses_one_configured_budget_while_other_stream_holds_anchor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1081,6 +1090,9 @@ async def test_first_admission_uses_one_five_second_budget_while_other_stream_ho
         published.append((run_id, event))
 
     monkeypatch.setattr(service, "_publish_factory_event", publish)
+    monkeypatch.setattr(factory_store_module, "_FACTORY_EVENT_LOCK_TIMEOUT_SECONDS", 5.0)
+    monkeypatch.setattr(factory_store_module, "_FACTORY_EVENT_LOCK_ACQUIRE_ATTEMPTS", 1)
+    monkeypatch.setattr(factory_store_module, "_FACTORY_EVENT_LOCK_RETRY_SLEEP_SECONDS", 0.0)
     run_a = await service.create_run(FactoryConfig(name="run-a"))
     published.clear()
     base_dir = service.store.base_dir

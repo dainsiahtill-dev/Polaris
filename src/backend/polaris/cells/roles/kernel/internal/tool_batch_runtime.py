@@ -683,12 +683,19 @@ class ToolBatchRuntime:
                 failure_payload = {
                     key: self._thaw_directed_effect_value(value) for key, value in mutation.tool_result.payload
                 }
+            error_token = str(mutation.error_code or "directed_effect_mutation_failed")
+            # R182/M03: nest physical executor error into tool lifecycle reason so
+            # residual attribution is not stuck on opaque deo_physical_execution_failed.
+            if isinstance(failure_payload, dict):
+                nested = str(failure_payload.get("physical_error") or failure_payload.get("error") or "").strip()
+                if nested and nested not in error_token:
+                    error_token = f"{error_token}:{nested[:400]}"
             return ToolResult(
                 call_id=call_id,
                 tool_name=tool_name,
                 status=ToolExecutionStatus.ERROR,
                 result=failure_payload,
-                error=str(mutation.error_code or "directed_effect_mutation_failed"),
+                error=error_token,
                 execution_time_ms=int(time.time() * 1000) - start_ms,
                 directed_effect_mutation_status=mutation.status,
                 directed_effect_claim_status="claimed",

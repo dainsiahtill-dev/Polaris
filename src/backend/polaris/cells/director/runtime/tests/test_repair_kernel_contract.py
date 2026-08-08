@@ -6973,6 +6973,44 @@ def test_public_typescript_commonjs_package_type_covers_node_esm_runtime_error()
     assert '"type": "commonjs"' in content_after
 
 
+def test_public_typescript_strict_null_relaxation_repair_relaxes_tsconfig_on_ts18048() -> None:
+    """Round B-v2: deterministic tsconfig relaxation when TS18048/TS2322 dominate.
+
+    L1-01 m03-r21 proved MiniMax-M3 ignores prompt-side relaxation guidance.
+    A deterministic repair relaxing compilerOptions.strict on TS18048/TS2322
+    does NOT rely on model compliance, and unblocks the build so the existing
+    node_test_missing_directory_target repair can run and create the test file.
+    """
+    diagnostic = (
+        "src/models/Humidity.ts(12,7): error TS18048: 'dewPoint' is possibly 'undefined'.\n"
+        "src/models/Humidity.ts(20,9): error TS2322: Type 'number | undefined' "
+        "is not assignable to type 'number'."
+    )
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,)))
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_STRICT_NULL_RELAXATION_SOURCE_TOOL,
+            base_files={
+                "tsconfig.json": (
+                    '{"compilerOptions":{"strict":true,"strictNullChecks":true,'
+                    '"noUnusedLocals":true,"outDir":"dist","rootDir":"src"}}\n'
+                ),
+            },
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+    coverage_payload = coverage.to_dict()
+    matched_source_tools = coverage_payload["items"][0]["matched_source_tools"]
+    assert ts_syntax.TYPESCRIPT_STRICT_NULL_RELAXATION_SOURCE_TOOL in matched_source_tools
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.strict_null_relaxation"
+    content_after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert '"strict": false' in content_after
+    assert '"noUnusedLocals": false' in content_after
+
+
 def test_public_html_module_script_uses_tsconfig_rootdir_for_compiled_entrypoint() -> None:
     diagnostic = (
         "HTML module script references missing compiled JavaScript './dist/web.js' in index.html; "

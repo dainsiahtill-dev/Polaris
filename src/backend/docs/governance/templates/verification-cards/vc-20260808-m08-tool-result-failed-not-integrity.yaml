@@ -1,0 +1,52 @@
+schema_version: governance.verification-card.v1
+id: vc-20260808-m08-tool-result-failed-not-integrity
+title: "M08 run-ledger projection: TOOL_RESULT_FAILED (per-tool execution failure) is product-quality, not control-plane integrity"
+date: 2026-08-08
+classification: structural  # AGENTS.md §8.6: changes the run-ledger integrity model (control_plane/run_ledger)
+status: open
+author: Claude (autonomous round m03-r25, authorized multi-round amplification)
+
+attribution:
+  primary_module_id: M08_run_ledger_tool_lifecycle
+  root_cause_signature: control_plane:tool_result_failed (conflation of recoverable per-tool failure with integrity break)
+  delivery_status: DELIVERY_VERIFIED_CHAIN_CONTROL_PLANE_FAIL (L1-01 m03-r24)
+  evidence_runs:
+    - factory_run_id: factory_3ba19d1de6e4  # r24
+      specific_failure: deo_inventory_ready_failed:guarded_receipt_mismatch (CAS race; tool RAN, recoverable)
+      failure_class: TOOL_RESULT_FAILED
+      impact: one recoverable per-tool failure -> run_ledger_integrity_failed -> canonical_execution FAIL, despite real_run_gate OK (build passed) and product chain verified
+
+assumption_register:
+  - assumption: "Any TOOL_RESULT_FAILED breaks run-ledger integrity (canonical_execution)."
+    evidence: refuted by consequence. A tool that RAN and returned ok=False is a recoverable per-tool execution failure / product-quality defect. real_run_gate / delivery_depth catch the actual product defect. canonical_execution integrity is about MISSING/DROPPED/missing-effect LIFECYCLE EVIDENCE, not a single tool's recoverable denial. (Per the M03 tool-denial blueprint: 'a single per-tool failure should not equal ledger-integrity failure'.)
+  - assumption: "Per-tool denials must each be patched non-fatal at the tool surface (R195 empty-search, Layer 2 command-block)."
+    evidence: insufficient. Each round a NEW per-tool mode broke canonical (r17 normalization, r21 parent_open_conflict, r24 receipt_mismatch). The M08 projection is the structural root — classify TOOL_RESULT_FAILED as recoverable once, for ALL modes.
+
+pre-mortem (most likely fix-miss locations):
+  - Over-broadening to MISSING/DROPPED/INCOMPLETE → would mask genuine lifecycle gaps. MUST NOT: only TOOL_RESULT_FAILED (tool ran, ok=False) is recoverable.
+  - Breaking the integrity guard for genuinely-missing evidence (real audits need canonical to fail when evidence is MISSING/DROPPED). MUST preserve those paths.
+
+verification_plan:
+  red_tests:
+    - test_project_tool_lifecycle_failure_status_tool_result_failed_is_recoverable_not_integrity
+  green: project_tool_lifecycle_failure_status returns failed:False for unresolved TOOL_RESULT_FAILED (not dropped); failed:True preserved for TOOL_DISPATCH_DROPPED / MISSING_EFFECT_RECEIPT / MISSING_BATCH_RECEIPT / MISSING_TOOL_RESULT / TOOL_LIFECYCLE_MISSING / INCOMPLETE_MATERIALIZATION.
+  gate_sequence: ruff/mypy -> run_ledger tests (335) -> cascade M01-M10 -> isolated L1-01 bench (r25).
+  refactor_guard: existing integrity tests for MISSING/DROPPED/INCOMPLETE remain green (335 passed).
+
+related_adrs:
+  - adr-0090 (corrective re-ask machinery — R195/Layer 2 made specific modes non-fatal at tool surface; M08 extends to projection for ALL per-tool execution failures)
+related_blueprints:
+  - docs/blueprints/M03_TOOL_DENIAL_DELIVERY_FATAL_BLUEPRINT_20260807.md (Layer B / M08: 'run-ledger tool-lifecycle must distinguish per-call-failed from integrity-broken')
+related_inflight_wip:
+  - R195 (edit_file empty-search non-fatal + content recovery)
+  - Layer 2 (compound-command block non-fatal)
+  - Round B-v2 (deterministic tsconfig strict-null relaxation)
+  - Round B-v3 (tsc-output capture -> DOM-lib repair fires -> build passes)
+
+risks:
+  - global integrity-model change; a critical tool failure (e.g. state-corrupting write) would no longer break canonical_execution — mitigated by real_run_gate/delivery_depth catching product defects and failure_evidence still recording the failure.
+  - test_files=0 model variance (r24 MiniMax-M3 chose vitest) is a SEPARATE blocker for delivery_depth; M08 alone may not pass r25 if test runner varies.
+
+stop_conditions_for_further_rounds:
+  - if r25 still fails, attribute the new residual (likely delivery_depth test variance or a genuine MISSING/DROPPED integrity gap the fix must NOT have created).
+  - do NOT broaden the recoverable classification beyond TOOL_RESULT_FAILED without a new VC.

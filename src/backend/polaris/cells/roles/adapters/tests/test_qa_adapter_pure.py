@@ -137,7 +137,9 @@ class _QaExecutionEventFailureTaskBoard(_QaRowProjectionOnlyTaskBoard):
         reason: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        return self._with_execution_event_failure("reopen", super().reopen_task_row(task_id, reason=reason, metadata=metadata))
+        return self._with_execution_event_failure(
+            "reopen", super().reopen_task_row(task_id, reason=reason, metadata=metadata)
+        )
 
     def update_task_row(
         self,
@@ -955,6 +957,54 @@ class TestQaExecute:
         assert '"factory_run_ref"' in message
         assert '"factory_run_ref"' in str(context.get("target") or "")
         assert "Chief Engineer blueprint evidence" in message
+        # R183/M02: QA LLM context must carry a first-class execution identity.
+        assert str(context.get("turn_request_id") or "").startswith("qa-")
+        metadata = context.get("metadata")
+        assert isinstance(metadata, dict)
+        assert str(metadata.get("turn_request_id") or "").startswith("qa-")
+        assert metadata.get("turn_request_id") == context.get("turn_request_id")
+
+    def test_bind_qa_transaction_execution_identity_mints_stable_turn_request_id(self) -> None:
+        from polaris.cells.roles.adapters.internal.qa_adapter import (
+            _bind_qa_transaction_execution_identity,
+        )
+
+        first = _bind_qa_transaction_execution_identity(
+            task_id="task-0-qa",
+            run_id="qa-run-1",
+            review_type="quality_gate",
+            parent_context={"run_id": "qa-run-1"},
+            stage_label="judgement",
+        )
+        second = _bind_qa_transaction_execution_identity(
+            task_id="task-0-qa",
+            run_id="qa-run-1",
+            review_type="quality_gate",
+            parent_context={"run_id": "qa-run-1"},
+            stage_label="judgement",
+        )
+        repair = _bind_qa_transaction_execution_identity(
+            task_id="task-0-qa",
+            run_id="qa-run-1",
+            review_type="quality_gate",
+            parent_context={"run_id": "qa-run-1"},
+            stage_label="json_repair",
+        )
+        assert first["turn_request_id"] == second["turn_request_id"]
+        assert first["turn_request_id"].startswith("qa-quality_gate-")
+        assert repair["turn_request_id"] == f"{first['turn_request_id']}-json_repair"
+        assert first["metadata"]["turn_request_id"] == first["turn_request_id"]
+        parented = _bind_qa_transaction_execution_identity(
+            task_id="task-0-qa",
+            run_id="qa-run-1",
+            review_type="quality_gate",
+            parent_context={"execution_attempt_id": "attempt-parent-9", "run_id": "qa-run-1"},
+            stage_label="judgement",
+        )
+        assert parented["execution_attempt_id"] == "attempt-parent-9"
+        assert parented["metadata"]["execution_attempt_id"] == "attempt-parent-9"
+        assert parented["turn_request_id"].startswith("qa-judgement-")
+        assert parented["turn_request_id"] != "attempt-parent-9"
 
     def test_cognitive_runtime_blocked_is_nonfatal_when_static_gate_passes(
         self, tmp_path: Any, monkeypatch: Any

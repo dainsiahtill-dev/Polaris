@@ -412,6 +412,38 @@ def test_foreign_renew_and_release_are_rejected(tmp_path: Path) -> None:
     assert release_error.value.code == "factory_workspace_run_fenced"
 
 
+def test_same_owner_renew_within_grace_after_expiry_recovers_lease(tmp_path: Path) -> None:
+    """R189/M05: one missed heartbeat window must not kill same-owner renew."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    clock = _MutableClock()
+    admission = FactoryWorkspaceRunAdmission(
+        workspace,
+        state_root=tmp_path / "runtime" / "factory",
+        lease_ttl_seconds=10,
+        clock=clock,
+    )
+    lease = admission.acquire("factory-grace")
+    clock.advance(11)  # past TTL, still within grace (== TTL)
+    renewed = admission.renew("factory-grace", fencing_token=lease.fencing_token)
+    assert renewed.state.value == "active"
+    assert renewed.expires_at > lease.expires_at
+
+    clock.advance(25)  # beyond TTL + grace from last renew? 25 > 10+10 from renew start
+    with pytest.raises(FactoryWorkspaceRunLeaseConflictError) as expired:
+        admission.renew("factory-grace", fencing_token=lease.fencing_token)
+    assert expired.value.code == "factory_workspace_run_lease_expired"
+
+
+def test_default_workspace_lease_ttl_covers_long_director_wave() -> None:
+    from polaris.cells.factory.pipeline.internal.factory_run_admission import (
+        DEFAULT_FACTORY_WORKSPACE_LEASE_TTL_SECONDS,
+    )
+
+    assert DEFAULT_FACTORY_WORKSPACE_LEASE_TTL_SECONDS >= 1800.0
+
+
 def test_lifecycle_claim_without_token_can_atomically_acquire_available_workspace(
     tmp_path: Path,
 ) -> None:
@@ -2330,3 +2362,41 @@ def test_factory_deadline_policy_normalizes_float_budgets_to_ints(
     assert isinstance(policy.director_first_task_min_seconds, int)
     assert isinstance(policy.quality_gate_reserved_seconds, int)
     assert isinstance(policy.safety_seconds, int)
+
+
+def test_success_director_stage_releases_claim_despite_inflight_run_continues_flag() -> None:
+    """R187/M07: success + inflight_run_continues must still release for quality_gate."""
+
+    held = StageResult(
+        stage="director_dispatch",
+        status="success",
+        output="timeout settled with delivery",
+        metadata={
+            "child_sessions_settled": True,
+            "inflight_run_continues": True,
+            "settlement_source": "director_dispatch_timeout_settle_grace",
+        },
+    )
+    assert FactoryRunService._stage_result_releases_execution_claim(held) is True
+
+    failed_inflight = StageResult(
+        stage="director_dispatch",
+        status="failed",
+        output="barrier timeout",
+        metadata={
+            "child_sessions_settled": False,
+            "inflight_run_continues": True,
+        },
+    )
+    assert FactoryRunService._stage_result_releases_execution_claim(failed_inflight) is False
+
+    success_unsettled = StageResult(
+        stage="director_dispatch",
+        status="success",
+        output="children still open",
+        metadata={
+            "child_sessions_settled": False,
+            "inflight_run_continues": True,
+        },
+    )
+    assert FactoryRunService._stage_result_releases_execution_claim(success_unsettled) is False

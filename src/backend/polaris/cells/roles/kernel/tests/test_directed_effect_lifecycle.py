@@ -530,6 +530,9 @@ class _RecordingRuntime:
     raise_stage: str | None = None
     malformed_stage: str | None = None
     malformed_kind: str = "none"
+    # R191/M03: first seal returns mismatch after durable seal; second is real replay.
+    seal_mismatch_after_durable_once: bool = False
+    _seal_mismatch_emitted: bool = False
 
     def _record(self, stage: str, command: object) -> None:
         self.events.append((stage, command))
@@ -601,6 +604,17 @@ class _RecordingRuntime:
             return cast(DirectedEffectInventoryResultV1, malformed)
         if self.fail_stage == "seal_inventory":
             return DirectedEffectInventoryResultV1(ok=False, code="stream_append_failed")
+        if self.seal_mismatch_after_durable_once and not self._seal_mismatch_emitted:
+            # Land durable seal, then surface exact-replay-style mismatch once.
+            durable = seal_directed_effect_inventory(command)
+            assert durable.ok is True, durable
+            self._seal_mismatch_emitted = True
+            return DirectedEffectInventoryResultV1(
+                ok=False,
+                code="guarded_receipt_mismatch",
+                projection=None,
+                evidence={"reason": "public_exact_replay_receipt_failed"},
+            )
         return seal_directed_effect_inventory(command)
 
     def admit_operation(
@@ -925,6 +939,54 @@ def test_r155_prepare_batch_idempotent_replay_after_ready_does_not_drop(tmp_path
         "call-a",
         "call-b",
     }
+
+
+def test_r191_prepare_batch_reseals_after_guarded_receipt_mismatch(tmp_path: Path) -> None:
+    """L1-01 r11: seal mismatch after durable seal must not drop write batch.
+
+    Live residual: TASK-3 write_file batch (tests/verify.test.ts, README.md,
+    src/verify.ts) dropped with
+    deo_inventory_seal_failed:guarded_receipt_mismatch:...projection_missing.
+    Lifecycle must immediately re-seal and recover via idempotent_replay.
+    """
+
+    attempt = _setup_attempt(str(tmp_path / "workspace-r191"))
+    runtime = _RecordingRuntime(events=[], seal_mismatch_after_durable_once=True)
+    service = _service(runtime)
+    candidates = (
+        _candidate(
+            attempt,
+            ordinal=0,
+            tool_call_id="call-test",
+            target_path="tests/verify.test.ts",
+            turn_id="turn-r191",
+            batch_id="batch-r191",
+        ),
+        _candidate(
+            attempt,
+            ordinal=1,
+            tool_call_id="call-readme",
+            target_path="README.md",
+            turn_id="turn-r191",
+            batch_id="batch-r191",
+        ),
+    )
+
+    prepared = service.prepare_batch(
+        execution_attempt=attempt,
+        execution_attempt_authority=_authority(attempt),
+        turn_id="turn-r191",
+        batch_id="batch-r191",
+        candidates=candidates,
+    )
+    assert prepared.status == "ready", (
+        f"expected ready after seal mismatch re-seal, got {prepared.status} "
+        f"error={prepared.error_code} evidence={prepared.upstream_evidence}"
+    )
+    assert prepared.prepared_batch is not None
+    assert prepared.error_code is None
+    seal_calls = [stage for stage, _ in runtime.events if stage == "seal_inventory"]
+    assert len(seal_calls) >= 2
 
 
 def test_r171_second_multi_member_batch_survives_same_owner_lease_renew(tmp_path: Path) -> None:

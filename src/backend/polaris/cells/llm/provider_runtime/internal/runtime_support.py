@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 
@@ -65,7 +66,22 @@ def _tool_choice_disabled(provider_cfg: dict[str, Any]) -> bool:
             str(provider_cfg.get("model") or ""),
         ]
     ).lower()
-    return _normalize_provider_type(provider_cfg) == "anthropic_compat" and "deepseek" in token
+    is_deepseek = _normalize_provider_type(provider_cfg) == "anthropic_compat" and "deepseek" in token
+    # Opt-in experiment guard (default OFF): deepseek was pre-emptively blocked from
+    # the Director role because its API was observed to reject forced tool_choice.
+    # KERNELONE_ALLOW_DEEPSEEK_DIRECTOR lets an operator explicitly test whether the
+    # current deepseek API honors the forced tool_choice the Director requires (the
+    # platform never actually sent it -- r19 was blocked pre-emptively here). The
+    # safety guard is preserved by default; this flag is for controlled bench
+    # experiments to probe whether deepseek can serve as a stronger Director.
+    if is_deepseek and os.environ.get("KERNELONE_ALLOW_DEEPSEEK_DIRECTOR", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return False
+    return is_deepseek
 
 
 def _codex_exec_sandbox(provider_cfg: dict[str, Any]) -> str:

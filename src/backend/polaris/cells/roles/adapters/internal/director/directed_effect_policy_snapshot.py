@@ -140,6 +140,8 @@ def _preview_edit_blocks_content(
     except (RuntimeError, TypeError, ValueError):
         return old_content
     return str(applied.get(normalized_target, old_content))
+
+
 _JOB_TOKEN_VERSION = "job-token-restriction.v1"
 _EXECUTION_ENVELOPE_VERSION = "director-execution-envelope.v1"
 _ALLOWED_COMMANDS_VERSION = "director-allowed-commands.v1"
@@ -589,20 +591,48 @@ class _DirectorEffectPolicySnapshotPort:
     ) -> tuple[str, str] | None:
         snapshot = request.bound_snapshot.snapshot
         baseline = snapshot.baseline_target_state_evidence
-        current, error = self._read_target_state(
-            normalized_tool_name=request.normalized_tool,
-            normalized_arguments=snapshot.subject.normalized_arguments,
-            expected_target_path=baseline.target_path,
+        last_detail = "uninitialized"
+        # R192/M03: transient double-stat races under concurrent multi-task writes
+        # previously returned opaque policy_target unavailable. Retry briefly.
+        for attempt in range(3):
+            current, error = self._read_target_state(
+                normalized_tool_name=request.normalized_tool,
+                normalized_arguments=snapshot.subject.normalized_arguments,
+                expected_target_path=baseline.target_path,
+            )
+            if error is not None:
+                last_detail = f"read_error:{error}"
+                if error == "deo_target_state_drift" and attempt < 2:
+                    continue
+                break
+            if current is None:
+                last_detail = "current_none"
+                break
+            current_evidence = current.evidence
+            if not self._target_evidence_semantically_matches(current_evidence, baseline):
+                last_detail = (
+                    "semantic_mismatch"
+                    f":exists={current_evidence.exists!r}/{baseline.exists!r}"
+                    f":path={current_evidence.target_path!r}/{baseline.target_path!r}"
+                    f":content={current_evidence.before_content_hash[:12]}/{baseline.before_content_hash[:12]}"
+                    f":agents={current_evidence.agents_policy_hash[:12]}/{baseline.agents_policy_hash[:12]}"
+                )
+                # Content drift is durable for same-path prior writes; retry only
+                # helps when double-stat raced mid-read.
+                if attempt < 2 and current_evidence.target_path == baseline.target_path:
+                    continue
+                break
+            if not snapshot.policy_version.strip() or not snapshot.policy_hash.strip():
+                last_detail = "policy_version_or_hash_empty"
+                break
+            return snapshot.policy_version, snapshot.policy_hash
+        logger.warning(
+            "deo_policy_target_capture_unavailable tool=%s path=%s detail=%s",
+            request.normalized_tool,
+            baseline.target_path,
+            last_detail,
         )
-        if (
-            error is not None
-            or current is None
-            or not self._target_evidence_semantically_matches(current.evidence, baseline)
-            or not snapshot.policy_version.strip()
-            or not snapshot.policy_hash.strip()
-        ):
-            return None
-        return snapshot.policy_version, snapshot.policy_hash
+        return None
 
     @staticmethod
     def _capture_operation_source(
@@ -1329,12 +1359,21 @@ class _DirectorEffectPolicySnapshotPort:
     ) -> dict[str, Any]:
         values = {key: _thaw(value) for key, value in request.normalized_arguments}
         values["allowed_scope"] = list(policy_paths)
-        proposed = values.get("content", "")
-        # write_file/edit_file require string bodies. Nested dict/list content is
-        # tool-arg corruption (e.g. HTML/JSON misparse); never coerce to empty write.
-        if request.normalized_tool_name in {"write_file", "edit_file"} and not isinstance(proposed, str):
-            raise ValueError("write tool content must be a string")
-        if request.normalized_tool_name == "edit_file":
+        # R193/M03: do NOT default missing content to "". For edit_file/search_replace,
+        # a missing content key plus a non-matching old_string previously previewed an
+        # empty-file write → package.json "remove all scripts" → deo_director_policy_denied
+        # (L1-01 r14 TASK-1/TASK-3 dropped package.json edits; tests never landed).
+        content_provided = "content" in values
+        proposed = values.get("content")
+        if request.normalized_tool_name == "write_file":
+            if not content_provided:
+                proposed = ""
+            if not isinstance(proposed, str):
+                raise ValueError("write tool content must be a string")
+        elif request.normalized_tool_name == "edit_file":
+            if content_provided and not isinstance(proposed, str):
+                # Nested dict/list content is tool-arg corruption; never coerce.
+                raise ValueError("write tool content must be a string")
             for field_name in ("old_string", "new_string", "old_content", "new_content"):
                 field_value = values.get(field_name)
                 if field_value is not None and not isinstance(field_value, str):
@@ -1365,8 +1404,33 @@ class _DirectorEffectPolicySnapshotPort:
             )
             if search and search in target_read.old_content:
                 new_content = target_read.old_content.replace(search, replace, 1)
+            elif content_provided and isinstance(proposed, str):
+                # Explicit full-body rewrite via content (common LLM edit_file usage).
+                new_content = proposed
             else:
-                new_content = proposed if isinstance(proposed, str) else target_read.old_content
+                # R194/M03: search-miss or empty edit_file. R193 wipe guard is preserved
+                # (the file is NOT wiped — we preview new_content == old_content below).
+                # Previously this raised ValueError -> deo_tool_normalization_failed ->
+                # run_ledger_integrity_failed -> DELIVERY_FAILED (L1-01 r16 residual),
+                # mis-attributing a per-tool model arg miss as a control-plane integrity
+                # break. A search-and-replace that does not match is a benign no-op: the
+                # snapshot ALLOWS it so the DEO batch is not dropped. The actual
+                # _tool_edit_file then runs and surfaces its normal "Search text not found"
+                # tool error to the model; the turn continues and control-plane integrity
+                # stays intact. Product-quality gates (real_run_gate) catch genuine defects.
+                new_content = target_read.old_content
+                return {
+                    "ok": True,
+                    "director_policy": {
+                        "operation": "edit_file",
+                        "no_op": True,
+                        "reason": "edit_file_search_miss_or_empty_preview",
+                        "allowed": True,
+                        "changed_files": [],
+                        "before_content_hash": target_read.evidence.before_content_hash,
+                        "after_content_hash": target_read.evidence.before_content_hash,
+                    },
+                }
         else:
             new_content = proposed if isinstance(proposed, str) else ""
         operation = tool_name

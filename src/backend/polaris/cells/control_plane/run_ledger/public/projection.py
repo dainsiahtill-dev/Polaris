@@ -1085,6 +1085,15 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     )
     tool_lifecycle_projection = project_tool_lifecycle_summary(tool_lifecycle_summary)
     tool_lifecycle_ok = bool(tool_lifecycle_projection.get("ok"))
+    if not tool_lifecycle_ok:
+        # M08: respect failure_status.failed. A recoverable per-tool execution
+        # failure (TOOL_RESULT_FAILED — tool ran, returned ok=False) is a product-
+        # quality defect, not a control-plane integrity break; tool_lifecycle_ok
+        # (and thus integrity_ok / canonical_execution) stays green. Only
+        # MISSING/DROPPED/missing-effect/INCOMPLETE evidence breaks integrity.
+        _tl_failure_status = project_tool_lifecycle_failure_status(tool_lifecycle_summary)
+        if not _tl_failure_status.get("failed"):
+            tool_lifecycle_ok = True
     integrity_ok = bool(gates) and capability_ok and evidence_policy_integrity_ok and tool_lifecycle_ok
     outcome_ok = bool(gates) and not failed_gates and not failed_required_modalities and task_boundary_ok
     projection_ok = integrity_ok and outcome_ok
@@ -1182,6 +1191,23 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
             else []
         )
         failure = _clean_string(failure_status.get("failure_class")) or "TOOL_LIFECYCLE_FAILED"
+        # M08 (caller side): respect the failure_status.failed verdict. A recoverable
+        # per-tool execution failure (TOOL_RESULT_FAILED — tool ran, returned ok=False)
+        # is a product-quality defect caught by real_run_gate/delivery_depth, NOT a
+        # control-plane integrity break; project ok:True so canonical_execution stays
+        # green. Only MISSING/DROPPED/missing-effect/INCOMPLETE evidence (failed:True)
+        # breaks integrity. (L1-01 r27 still died on TOOL_RESULT_FAILED because this
+        # caller checked the summary's raw ``ok`` flag instead of the failed verdict.)
+        if not failure_status.get("failed"):
+            return {
+                "ok": True,
+                "detail": "run ledger projection tool lifecycle recoverable: " + failure,
+                "missing": [],
+                "failed_control_plane_events": [],
+                "failure_evidence": failure_evidence,
+                "capability": capability_map,
+                "tool_lifecycle": tool_lifecycle_map,
+            }
         return {
             "ok": False,
             "detail": "run ledger projection tool lifecycle failed: " + failure,

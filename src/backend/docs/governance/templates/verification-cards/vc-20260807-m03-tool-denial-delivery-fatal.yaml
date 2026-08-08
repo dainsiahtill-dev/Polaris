@@ -1,0 +1,61 @@
+schema_version: governance.verification-card.v1
+id: vc-20260807-m03-tool-denial-delivery-fatal
+title: "M03 single tool-call denial makes whole delivery fatal (control_plane:tool_result_failed structural)"
+date: 2026-08-07
+classification: structural  # AGENTS.md §8.6.2: multi-module shared mistaken assumption
+status: open
+author: Claude (autonomous round m03-r16)
+
+attribution:
+  primary_module_id: M03_tool_batch_deo
+  root_cause_signature: control_plane:tool_result_failed
+  delivery_status: DELIVERY_FAILED
+  evidence_runs:
+    - factory_run_id: factory_aeeabc0f6220   # r15
+      specific_denial: deo_director_policy_denied ("Command blocked: matches dangerous pattern")
+      denied_command: "node --version && ls -la src/verify.ts tests/verify.test.ts package.json index.html README.md 2>&1 | head -40"
+      blocker: kernelone/tool_execution/security.py:18 _SHELL_META_RE via execution_tools.py:1090
+    - factory_run_id: factory_783bf9cf824a   # r16
+      specific_denial: deo_tool_normalization_failed + dropped_tool_call
+      denied_call: edit_file (native call_019fdc5173bb7f23a01eca5e)
+      blocker: directed_effect_policy_snapshot.py:1165/1239 (R193 edit_file search-miss no-wipe; WIP-touched)
+
+assumption_register:
+  - assumption: "A single Director tool-call denial reflects a control-plane integrity break."
+    evidence: refuted. r15 denial = compound-command shell-meta block (model issued `&&`/`|`); r16 denial = edit_file search-miss (model's old_string not in file). Both are model-quality / arg-shape issues, not integrity breaks.
+  - assumption: "deo_tool_normalization_failed must fail-closed the whole turn/batch."
+    evidence: refuted by consequence. It forces DELIVERY_FAILED and mis-attributes a recoverable model error as a fatal control-plane defect. R193 (test_r193_edit_file_search_miss_does_not_wipe_package_json) deliberately returns this code to prevent empty-wipe; the fatality is the separate, unaddressed problem.
+  - assumption: "canonical_execution integrity requires every tool result to be non-TOOL_RESULT_FAILED."
+    evidence: this is the load-bearing assumption to challenge (Layer B / M08). A single recoverable per-tool failure should not equal ledger-integrity failure.
+
+pre-mortem (most likely fix-miss locations):
+  - Reverting R193 no-wipe guard -> would reintroduce empty-wipe (package.json). MUST NOT.
+  - Relaxing _SHELL_META_RE without prompt-side fix -> broad security blast radius. Prefer prompt contract.
+  - Treating this as a single-module M03 patch -> will recur as a different denial class (whack-a-mole, already observed r15->r16). MUST address the recoverable-denial-isolation mechanism.
+
+verification_plan:
+  red_tests:
+    - test_edit_file_search_miss_does_not_break_canonical_execution
+    - test_compound_verification_command_recoverable
+  green: implement recoverable-denial isolation (corrective re-ask, extend ADR-0090) + prompt-side compound-command contract
+  gate_sequence: ruff/mypy -> M03 module gate -> cascade (M01-M10) -> one isolated L1-01 bench
+  refactor_guard: keep R193 no-wipe tests green; update R193 assertion to recoverable-not-fatal
+
+related_adrs:
+  - adr-0090 (corrective re-ask machinery)  # extend to recoverable arg-shape/normalization denials
+related_blueprint: docs/blueprints/M03_TOOL_DENIAL_DELIVERY_FATAL_BLUEPRINT_20260807.md
+related_inflight_wip:
+  - R192 same-path-collapse (tool_batch_executor)
+  - R193 edit_file search-miss no-wipe (directed_effect_policy_snapshot)
+  - R182 deo_physical_execution_failed attribution clarity
+
+risks:
+  - spans M03 + M08; M08 forbidden in m03-r16 attribution
+  - active WIP conflict in tool_batch_executor / directed_effect_policy_snapshot
+  - model ceiling: L1-01 COMPLETED_VERIFIED also requires building TS (r16 TS1110); control-plane fix alone insufficient
+  - bench_gates must remain measure-only; do not mask the failure
+
+stop_conditions_for_further_rounds:
+  - implement only after this VC + blueprint accepted
+  - if Layer 1 insufficient without M08, open dedicated M08 round (re-attribute first)
+  - do NOT claim COMPLETED_VERIFIED on control-plane fix alone (product TS quality is a separate bucket)

@@ -8,6 +8,7 @@ the stage itself is failed/timeout.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -117,6 +118,7 @@ def test_r181_recover_director_stage_authority_after_delivery_settle(
             "rows": [
                 {
                     "task_id": "1",
+                    "workflow_run_id": "director-task-1",
                     "status": "completed",
                     "execution_state": "completed",
                     "fact_event_seq": 1,
@@ -125,6 +127,7 @@ def test_r181_recover_director_stage_authority_after_delivery_settle(
                 },
                 {
                     "task_id": "3",
+                    "workflow_run_id": "director-task-3",
                     "status": "failed",
                     "execution_state": "failed",
                     "fact_event_seq": 7,
@@ -180,6 +183,12 @@ def test_r181_recover_director_stage_authority_after_delivery_settle(
                     "ok": True,
                     "failure_class": "PASSED",
                 },
+                "TASK-3": {
+                    "task_id": "TASK-3",
+                    "status": "completed_verified",
+                    "ok": True,
+                    "failure_class": "PASSED",
+                },
             },
             "failed": [],
         },
@@ -216,7 +225,133 @@ def test_r181_recover_director_stage_authority_after_delivery_settle(
     assert recovered is not None
     assert recovered.director_stage_authorized is True
     assert appends, "recovery must append completed_verified boundary for failed task"
+    # Dual-write N + TASK-N under the director child workflow run id.
+    written_run_ids = {str(getattr(cmd, "run_id", "") or "") for cmd in appends}
+    assert "director-task-3" in written_run_ids
+    written_task_ids: set[str] = set()
+    for cmd in appends:
+        event = getattr(cmd, "event", {}) or {}
+        written_task_ids.add(str(event.get("task_id") or ""))
+    assert "3" in written_task_ids
+    assert "TASK-3" in written_task_ids
     assert loads["n"] >= 2
+
+
+def test_recover_director_stage_authority_orphan_blocked_uses_sibling_director_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R188/M06: blocked task without director child must recover under sibling director-* id."""
+
+    from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
+        evaluate_canonical_factory_authority,
+    )
+
+    (tmp_path / "package.json").write_text(
+        '{"name":"garden","scripts":{"test":"node --test tests/*.test.ts","build":"tsc"}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    for name in ("main.ts", "index.ts", "a.ts", "b.ts"):
+        (tmp_path / "src" / name).write_text(f"export const {name.split('.')[0]} = 1\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "verify.test.ts").write_text("import test from 'node:test'\n", encoding="utf-8")
+
+    executor = OrchestrationStageExecutor(tmp_path)
+    run = _run(tmp_path)
+
+    incomplete_projection = {
+        "schema_version": "run_ledger.projection.v1",
+        "source": "run_ledger",
+        "integrity_ok": True,
+        "outcome_ok": True,
+        "task_runtime_projection": {
+            "schema_version": "task_runtime.observable_task_rows_authority.v1",
+            "source": "task_runtime.execution_fact",
+            "authoritative": True,
+            "degraded": False,
+            "readiness": {"ready": True},
+            "rows": [
+                {
+                    "task_id": "1",
+                    "status": "completed",
+                    "execution_state": "completed",
+                    "workflow_run_id": "director-task-1",
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                    "fact_event_seq": 2,
+                },
+                {
+                    "task_id": "3",
+                    "status": "blocked",
+                    "execution_state": "blocked",
+                    "workflow_run_id": "",
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                    "fact_event_seq": 1,
+                },
+            ],
+        },
+        "task_boundary": {
+            "latest_by_task": {
+                "1": {"task_id": "1", "status": "completed_verified", "ok": True, "failure_class": "PASSED"},
+            },
+            "failed": [],
+        },
+    }
+    recovered_projection = {
+        "schema_version": "run_ledger.projection.v1",
+        "source": "run_ledger",
+        "integrity_ok": True,
+        "outcome_ok": True,
+        "task_runtime_projection": incomplete_projection["task_runtime_projection"],
+        "task_boundary": {
+            "latest_by_task": {
+                "1": {"task_id": "1", "status": "completed_verified", "ok": True, "failure_class": "PASSED"},
+                "3": {"task_id": "3", "status": "completed_verified", "ok": True, "failure_class": "PASSED"},
+                "TASK-3": {
+                    "task_id": "TASK-3",
+                    "status": "completed_verified",
+                    "ok": True,
+                    "failure_class": "PASSED",
+                },
+            },
+            "failed": [],
+        },
+    }
+    appends: list[Any] = []
+
+    def _fake_projection(_run: Any, _context: dict[str, Any]) -> dict[str, Any]:
+        if appends:
+            return dict(recovered_projection)
+        return dict(incomplete_projection)
+
+    def _fake_append(command: Any) -> Any:
+        appends.append(command)
+        return None
+
+    monkeypatch.setattr(executor, "_canonical_factory_projection", _fake_projection)
+    monkeypatch.setattr(
+        "polaris.cells.control_plane.run_ledger.public.append_run_ledger_event",
+        _fake_append,
+    )
+
+    prior = evaluate_canonical_factory_authority(incomplete_projection)
+    assert prior.director_stage_authorized is False
+    assert "3" in prior.incomplete_task_ids or "3" in prior.incomplete_runtime_task_ids
+
+    recovered = executor._recover_director_stage_authority_after_delivery_settle(
+        run=run,
+        context={"project_id": "L1-01"},
+        prior_authority=prior,
+    )
+    assert recovered is not None
+    assert recovered.director_stage_authorized is True
+    written_run_ids = {str(getattr(cmd, "run_id", "") or "") for cmd in appends}
+    assert "director-task-1" in written_run_ids
+    written_task_ids = {str((getattr(cmd, "event", {}) or {}).get("task_id") or "") for cmd in appends}
+    assert "3" in written_task_ids
+    assert "TASK-3" in written_task_ids
 
 
 @pytest.mark.asyncio
@@ -320,6 +455,67 @@ async def test_run_director_stage_materialization_quality_settle_invokes_schedul
     assert "tests/verify.test.ts" in (commit_ctx.get("allowed_paths") or [])
 
 
+def test_claim_director_stage_materialization_settle_attempt_mints_unique_external_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R190/M06: each settle claim mints a fresh external_task_id (no task_terminal reuse)."""
+
+    from polaris.cells.runtime.task_runtime.public import TaskRuntimeExecutionAttemptIdentityV1
+
+    executor = OrchestrationStageExecutor(tmp_path)
+    run = _run(tmp_path)
+    seen_external: list[str] = []
+    row_counter = {"n": 0}
+
+    class _FakeTR:
+        def ensure_task_row(self, **kwargs: Any) -> dict[str, Any]:
+            external = str(kwargs.get("external_task_id") or "")
+            seen_external.append(external)
+            row_counter["n"] += 1
+            return {"id": row_counter["n"], "external_task_id": external}
+
+        def normalize_task_id(self, value: Any) -> int:
+            return int(value)
+
+        def claim_execution(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            external = str(kwargs.get("external_task_id") or "")
+            return {
+                "success": True,
+                "session": {"session_id": f"sess-{external[-8:]}"},
+                "execution_attempt": {
+                    "workspace": str(tmp_path),
+                    "task_id": int(args[0]) if args else 1,
+                    "session_id": f"sess-{external[-8:]}",
+                    "attempt_id": f"att-{external[-8:]}",
+                    "external_task_id": external,
+                },
+            }
+
+    monkeypatch.setattr(
+        "polaris.cells.factory.pipeline.internal.factory_stage_executor.TaskRuntimeService",
+        lambda _ws: _FakeTR(),
+    )
+    monkeypatch.setattr(
+        "polaris.cells.factory.pipeline.internal.factory_stage_executor.bind_runtime_task_to_factory_run",
+        lambda _cmd: SimpleNamespace(ok=True, code="ok"),
+    )
+    monkeypatch.setattr(
+        TaskRuntimeExecutionAttemptIdentityV1,
+        "from_record",
+        staticmethod(lambda record: SimpleNamespace(**dict(record))),
+    )
+
+    first_external, first_row, _first = executor._claim_director_stage_materialization_settle_attempt(run_id=run.id)
+    second_external, second_row, _second = executor._claim_director_stage_materialization_settle_attempt(run_id=run.id)
+    assert first_external.startswith("factory-director-mat-settle:factory_test_m06_settle:")
+    assert second_external.startswith("factory-director-mat-settle:factory_test_m06_settle:")
+    assert first_external != second_external
+    assert first_row != second_row
+    assert len(seen_external) == 2
+    assert len(set(seen_external)) == 2
+
+
 @pytest.mark.asyncio
 async def test_run_director_stage_materialization_quality_settle_forwards_tsc_diagnostics(
     tmp_path: Path,
@@ -421,6 +617,10 @@ def test_partition_allows_smoke_test_when_main_ts_repairs_conflict() -> None:
 def test_director_stage_materialization_settle_commit_context_builds_job_token(
     tmp_path: Path,
 ) -> None:
+    from polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge import (
+        _capability_token_from_context,
+    )
+
     (tmp_path / "package.json").write_text(
         '{"name":"x","scripts":{"test":"node --test tests/*.test.ts"}}\n', encoding="utf-8"
     )
@@ -441,6 +641,12 @@ def test_director_stage_materialization_settle_commit_context_builds_job_token(
     assert context["execution_envelope"]["authorization"]["capability_token_ref"] == job_token["token_id"]
     assert "package.json" in context["allowed_paths"]
     assert "tests/verify.test.ts" in context["allowed_paths"]
+    # R185/M03: deferred DEO commit must accept the settle context (not skip silently).
+    assert str(context.get("capability_token_hash") or "").strip()
+    assert context["execution_envelope"]["authorization"]["capability_token_hash"] == context["capability_token_hash"]
+    accepted = _capability_token_from_context(context)
+    assert accepted is not None
+    assert accepted["token_id"] == job_token["token_id"]
 
 
 def test_collect_director_stage_materialization_diagnostics_parses_tsc_stderr(
@@ -525,6 +731,43 @@ def test_seal_director_stage_missing_tool_lifecycles_appends_blocked_receipt(
     assert command.run_id == "director-task2-run"
     receipt = dict(command.lifecycle_receipt or {})
     assert receipt.get("dispatch_status") == "blocked"
-    assert "incomplete" in str(receipt.get("reason") or "").lower() or "without_tools" in str(
-        receipt.get("reason") or ""
-    ).lower()
+    assert (
+        "incomplete" in str(receipt.get("reason") or "").lower()
+        or "without_tools" in str(receipt.get("reason") or "").lower()
+    )
+
+
+def test_collect_materialization_diagnostics_flags_missing_package_test_files(tmp_path: Path) -> None:
+    """R184: settle diagnostics include missing package.json test entrypoints."""
+
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "x",
+                "scripts": {"test": "node --test --import tsx tests/*.test.ts"},
+                "devDependencies": {"typescript": "^5.0.0"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("export const n = 1;\n", encoding="utf-8")
+    # No tsconfig → skip tsc, still report missing tests.
+    executor = OrchestrationStageExecutor(tmp_path)
+    diagnostics = executor._collect_director_stage_materialization_diagnostics()
+    assert any("missing test source files" in item for item in diagnostics)
+
+
+def test_settle_materialization_attempt_maps_non_success_to_failed_not_suspended() -> None:
+    """R184: helper settle claim must terminal-close; suspended left task 5 pending."""
+
+    assert OrchestrationStageExecutor._materialization_settle_attempt_outcome("success") == "completed"
+    assert OrchestrationStageExecutor._materialization_settle_attempt_outcome("completed") == "completed"
+    assert OrchestrationStageExecutor._materialization_settle_attempt_outcome("failed") == "failed"
+    assert OrchestrationStageExecutor._materialization_settle_attempt_outcome("error") == "failed"
+    assert OrchestrationStageExecutor._materialization_settle_attempt_outcome("") == "failed"
+    # Explicit: never suspended.
+    assert OrchestrationStageExecutor._materialization_settle_attempt_outcome("failed") != "suspended"

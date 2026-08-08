@@ -38,7 +38,14 @@ from .factory_event_chain import (
 
 logger = logging.getLogger(__name__)
 
-_FACTORY_EVENT_LOCK_TIMEOUT_SECONDS = 5.0
+# R186/M07: after long director_dispatch + settle (DEO commits, tsc/npm), the
+# factory event chain lock can be briefly contended. A 5s hard deadline caused
+# L1-01 runs with green delivery (tests + real_run) to die at stage commit with
+# ``advisory lock exceeded monotonic deadline`` and never enter quality_gate
+# (qa_verdict_missing). Give post-stage persistence a realistic contention budget.
+_FACTORY_EVENT_LOCK_TIMEOUT_SECONDS = 30.0
+_FACTORY_EVENT_LOCK_ACQUIRE_ATTEMPTS = 3
+_FACTORY_EVENT_LOCK_RETRY_SLEEP_SECONDS = 0.25
 _FACTORY_RUN_SNAPSHOT_MAX_BYTES = 4 * 1024 * 1024
 
 # Cross-loop safe file locks.
@@ -756,39 +763,62 @@ class FactoryStore:
         return remaining
 
     def _acquire_authoritative_event_lock(self, logical_path: str) -> LockedRegularFileSetV1:
-        """Acquire an enrolled stream within five seconds, provisioning only when absent."""
+        """Acquire an enrolled stream within the lock budget, provisioning only when absent.
 
-        deadline = time.monotonic() + _FACTORY_EVENT_LOCK_TIMEOUT_SECONDS
+        R186/M07: retry lock_acquisition_timeout a few times so brief contention
+        after director settle does not terminalize a successful stage before QA.
+        """
 
-        def acquire() -> LockedRegularFileSetV1:
-            return LockedRegularFileSetV1.acquire(
-                runtime_root=str(self.base_dir),
-                storage_identity_token=self._event_storage_identity,
-                logical_paths=(logical_path,),
-                platform_lock_root=str(self._event_lock_root),
-                timeout_seconds=self._remaining_event_lock_budget(deadline),
-            )
+        last_exc: LockedRegularFileError | None = None
+        attempts = max(1, int(_FACTORY_EVENT_LOCK_ACQUIRE_ATTEMPTS))
+        for attempt in range(attempts):
+            deadline = time.monotonic() + _FACTORY_EVENT_LOCK_TIMEOUT_SECONDS
 
-        try:
-            return acquire()
-        except LockedRegularFileError as exc:
-            missing_code = exc.code
-            if missing_code not in {"lock_authority_missing", "stream_lock_missing"}:
-                raise
+            def acquire(*, _deadline: float = deadline) -> LockedRegularFileSetV1:
+                return LockedRegularFileSetV1.acquire(
+                    runtime_root=str(self.base_dir),
+                    storage_identity_token=self._event_storage_identity,
+                    logical_paths=(logical_path,),
+                    platform_lock_root=str(self._event_lock_root),
+                    timeout_seconds=self._remaining_event_lock_budget(_deadline),
+                )
 
-        if missing_code == "lock_authority_missing":
-            self._provision_authoritative_event_authority(timeout_seconds=self._remaining_event_lock_budget(deadline))
             try:
+                try:
+                    return acquire()
+                except LockedRegularFileError as exc:
+                    missing_code = exc.code
+                    if missing_code not in {"lock_authority_missing", "stream_lock_missing"}:
+                        raise
+
+                if missing_code == "lock_authority_missing":
+                    self._provision_authoritative_event_authority(
+                        timeout_seconds=self._remaining_event_lock_budget(deadline)
+                    )
+                    try:
+                        return acquire()
+                    except LockedRegularFileError as exc:
+                        if exc.code != "stream_lock_missing":
+                            raise
+
+                self._enroll_authoritative_event_lock(
+                    logical_path,
+                    timeout_seconds=self._remaining_event_lock_budget(deadline),
+                )
                 return acquire()
             except LockedRegularFileError as exc:
-                if exc.code != "stream_lock_missing":
+                last_exc = exc
+                if exc.code != "lock_acquisition_timeout" or attempt + 1 >= attempts:
                     raise
-
-        self._enroll_authoritative_event_lock(
-            logical_path,
-            timeout_seconds=self._remaining_event_lock_budget(deadline),
-        )
-        return acquire()
+                logger.warning(
+                    "Factory event lock acquire timeout (attempt %s/%s) path=%s; retrying",
+                    attempt + 1,
+                    attempts,
+                    logical_path,
+                )
+                time.sleep(_FACTORY_EVENT_LOCK_RETRY_SLEEP_SECONDS)
+        assert last_exc is not None
+        raise last_exc
 
     def _append_authoritative_event_sync(
         self,

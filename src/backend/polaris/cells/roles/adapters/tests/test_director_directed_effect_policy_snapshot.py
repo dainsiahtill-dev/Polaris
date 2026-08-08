@@ -2221,9 +2221,7 @@ def _edit_blocks_request(
 ) -> DirectorEffectPolicySnapshotRequestV1:
     """R179: build a prospective edit_blocks snapshot request against one file."""
 
-    blocks = (
-        f"<<<<<<< SEARCH\n{old_text}=======\n{new_text}>>>>>>> REPLACE\n"
-    )
+    blocks = f"<<<<<<< SEARCH\n{old_text}=======\n{new_text}>>>>>>> REPLACE\n"
     arguments = (
         ("allowed_scope", ("src/a.py",)),
         ("blocks", blocks),
@@ -2279,9 +2277,7 @@ async def test_r179_edit_blocks_is_allowed_write_tool_not_policy_denied(tmp_path
     target.write_text("before\n", encoding="utf-8")
     (workspace / "AGENTS.md").write_text("# policy\n", encoding="utf-8")
 
-    result = await create_director_effect_policy_snapshot_port(str(workspace)).snapshot(
-        _edit_blocks_request(workspace)
-    )
+    result = await create_director_effect_policy_snapshot_port(str(workspace)).snapshot(_edit_blocks_request(workspace))
 
     assert result.error_code != "deo_director_policy_denied" or result.allowed is True
     # Preferred outcome: allowed when scope + SEARCH/REPLACE apply cleanly.
@@ -2297,3 +2293,157 @@ async def test_r179_edit_blocks_unknown_write_tool_no_longer_hard_denied(tmp_pat
 
     assert "edit_blocks" in mod._WRITE_TOOLS
     assert "search_replace" in mod._WRITE_TOOLS
+
+
+@pytest.mark.asyncio
+async def test_r194_edit_file_search_miss_is_allowed_no_op_not_fatal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R194/M03: edit_file search-miss must be an allowed no-op, NOT delivery-fatal.
+
+    R193 origin: edit_file on package.json with non-matching old_string and no content
+    key used to preview an empty-file write -> package.json wiped. R193 fixed the wipe
+    by raising -> deo_tool_normalization_failed.
+
+    R194 problem (L1-01 r16 residual): that raise made the snapshot return
+    deo_tool_normalization_failed, which the run ledger projected as TOOL_RESULT_FAILED,
+    breaking canonical_execution -> DELIVERY_FAILED. A model arg miss (search string not
+    in file) was mis-attributed as a control-plane integrity break.
+
+    R194 fix: search-miss/empty edit_file previews as a benign no-op (file preserved,
+    R193 wipe guard intact) and the snapshot ALLOWS it. The batch is not dropped; the
+    real _tool_edit_file then runs and surfaces its normal "Search text not found" tool
+    error to the model, so the turn continues without breaking control-plane integrity.
+    Product-quality gates (real_run_gate) catch any genuine downstream defect.
+    """
+
+    from polaris.cells.director.runtime.public import DirectorEffectPolicyBaselineCaptureRequestV1
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "AGENTS.md").write_text("# policy\n", encoding="utf-8")
+    package_body = (
+        "{\n"
+        '  "name": "glow",\n'
+        '  "private": true,\n'
+        '  "scripts": {\n'
+        '    "build": "tsc -p tsconfig.json",\n'
+        '    "test": "node --test tests/run.ts"\n'
+        "  }\n"
+        "}\n"
+    )
+    (workspace / "package.json").write_text(package_body, encoding="utf-8")
+    effect_calls = _install_zero_effect_spies(monkeypatch)
+
+    arguments = (
+        ("new_string", '"test": "node --test tests/verify.test.ts"'),
+        ("old_string", "THIS_STRING_IS_NOT_IN_THE_FILE"),
+        ("path", "package.json"),
+    )
+    operation_hash = _operation_hash(
+        workspace=workspace,
+        normalized_tool_name="edit_file",
+        normalized_arguments=arguments,
+        effect_type="write",
+        execution_mode="write_serial",
+        inventory_ordinal=1,
+        tool_call_id="call-pkg-edit",
+    )
+    subject = DirectorEffectPolicyOperationSubjectV1(
+        workspace=str(workspace.resolve()),
+        turn_id="turn-1",
+        batch_id="batch-1",
+        tool_call_id="call-pkg-edit",
+        inventory_ordinal=1,
+        normalized_tool_name="edit_file",
+        normalized_arguments=arguments,
+        effect_type="write",
+        execution_mode="write_serial",
+        prospective_operation_hash=operation_hash,
+    )
+    allowed_paths = ("package.json", "tests/verify.test.ts")
+    job = _job_evidence(allowed_paths=allowed_paths)
+    result = await create_director_effect_policy_snapshot_port(str(workspace)).capture_baseline_snapshot(
+        DirectorEffectPolicyBaselineCaptureRequestV1(
+            subject=subject,
+            workspace=str(workspace.resolve()),
+            normalized_tool_name="edit_file",
+            normalized_arguments=arguments,
+            job_token_restriction_evidence=job,
+            expected_policy_version="director-policy-v1",
+            canonical_command="",
+            path_scope_evidence=(("allowed_paths", allowed_paths),),
+            command_scope_evidence=(("allowed_commands", ("pytest -q",)),),
+        )
+    )
+    # R193 wipe guard still holds: package.json must be untouched.
+    assert (workspace / "package.json").read_text(encoding="utf-8") == package_body
+    # R194: the snapshot must NOT report a fatal normalization failure.
+    assert result.error_code != "deo_tool_normalization_failed"
+    assert result.error_code != "deo_director_policy_denied"
+    # R194: search-miss is an allowed no-op (batch not dropped); the real tool surfaces
+    # its own "search not found" error downstream. No disk effect during snapshot capture.
+    assert result.allowed is True
+    assert effect_calls == []
+
+
+@pytest.mark.asyncio
+async def test_r193_edit_file_content_body_still_rewrites_package_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """edit_file with explicit content body remains a valid full rewrite path."""
+
+    from polaris.cells.director.runtime.public import DirectorEffectPolicyBaselineCaptureRequestV1
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "AGENTS.md").write_text("# policy\n", encoding="utf-8")
+    before = '{\n  "name": "glow",\n  "private": true,\n  "scripts": {"build": "tsc"}\n}\n'
+    after = (
+        '{\n  "name": "glow",\n  "private": true,\n'
+        '  "scripts": {"build": "tsc", "test": "node --test tests/verify.test.ts"}\n}\n'
+    )
+    (workspace / "package.json").write_text(before, encoding="utf-8")
+    effect_calls = _install_zero_effect_spies(monkeypatch)
+    arguments = (("content", after), ("path", "package.json"))
+    operation_hash = _operation_hash(
+        workspace=workspace,
+        normalized_tool_name="edit_file",
+        normalized_arguments=arguments,
+        effect_type="write",
+        execution_mode="write_serial",
+        inventory_ordinal=1,
+        tool_call_id="call-pkg-content",
+    )
+    subject = DirectorEffectPolicyOperationSubjectV1(
+        workspace=str(workspace.resolve()),
+        turn_id="turn-1",
+        batch_id="batch-1",
+        tool_call_id="call-pkg-content",
+        inventory_ordinal=1,
+        normalized_tool_name="edit_file",
+        normalized_arguments=arguments,
+        effect_type="write",
+        execution_mode="write_serial",
+        prospective_operation_hash=operation_hash,
+    )
+    allowed_paths = ("package.json", "tests/verify.test.ts")
+    job = _job_evidence(allowed_paths=allowed_paths)
+    result = await create_director_effect_policy_snapshot_port(str(workspace)).capture_baseline_snapshot(
+        DirectorEffectPolicyBaselineCaptureRequestV1(
+            subject=subject,
+            workspace=str(workspace.resolve()),
+            normalized_tool_name="edit_file",
+            normalized_arguments=arguments,
+            job_token_restriction_evidence=job,
+            expected_policy_version="director-policy-v1",
+            canonical_command="",
+            path_scope_evidence=(("allowed_paths", allowed_paths),),
+            command_scope_evidence=(("allowed_commands", ("pytest -q",)),),
+        )
+    )
+    assert result.allowed is True, result.error_code
+    assert result.error_code is None
+    assert effect_calls == []

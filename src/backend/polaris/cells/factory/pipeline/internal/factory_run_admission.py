@@ -29,7 +29,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_FACTORY_WORKSPACE_LEASE_TTL_SECONDS = 180.0
+# R189/M05: multi-task director_dispatch + quality_gate routinely exceeds 3 minutes.
+# A 180s TTL meant one event-loop starvation window (sync stage work blocking
+# asyncio heartbeat) permanently killed the lease — renew refuse-after-expiry —
+# and quality_gate failed with ``Factory workspace lease has expired`` (L1-01
+# r8/r9). 30 minutes covers a full PM→CE→Director→QA isolated L1 wave while
+# still fencing abandoned owners.
+DEFAULT_FACTORY_WORKSPACE_LEASE_TTL_SECONDS = 1800.0
+# Same-owner renew may still succeed within one extra TTL after expires_at so a
+# single missed heartbeat window does not terminalize a live stage.
+DEFAULT_FACTORY_WORKSPACE_LEASE_RENEW_GRACE_SECONDS = DEFAULT_FACTORY_WORKSPACE_LEASE_TTL_SECONDS
 _LEASE_RECORD_NAME = ".workspace_run_lease.json"
 _LEASE_LOCK_NAME = ".workspace_run_lease.lock"
 _RESTART_REPLAY_FENCE_REASON = "factory_physical_attempt_restart_replay_fence"
@@ -129,6 +138,8 @@ class FactoryWorkspaceRunAdmission:
         self.record_path = self.state_root / _LEASE_RECORD_NAME
         self.lock_path = self.state_root / _LEASE_LOCK_NAME
         self._lease_ttl_seconds = self._normalize_ttl(lease_ttl_seconds)
+        # Grace tracks the instance TTL so unit tests with short TTLs stay tight.
+        self._lease_renew_grace_seconds = self._lease_ttl_seconds
         self._clock = clock
 
     @staticmethod
@@ -874,16 +885,24 @@ class FactoryWorkspaceRunAdmission:
         fencing_token: int,
         lease_ttl_seconds: float | None = None,
     ) -> FactoryWorkspaceRunLeaseV1:
-        """Renew an unexpired ACTIVE or DRAINING lease owned by this fence."""
+        """Renew an ACTIVE or DRAINING lease owned by this fence.
+
+        R189/M05: allow same-owner renew shortly after expires_at so a single
+        event-loop starvation window that delays heartbeat past TTL does not
+        permanently fence a still-running stage (quality_gate after long
+        director_dispatch). Beyond the grace window, expiry remains fail-closed.
+        """
 
         normalized_run_id = _normalize_run_id(run_id)
         ttl = self._ttl(lease_ttl_seconds)
+        grace = max(0.0, float(self._lease_renew_grace_seconds))
         with _stable_exclusive_lock(self.lock_path):
             now = self._now()
             current = self._require_owned_locked(
                 run_id=normalized_run_id,
                 fencing_token=fencing_token,
                 now=now,
+                allow_expired=True,
             )
             if current.state.value not in {"active", "draining"}:
                 self._raise_conflict(
@@ -891,6 +910,22 @@ class FactoryWorkspaceRunAdmission:
                     code="factory_workspace_run_released",
                     run_id=normalized_run_id,
                     current=current,
+                )
+            if self._is_expired(current, now):
+                expires_at = self._parse_timestamp(current.expires_at, field_name="expires_at")
+                grace_deadline = expires_at + timedelta(seconds=grace)
+                if now > grace_deadline:
+                    self._raise_conflict(
+                        "Factory workspace lease has expired",
+                        code="factory_workspace_run_lease_expired",
+                        run_id=normalized_run_id,
+                        current=current,
+                    )
+                logger.warning(
+                    "Factory workspace lease renew within grace after expiry run_id=%s expires_at=%s grace_seconds=%s",
+                    normalized_run_id,
+                    current.expires_at,
+                    grace,
                 )
             renewed = replace(
                 current,
@@ -1107,6 +1142,7 @@ class FactoryWorkspaceRunAdmission:
 
 
 __all__ = [
+    "DEFAULT_FACTORY_WORKSPACE_LEASE_RENEW_GRACE_SECONDS",
     "DEFAULT_FACTORY_WORKSPACE_LEASE_TTL_SECONDS",
     "FactoryWorkspaceRunAdmission",
 ]
