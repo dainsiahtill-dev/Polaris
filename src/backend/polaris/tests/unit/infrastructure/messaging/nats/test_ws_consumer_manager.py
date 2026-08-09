@@ -349,7 +349,7 @@ async def test_invalid_runtime_event_wire_message_is_acked_and_dropped() -> None
         channels=["llm"],
     )
     payload = _runtime_event_payload()
-    payload.pop("run_id")
+    payload.pop("channel")
     msg = _FakeMessage(payload=payload, stream_seq=42)
     manager._subscription = _OneShotSubscription(msg)
     manager._closed = False

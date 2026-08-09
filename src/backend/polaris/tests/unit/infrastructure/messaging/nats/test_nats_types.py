@@ -43,7 +43,6 @@ def test_runtime_event_from_dict_round_trips_canonical_event() -> None:
         "schema_version",
         "event_id",
         "workspace_key",
-        "run_id",
         "channel",
         "kind",
         "ts",
@@ -74,3 +73,24 @@ def test_runtime_event_from_dict_rejects_invalid_wire_fields(
 ) -> None:
     with pytest.raises(ValueError, match=expected_message):
         RuntimeEventEnvelope.from_dict(_runtime_event_payload(**override))
+
+
+def test_runtime_event_from_dict_accepts_empty_run_id_for_non_run_events() -> None:
+    """File-edit / non-run-scoped events legitimately carry no run_id.
+
+    Regression guard: ``from_dict`` previously required a non-empty ``run_id``,
+    but ``file_event_broadcaster`` (hardcoded ``run_id=""``), the log_pipeline
+    writer (``event.run_id or ""``) and ``run_ledger`` status events
+    (``run_id or ... or ""``) all emit empty ``run_id`` for events outside a
+    factory run. The strict requirement made the JetStream consumer drop every
+    such event ("RuntimeEventEnvelope field 'run_id' is required" spam),
+    starving the runtime WebSocket feed. run_id is optional on the dataclass
+    (default ``""``) and must round-trip empty/missing as ``""``.
+    """
+    empty_envelope = RuntimeEventEnvelope.from_dict(_runtime_event_payload(run_id=""))
+    assert empty_envelope.run_id == ""
+
+    missing_payload = _runtime_event_payload()
+    missing_payload.pop("run_id")
+    missing_envelope = RuntimeEventEnvelope.from_dict(missing_payload)
+    assert missing_envelope.run_id == ""

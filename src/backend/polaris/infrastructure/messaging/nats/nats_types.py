@@ -26,6 +26,22 @@ def _require_event_string(data: dict[str, Any], field_name: str) -> str:
     return value.strip()
 
 
+def _optional_event_string(data: dict[str, Any], field_name: str) -> str:
+    r"""Return a trimmed optional string field, defaulting to "".
+
+    Non-run-scoped events (e.g. file edits outside a factory run, log events,
+    control-plane status) legitimately carry no run_id; the dataclass default
+    is ``run_id: str = ""``. Missing/None/empty all round-trip as ``""``; a
+    present-but-non-string value still fails the wire contract.
+    """
+    value = data.get(field_name, "")
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(f"RuntimeEventEnvelope field '{field_name}' must be a string")
+    return value.strip()
+
+
 def _require_event_timestamp(data: dict[str, Any]) -> str:
     timestamp = _require_event_string(data, "ts")
     try:
@@ -191,7 +207,7 @@ class RuntimeEventEnvelope:
             schema_version=schema_version,
             event_id=_require_event_string(data, "event_id"),
             workspace_key=_require_event_string(data, "workspace_key"),
-            run_id=_require_event_string(data, "run_id"),
+            run_id=_optional_event_string(data, "run_id"),
             channel=_require_event_string(data, "channel"),
             kind=_require_event_string(data, "kind"),
             ts=_require_event_timestamp(data),
