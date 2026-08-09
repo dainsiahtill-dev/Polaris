@@ -1,0 +1,5 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { memo } from 'react';
+export const GoalsList = memo(function GoalsList({ goals }) {
+    return (_jsxs("div", { className: "mt-4 soft-panel-subtle rounded-xl p-4", children: [_jsxs("div", { className: "flex items-center justify-between text-xs text-text-muted", children: [_jsx("span", { className: "font-medium uppercase tracking-wide", children: "\u5723\u610F\u603B\u89C8" }), _jsx("span", { className: "font-mono", children: goals.length ? `${goals.length} 项` : '-' })] }), _jsx("div", { className: "mt-3 max-h-40 space-y-2 overflow-auto pr-1 text-xs text-text-main custom-scrollbar", children: goals.length === 0 ? (_jsx("div", { className: "text-text-dim", children: "\u6682\u65E0\u5723\u610F\u6761\u76EE" })) : (goals.map((item, idx) => (_jsxs("div", { className: "flex items-start gap-2", children: [_jsxs("span", { className: "mt-0.5 text-accent font-mono text-[10px]", children: [idx + 1, "."] }), _jsx("span", { className: "leading-relaxed", children: item })] }, `${idx}-${item}`)))) })] }));
+});

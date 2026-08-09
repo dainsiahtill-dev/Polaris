@@ -1,16 +1,9 @@
 from __future__ import annotations
 
-import json
-import posixpath
 import re
 from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
-from pathlib import PurePosixPath
-from typing import Any
 
-from ...contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from ...javascript_syntax import repair_javascript_export_contract_placeholders
-from ...path_files import normalize_base_files_strict, normalize_repair_path_strict
+from ...contracts import RepairDiagnostic, RepairOperation, sha256_text
 from ..constants import *  # noqa: F403
 from .path_ops import *  # noqa: F403
 from .plan_ops import *  # noqa: F403
@@ -19,20 +12,6 @@ from .misc_ops import *  # noqa: F403
 
 """Shared TypeScript repair helpers: arg_shape_ops."""
 
-def _strip_javascript_callable_type_match(match: re.Match[str]) -> str:
-    params = []
-    for raw_param in str(match.group("params") or "").split(","):
-        param = raw_param.strip()
-        if not param:
-            continue
-        default = ""
-        head = param
-        if "=" in param:
-            head, default_value = param.split("=", 1)
-            default = " = " + default_value.strip()
-        head = re.sub(r"^(?P<name>\.\.\.[A-Za-z_$][\w$]*|[A-Za-z_$][\w$]*)\s*:\s*[^=,]+$", r"\g<name>", head.strip())
-        params.append(f"{head}{default}")
-    return f"{match.group('prefix')}({', '.join(params)}){match.group('brace')}"
 
 def _parse_typescript_unused_declaration_errors(diagnostics: Sequence[RepairDiagnostic]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
@@ -51,6 +30,7 @@ def _parse_typescript_unused_declaration_errors(diagnostics: Sequence[RepairDiag
                 seen.add(key)
                 parsed.append(item)
     return [item for item in parsed if item["file"] and item["line"] and item["name"]]
+
 
 def _typescript_unused_parameter_operations(
     *,
@@ -107,6 +87,7 @@ def _typescript_unused_parameter_operations(
         repairs.append({"file": path, "parameter": name, "replacement": str(operation.replacement or "")})
     return tuple(operations), repairs
 
+
 def _typescript_unused_declaration_item_key(item: Mapping[str, str]) -> tuple[str, str, str, str]:
     return (
         str(item.get("file") or ""),
@@ -114,6 +95,7 @@ def _typescript_unused_declaration_item_key(item: Mapping[str, str]) -> tuple[st
         str(item.get("column") or ""),
         str(item.get("name") or ""),
     )
+
 
 def _typescript_unused_named_import_binding_group_operations(
     *,
@@ -196,6 +178,7 @@ def _typescript_unused_named_import_binding_group_operations(
         repairs.extend({"file": path, "parameter": name, "replacement": replacement} for name in sorted(names))
     return tuple(operations), repairs, consumed_item_keys
 
+
 def _typescript_unused_import_declaration_operation(
     *,
     path: str,
@@ -242,6 +225,7 @@ def _typescript_unused_import_declaration_operation(
         )
     return None
 
+
 def _typescript_unused_named_import_binding_operation(
     *,
     path: str,
@@ -279,8 +263,10 @@ def _typescript_unused_named_import_binding_operation(
         )
     return None
 
+
 def _remove_typescript_named_import_binding(*, import_text: str, name: str) -> str:
     return _remove_typescript_named_import_bindings(import_text=import_text, names={name})
+
 
 def _remove_typescript_named_import_bindings(*, import_text: str, names: set[str]) -> str:
     normalized_names = {name for name in names if _TS_IDENTIFIER_RE.fullmatch(name)}
@@ -318,6 +304,7 @@ def _remove_typescript_named_import_bindings(*, import_text: str, names: set[str
         f"from {match.group('quote')}{match.group('module')}{match.group('quote')};"
     )
 
+
 def _remove_typescript_multiline_named_import_bindings(*, import_text: str, names: set[str]) -> str:
     lines = import_text.splitlines(keepends=True)
     kept_lines: list[str] = []
@@ -340,6 +327,7 @@ def _remove_typescript_multiline_named_import_bindings(*, import_text: str, name
         return ""
     return "".join(kept_lines)
 
+
 def _typescript_named_import_local_name(part: str) -> str:
     normalized = str(part or "").strip().rstrip(",").strip()
     if normalized.startswith("type "):
@@ -347,6 +335,7 @@ def _typescript_named_import_local_name(part: str) -> str:
     alias_parts = re.split(r"\s+as\s+", normalized, maxsplit=1, flags=re.IGNORECASE)
     local = alias_parts[-1].strip()
     return local if _TS_IDENTIFIER_RE.fullmatch(local) else ""
+
 
 def _typescript_unused_local_declaration_operation(
     *,
@@ -385,6 +374,7 @@ def _typescript_unused_local_declaration_operation(
             "replacement_strategy": "initializer_expression_statement",
         },
     )
+
 
 def _typescript_unused_function_declaration_operation(
     *,
@@ -440,6 +430,7 @@ def _typescript_unused_function_declaration_operation(
         },
     )
 
+
 def _typescript_unused_local_expression_requires_binding(expression: str) -> bool:
     stripped = str(expression or "").lstrip()
     if not stripped:
@@ -447,6 +438,7 @@ def _typescript_unused_local_expression_requires_binding(expression: str) -> boo
     if stripped.startswith(("{", "function ", "class ", "interface ", "type ")):
         return True
     return "=>" in stripped
+
 
 def _typescript_unused_parameter_operation(
     *,
@@ -495,6 +487,7 @@ def _typescript_unused_parameter_operation(
         )
     return None
 
+
 def _typescript_unused_parameter_line_replacement(*, line: str, name: str, column: int) -> str:
     if name.startswith("_") or f"_{name}" in line:
         return ""
@@ -508,6 +501,7 @@ def _typescript_unused_parameter_line_replacement(*, line: str, name: str, colum
             continue
         return f"{line[: match.start()]}_{name}{line[match.end() :]}"
     return ""
+
 
 def _typescript_unused_multiline_parameter_line_replacement(
     *,
@@ -539,6 +533,7 @@ def _typescript_unused_multiline_parameter_line_replacement(
         return f"{line[: match.start()]}_{name}{line[match.end() :]}"
     return ""
 
+
 def _typescript_identifier_occurrence_is_parameter(line: str, start: int, end: int) -> bool:
     open_index = line.rfind("(", 0, start)
     close_index = line.find(")", end)
@@ -554,6 +549,7 @@ def _typescript_identifier_occurrence_is_parameter(line: str, start: int, end: i
     tail = segment_after.lstrip()
     return not tail or tail.startswith((":", "?", "=", ","))
 
+
 def _typescript_identifier_occurrence_has_parameter_shape(line: str, start: int, end: int) -> bool:
     before = line[:start].strip()
     if before:
@@ -563,6 +559,7 @@ def _typescript_identifier_occurrence_has_parameter_shape(line: str, start: int,
             return False
     tail = line[end:].lstrip()
     return not tail or tail.startswith((":", "?", "=", ","))
+
 
 def _typescript_identifier_occurrence_is_in_multiline_parameter_list(
     *,
@@ -584,6 +581,7 @@ def _typescript_identifier_occurrence_is_in_multiline_parameter_list(
     close_index = after.find(")")
     return close_index >= 0
 
+
 def _line_text_replace_operation(
     *,
     path: str,
@@ -604,6 +602,7 @@ def _line_text_replace_operation(
         before_hash=sha256_text(content),
         metadata=dict(metadata),
     )
+
 
 def _too_many_arguments_declaration_operation(
     *,
@@ -636,6 +635,7 @@ def _too_many_arguments_declaration_operation(
             "repair": "declaration_rest_parameter",
         },
     )
+
 
 def _too_many_arguments_callsite_trim_operation(
     *,
@@ -708,6 +708,7 @@ def _too_many_arguments_callsite_trim_operation(
         )
     return None
 
+
 def _too_many_arguments_declaration_expand_operation(
     *,
     base_files: Mapping[str, str],
@@ -765,6 +766,7 @@ def _too_many_arguments_declaration_expand_operation(
         },
     )
 
+
 def _typescript_function_param_names_from_header(header: str) -> list[str]:
     open_index = header.find("(")
     close_index = _find_matching_paren(header, open_index)
@@ -777,6 +779,7 @@ def _typescript_function_param_names_from_header(header: str) -> list[str]:
         if _TS_IDENTIFIER_RE.fullmatch(name):
             names.append(name)
     return names
+
 
 def _typescript_select_args_for_params(
     arg_texts: Sequence[str],
@@ -818,6 +821,7 @@ def _typescript_select_args_for_params(
             return None
     return selected
 
+
 def _find_unique_typescript_function_declaration_multiline(
     *,
     base_files: Mapping[str, str],
@@ -851,6 +855,7 @@ def _find_unique_typescript_function_declaration_multiline(
             matches.append((path, line_index, header))
     return matches[0] if len(matches) == 1 else None
 
+
 def _insert_unknown_params_into_callable_header(header: str, *, add_count: int) -> str:
     if add_count <= 0:
         return header
@@ -866,6 +871,7 @@ def _insert_unknown_params_into_callable_header(header: str, *, add_count: int) 
     else:
         new_params = [*params, *extras]
     return header[: open_index + 1] + ", ".join(new_params) + header[close_index:]
+
 
 def _expand_multiline_function_params(
     *,
@@ -920,6 +926,7 @@ def _expand_multiline_function_params(
         },
     )
 
+
 def _find_unique_typescript_function_declaration(
     *,
     base_files: Mapping[str, str],
@@ -945,6 +952,7 @@ def _find_unique_typescript_function_declaration(
                 matches.append((path, line_index, line))
     return matches[0] if len(matches) == 1 else None
 
+
 def _add_rest_param_to_typescript_callable(line: str) -> str:
     open_index = line.find("(")
     close_index = _find_matching_paren(line, open_index)
@@ -956,6 +964,7 @@ def _add_rest_param_to_typescript_callable(line: str) -> str:
     separator = ", " if params_text else ""
     repaired_params = f"{params_text}{separator}..._args: unknown[]"
     return line[: open_index + 1] + repaired_params + line[close_index:]
+
 
 def _add_defaults_to_typescript_method_params(line: str, *, got_count: int, expected_count: int) -> str:
     open_index = line.find("(")
@@ -976,6 +985,7 @@ def _add_defaults_to_typescript_method_params(line: str, *, got_count: int, expe
         return line
     return line[: open_index + 1] + ", ".join(params) + line[close_index:]
 
+
 def _typescript_param_with_default(param: str) -> str:
     if "=" in param:
         return param
@@ -984,6 +994,7 @@ def _typescript_param_with_default(param: str) -> str:
     name, annotation = param.split(":", 1)
     ts_type = annotation.strip()
     return f"{name.strip()}: {ts_type} = {_typescript_default_value_for_type(ts_type)}"
+
 
 def _typescript_function_param_names_for_line(lines: Sequence[str], target_index: int) -> list[str]:
     for start_index in range(target_index, -1, -1):
@@ -998,6 +1009,7 @@ def _typescript_function_param_names_for_line(lines: Sequence[str], target_index
         return _parse_typescript_param_names(str(match.group("params") or ""))
     return []
 
+
 def _typescript_line_is_inside_scope(lines: Sequence[str], start_index: int, target_index: int) -> bool:
     depth = 0
     for index in range(start_index, target_index + 1):
@@ -1008,6 +1020,7 @@ def _typescript_line_is_inside_scope(lines: Sequence[str], start_index: int, tar
             return False
     return depth > 0
 
+
 def _parse_typescript_param_names(params_text: str) -> list[str]:
     names: list[str] = []
     for raw_param in _split_typescript_params(params_text):
@@ -1016,14 +1029,17 @@ def _parse_typescript_param_names(params_text: str) -> list[str]:
             names.append(param)
     return names
 
+
 def _is_number_to_function_argument(diagnostic: RepairDiagnostic) -> bool:
     message = str(diagnostic.message or diagnostic.raw or "").lower()
     if diagnostic.code.lower() == "typescript_ts2345" and "number" in message and "(n: number) => number" in message:
         return True
     return bool(_TS_NUMBER_TO_FUNCTION_ARGUMENT_RAW_RE.search(str(diagnostic.raw or diagnostic.message or "")))
 
+
 def _has_number_to_function_argument_diagnostic(diagnostics: Sequence[RepairDiagnostic]) -> bool:
     return any(_is_number_to_function_argument(diagnostic) for diagnostic in diagnostics)
+
 
 def _remove_shorthand_properties(line: str, properties: set[str]) -> tuple[str, tuple[str, ...]]:
     if not properties or "{" not in line or "}" not in line:
@@ -1050,6 +1066,7 @@ def _remove_shorthand_properties(line: str, properties: set[str]) -> tuple[str, 
     replacement_inner = f" {', '.join(kept)} " if kept else ""
     return f"{line[: open_index + 1]}{replacement_inner}{line[close_index:]}", tuple(sorted(removed))
 
+
 def _wrap_typescript_argument_at_column_as_string(line: str, column: int) -> str:
     span = _find_typescript_argument_span_at_column(line, column)
     if span is None:
@@ -1064,6 +1081,7 @@ def _wrap_typescript_argument_at_column_as_string(line: str, column: int) -> str
     replacement = f"{leading}String({stripped}){trailing}"
     return line[:start] + replacement + line[end:]
 
+
 def _find_typescript_argument_span_at_column(line: str, column: int) -> tuple[int, int] | None:
     index = max(0, min(len(line), int(column) - 1))
     open_index = line.rfind("(", 0, index + 1)
@@ -1077,6 +1095,7 @@ def _find_typescript_argument_span_at_column(line: str, column: int) -> tuple[in
                 return None
             return start, end
     return None
+
 
 def _find_matching_paren(text: str, open_paren: int) -> int:
     if open_paren < 0 or open_paren >= len(text) or text[open_paren] != "(":
@@ -1104,6 +1123,7 @@ def _find_matching_paren(text: str, open_paren: int) -> int:
             if depth == 0:
                 return index
     return -1
+
 
 def _typescript_extract_argument_expression(line: str, col_index: int) -> str:
     text = str(line or "")
@@ -1145,6 +1165,7 @@ def _typescript_extract_argument_expression(line: str, col_index: int) -> str:
     if not expr or expr in {"if", "return", "const", "let", "var"}:
         return ""
     return expr
+
 
 def _typescript_param_type_from_property_operation(
     *,
@@ -1217,7 +1238,6 @@ def _typescript_param_type_from_property_operation(
 
 
 __all__ = (
-    "_strip_javascript_callable_type_match",
     "_parse_typescript_unused_declaration_errors",
     "_typescript_unused_parameter_operations",
     "_typescript_unused_declaration_item_key",

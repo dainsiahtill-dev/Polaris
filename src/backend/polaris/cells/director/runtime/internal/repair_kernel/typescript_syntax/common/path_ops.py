@@ -1,19 +1,20 @@
 from __future__ import annotations
 
-import json
-import posixpath
 import re
 from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
-from pathlib import PurePosixPath
-from typing import Any
 
-from ...contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from ...javascript_syntax import repair_javascript_export_contract_placeholders
+from ...contracts import RepairDiagnostic
 from ...path_files import normalize_base_files_strict, normalize_repair_path_strict
 from ..constants import *  # noqa: F403
 
 """Shared TypeScript repair helpers: path_ops."""
+
+
+def _normalize_repair_path(path: str) -> str:
+    """Delegate path validation to the repair-kernel path SSoT."""
+
+    return normalize_repair_path_strict(path)
+
 
 def _typescript_diagnostic_line(diagnostic: RepairDiagnostic) -> int | None:
     if diagnostic.line:
@@ -30,6 +31,7 @@ def _typescript_diagnostic_line(diagnostic: RepairDiagnostic) -> int | None:
     except (TypeError, ValueError):
         return None
 
+
 def _line_ending(line: str) -> str:
     if line.endswith("\r\n"):
         return "\r\n"
@@ -37,8 +39,21 @@ def _line_ending(line: str) -> str:
         return "\n"
     return "\n"
 
+
 def _normalized_base_files(base_files: Mapping[str, str]) -> dict[str, str]:
     return normalize_base_files_strict(base_files)
+
+
+def _dedupe_preserve_order(items: Sequence[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        value = str(item or "").strip()
+        if value and value not in seen:
+            seen.add(value)
+            deduped.append(value)
+    return deduped
+
 
 def _common_prefix_len(left: str, right: str) -> int:
     limit = min(len(left), len(right))
@@ -46,6 +61,7 @@ def _common_prefix_len(left: str, right: str) -> int:
     while index < limit and left[index] == right[index]:
         index += 1
     return index
+
 
 def _diagnostic_targets_path(diagnostic: RepairDiagnostic, path: str) -> bool:
     normalized_path = _normalize_repair_path(str(diagnostic.path or ""))
@@ -68,9 +84,11 @@ def _diagnostic_targets_path(diagnostic: RepairDiagnostic, path: str) -> bool:
 
 
 __all__ = (
-    "_typescript_diagnostic_line",
-    "_line_ending",
-    "_normalized_base_files",
     "_common_prefix_len",
+    "_dedupe_preserve_order",
     "_diagnostic_targets_path",
+    "_line_ending",
+    "_normalize_repair_path",
+    "_normalized_base_files",
+    "_typescript_diagnostic_line",
 )

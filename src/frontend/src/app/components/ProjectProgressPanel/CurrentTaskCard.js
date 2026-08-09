@@ -1,0 +1,7 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { memo } from 'react';
+import { ArrowRight } from 'lucide-react';
+import { UI_TERMS } from '@/app/constants/uiTerminology';
+export const CurrentTaskCard = memo(function CurrentTaskCard({ currentSummary, lastTaskId }) {
+    return (_jsxs("div", { className: "soft-panel-subtle rounded-xl p-4 transition-all", children: [_jsxs("div", { className: "flex items-center justify-between gap-2", children: [_jsx("div", { className: "text-xs font-semibold uppercase tracking-wide text-text-muted", children: "\u5F53\u524DDirector Task" }), _jsx(ArrowRight, { className: "size-4 text-accent" })] }), currentSummary ? (_jsxs("div", { className: "mt-3 flex items-start gap-3", children: [_jsx("div", { className: "mt-1 flex size-8 items-center justify-center soft-raised rounded-full text-accent", children: _jsx(ArrowRight, { className: "size-4" }) }), _jsxs("div", { className: "min-w-0", children: [_jsx("div", { className: "text-sm font-semibold text-text-main", children: currentSummary }), _jsx("div", { className: "mt-1 text-xs text-text-dim font-mono", children: lastTaskId ? _jsxs("span", { children: ["ID: ", lastTaskId] }) : _jsxs("span", { children: ["\u5F85", UI_TERMS.roles.pm, "\u5206\u6D3ETask"] }) })] })] })) : (_jsx("div", { className: "mt-3 text-sm text-text-dim", children: "\u6682\u65E0\u5F53\u524D\u5DEE\u4E8B\u6848\u5377" }))] }));
+});

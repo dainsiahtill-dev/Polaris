@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-import json
-import posixpath
-import re
 from collections.abc import Mapping, Sequence
 from difflib import SequenceMatcher
-from pathlib import PurePosixPath
-from typing import Any
 
 from ...contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from ...javascript_syntax import repair_javascript_export_contract_placeholders
-from ...path_files import normalize_base_files_strict, normalize_repair_path_strict
-from ..constants import *  # noqa: F403
-from .path_ops import *  # noqa: F403
 
 """Shared TypeScript repair helpers: plan_ops."""
+
+
+def _line_start_offsets(lines: Sequence[str]) -> list[int]:
+    offsets: list[int] = [0]
+    current = 0
+    for line in lines:
+        current += len(line)
+        offsets.append(current)
+    return offsets
+
 
 def _repair_plan_or_none(
     *,
@@ -39,10 +40,12 @@ def _repair_plan_or_none(
         metadata=dict(metadata or {}),
     )
 
+
 def _apply_single_text_operation(content: str, operation: RepairOperation) -> str:
     if operation.span_start is None or operation.span_end is None:
         return content
     return content[: operation.span_start] + str(operation.replacement or "") + content[operation.span_end :]
+
 
 def _text_replace_operations_from_repair(
     *,
@@ -85,7 +88,8 @@ def _text_replace_operations_from_repair(
 
 
 __all__ = (
-    "_repair_plan_or_none",
     "_apply_single_text_operation",
+    "_line_start_offsets",
+    "_repair_plan_or_none",
     "_text_replace_operations_from_repair",
 )

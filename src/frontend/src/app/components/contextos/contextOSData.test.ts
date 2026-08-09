@@ -5,6 +5,8 @@ import {
   decisionMatchesRole,
   contextOSFormat,
   safeText,
+  summarizeRoleContextState,
+  type RoleInternalContext,
 } from './contextOSData';
 import { buildTelemetryFromStream } from './contextOSTelemetry';
 import type { UsageStats } from '@/app/components/UsageHUD';
@@ -1641,5 +1643,124 @@ describe('null-safe fallback', () => {
     const model = buildContextOSModel(baseInput({ dialogueEvents: dialogue }));
     expect(model.decisions.length).toBeGreaterThanOrEqual(0);
     expect(model.running).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// summarizeRoleContextState — 人话摘要（替代 TruthLog/WorkingMem/... 术语）
+// ---------------------------------------------------------------------------
+
+function makeCtx(overrides: Partial<RoleInternalContext> = {}): RoleInternalContext {
+  return {
+    roleId: 'director',
+    title: 'Director',
+    courtTitle: '工部侍郎',
+    state: 'idle',
+    events: [],
+    eventCount: 0,
+    projectionCount: 0,
+    receiptCount: 0,
+    contextItemsCount: null,
+    workingMemoryItems: null,
+    workingMemoryEstimated: false,
+    contextTokensLatest: null,
+    contextWindowTokens: null,
+    contextWindowLabel: '窗口未知',
+    contextWindowDetail: '',
+    contextWindowSource: 'unknown',
+    contextWindowProvider: null,
+    contextWindowModel: null,
+    windowOccupancyTokens: null,
+    windowOccupancyLabel: '无 usage',
+    windowOccupancyDetail: '',
+    totalTokens: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    cachedTokens: 0,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    toolTokens: 0,
+    reasoningTokens: 0,
+    audioTokens: 0,
+    serverToolUseCount: 0,
+    calls: 0,
+    lastEventAt: null,
+    currentTaskId: null,
+    currentTaskTitle: null,
+    latestContextSnapshotRef: null,
+    latestCallId: null,
+    latestTurnId: null,
+    bindingBudgets: [],
+    detail: '',
+    ...overrides,
+  };
+}
+
+describe('summarizeRoleContextState', () => {
+  it('报告尚未观测到任何事件的角色为空闲待命', () => {
+    const summary = summarizeRoleContextState(makeCtx({ eventCount: 0 }));
+    expect(summary.tone).toBe('idle');
+    expect(summary.headline).toContain('尚未产生运行事件');
+    expect(summary.detail).toContain('没有观测到该角色的实时活动');
+  });
+
+  it('把“有事件但无调用无 token”解读为待机而非执行（截图场景）', () => {
+    // 截图：Director 19 条事件、0 投影、0 回执、0 调用、无 usage
+    const summary = summarizeRoleContextState(
+      makeCtx({ eventCount: 19, calls: 0, totalTokens: 0, projectionCount: 0, receiptCount: 0 }),
+    );
+    expect(summary.tone).toBe('idle');
+    expect(summary.headline).toContain('19 条事件');
+    expect(summary.headline).toContain('还未真正调用模型');
+    expect(summary.detail).toContain('不是真正的执行');
+  });
+
+  it('当事件附带装配次数时，摘要细节里带上装配计数', () => {
+    const summary = summarizeRoleContextState(
+      makeCtx({ eventCount: 5, calls: 0, totalTokens: 0, projectionCount: 3 }),
+    );
+    expect(summary.detail).toContain('装配 3 次');
+  });
+
+  it('把“有调用但无 token 用量”解读为 usage 缺失', () => {
+    const summary = summarizeRoleContextState(
+      makeCtx({ eventCount: 4, calls: 2, totalTokens: 0 }),
+    );
+    expect(summary.tone).toBe('idle');
+    expect(summary.headline).toContain('2 次模型调用');
+    expect(summary.headline).toContain('未记录 token');
+  });
+
+  it('把“有调用且有真实 token”解读为运行中并给出用量', () => {
+    const summary = summarizeRoleContextState(
+      makeCtx({
+        eventCount: 8,
+        calls: 3,
+        totalTokens: 1500,
+        promptTokens: 1000,
+        completionTokens: 500,
+        projectionCount: 3,
+        receiptCount: 2,
+      }),
+    );
+    expect(summary.tone).toBe('active');
+    expect(summary.headline).toContain('3 次模型调用');
+    expect(summary.headline).toMatch(/1\.5k\s*token/);
+    expect(summary.detail).toContain('提示');
+    expect(summary.detail).toContain('装配 3 次');
+    expect(summary.detail).toContain('回执 2 条');
+  });
+
+  it('把错误受阻状态解读为受阻并提示查看事件流', () => {
+    const errorEvent = {
+      id: 'e1',
+      category: 'error',
+    } as RoleInternalContext['events'][number];
+    const summary = summarizeRoleContextState(
+      makeCtx({ eventCount: 3, state: 'blocked', events: [errorEvent] }),
+    );
+    expect(summary.tone).toBe('blocked');
+    expect(summary.headline).toContain('错误');
+    expect(summary.detail).toContain('事件流');
   });
 });

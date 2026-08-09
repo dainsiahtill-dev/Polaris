@@ -6221,8 +6221,12 @@ def test_public_runtime_dependency_repair_covers_node_scheme_ts2307() -> None:
     assert planning_payload["ok"] is True
     assert planning_payload["planned"] is True
     assert planning_payload["plan_summary"]["rule_id"] == "generic.runtime_dependency"
-    assert planning_payload["plan_summary"]["operation_count"] == 1
-    assert '"@types/node"' in planning_payload["composition_summary"]["patches"][0]["content_after"]
+    assert planning_payload["plan_summary"]["operation_count"] == 2
+    changed_paths = set(planning_payload["composition_summary"]["changed_paths"])
+    assert changed_paths == {"package.json", "tsconfig.json"}
+    patches = {patch["path"]: patch["content_after"] for patch in planning_payload["composition_summary"]["patches"]}
+    assert '"@types/node"' in patches["package.json"]
+    assert '"node"' in patches["tsconfig.json"]
 
 
 def test_public_runtime_dependency_repair_covers_missing_node_type_definition_file() -> None:
@@ -6251,8 +6255,12 @@ def test_public_runtime_dependency_repair_covers_missing_node_type_definition_fi
     assert planning_payload["ok"] is True
     assert planning_payload["planned"] is True
     assert planning_payload["plan_summary"]["rule_id"] == "generic.runtime_dependency"
-    assert planning_payload["plan_summary"]["operation_count"] == 1
-    assert '"@types/node"' in planning_payload["composition_summary"]["patches"][0]["content_after"]
+    assert planning_payload["plan_summary"]["operation_count"] == 2
+    changed_paths = set(planning_payload["composition_summary"]["changed_paths"])
+    assert changed_paths == {"package.json", "tsconfig.json"}
+    patches = {patch["path"]: patch["content_after"] for patch in planning_payload["composition_summary"]["patches"]}
+    assert '"@types/node"' in patches["package.json"]
+    assert '"node"' in patches["tsconfig.json"]
 
 
 def test_public_javascript_missing_test_target_covers_npm_module_not_found() -> None:
@@ -6306,10 +6314,7 @@ def test_public_javascript_frontend_smoke_target_respects_esm_package() -> None:
     """Regression: a ``type=module`` package cannot execute a generated require()-based test."""
 
     source_tool = js_syntax.JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL
-    diagnostic = (
-        "artifact_quality_error: npm test failed (exit=1): "
-        "Could not find 'dist/tests/verify.test.js'"
-    )
+    diagnostic = "artifact_quality_error: npm test failed (exit=1): Could not find 'dist/tests/verify.test.js'"
     planning_result = plan_director_repair(
         PlanDirectorRepairCommandV1(
             source_tool=source_tool,
@@ -7374,9 +7379,7 @@ def test_public_typescript_member_alias_rewrites_position_glow_and_garden_tick()
 def test_public_typescript_literal_union_expand_adds_missing_literals() -> None:
     """L1-01 r160: Type '\"waxing\"' not assignable to MoonPhaseName expands the union."""
 
-    diagnostic = (
-        "src/web.ts(3,10): error TS2322: Type '\"waxing\"' is not assignable to type 'MoonPhaseName'."
-    )
+    diagnostic = "src/web.ts(3,10): error TS2322: Type '\"waxing\"' is not assignable to type 'MoonPhaseName'."
     planning = plan_director_repair(
         PlanDirectorRepairCommandV1(
             source_tool=ts_syntax.TYPESCRIPT_LITERAL_UNION_EXPAND_SOURCE_TOOL,
@@ -7399,10 +7402,8 @@ def test_public_typescript_literal_union_expand_normalizes_type_only_string_enum
     """TS2322 string literals can safely use a type-only string enum as a union."""
 
     diagnostics = (
-        "src/models/Firefly.ts(10,5): error TS2322: "
-        "Type '\"resting\"' is not assignable to type 'FireflyMode'.",
-        "src/models/Firefly.ts(14,5): error TS2322: "
-        "Type '\"flashing\"' is not assignable to type 'FireflyMode'.",
+        "src/models/Firefly.ts(10,5): error TS2322: Type '\"resting\"' is not assignable to type 'FireflyMode'.",
+        "src/models/Firefly.ts(14,5): error TS2322: Type '\"flashing\"' is not assignable to type 'FireflyMode'.",
     )
     planning = plan_director_repair(
         PlanDirectorRepairCommandV1(
@@ -7430,26 +7431,18 @@ def test_public_typescript_literal_union_expand_normalizes_type_only_string_enum
     assert planning["planned"] is True
     patch = planning["composition_summary"]["patches"][0]
     assert patch["path"] == "src/models/types.ts"
-    assert (
-        'export type FireflyMode = "resting" | "glowing" | "flashing";'
-        in patch["content_after"]
-    )
+    assert 'export type FireflyMode = "resting" | "glowing" | "flashing";' in patch["content_after"]
 
 
 def test_public_typescript_literal_union_expand_preserves_runtime_enum_authority() -> None:
     """Runtime ``Enum.Member`` consumers make enum-to-union normalization unsafe."""
 
-    diagnostic = (
-        "src/models/Firefly.ts(2,5): error TS2322: "
-        "Type '\"resting\"' is not assignable to type 'FireflyMode'."
-    )
+    diagnostic = "src/models/Firefly.ts(2,5): error TS2322: Type '\"resting\"' is not assignable to type 'FireflyMode'."
     planning = plan_director_repair(
         PlanDirectorRepairCommandV1(
             source_tool=ts_syntax.TYPESCRIPT_LITERAL_UNION_EXPAND_SOURCE_TOOL,
             base_files={
-                "src/models/types.ts": (
-                    "export enum FireflyMode { Resting = 'resting', Flashing = 'flashing' }\n"
-                ),
+                "src/models/types.ts": ("export enum FireflyMode { Resting = 'resting', Flashing = 'flashing' }\n"),
                 "src/models/Firefly.ts": (
                     "import { FireflyMode } from './types.js';\n"
                     "let mode: FireflyMode = 'resting';\n"
@@ -7593,10 +7586,7 @@ def test_public_typescript_arg_type_function_alias_rewrites_humidity_to_hydratio
                     "  return { value: state.value + delta };\n"
                     "}\n"
                 ),
-                "src/models/index.ts": (
-                    "export * from './Flower.js';\n"
-                    "export * from './Humidity.js';\n"
-                ),
+                "src/models/index.ts": ("export * from './Flower.js';\nexport * from './Humidity.js';\n"),
                 "src/web.ts": (
                     "import { adjustHumidity } from './models/index.js';\n"  # 1
                     "import type { FlowerState } from './models/index.js';\n"  # 2
@@ -7683,7 +7673,19 @@ def test_public_typescript_json_as_source_rewrites_package_manifest_and_adds_smo
         "  }\n"
         "}\n"
     )
-    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,)))
+    coverage = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(
+            artifact_quality_errors=(diagnostic,),
+            artifact_quality_issues=(
+                {
+                    "code": "typescript_json_as_source",
+                    "message": "package manifest JSON was proven in a TypeScript source file",
+                    "path": "src/verify.ts",
+                    "source": "materialization_quality",
+                },
+            ),
+        )
+    )
     planning = plan_director_repair(
         PlanDirectorRepairCommandV1(
             source_tool=ts_syntax.TYPESCRIPT_JSON_AS_SOURCE_SOURCE_TOOL,
@@ -7697,7 +7699,10 @@ def test_public_typescript_json_as_source_rewrites_package_manifest_and_adds_smo
         )
     ).to_dict()
 
-    assert coverage.to_dict()["covered_diagnostic_count"] >= 1
+    coverage_payload = coverage.to_dict()
+    assert coverage_payload["covered_diagnostic_count"] == 1
+    assert coverage_payload["items"][0]["known_rule_matched"] is False
+    assert coverage_payload["items"][1]["matched_rule_ids"] == ["typescript.json_as_source"]
     assert planning["ok"] is True
     assert planning["planned"] is True
     assert planning["plan_summary"]["rule_id"] == "typescript.json_as_source"

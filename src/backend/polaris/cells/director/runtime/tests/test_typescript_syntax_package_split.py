@@ -23,14 +23,16 @@ from polaris.cells.director.runtime.internal.repair_kernel.typescript_syntax imp
     build_typescript_runtime_plan_for_source_tool,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.typescript_syntax.common import (
+    _dedupe_preserve_order,
+    _line_start_offsets,
     _normalize_repair_path,
     _normalized_base_files,
+    _strip_javascript_callable_type_match,
 )
 
 _PACKAGE_DIR = Path(ts_syntax.__file__).resolve().parent
 _REQUIRED_DOMAIN_MODULES = (
     "constants.py",
-    "common.py",
     "dispatch.py",
     "object_literals.py",
     "nullability.py",
@@ -41,6 +43,16 @@ _REQUIRED_DOMAIN_MODULES = (
     "html_dom.py",
     "type_shapes.py",
     "text_repairs.py",
+)
+_REQUIRED_COMMON_MODULES = (
+    "arg_shape_ops.py",
+    "import_text_ops.py",
+    "member_text_ops.py",
+    "misc_ops.py",
+    "null_dom_ops.py",
+    "parse_ops.py",
+    "path_ops.py",
+    "plan_ops.py",
 )
 
 
@@ -56,11 +68,17 @@ def test_typescript_syntax_is_package_not_monolith_module() -> None:
     assert len(domain_files) >= 5
     for name in _REQUIRED_DOMAIN_MODULES:
         assert name in domain_files, f"missing domain module {name}"
+    common_dir = _PACKAGE_DIR / "common"
+    assert common_dir.is_dir()
+    assert (common_dir / "__init__.py").is_file()
+    common_files = sorted(p.name for p in common_dir.glob("*.py") if p.name != "__init__.py")
+    for name in _REQUIRED_COMMON_MODULES:
+        assert name in common_files, f"missing common domain module {name}"
 
     # Facade stays thin; rule bodies live in domain modules.
     init_lines = sum(1 for _ in (_PACKAGE_DIR / "__init__.py").open(encoding="utf-8"))
     assert init_lines < 300
-    common_lines = sum(1 for _ in (_PACKAGE_DIR / "common.py").open(encoding="utf-8"))
+    common_lines = sum(sum(1 for _ in path.open(encoding="utf-8")) for path in common_dir.glob("*.py"))
     dispatch_lines = sum(1 for _ in (_PACKAGE_DIR / "dispatch.py").open(encoding="utf-8"))
     assert common_lines > 100
     assert dispatch_lines > 20
@@ -80,17 +98,17 @@ def test_package_path_helpers_are_thin_wrappers_over_path_files_ssot() -> None:
 
     # Exactly one _normalize_repair_path def in the package, and it is a wrapper.
     defs: list[tuple[str, str]] = []
-    for path in _PACKAGE_DIR.glob("*.py"):
+    for path in _PACKAGE_DIR.rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in tree.body:
             if isinstance(node, ast.FunctionDef) and node.name == "_normalize_repair_path":
                 defs.append((path.name, ast.get_source_segment(path.read_text(encoding="utf-8"), node) or ""))
     assert len(defs) == 1
-    assert defs[0][0] == "common.py"
+    assert defs[0][0] == "path_ops.py"
     assert "normalize_repair_path_strict" in defs[0][1]
 
     # No package file reimplements the strip/reject loop (SSoT lives in path_files).
-    for path in _PACKAGE_DIR.glob("*.py"):
+    for path in _PACKAGE_DIR.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         assert "while normalized.startswith" not in text, path.name
 
@@ -103,21 +121,25 @@ def test_package_path_helpers_are_thin_wrappers_over_path_files_ssot() -> None:
     assert _normalized_base_files(base) == normalize_base_files_strict(base)
 
 
+def test_common_dependency_primitives_live_below_their_consumers() -> None:
+    """Regression: package split must not leave reverse imports or runtime NameError."""
+
+    assert _line_start_offsets(["a\n", "bc"]) == [0, 2, 4]
+    assert _line_start_offsets.__module__.endswith("common.plan_ops")
+    assert _dedupe_preserve_order([" a ", "", "a", "b"]) == ["a", "b"]
+    assert _dedupe_preserve_order.__module__.endswith("common.path_ops")
+    assert _strip_javascript_callable_type_match.__module__.endswith("common.misc_ops")
+
+
 def test_public_facade_exports_source_tools_and_builders() -> None:
     """Stable import face used by registry/runtime_dispatch must keep working."""
 
-    assert TYPESCRIPT_RETURN_OBJECT_COMMA_SOURCE_TOOL == (
-        "deterministic_typescript_return_object_semicolon_repair"
-    )
-    assert TYPESCRIPT_JSON_AS_SOURCE_SOURCE_TOOL == (
-        "deterministic_typescript_json_as_source_repair"
-    )
+    assert TYPESCRIPT_RETURN_OBJECT_COMMA_SOURCE_TOOL == ("deterministic_typescript_return_object_semicolon_repair")
+    assert TYPESCRIPT_JSON_AS_SOURCE_SOURCE_TOOL == ("deterministic_typescript_json_as_source_repair")
     assert callable(build_typescript_runtime_plan_for_source_tool)
     assert callable(build_typescript_object_literal_comma_plan)
     # Implementation module is domain dispatch, re-exported from package face.
-    assert build_typescript_runtime_plan_for_source_tool.__module__.endswith(
-        "typescript_syntax.dispatch"
-    )
+    assert build_typescript_runtime_plan_for_source_tool.__module__.endswith("typescript_syntax.dispatch")
 
 
 def test_runtime_plan_dispatch_unsupported_and_json_as_source_real_path() -> None:
@@ -171,9 +193,7 @@ def test_object_literal_comma_builder_resolves_from_package_face() -> None:
         diagnostics=(),
     )
     assert plan is None
-    assert build_typescript_object_literal_comma_plan.__module__.endswith(
-        "typescript_syntax.object_literals"
-    )
+    assert build_typescript_object_literal_comma_plan.__module__.endswith("typescript_syntax.object_literals")
 
 
 @pytest.mark.parametrize(

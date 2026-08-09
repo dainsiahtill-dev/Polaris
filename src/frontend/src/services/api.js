@@ -1,0 +1,1418 @@
+import { apiFetch } from "@/api";
+import { devLogger } from "@/app/utils/devLogger";
+function normalizeArtifactPath(path) {
+    const normalized = String(path || "")
+        .trim()
+        .replace(/\\/g, "/");
+    if (!normalized)
+        return normalized;
+    if (normalized === ".polaris/runtime")
+        return "runtime";
+    if (normalized.startsWith(".polaris/runtime/")) {
+        return `runtime/${normalized.slice(".polaris/runtime/".length)}`;
+    }
+    return normalized;
+}
+function workspaceQuerySuffix(workspace = "") {
+    return workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
+}
+function directorStatusQuerySuffix(workspace = "") {
+    const workspaceSuffix = workspace
+        ? `&workspace=${encodeURIComponent(workspace)}`
+        : "";
+    return `?source=auto${workspaceSuffix}`;
+}
+function extractApiErrorString(value) {
+    if (typeof value === "string" && value.trim()) {
+        return value.trim();
+    }
+    if (!value || typeof value !== "object") {
+        return null;
+    }
+    const payload = value;
+    return (extractApiErrorString(payload.message) ||
+        extractApiErrorString(payload.detail) ||
+        extractApiErrorString(payload.error) ||
+        extractApiErrorString(payload.reason) ||
+        extractApiErrorString(payload.code));
+}
+async function handleResponse(res, fallbackError) {
+    if (!res.ok) {
+        let detail = fallbackError;
+        try {
+            const payload = (await res.json());
+            detail = extractApiErrorString(payload) || fallbackError;
+        }
+        catch (err) {
+            devLogger.warn("[api] Error parsing error response:", err);
+        }
+        return { ok: false, error: detail };
+    }
+    try {
+        const data = (await res.json());
+        return { ok: true, data };
+    }
+    catch (err) {
+        devLogger.warn("[api] Failed to parse response:", err);
+        return { ok: false, error: "Failed to parse response" };
+    }
+}
+function normalizeDirectorStatusPayload(payload) {
+    const raw = payload;
+    if (!raw || typeof raw !== "object") {
+        return {
+            running: false,
+            pid: null,
+            started_at: null,
+            source: "none",
+            status: null,
+        };
+    }
+    if (typeof raw.running === "boolean") {
+        return {
+            running: raw.running,
+            pid: typeof raw.pid === "number" ? raw.pid : null,
+            started_at: typeof raw.started_at === "number" ? raw.started_at : null,
+            mode: typeof raw.mode === "string" ? raw.mode : undefined,
+            log_path: typeof raw.log_path === "string" ? raw.log_path : undefined,
+            source: typeof raw.source === "string" ? raw.source : undefined,
+            status: typeof raw.status === "object" && raw.status !== null
+                ? raw.status
+                : null,
+        };
+    }
+    const state = String(raw.state || "")
+        .trim()
+        .toUpperCase();
+    return {
+        running: state === "RUNNING",
+        pid: null,
+        started_at: null,
+        mode: "v2_service",
+        source: "v2_service",
+        status: raw,
+    };
+}
+export const settingsService = {
+    async get() {
+        const res = await apiFetch("/v2/settings");
+        return handleResponse(res, "Failed to load settings");
+    },
+    async update(updates) {
+        const res = await apiFetch("/v2/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(updates),
+        });
+        return handleResponse(res, "Failed to update settings");
+    },
+};
+export const statusService = {
+    async getPm(workspace = "") {
+        const res = await apiFetch(`/v2/pm/status${workspaceQuerySuffix(workspace)}`);
+        return handleResponse(res, "Failed to load PM status");
+    },
+    async getDirector(workspace = "") {
+        const res = await apiFetch(`/v2/director/status${directorStatusQuerySuffix(workspace)}`);
+        if (!res.ok) {
+            return handleResponse(res, "Failed to load Director status");
+        }
+        try {
+            const payload = await res.json();
+            return { ok: true, data: normalizeDirectorStatusPayload(payload) };
+        }
+        catch {
+            return { ok: false, error: "Failed to parse Director status" };
+        }
+    },
+    async getAll(workspace = "") {
+        const [pmRes, directorRes] = await Promise.all([
+            apiFetch(`/v2/pm/status${workspaceQuerySuffix(workspace)}`),
+            apiFetch(`/v2/director/status${directorStatusQuerySuffix(workspace)}`),
+        ]);
+        let director;
+        if (!directorRes.ok) {
+            director = await handleResponse(directorRes, "Failed to load Director status");
+        }
+        else {
+            try {
+                const payload = await directorRes.json();
+                director = { ok: true, data: normalizeDirectorStatusPayload(payload) };
+            }
+            catch {
+                director = { ok: false, error: "Failed to parse Director status" };
+            }
+        }
+        return {
+            pm: await handleResponse(pmRes, "Failed to load PM status"),
+            director,
+        };
+    },
+};
+export const processService = {
+    async startPm(resume = false, workspace = "") {
+        const query = new URLSearchParams();
+        if (resume) {
+            query.set("resume", "true");
+        }
+        if (workspace.trim()) {
+            query.set("workspace", workspace);
+        }
+        const suffix = query.toString();
+        const url = suffix ? `/v2/pm/start?${suffix}` : "/v2/pm/start";
+        const res = await apiFetch(url, { method: "POST" });
+        return handleResponse(res, "Failed to start PM");
+    },
+    async stopPm(workspace = "") {
+        const query = new URLSearchParams();
+        if (workspace.trim()) {
+            query.set("workspace", workspace);
+        }
+        const suffix = query.toString();
+        const res = await apiFetch(`/v2/pm/stop${suffix ? `?${suffix}` : ""}`, {
+            method: "POST",
+        });
+        return handleResponse(res, "Failed to stop PM");
+    },
+    async runPmOnce(workspace = "") {
+        const query = new URLSearchParams();
+        if (workspace.trim()) {
+            query.set("workspace", workspace);
+        }
+        const suffix = query.toString();
+        const res = await apiFetch(`/v2/pm/run_once${suffix ? `?${suffix}` : ""}`, {
+            method: "POST",
+        });
+        return handleResponse(res, "PM run once failed");
+    },
+    async startDirector(workspace = "") {
+        const query = new URLSearchParams();
+        if (workspace.trim()) {
+            query.set("workspace", workspace);
+        }
+        const suffix = query.toString();
+        const res = await apiFetch(`/v2/director/start${suffix ? `?${suffix}` : ""}`, { method: "POST" });
+        return handleResponse(res, "Failed to start Director");
+    },
+    async stopDirector(workspace = "") {
+        const query = new URLSearchParams();
+        if (workspace.trim()) {
+            query.set("workspace", workspace);
+        }
+        const suffix = query.toString();
+        const res = await apiFetch(`/v2/director/stop${suffix ? `?${suffix}` : ""}`, { method: "POST" });
+        return handleResponse(res, "Failed to stop Director");
+    },
+};
+export const snapshotService = {
+    async get() {
+        const res = await apiFetch("/v2/state/snapshot");
+        return handleResponse(res, "Failed to load snapshot");
+    },
+};
+export const residentService = {
+    async getStatus(workspace = "", details = false) {
+        const query = new URLSearchParams();
+        if (workspace)
+            query.set("workspace", workspace);
+        if (details)
+            query.set("details", "true");
+        const suffix = query.toString();
+        const res = await apiFetch(`/v2/resident/status${suffix ? `?${suffix}` : ""}`);
+        return handleResponse(res, "Failed to load Resident status");
+    },
+    async getCapabilities(workspace = "") {
+        const suffix = workspace
+            ? `?workspace=${encodeURIComponent(workspace)}`
+            : "";
+        const res = await apiFetch(`/v2/resident/capabilities${suffix}`);
+        return handleResponse(res, "Failed to load Resident AGI capability surface");
+    },
+    async getAgiAuditPack(workspace = "", decisionLimit = 20) {
+        const query = new URLSearchParams();
+        if (workspace)
+            query.set("workspace", workspace);
+        query.set("decision_limit", String(decisionLimit));
+        const res = await apiFetch(`/v2/resident/agi/audit-pack?${query.toString()}`);
+        return handleResponse(res, "Failed to load Resident AGI audit pack");
+    },
+    async getAgiEvidenceInterfaces(workspace = "", options = {}) {
+        const query = new URLSearchParams();
+        if (workspace)
+            query.set("workspace", workspace);
+        if (options.decisionType)
+            query.set("decision_type", options.decisionType);
+        if (options.interfaceIds?.length)
+            query.set("interface_ids", options.interfaceIds.join(","));
+        if (options.runId)
+            query.set("run_id", options.runId);
+        if (options.taskId)
+            query.set("task_id", options.taskId);
+        if (options.decisionLimit)
+            query.set("decision_limit", String(options.decisionLimit));
+        if (options.maxRuns)
+            query.set("max_runs", String(options.maxRuns));
+        const res = await apiFetch(`/v2/resident/agi/evidence-interfaces?${query.toString()}`);
+        return handleResponse(res, "Failed to load Resident AGI evidence interfaces");
+    },
+    async getAgiHandoffs(workspace = "", options = {}) {
+        const query = new URLSearchParams();
+        if (workspace)
+            query.set("workspace", workspace);
+        if (options.targetRole)
+            query.set("target_role", options.targetRole);
+        if (options.handoffStatus)
+            query.set("handoff_status", options.handoffStatus);
+        if (options.limit)
+            query.set("limit", String(options.limit));
+        const res = await apiFetch(`/v2/resident/agi/handoffs?${query.toString()}`);
+        return handleResponse(res, "Failed to load Resident AGI handoffs");
+    },
+    async getAgiRepairAdvisoryOverlay(workspace = "", options = {}) {
+        const query = new URLSearchParams();
+        if (workspace)
+            query.set("workspace", workspace);
+        if (options.limit)
+            query.set("limit", String(options.limit));
+        if (options.requireReady)
+            query.set("require_ready", "true");
+        if (options.requireEligible)
+            query.set("require_eligible", "true");
+        const res = await apiFetch(`/v2/resident/agi/repair-advisory-overlay?${query.toString()}`);
+        return handleResponse(res, "Failed to load Resident AGI repair advisory overlay");
+    },
+    async decide(workspace, payload) {
+        const res = await apiFetch("/v2/resident/agi/decide", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace, ...payload }),
+        });
+        return handleResponse(res, "Failed to run Resident AGI decision turn");
+    },
+    async chat(workspace, payload) {
+        const res = await apiFetch("/v2/resident/agi/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace, ...payload }),
+        });
+        return handleResponse(res, "Failed to run Resident AGI tactical chat");
+    },
+    async getAgiActionCatalog() {
+        const res = await apiFetch("/v2/resident/agi/actions/catalog");
+        return handleResponse(res, "Failed to load Resident AGI tactical action catalog");
+    },
+    async executeAgiAction(workspace, payload) {
+        const res = await apiFetch("/v2/resident/agi/actions/execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace, ...payload }),
+        });
+        return handleResponse(res, "Failed to execute Resident AGI tactical action");
+    },
+    async start(workspace, mode) {
+        const res = await apiFetch("/v2/resident/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace, mode }),
+        });
+        return handleResponse(res, "Failed to start Resident");
+    },
+    async stop(workspace) {
+        const res = await apiFetch("/v2/resident/stop", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace }),
+        });
+        return handleResponse(res, "Failed to stop Resident");
+    },
+    async tick(workspace, force = true) {
+        const query = force ? "?force=true" : "";
+        const res = await apiFetch(`/v2/resident/tick${query}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace }),
+        });
+        return handleResponse(res, "Failed to tick Resident");
+    },
+    async updateIdentity(workspace, payload) {
+        const res = await apiFetch("/v2/resident/identity", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace, ...payload }),
+        });
+        return handleResponse(res, "Failed to update Resident identity");
+    },
+    async updateAgiParticipation(workspace, payload) {
+        const res = await apiFetch("/v2/resident/agi/participation", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace, ...payload }),
+        });
+        return handleResponse(res, "Failed to update Resident AGI participation");
+    },
+    async listGoals(workspace, statusFilter = "") {
+        const query = new URLSearchParams();
+        if (workspace)
+            query.set("workspace", workspace);
+        if (statusFilter)
+            query.set("status_filter", statusFilter);
+        const suffix = query.toString();
+        const res = await apiFetch(`/v2/resident/goals${suffix ? `?${suffix}` : ""}`);
+        const parsed = await handleResponse(res, "Failed to list Resident goals");
+        return parsed.ok
+            ? {
+                ok: true,
+                data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+            }
+            : { ok: false, error: parsed.error };
+    },
+    async createGoal(workspace, payload) {
+        const res = await apiFetch("/v2/resident/goals", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace, ...payload }),
+        });
+        return handleResponse(res, "Failed to create Resident goal");
+    },
+    async approveGoal(goalId, workspace, note = "") {
+        const res = await apiFetch(`/v2/resident/goals/${encodeURIComponent(goalId)}/approve`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace, note }),
+        });
+        return handleResponse(res, "Failed to approve Resident goal");
+    },
+    async rejectGoal(goalId, workspace, note = "") {
+        const res = await apiFetch(`/v2/resident/goals/${encodeURIComponent(goalId)}/reject`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace, note }),
+        });
+        return handleResponse(res, "Failed to reject Resident goal");
+    },
+    async materializeGoal(goalId, workspace) {
+        const res = await apiFetch(`/v2/resident/goals/${encodeURIComponent(goalId)}/materialize`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace }),
+        });
+        return handleResponse(res, "Failed to materialize Resident goal");
+    },
+    async stageGoal(goalId, workspace, promoteToPmRuntime = false) {
+        const res = await apiFetch(`/v2/resident/goals/${encodeURIComponent(goalId)}/stage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                workspace,
+                promote_to_pm_runtime: promoteToPmRuntime,
+            }),
+        });
+        return handleResponse(res, "Failed to stage Resident goal");
+    },
+    async runGoal(goalId, workspace, options = {}) {
+        const res = await apiFetch(`/v2/resident/goals/${encodeURIComponent(goalId)}/run`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                workspace,
+                run_type: options.runType || "pm",
+                run_director: options.runDirector ?? true,
+                director_iterations: options.directorIterations ?? 1,
+            }),
+        });
+        return handleResponse(res, "Failed to run Resident goal through PM");
+    },
+    async listDecisions(workspace, options = {}) {
+        const query = new URLSearchParams();
+        if (workspace)
+            query.set("workspace", workspace);
+        if (options.limit)
+            query.set("limit", String(options.limit));
+        if (options.actor)
+            query.set("actor", options.actor);
+        if (options.verdict)
+            query.set("verdict", options.verdict);
+        const suffix = query.toString();
+        const res = await apiFetch(`/v2/resident/decisions${suffix ? `?${suffix}` : ""}`);
+        const parsed = await handleResponse(res, "Failed to list Resident decisions");
+        return parsed.ok
+            ? {
+                ok: true,
+                data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+            }
+            : { ok: false, error: parsed.error };
+    },
+    async recordDecision(workspace, payload) {
+        const res = await apiFetch("/v2/resident/decisions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace, ...payload }),
+        });
+        return handleResponse(res, "Failed to record Resident decision");
+    },
+    async listSkills(workspace) {
+        const suffix = workspace
+            ? `?workspace=${encodeURIComponent(workspace)}`
+            : "";
+        const res = await apiFetch(`/v2/resident/skills${suffix}`);
+        const parsed = await handleResponse(res, "Failed to list Resident skills");
+        return parsed.ok
+            ? {
+                ok: true,
+                data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+            }
+            : { ok: false, error: parsed.error };
+    },
+    async extractSkills(workspace) {
+        const res = await apiFetch("/v2/resident/skills/extract", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace }),
+        });
+        const parsed = await handleResponse(res, "Failed to extract Resident skills");
+        return parsed.ok
+            ? {
+                ok: true,
+                data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+            }
+            : { ok: false, error: parsed.error };
+    },
+    async listExperiments(workspace) {
+        const suffix = workspace
+            ? `?workspace=${encodeURIComponent(workspace)}`
+            : "";
+        const res = await apiFetch(`/v2/resident/experiments${suffix}`);
+        const parsed = await handleResponse(res, "Failed to list Resident experiments");
+        return parsed.ok
+            ? {
+                ok: true,
+                data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+            }
+            : { ok: false, error: parsed.error };
+    },
+    async runExperiments(workspace) {
+        const res = await apiFetch("/v2/resident/experiments/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace }),
+        });
+        const parsed = await handleResponse(res, "Failed to run Resident experiments");
+        return parsed.ok
+            ? {
+                ok: true,
+                data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+            }
+            : { ok: false, error: parsed.error };
+    },
+    async listImprovements(workspace) {
+        const suffix = workspace
+            ? `?workspace=${encodeURIComponent(workspace)}`
+            : "";
+        const res = await apiFetch(`/v2/resident/improvements${suffix}`);
+        const parsed = await handleResponse(res, "Failed to list Resident improvements");
+        return parsed.ok
+            ? {
+                ok: true,
+                data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+            }
+            : { ok: false, error: parsed.error };
+    },
+    async runImprovements(workspace) {
+        const res = await apiFetch("/v2/resident/improvements/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace }),
+        });
+        const parsed = await handleResponse(res, "Failed to run Resident improvements");
+        return parsed.ok
+            ? {
+                ok: true,
+                data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+            }
+            : { ok: false, error: parsed.error };
+    },
+    // Phase 1.2: Goal Execution Projection
+    async getGoalExecution(goalId, workspace) {
+        const suffix = workspace
+            ? `?workspace=${encodeURIComponent(workspace)}`
+            : "";
+        const res = await apiFetch(`/v2/resident/goals/${encodeURIComponent(goalId)}/execution${suffix}`);
+        return handleResponse(res, "Failed to load goal execution view");
+    },
+    async listGoalExecutions(workspace) {
+        const suffix = workspace
+            ? `?workspace=${encodeURIComponent(workspace)}`
+            : "";
+        const res = await apiFetch(`/v2/resident/goals/execution/bulk${suffix}`);
+        const parsed = await handleResponse(res, "Failed to list goal executions");
+        return parsed.ok
+            ? {
+                ok: true,
+                data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+            }
+            : { ok: false, error: parsed.error };
+    },
+};
+export const lancedbService = {
+    async getStatus() {
+        const res = await apiFetch("/v2/lancedb/status");
+        return handleResponse(res, "Failed to load LanceDB status");
+    },
+};
+export const llmService = {
+    async getStatus() {
+        const res = await apiFetch("/v2/llm/status");
+        return handleResponse(res, "Failed to load LLM status");
+    },
+};
+export const fileService = {
+    async read(path, tailLines) {
+        const normalizedPath = normalizeArtifactPath(path);
+        let url = `/v2/files/read?path=${encodeURIComponent(normalizedPath)}`;
+        if (tailLines) {
+            url += `&tail_lines=${tailLines}`;
+        }
+        const res = await apiFetch(url);
+        return handleResponse(res, "Failed to read file");
+    },
+    async readLogTail(path, lines = 20) {
+        const result = await this.read(path, 200);
+        if (!result.ok || !result.data?.content)
+            return "";
+        const allLines = result.data.content.split("\n");
+        return allLines.slice(-lines).join("\n");
+    },
+};
+export const memoService = {
+    async list(limit = 200) {
+        const res = await apiFetch(`/v2/memos/list?limit=${limit}`);
+        return handleResponse(res, "Failed to list memos");
+    },
+};
+export const runtimeService = {
+    async clearDialogue() {
+        const res = await apiFetch("/v2/runtime/clear", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ scope: "dialogue" }),
+        });
+        return handleResponse(res, "清空对话日志失败");
+    },
+    async resetTasks() {
+        const res = await apiFetch("/v2/runtime/reset/tasks", { method: "POST" });
+        return handleResponse(res, "重置任务失败");
+    },
+};
+export const ollamaService = {
+    async stopModels() {
+        const res = await apiFetch("/v2/ollama/stop", { method: "POST" });
+        return handleResponse(res, "Failed to stop Ollama models");
+    },
+};
+export const healthService = {
+    async check() {
+        const res = await apiFetch("/health");
+        return handleResponse(res, "Health check failed");
+    },
+};
+export const agentsService = {
+    async applyDraft(draftPath) {
+        const res = await apiFetch("/v2/agents/apply", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ draft_path: draftPath }),
+        });
+        return handleResponse(res, "Failed to apply AGENTS draft");
+    },
+    async saveFeedback(text) {
+        const res = await apiFetch("/v2/agents/feedback", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text }),
+        });
+        return handleResponse(res, "Failed to save feedback");
+    },
+};
+export const v2Services = {
+    // Background Tasks
+    async createTask(command, timeout = 300, tier = "background") {
+        const res = await apiFetch("/v2/services/tasks", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ command, timeout, tier }),
+        });
+        return handleResponse(res, "Failed to create background task");
+    },
+    async getTask(taskId) {
+        const res = await apiFetch(`/v2/services/tasks/${taskId}`);
+        return handleResponse(res, "Failed to get task");
+    },
+    async listTasks(state) {
+        const url = state
+            ? `/v2/services/tasks?state=${state}`
+            : "/v2/services/tasks";
+        const res = await apiFetch(url);
+        return handleResponse(res, "Failed to list tasks");
+    },
+    // Todos
+    async createTodo(content, priority = "medium", tags = []) {
+        const res = await apiFetch("/v2/services/todos", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content, priority, tags }),
+        });
+        return handleResponse(res, "Failed to create todo");
+    },
+    async listTodos(status) {
+        const url = status
+            ? `/v2/services/todos?status=${status}`
+            : "/v2/services/todos";
+        const res = await apiFetch(url);
+        return handleResponse(res, "Failed to list todos");
+    },
+    async getTodoSummary() {
+        const res = await apiFetch("/v2/services/todos/summary");
+        return handleResponse(res, "Failed to get todo summary");
+    },
+    async markTodoDone(itemId) {
+        const res = await apiFetch(`/v2/services/todos/${itemId}/done`, {
+            method: "POST",
+        });
+        return handleResponse(res, "Failed to mark todo done");
+    },
+    // Token Budget
+    async getTokenStatus() {
+        const res = await apiFetch("/v2/services/tokens/status");
+        return handleResponse(res, "Failed to get token status");
+    },
+    async recordTokenUsage(tokens) {
+        const res = await apiFetch("/v2/services/tokens/record", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tokens }),
+        });
+        return handleResponse(res, "Failed to record token usage");
+    },
+    // Security
+    async checkSecurity(command) {
+        const res = await apiFetch("/v2/services/security/check", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ command }),
+        });
+        return handleResponse(res, "Failed to check security");
+    },
+    // Transcript
+    async getTranscript(limit = 100, messageType) {
+        let url = `/v2/services/transcript?limit=${limit}`;
+        if (messageType)
+            url += `&message_type=${messageType}`;
+        const res = await apiFetch(url);
+        return handleResponse(res, "Failed to get transcript");
+    },
+    async getTranscriptSession() {
+        const res = await apiFetch("/v2/services/transcript/session");
+        return handleResponse(res, "Failed to get transcript session");
+    },
+};
+// ============================================================================
+// V2 P0 Missing Routes — Unified Role Chat
+// ============================================================================
+export const roleChatService = {
+    /** POST /v2/role/{role}/chat — Non-streaming unified role chat */
+    async chat(role, request, workspace = "") {
+        const res = await apiFetch(`/v2/role/${encodeURIComponent(role)}/chat${workspaceQuerySuffix(workspace)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Role chat failed");
+    },
+    /** GET /v2/role/{role}/chat/status — Role chat readiness status */
+    async getStatus(role, workspace = "") {
+        const res = await apiFetch(`/v2/role/${encodeURIComponent(role)}/chat/status${workspaceQuerySuffix(workspace)}`);
+        return handleResponse(res, "Failed to load role chat status");
+    },
+};
+// ============================================================================
+// V2 P0 Missing Routes — Role Session Messages
+// ============================================================================
+export const roleSessionService = {
+    /** POST /v2/roles/sessions/{id}/messages — Send a message to a role session */
+    async sendMessage(sessionId, request) {
+        const res = await apiFetch(`/v2/roles/sessions/${encodeURIComponent(sessionId)}/messages`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Failed to send session message");
+    },
+    /** GET /v2/roles/sessions/{id}/memory — Get session memory (maps to memory search endpoint) */
+    async getMemory(sessionId, query, kind, entity, limit = 6) {
+        const params = new URLSearchParams();
+        if (query)
+            params.set("q", query);
+        if (kind)
+            params.set("kind", kind);
+        if (entity)
+            params.set("entity", entity);
+        params.set("limit", String(limit));
+        const res = await apiFetch(`/v2/roles/sessions/${encodeURIComponent(sessionId)}/memory/search?${params}`);
+        return handleResponse(res, "Failed to load session memory");
+    },
+};
+// ============================================================================
+// V2 P0 Routes — Conversations
+// ============================================================================
+// ============================================================================
+// V2 P1 Management Routes — PM Tasks
+// ============================================================================
+export const pmTaskService = {
+    /** GET /v2/pm/tasks — List PM tasks */
+    async list(workspace = "") {
+        const res = await apiFetch(`/v2/pm/tasks${workspaceQuerySuffix(workspace)}`);
+        return handleResponse(res, "Failed to list PM tasks");
+    },
+    /** GET /v2/pm/tasks/{id} — Get PM task detail */
+    async get(id, workspace = "") {
+        const res = await apiFetch(`/v2/pm/tasks/${encodeURIComponent(id)}${workspaceQuerySuffix(workspace)}`);
+        return handleResponse(res, "Failed to get PM task detail");
+    },
+    /** POST /v2/pm/tasks — Create PM task */
+    async create(request, workspace = "") {
+        const res = await apiFetch(`/v2/pm/tasks${workspaceQuerySuffix(workspace)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Failed to create PM task");
+    },
+};
+// ============================================================================
+// V2 P1 Management Routes — PM Requirements
+// ============================================================================
+export const pmRequirementService = {
+    /** GET /v2/pm/requirements — List PM requirements */
+    async list(workspace = "") {
+        const res = await apiFetch(`/v2/pm/requirements${workspaceQuerySuffix(workspace)}`);
+        return handleResponse(res, "Failed to list PM requirements");
+    },
+    /** GET /v2/pm/requirements/{id} — Get PM requirement detail */
+    async get(id, workspace = "") {
+        const res = await apiFetch(`/v2/pm/requirements/${encodeURIComponent(id)}${workspaceQuerySuffix(workspace)}`);
+        return handleResponse(res, "Failed to get PM requirement detail");
+    },
+};
+// ============================================================================
+// V2 P1 Management Routes — Docs Init
+// ============================================================================
+export const docsInitService = {
+    /** POST /v2/docs/init/dialogue — Docs init dialogue */
+    async dialogue(request) {
+        const res = await apiFetch("/v2/docs/init/dialogue", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Docs init dialogue failed");
+    },
+    /** POST /v2/docs/init/suggest — Docs init suggest */
+    async suggest(request) {
+        const res = await apiFetch("/v2/docs/init/suggest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Docs init suggest failed");
+    },
+    /** POST /v2/docs/init/preview — Docs init preview */
+    async preview(request) {
+        const res = await apiFetch("/v2/docs/init/preview", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Docs init preview failed");
+    },
+    /** POST /v2/docs/init/apply — Docs init apply */
+    async apply(request) {
+        const res = await apiFetch("/v2/docs/init/apply", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Docs init apply failed");
+    },
+};
+// ============================================================================
+// V2 P1 Management Routes — LLM Config
+// ============================================================================
+export const llmConfigService = {
+    /** GET /v2/llm/config — Get LLM config */
+    async get() {
+        const res = await apiFetch("/v2/llm/config");
+        return handleResponse(res, "Failed to load LLM config");
+    },
+    /** POST /v2/llm/config/migrate — Migrate LLM config */
+    async migrate(request) {
+        const res = await apiFetch("/v2/llm/config/migrate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Failed to migrate LLM config");
+    },
+    /** GET /v2/llm/status — Get LLM status */
+    async getStatus() {
+        const res = await apiFetch("/v2/llm/status");
+        return handleResponse(res, "Failed to load LLM status");
+    },
+    /** GET /v2/llm/providers — List LLM providers */
+    async listProviders() {
+        const res = await apiFetch("/v2/llm/providers");
+        return handleResponse(res, "Failed to list LLM providers");
+    },
+};
+// ============================================================================
+// V2 P1 Management Routes — Settings
+// ============================================================================
+export const settingsV2Service = {
+    /** GET /v2/settings — Get settings */
+    async get() {
+        const res = await apiFetch("/v2/settings");
+        return handleResponse(res, "Failed to load settings");
+    },
+    /** POST /v2/settings — Update settings */
+    async update(request) {
+        const res = await apiFetch("/v2/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Failed to update settings");
+    },
+};
+// ============================================================================
+// V2 P1 Management Routes — Agents
+// ============================================================================
+export const agentsV2Service = {
+    /** POST /v2/agents/apply — Apply agents */
+    async apply(request) {
+        const res = await apiFetch("/v2/agents/apply", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Failed to apply agents");
+    },
+    /** POST /v2/agents/feedback — Agents feedback */
+    async feedback(request) {
+        const res = await apiFetch("/v2/agents/feedback", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Failed to submit agents feedback");
+    },
+};
+// ============================================================================
+// V2 P1 Management Routes — Role Cache
+// ============================================================================
+export const roleCacheService = {
+    /** GET /v2/role/cache-stats — LLM cache stats */
+    async getStats() {
+        const res = await apiFetch("/v2/role/cache-stats");
+        return handleResponse(res, "Failed to load role cache stats");
+    },
+    /** POST /v2/role/cache-clear — Clear LLM cache */
+    async clear() {
+        const res = await apiFetch("/v2/role/cache-clear", { method: "POST" });
+        return handleResponse(res, "Failed to clear role cache");
+    },
+};
+// ============================================================================
+// V2 P1 Management Routes — Role Chat Roles
+// ============================================================================
+export const roleChatRolesService = {
+    /** GET /v2/role/chat/roles — List supported roles */
+    async list() {
+        const res = await apiFetch("/v2/role/chat/roles");
+        return handleResponse(res, "Failed to list supported roles");
+    },
+};
+export const conversationV2Service = {
+    /** GET /v2/conversations — List conversations */
+    async list(params) {
+        const searchParams = new URLSearchParams();
+        if (params?.role)
+            searchParams.set("role", params.role);
+        if (params?.workspace)
+            searchParams.set("workspace", params.workspace);
+        if (params?.limit)
+            searchParams.set("limit", String(params.limit));
+        if (params?.offset)
+            searchParams.set("offset", String(params.offset));
+        const query = searchParams.toString();
+        const res = await apiFetch(`/v2/conversations${query ? `?${query}` : ""}`);
+        return handleResponse(res, "Failed to list conversations");
+    },
+    /** POST /v2/conversations — Create conversation */
+    async create(request) {
+        const res = await apiFetch("/v2/conversations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Failed to create conversation");
+    },
+    /** GET /v2/conversations/{id}/messages — Get conversation messages */
+    async getMessages(conversationId, params) {
+        const searchParams = new URLSearchParams();
+        if (params?.limit)
+            searchParams.set("limit", String(params.limit));
+        if (params?.offset)
+            searchParams.set("offset", String(params.offset));
+        const query = searchParams.toString();
+        const res = await apiFetch(`/v2/conversations/${encodeURIComponent(conversationId)}/messages${query ? `?${query}` : ""}`);
+        return handleResponse(res, "Failed to get conversation messages");
+    },
+    /** POST /v2/conversations/{id}/messages — Add message to conversation */
+    async addMessage(conversationId, request) {
+        const res = await apiFetch(`/v2/conversations/${encodeURIComponent(conversationId)}/messages`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Failed to add conversation message");
+    },
+};
+// ============================================================================
+// V2 P2 Diagnostic Routes
+// ============================================================================
+export const healthV2Service = {
+    /** GET /v2/health — Health check */
+    async check() {
+        const res = await apiFetch("/v2/health");
+        return handleResponse(res, "Health check failed");
+    },
+};
+export const readyV2Service = {
+    /** GET /v2/ready — Readiness probe */
+    async check() {
+        const res = await apiFetch("/v2/ready");
+        return handleResponse(res, "Readiness check failed");
+    },
+};
+export const liveV2Service = {
+    /** GET /v2/live — Liveness probe */
+    async check() {
+        const res = await apiFetch("/v2/live");
+        return handleResponse(res, "Liveness check failed");
+    },
+};
+export const stateSnapshotV2Service = {
+    /** GET /v2/state/snapshot — State snapshot */
+    async get() {
+        const res = await apiFetch("/v2/state/snapshot");
+        return handleResponse(res, "Failed to load state snapshot");
+    },
+};
+export const shutdownV2Service = {
+    /** POST /v2/app/shutdown — Shutdown */
+    async shutdown() {
+        const res = await apiFetch("/v2/app/shutdown", { method: "POST" });
+        return handleResponse(res, "Shutdown failed");
+    },
+};
+export const logsV2Service = {
+    /** GET /logs/v2/query - Query logs */
+    async query(params) {
+        const searchParams = new URLSearchParams();
+        if (params?.level)
+            searchParams.set("level", params.level);
+        if (params?.channel)
+            searchParams.set("channel", params.channel);
+        if (params?.limit)
+            searchParams.set("limit", String(params.limit));
+        if (params?.offset)
+            searchParams.set("offset", String(params.offset));
+        if (params?.start)
+            searchParams.set("start", params.start);
+        if (params?.end)
+            searchParams.set("end", params.end);
+        const query = searchParams.toString();
+        const res = await apiFetch(`/logs/v2/query${query ? `?${query}` : ""}`);
+        return handleResponse(res, "Failed to query logs");
+    },
+    /** POST /logs/v2/user-action - Log user action */
+    async logUserAction(request) {
+        const res = await apiFetch("/logs/v2/user-action", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Failed to log user action");
+    },
+    /** GET /logs/v2/channels - Log channels */
+    async channels() {
+        const res = await apiFetch("/logs/v2/channels");
+        return handleResponse(res, "Failed to load log channels");
+    },
+};
+export const lancedbV2Service = {
+    /** GET /v2/lancedb/status — LanceDB status */
+    async getStatus() {
+        const res = await apiFetch("/v2/lancedb/status");
+        return handleResponse(res, "Failed to load LanceDB status");
+    },
+};
+export const memosV2Service = {
+    /** GET /v2/memos/list — List memos */
+    async list(limit = 200) {
+        const res = await apiFetch(`/v2/memos/list?limit=${limit}`);
+        return handleResponse(res, "Failed to list memos");
+    },
+};
+export const ollamaV2Service = {
+    /** POST /v2/ollama/models — List Ollama models */
+    async listModels(request) {
+        const res = await apiFetch("/v2/ollama/models", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request ?? {}),
+        });
+        return handleResponse(res, "Failed to list Ollama models");
+    },
+    /** POST /v2/ollama/stop — Stop Ollama */
+    async stop() {
+        const res = await apiFetch("/v2/ollama/stop", { method: "POST" });
+        return handleResponse(res, "Failed to stop Ollama");
+    },
+};
+export const memoryV2Service = {
+    /** GET /memory/v2/state - Memory state */
+    async getState() {
+        const res = await apiFetch("/memory/v2/state");
+        return handleResponse(res, "Failed to load memory state");
+    },
+    /** DELETE /memory/v2/memories/{memory_id} - Delete memory */
+    async deleteMemory(memoryId) {
+        const res = await apiFetch(`/memory/v2/memories/${encodeURIComponent(memoryId)}`, { method: "DELETE" });
+        return handleResponse(res, "Failed to delete memory");
+    },
+};
+export const roleLlmEventsV2Service = {
+    /** GET /v2/role/{role}/llm-events — Role LLM events */
+    async getByRole(role, params) {
+        const searchParams = new URLSearchParams();
+        if (params?.limit)
+            searchParams.set("limit", String(params.limit));
+        if (params?.offset)
+            searchParams.set("offset", String(params.offset));
+        if (params?.workspace)
+            searchParams.set("workspace", params.workspace);
+        const query = searchParams.toString();
+        const res = await apiFetch(`/v2/role/${encodeURIComponent(role)}/llm-events${query ? `?${query}` : ""}`);
+        return handleResponse(res, "Failed to load role LLM events");
+    },
+    /** GET /v2/role/llm-events — All LLM events */
+    async getAll(params) {
+        const searchParams = new URLSearchParams();
+        if (params?.limit)
+            searchParams.set("limit", String(params.limit));
+        if (params?.offset)
+            searchParams.set("offset", String(params.offset));
+        if (params?.role)
+            searchParams.set("role", params.role);
+        if (params?.workspace)
+            searchParams.set("workspace", params.workspace);
+        const query = searchParams.toString();
+        const res = await apiFetch(`/v2/role/llm-events${query ? `?${query}` : ""}`);
+        return handleResponse(res, "Failed to load LLM events");
+    },
+};
+export const factoryRunV2Service = {
+    /** GET /v2/factory/runs/{id}/events — Factory run events */
+    async getEvents(runId, params) {
+        const searchParams = new URLSearchParams();
+        if (params?.limit)
+            searchParams.set("limit", String(params.limit));
+        if (params?.offset)
+            searchParams.set("offset", String(params.offset));
+        const query = searchParams.toString();
+        const res = await apiFetch(`/v2/factory/runs/${encodeURIComponent(runId)}/events${query ? `?${query}` : ""}`);
+        return handleResponse(res, "Failed to load factory run events");
+    },
+    /** GET /v2/factory/runs/{id}/audit-bundle — Audit bundle */
+    async getAuditBundle(runId) {
+        const res = await apiFetch(`/v2/factory/runs/${encodeURIComponent(runId)}/audit-bundle`);
+        return handleResponse(res, "Failed to load factory run audit bundle");
+    },
+};
+export const runtimeMigrationV2Service = {
+    /** GET /v2/runtime/migration/status — Migration status */
+    async getStatus() {
+        const res = await apiFetch("/v2/runtime/migration/status");
+        return handleResponse(res, "Failed to load runtime migration status");
+    },
+};
+// ============================================================================
+// V2 P3 Advanced Routes — Court
+// ============================================================================
+export const courtService = {
+    /** GET /v2/court/topology — Court topology */
+    async getTopology() {
+        const res = await apiFetch("/v2/court/topology");
+        return handleResponse(res, "Failed to load court topology");
+    },
+    /** GET /v2/court/state — Court state */
+    async getState() {
+        const res = await apiFetch("/v2/court/state");
+        return handleResponse(res, "Failed to load court state");
+    },
+    /** GET /v2/court/actors/{role_id} — Court actor */
+    async getActor(roleId) {
+        const res = await apiFetch(`/v2/court/actors/${encodeURIComponent(roleId)}`);
+        return handleResponse(res, "Failed to load court actor");
+    },
+    /** GET /v2/court/scenes/{scene_id} — Court scene */
+    async getScene(sceneId) {
+        const res = await apiFetch(`/v2/court/scenes/${encodeURIComponent(sceneId)}`);
+        return handleResponse(res, "Failed to load court scene");
+    },
+    /** GET /v2/court/mapping — Court mapping */
+    async getMapping() {
+        const res = await apiFetch("/v2/court/mapping");
+        return handleResponse(res, "Failed to load court mapping");
+    },
+};
+// ============================================================================
+// V2 P3 Advanced Routes — Vision
+// ============================================================================
+export const visionService = {
+    /** GET /v2/vision/status — Vision status */
+    async getStatus() {
+        const res = await apiFetch("/v2/vision/status");
+        return handleResponse(res, "Failed to load vision status");
+    },
+    /** POST /v2/vision/analyze — Vision analyze */
+    async analyze(request) {
+        const res = await apiFetch("/v2/vision/analyze", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Vision analyze failed");
+    },
+};
+// ============================================================================
+// V2 P3 Advanced Routes — Scheduler
+// ============================================================================
+export const schedulerService = {
+    /** GET /v2/scheduler/status — Scheduler status */
+    async getStatus() {
+        const res = await apiFetch("/v2/scheduler/status");
+        return handleResponse(res, "Failed to load scheduler status");
+    },
+    /** POST /v2/scheduler/start — Scheduler start */
+    async start(request) {
+        const res = await apiFetch("/v2/scheduler/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request ?? {}),
+        });
+        return handleResponse(res, "Failed to start scheduler");
+    },
+    /** POST /v2/scheduler/stop — Scheduler stop */
+    async stop() {
+        const res = await apiFetch("/v2/scheduler/stop", { method: "POST" });
+        return handleResponse(res, "Failed to stop scheduler");
+    },
+};
+// ============================================================================
+// V2 P3 Advanced Routes — Code Map
+// ============================================================================
+export const codeMapService = {
+    /** GET /v2/code_map — Code map */
+    async getMap() {
+        const res = await apiFetch("/v2/code_map");
+        return handleResponse(res, "Failed to load code map");
+    },
+    /** POST /v2/code/index — Code index */
+    async index(request) {
+        const res = await apiFetch("/v2/code/index", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request ?? {}),
+        });
+        return handleResponse(res, "Failed to index code");
+    },
+    /** POST /v2/code/search — Code search */
+    async search(request) {
+        const res = await apiFetch("/v2/code/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Code search failed");
+    },
+};
+// ============================================================================
+// V2 P3 Advanced Routes — MCP
+// ============================================================================
+export const mcpService = {
+    /** GET /v2/mcp/status — MCP status */
+    async getStatus() {
+        const res = await apiFetch("/v2/mcp/status");
+        return handleResponse(res, "Failed to load MCP status");
+    },
+};
+// ============================================================================
+// V2 P3 Advanced Routes — Director Capabilities
+// ============================================================================
+export const directorCapabilitiesService = {
+    /** GET /v2/director/capabilities — Director capabilities */
+    async getCapabilities() {
+        const res = await apiFetch("/v2/director/capabilities");
+        return handleResponse(res, "Failed to load director capabilities");
+    },
+};
+// ============================================================================
+// V2 P3 Advanced Routes — Interview
+// ============================================================================
+export const interviewService = {
+    /** POST /v2/llm/interview/ask — Interview ask */
+    async ask(request) {
+        const res = await apiFetch("/v2/llm/interview/ask", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Interview ask failed");
+    },
+    /** POST /v2/llm/interview/save — Interview save */
+    async save(request) {
+        const res = await apiFetch("/v2/llm/interview/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Interview save failed");
+    },
+    /** POST /v2/llm/interview/cancel — Interview cancel */
+    async cancel(request) {
+        const res = await apiFetch("/v2/llm/interview/cancel", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request ?? {}),
+        });
+        return handleResponse(res, "Interview cancel failed");
+    },
+};
+// ============================================================================
+// V2 P3 Advanced Routes — LLM Test
+// ============================================================================
+export const llmTestService = {
+    /** GET /v2/llm/test — LLM test report */
+    async getReport() {
+        const res = await apiFetch("/v2/llm/test");
+        return handleResponse(res, "Failed to load LLM test report");
+    },
+    /** POST /v2/llm/test — Start LLM test */
+    async start(request) {
+        const res = await apiFetch("/v2/llm/test", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request ?? {}),
+        });
+        return handleResponse(res, "Failed to start LLM test");
+    },
+    /** GET /v2/llm/test/{test_run_id} — Test run status */
+    async getRunStatus(testRunId) {
+        const res = await apiFetch(`/v2/llm/test/${encodeURIComponent(testRunId)}`);
+        return handleResponse(res, "Failed to load test run status");
+    },
+    /** GET /v2/llm/test/{test_run_id}/transcript — Test transcript */
+    async getTranscript(testRunId) {
+        const res = await apiFetch(`/v2/llm/test/${encodeURIComponent(testRunId)}/transcript`);
+        return handleResponse(res, "Failed to load test transcript");
+    },
+};
+// ============================================================================
+// V2 P3 Advanced Routes — Permissions
+// ============================================================================
+export const permissionsV2Service = {
+    /** POST /v2/permissions/check — Check permission */
+    async check(request) {
+        const res = await apiFetch("/v2/permissions/check", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Permission check failed");
+    },
+    /** GET /v2/permissions/effective — Effective permissions */
+    async getEffective() {
+        const res = await apiFetch("/v2/permissions/effective");
+        return handleResponse(res, "Failed to load effective permissions");
+    },
+    /** GET /v2/permissions/roles — Permission roles */
+    async listRoles() {
+        const res = await apiFetch("/v2/permissions/roles");
+        return handleResponse(res, "Failed to list permission roles");
+    },
+    /** POST /v2/permissions/assign — Assign permission */
+    async assign(request) {
+        const res = await apiFetch("/v2/permissions/assign", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+        return handleResponse(res, "Permission assign failed");
+    },
+    /** GET /v2/permissions/policies — Permission policies */
+    async listPolicies() {
+        const res = await apiFetch("/v2/permissions/policies");
+        return handleResponse(res, "Failed to list permission policies");
+    },
+};
+// ============================================================================
+// V2 P3 Advanced Routes — Files V2
+// ============================================================================
+export const fileV2Service = {
+    /** GET /v2/files/read — Read file */
+    async read(path) {
+        const res = await apiFetch(`/v2/files/read?path=${encodeURIComponent(path)}`);
+        return handleResponse(res, "Failed to read file");
+    },
+};
+// ============================================================================
+// V2 P3 Advanced Routes — Runtime V2
+// ============================================================================
+export const runtimeV2Service = {
+    /** POST /v2/runtime/clear — Clear runtime */
+    async clear() {
+        const res = await apiFetch("/v2/runtime/clear", { method: "POST" });
+        return handleResponse(res, "Failed to clear runtime");
+    },
+    /** POST /v2/runtime/reset/tasks — Reset tasks */
+    async resetTasks() {
+        const res = await apiFetch("/v2/runtime/reset/tasks", { method: "POST" });
+        return handleResponse(res, "Failed to reset tasks");
+    },
+};
+// ============================================================================
+// V2 P3 Advanced Routes — LLM Runtime Status
+// ============================================================================
+export const llmRuntimeStatusService = {
+    /** GET /v2/llm/runtime-status — LLM runtime status */
+    async getStatus() {
+        const res = await apiFetch("/v2/llm/runtime-status");
+        return handleResponse(res, "Failed to load LLM runtime status");
+    },
+    /** GET /v2/llm/runtime-status/{role_id} — Role runtime status */
+    async getRoleStatus(roleId) {
+        const res = await apiFetch(`/v2/llm/runtime-status/${encodeURIComponent(roleId)}`);
+        return handleResponse(res, "Failed to load role runtime status");
+    },
+};

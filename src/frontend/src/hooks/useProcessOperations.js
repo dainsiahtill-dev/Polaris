@@ -1,0 +1,369 @@
+import { useState, useCallback } from 'react';
+import { toast } from 'sonner';
+import { startPm, stopPm, runPmOnce, startDirector, stopDirector, listDirectorTasks, createDirectorTask, readLogTail, } from '@/services';
+function isPmTaskDone(task) {
+    const rawStatus = String(task.status || task.state || '').trim().toLowerCase();
+    return Boolean(task.done || task.completed || ['done', 'completed', 'success', 'passed'].includes(rawStatus));
+}
+function toDirectorPriority(task) {
+    const numeric = Number(task.priority);
+    if (Number.isFinite(numeric)) {
+        if (numeric <= 0)
+            return 'CRITICAL';
+        if (numeric <= 1)
+            return 'HIGH';
+        if (numeric <= 2)
+            return 'MEDIUM';
+    }
+    return 'LOW';
+}
+function normalizePmTaskId(task) {
+    const raw = String(task.id || '').trim();
+    // Strip backend-generated TASK- prefixes (TASK-1, task_1, task-1, etc.)
+    return raw.replace(/^(?:task[-_])/i, '');
+}
+function toStringList(value) {
+    if (!Array.isArray(value)) {
+        const token = typeof value === 'string' ? value.trim() : '';
+        return token ? [token] : [];
+    }
+    return value
+        .map((item) => {
+        if (typeof item === 'string')
+            return item.trim();
+        if (item && typeof item === 'object') {
+            const record = item;
+            return String(record.description || record.title || record.id || '').trim();
+        }
+        return '';
+    })
+        .filter((item) => item.length > 0);
+}
+function toTaskRecord(task) {
+    return task;
+}
+function taskMetadata(task) {
+    const metadata = toTaskRecord(task).metadata;
+    return metadata && typeof metadata === 'object'
+        ? metadata
+        : {};
+}
+function readTaskValue(task, keys) {
+    const taskRecord = toTaskRecord(task);
+    const metadata = taskMetadata(task);
+    for (const key of keys) {
+        const directValue = taskRecord[key];
+        if (directValue !== undefined && directValue !== null) {
+            return directValue;
+        }
+        const metadataValue = metadata[key];
+        if (metadataValue !== undefined && metadataValue !== null) {
+            return metadataValue;
+        }
+    }
+    return undefined;
+}
+function readTaskString(task, keys) {
+    const value = readTaskValue(task, keys);
+    return typeof value === 'string' ? value.trim() : '';
+}
+function buildDirectorTaskPayload(task) {
+    const title = String(task.title || task.goal || task.id || '未命名任务').trim();
+    const description = String(task.summary || task.goal || '').trim();
+    const taskRecord = toTaskRecord(task);
+    const acceptance = toStringList(taskRecord.acceptance).concat(toStringList(taskRecord.acceptance_criteria));
+    const scopePaths = toStringList(taskRecord.scope_paths);
+    const targetFiles = toStringList(taskRecord.target_files);
+    const executionChecklist = toStringList(taskRecord.execution_checklist);
+    const command = String(taskRecord.command || '').trim();
+    return {
+        subject: title,
+        description,
+        command: command || null,
+        priority: toDirectorPriority(task),
+        timeout_seconds: 600,
+        metadata: {
+            pm_task_id: normalizePmTaskId(task),
+            pm_task_title: title,
+            pm_task_status: String(task.status || task.state || '').trim(),
+            acceptance,
+            scope_paths: scopePaths,
+            target_files: targetFiles,
+            execution_checklist: executionChecklist,
+            qa_contract: taskRecord.qa_contract && typeof taskRecord.qa_contract === 'object'
+                ? taskRecord.qa_contract
+                : {},
+            blueprint_id: readTaskString(task, ['blueprint_id', 'blueprintId']) || null,
+            blueprint_path: readTaskString(task, ['blueprint_path', 'blueprintPath']) || null,
+            runtime_blueprint_path: readTaskString(task, ['runtime_blueprint_path', 'runtimeBlueprintPath']) || null,
+            guardrails: readTaskValue(task, ['guardrails']),
+            no_touch_zones: readTaskValue(task, ['no_touch_zones', 'noTouchZones']),
+            context_snapshot_ref: readTaskString(task, ['context_snapshot_ref', 'contextSnapshotRef']) || null,
+            source: 'pm_contract',
+        },
+    };
+}
+export function useProcessOperations(options = {}) {
+    const { workspace = '', onStatusChange, onOpenLogs, lancedbBlocked, lancedbBlockMessage } = options;
+    const [state, setState] = useState({
+        isStartingPM: false,
+        isStoppingPM: false,
+        isStartingDirector: false,
+        isStoppingDirector: false,
+        pmActionError: null,
+        directorActionError: null,
+    });
+    const setField = useCallback((key, value) => {
+        setState(prev => ({ ...prev, [key]: value }));
+    }, []);
+    const handleProcessError = useCallback(async (errorMessage, defaultLogPath) => {
+        let combined = errorMessage;
+        try {
+            const tail = await readLogTail(defaultLogPath, 20);
+            if (tail) {
+                combined = `${errorMessage}\n\n${tail}`;
+            }
+        }
+        catch {
+            // Ignore errors when fetching log tail
+        }
+        return combined;
+    }, []);
+    const startPmLoop = useCallback(async (resume = false) => {
+        setField('pmActionError', null);
+        setField('isStartingPM', true);
+        const startToastId = toast.loading(resume ? 'Resuming PM...' : 'Starting PM...', {
+            duration: 5000,
+        });
+        try {
+            if (lancedbBlocked) {
+                toast.warning(lancedbBlockMessage || 'LanceDB is required to start PM.');
+                toast.dismiss(startToastId);
+                return false;
+            }
+            const result = await startPm(resume, workspace);
+            if (!result.ok) {
+                toast.dismiss(startToastId);
+                const combined = await handleProcessError(result.error || 'Failed to start PM', 'runtime/logs/pm.process.log');
+                onOpenLogs?.('pm-subprocess', combined);
+                toast.error('Failed to start PM');
+                return false;
+            }
+            toast.dismiss(startToastId);
+            toast.success(resume ? 'PM resumed' : 'PM started');
+            onStatusChange?.();
+            return true;
+        }
+        catch (err) {
+            toast.dismiss(startToastId);
+            const message = err instanceof Error ? err.message : 'PM operation failed';
+            onOpenLogs?.('pm-subprocess', message);
+            toast.error(message);
+            return false;
+        }
+        finally {
+            setField('isStartingPM', false);
+        }
+    }, [lancedbBlocked, lancedbBlockMessage, handleProcessError, onOpenLogs, onStatusChange, setField, workspace]);
+    const stopPmCallback = useCallback(async () => {
+        setField('pmActionError', null);
+        setField('isStoppingPM', true);
+        try {
+            const result = await stopPm(workspace);
+            if (!result.ok) {
+                throw new Error(result.error || 'Failed to stop PM');
+            }
+            onStatusChange?.();
+            return true;
+        }
+        catch (err) {
+            const message = err instanceof Error ? err.message : 'PM operation failed';
+            setField('pmActionError', message);
+            toast.error(message);
+            return false;
+        }
+        finally {
+            setField('isStoppingPM', false);
+        }
+    }, [onStatusChange, setField, workspace]);
+    const togglePm = useCallback(async (isRunning) => {
+        if (isRunning) {
+            return stopPmCallback();
+        }
+        else {
+            return startPmLoop(false);
+        }
+    }, [startPmLoop, stopPmCallback]);
+    const runPmOnceCallback = useCallback(async () => {
+        setField('pmActionError', null);
+        setField('isStartingPM', true);
+        const startToastId = toast.loading('Running PM once...', {
+            duration: 5000,
+        });
+        try {
+            if (lancedbBlocked) {
+                toast.warning(lancedbBlockMessage || 'LanceDB is required to run PM.');
+                toast.dismiss(startToastId);
+                return false;
+            }
+            const result = await runPmOnce(workspace);
+            if (!result.ok) {
+                toast.dismiss(startToastId);
+                const combined = await handleProcessError(result.error || 'PM run once failed', 'runtime/logs/pm.process.log');
+                onOpenLogs?.('pm-subprocess', combined);
+                toast.error('PM run once failed');
+                return false;
+            }
+            toast.dismiss(startToastId);
+            toast.success('PM run once started');
+            onStatusChange?.();
+            return true;
+        }
+        catch (err) {
+            toast.dismiss(startToastId);
+            const message = err instanceof Error ? err.message : 'PM run once failed';
+            onOpenLogs?.('pm-subprocess', message);
+            toast.error(message);
+            return false;
+        }
+        finally {
+            setField('isStartingPM', false);
+        }
+    }, [lancedbBlocked, lancedbBlockMessage, handleProcessError, onOpenLogs, onStatusChange, setField, workspace]);
+    const seedDirectorQueueFromPmTasks = useCallback(async (tasks) => {
+        const sourceTasks = Array.isArray(tasks)
+            ? tasks.filter((task) => task && typeof task === 'object')
+            : [];
+        if (!sourceTasks.length) {
+            return true;
+        }
+        const candidates = sourceTasks.filter((task) => task && typeof task === 'object' && !isPmTaskDone(task));
+        if (!candidates.length) {
+            return true;
+        }
+        const existingResult = await listDirectorTasks('local', workspace);
+        let existingTaskIds = new Set();
+        if (existingResult.ok && existingResult.data) {
+            const tasks = existingResult.data;
+            const ids = tasks
+                .filter((item) => {
+                const workflowState = String(item?.metadata?.workflow_state || '').trim();
+                return workflowState.length === 0;
+            })
+                .map((item) => String(item?.metadata?.pm_task_id || '').trim())
+                .filter((item) => item.length > 0);
+            existingTaskIds = new Set(ids);
+        }
+        for (const task of candidates) {
+            const pmTaskId = normalizePmTaskId(task);
+            if (pmTaskId && existingTaskIds.has(pmTaskId)) {
+                continue;
+            }
+            const result = await createDirectorTask(buildDirectorTaskPayload(task), workspace);
+            if (!result.ok) {
+                throw new Error(result.error || '同步 PM 任务到 Director 队列失败');
+            }
+            if (pmTaskId) {
+                existingTaskIds.add(pmTaskId);
+            }
+        }
+        return true;
+    }, [workspace]);
+    const startDirectorCallback = useCallback(async (checkAgents, tasks) => {
+        setField('directorActionError', null);
+        setField('isStartingDirector', true);
+        const startToastId = toast.loading('Starting Director...', {
+            duration: 5000,
+        });
+        try {
+            if (checkAgents?.required) {
+                toast.dismiss(startToastId);
+                if (checkAgents.draftReady) {
+                    toast.warning('Please review and confirm AGENTS.generated.md before starting Director.');
+                }
+                else {
+                    toast.warning('Please run PM first to read the spec and generate AGENTS.generated.md.');
+                }
+                return false;
+            }
+            if (lancedbBlocked) {
+                toast.dismiss(startToastId);
+                toast.warning(lancedbBlockMessage || 'LanceDB is required to start Director.');
+                return false;
+            }
+            await seedDirectorQueueFromPmTasks(tasks);
+            const result = await startDirector(workspace);
+            if (!result.ok) {
+                toast.dismiss(startToastId);
+                const combined = await handleProcessError(result.error || 'Failed to start Director', 'runtime/logs/director.process.log');
+                onOpenLogs?.('director', combined);
+                toast.error('Failed to start Director');
+                return false;
+            }
+            toast.dismiss(startToastId);
+            toast.success('Director started');
+            onStatusChange?.();
+            return true;
+        }
+        catch (err) {
+            toast.dismiss(startToastId);
+            const message = err instanceof Error ? err.message : 'Director operation failed';
+            setField('directorActionError', message);
+            toast.error(message);
+            return false;
+        }
+        finally {
+            setField('isStartingDirector', false);
+        }
+    }, [
+        lancedbBlocked,
+        lancedbBlockMessage,
+        handleProcessError,
+        onOpenLogs,
+        onStatusChange,
+        seedDirectorQueueFromPmTasks,
+        setField,
+        workspace,
+    ]);
+    const stopDirectorCallback = useCallback(async () => {
+        setField('directorActionError', null);
+        setField('isStoppingDirector', true);
+        try {
+            const result = await stopDirector(workspace);
+            if (!result.ok) {
+                throw new Error(result.error || 'Failed to stop Director');
+            }
+            onStatusChange?.();
+            return true;
+        }
+        catch (err) {
+            const message = err instanceof Error ? err.message : 'Director operation failed';
+            setField('directorActionError', message);
+            toast.error(message);
+            return false;
+        }
+        finally {
+            setField('isStoppingDirector', false);
+        }
+    }, [onStatusChange, setField, workspace]);
+    const toggleDirector = useCallback(async (isRunning, checkAgents, tasks) => {
+        if (isRunning) {
+            return stopDirectorCallback();
+        }
+        else {
+            return startDirectorCallback(checkAgents, tasks);
+        }
+    }, [startDirectorCallback, stopDirectorCallback]);
+    return {
+        ...state,
+        startPmLoop,
+        stopPm: stopPmCallback,
+        togglePm,
+        runPmOnce: runPmOnceCallback,
+        startDirector: startDirectorCallback,
+        stopDirector: stopDirectorCallback,
+        toggleDirector,
+        clearPmError: () => setField('pmActionError', null),
+        clearDirectorError: () => setField('directorActionError', null),
+    };
+}

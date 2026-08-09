@@ -1,0 +1,414 @@
+/**
+ * Runtime DirectorWorkspace - DirectorWorkspace 状态选择器与 VM
+ *
+ * 为 DirectorWorkspace 组件提供状态选择和 ViewModel
+ */
+import { useMemo, useState, useCallback } from 'react';
+import { useRuntime } from '@/app/hooks/useRuntime';
+// ============================================================
+// 纯函数工具
+// ============================================================
+export function resolveTaskExecutionStatus(params) {
+    const normalized = String(params.rawStatus || '').trim().toLowerCase();
+    const completed = params.done || params.completed || ['completed', 'done', 'success'].includes(normalized);
+    if (completed)
+        return 'completed';
+    if (['failed', 'error'].includes(normalized))
+        return 'failed';
+    if (['blocked', 'cancelled', 'canceled'].includes(normalized))
+        return 'blocked';
+    if (['running', 'in_progress', 'claimed'].includes(normalized))
+        return 'running';
+    if (params.directorRunning && params.isCurrent)
+        return 'running';
+    return 'pending';
+}
+export function resolveSessionStatus(directorRunning, isStarting, tasks) {
+    if (directorRunning || isStarting)
+        return 'running';
+    if (tasks.length > 0 && tasks.every((task) => task.status === 'completed'))
+        return 'completed';
+    if (tasks.some((task) => task.status === 'blocked'))
+        return 'paused';
+    return 'idle';
+}
+function readTaskMetadata(task) {
+    return task.metadata && typeof task.metadata === 'object' ? task.metadata : {};
+}
+function readTaskString(task, keys) {
+    for (const key of keys) {
+        const directValue = task[key];
+        if (typeof directValue === 'string' && directValue.trim()) {
+            return directValue.trim();
+        }
+        const metadataValue = readTaskMetadata(task)[key];
+        if (typeof metadataValue === 'string' && metadataValue.trim()) {
+            return metadataValue.trim();
+        }
+    }
+    return '';
+}
+export function computePatchLineStats(patch, operation) {
+    const text = String(patch || '');
+    if (!text)
+        return { added: 0, deleted: 0, modified: 0 };
+    const lines = text.split('\n');
+    const hasDiffMarkers = lines.some((line) => line.startsWith('@@') || line.startsWith('+++ ') || line.startsWith('--- '));
+    if (!hasDiffMarkers) {
+        const rawLineCount = lines.filter((line) => line.trim().length > 0).length;
+        if (operation === 'delete')
+            return { added: 0, deleted: rawLineCount, modified: 0 };
+        return { added: rawLineCount, deleted: 0, modified: 0 };
+    }
+    let plus = 0, minus = 0;
+    for (const line of lines) {
+        if (!line)
+            continue;
+        if (line.startsWith('+++ ') || line.startsWith('--- ') || line.startsWith('@@'))
+            continue;
+        if (line.startsWith('+')) {
+            plus += 1;
+            continue;
+        }
+        if (line.startsWith('-'))
+            minus += 1;
+    }
+    const modified = Math.min(plus, minus);
+    return {
+        added: Math.max(0, plus - modified),
+        deleted: Math.max(0, minus - modified),
+        modified,
+    };
+}
+function resolveEventLineStats(event) {
+    const backendStats = {
+        added: Math.max(0, Number(event.addedLines) || 0),
+        deleted: Math.max(0, Number(event.deletedLines) || 0),
+        modified: Math.max(0, Number(event.modifiedLines) || 0),
+    };
+    if (backendStats.added > 0 || backendStats.deleted > 0 || backendStats.modified > 0) {
+        return backendStats;
+    }
+    return computePatchLineStats(event.patch, event.operation);
+}
+function toTaskToken(value) {
+    return String(value || '').trim().toLowerCase();
+}
+function resolveTaskIdentityCandidates(task) {
+    const metadata = readTaskMetadata(task);
+    const candidates = [task.id, task.title, task.goal, metadata.pm_task_id, metadata.task_id, metadata.id];
+    const normalized = [];
+    const seen = new Set();
+    for (const candidate of candidates) {
+        const token = toTaskToken(candidate);
+        if (!token || seen.has(token))
+            continue;
+        seen.add(token);
+        normalized.push(token);
+    }
+    return normalized;
+}
+export function buildTaskRealtimeTelemetry(tasks, fileEditEvents, taskProgressMap) {
+    const tokenToTaskId = new Map();
+    const taskIdSet = new Set();
+    for (const task of tasks) {
+        const taskId = String(task.id || '').trim();
+        if (!taskId)
+            continue;
+        taskIdSet.add(taskId);
+        const candidates = resolveTaskIdentityCandidates(task);
+        for (const token of candidates) {
+            tokenToTaskId.set(token, taskId);
+        }
+    }
+    const accumulators = new Map();
+    // Process file edit events
+    for (const event of fileEditEvents) {
+        const rawTaskId = String(event.taskId || '').trim();
+        if (!rawTaskId)
+            continue;
+        const mappedTaskId = tokenToTaskId.get(toTaskToken(rawTaskId)) || rawTaskId;
+        if (!taskIdSet.has(mappedTaskId))
+            continue;
+        const accumulator = accumulators.get(mappedTaskId) || {
+            filesTouched: new Set(),
+            lineStats: { added: 0, deleted: 0, modified: 0 },
+            operationStats: { create: 0, modify: 0, delete: 0 },
+        };
+        const lineStats = resolveEventLineStats(event);
+        accumulator.lineStats.added += lineStats.added;
+        accumulator.lineStats.deleted += lineStats.deleted;
+        accumulator.lineStats.modified += lineStats.modified;
+        accumulator.operationStats[event.operation] += 1;
+        if (event.filePath)
+            accumulator.filesTouched.add(event.filePath);
+        const previousEpoch = Date.parse(String(accumulator.activityUpdatedAt || ''));
+        const nextEpoch = Date.parse(String(event.timestamp || ''));
+        const shouldReplace = !Number.isFinite(previousEpoch) ||
+            (Number.isFinite(nextEpoch) && nextEpoch >= previousEpoch);
+        if (shouldReplace) {
+            accumulator.currentFilePath = event.filePath || accumulator.currentFilePath;
+            accumulator.activityUpdatedAt = event.timestamp || accumulator.activityUpdatedAt;
+        }
+        accumulators.set(mappedTaskId, accumulator);
+    }
+    // Merge task progress data
+    if (taskProgressMap) {
+        for (const [taskId, progress] of taskProgressMap.entries()) {
+            if (!taskIdSet.has(taskId))
+                continue;
+            const accumulator = accumulators.get(taskId) || {
+                filesTouched: new Set(),
+                lineStats: { added: 0, deleted: 0, modified: 0 },
+                operationStats: { create: 0, modify: 0, delete: 0 },
+            };
+            if (progress.retryCount !== undefined)
+                accumulator.retryCount = progress.retryCount;
+            if (progress.maxRetries !== undefined)
+                accumulator.maxRetries = progress.maxRetries;
+            if (progress.phase)
+                accumulator.currentPhase = progress.phase;
+            if (progress.phaseIndex !== undefined)
+                accumulator.phaseIndex = progress.phaseIndex;
+            if (progress.phaseTotal !== undefined)
+                accumulator.phaseTotal = progress.phaseTotal;
+            if (progress.currentFile)
+                accumulator.currentFilePath = progress.currentFile;
+            accumulators.set(taskId, accumulator);
+        }
+    }
+    const telemetry = new Map();
+    for (const [taskId, accumulator] of accumulators.entries()) {
+        telemetry.set(taskId, {
+            currentFilePath: accumulator.currentFilePath,
+            activityUpdatedAt: accumulator.activityUpdatedAt,
+            filesTouchedCount: accumulator.filesTouched.size,
+            lineStats: { ...accumulator.lineStats },
+            operationStats: { ...accumulator.operationStats },
+            retryCount: accumulator.retryCount,
+            maxRetries: accumulator.maxRetries,
+            currentPhase: accumulator.currentPhase,
+            phaseIndex: accumulator.phaseIndex,
+            phaseTotal: accumulator.phaseTotal,
+        });
+    }
+    return telemetry;
+}
+export function formatTelemetryTime(value) {
+    if (!value)
+        return '';
+    const epoch = Date.parse(value);
+    if (!Number.isFinite(epoch))
+        return '';
+    return new Date(epoch).toLocaleTimeString();
+}
+// ============================================================
+// Hooks
+// ============================================================
+/**
+ * DirectorWorkspace ViewModel Hook
+ */
+export function useDirectorWorkspaceVM(workspace, onToggleDirector) {
+    const runtime = useRuntime({ roles: ['pm', 'chief_engineer', 'director', 'qa'] });
+    const [selectedTaskId, setSelectedTaskId] = useState(null);
+    const [terminalOutput, setTerminalOutput] = useState('');
+    // Runtime task rows are owned by Nats-JetStream/runtime.v2 push. Do not merge
+    // automatic HTTP task snapshots here; that masks missing realtime delivery.
+    const visibleTasks = useMemo(() => {
+        const toTaskId = (task) => String(task.id || '').trim();
+        const merged = new Map();
+        for (const task of runtime.tasks) {
+            const taskId = toTaskId(task);
+            if (taskId)
+                merged.set(taskId, task);
+        }
+        const orderedIds = [];
+        for (const task of runtime.tasks) {
+            const taskId = toTaskId(task);
+            if (taskId && !orderedIds.includes(taskId))
+                orderedIds.push(taskId);
+        }
+        return orderedIds.map((taskId) => merged.get(taskId)).filter((task) => Boolean(task));
+    }, [runtime.tasks]);
+    // Build telemetry
+    const taskRealtimeTelemetry = useMemo(() => buildTaskRealtimeTelemetry(visibleTasks, runtime.fileEditEvents, runtime.taskProgressMap), [visibleTasks, runtime.fileEditEvents, runtime.taskProgressMap]);
+    // Convert to execution tasks
+    const executionTasks = useMemo(() => {
+        return visibleTasks.map((task) => {
+            const taskId = String(task.id || '').trim();
+            const rawStatus = String(task.status || task.state || '').trim().toLowerCase();
+            const isCurrent = runtime.currentPhase?.includes('executing');
+            const status = resolveTaskExecutionStatus({
+                rawStatus,
+                done: Boolean(task.done),
+                completed: Boolean(task.completed),
+                directorRunning: runtime.directorStatus?.running === true,
+                isCurrent,
+            });
+            const title = String(task.title || task.goal || task.id || '未命名任务').trim();
+            const lowered = `${title} ${String(task.goal || '')}`.toLowerCase();
+            const type = lowered.includes('test') ? 'test'
+                : lowered.includes('debug') || lowered.includes('fix') ? 'debug'
+                    : lowered.includes('review') || lowered.includes('audit') ? 'review'
+                        : 'code';
+            const metadata = readTaskMetadata(task);
+            const budgetRaw = metadata.budget && typeof metadata.budget === 'object' ? metadata.budget : task.budget;
+            const budgetInfo = budgetRaw && typeof budgetRaw === 'object' ? {
+                used: Number(budgetRaw.used) || 0,
+                total: Number(budgetRaw.total) || 100,
+                unit: (budgetRaw.unit || 'tokens'),
+            } : undefined;
+            const createdAt = task.created_at || task.createdAt;
+            const startedAt = task.started_at || task.startedAt;
+            const completedAt = task.completed_at || task.completedAt;
+            let actualTime;
+            if (completedAt && startedAt) {
+                actualTime = new Date(completedAt).getTime() - new Date(startedAt).getTime();
+            }
+            else if (startedAt && status === 'running') {
+                actualTime = Date.now() - new Date(startedAt).getTime();
+            }
+            const priorityValue = readTaskString(task, ['priority']) || 'medium';
+            const dependencies = task.dependencies || task.blocked_by ||
+                (Array.isArray(metadata.dependencies) ? metadata.dependencies : undefined);
+            const tags = task.tags || (Array.isArray(metadata.tags) ? metadata.tags : []);
+            const telemetry = taskRealtimeTelemetry.get(taskId);
+            const filesModified = Math.max(Number(task.files_modified || metadata.files_modified || 0) || 0, telemetry?.filesTouchedCount || 0);
+            const retries = Number(task.retries || task.retry_count || metadata.retry_count || metadata.retries || 0) || 0;
+            const assignedWorker = readTaskString(task, [
+                'assigned_worker', 'worker_id', 'claimed_by', 'assignedTo', 'assignee',
+            ]);
+            return {
+                id: task.id || title,
+                name: title,
+                description: String(task.description || task.goal || '').trim(),
+                status,
+                type,
+                priority: String(priorityValue).toLowerCase(),
+                progress: status === 'running' ? 50 : status === 'completed' ? 100 : status === 'failed' ? 0 : undefined,
+                output: String(task.summary || task.output || '').trim(),
+                error: status === 'failed' || status === 'blocked' ? String(task.error || task.state || task.status || '').trim() : '',
+                budget: budgetInfo,
+                estimatedTime: task.estimated_time || task.estimatedTime,
+                actualTime,
+                dependencies: Array.isArray(dependencies) ? dependencies.map((item) => String(item)) : undefined,
+                tags: Array.isArray(tags) ? tags.map((tag) => String(tag)) : [],
+                createdAt,
+                startedAt,
+                completedAt,
+                assignedWorker: assignedWorker || undefined,
+                filesModified,
+                retries: telemetry?.retryCount ?? retries,
+                maxRetries: telemetry?.maxRetries,
+                currentFilePath: telemetry?.currentFilePath || readTaskString(task, ['current_file', 'current_file_path']),
+                activityUpdatedAt: telemetry?.activityUpdatedAt,
+                lineStats: telemetry?.lineStats,
+                operationStats: telemetry?.operationStats,
+                currentPhase: telemetry?.currentPhase,
+                phaseIndex: telemetry?.phaseIndex,
+                phaseTotal: telemetry?.phaseTotal,
+            };
+        });
+    }, [visibleTasks, runtime.directorStatus?.running, runtime.currentPhase, taskRealtimeTelemetry]);
+    const taskMap = useMemo(() => {
+        const mapping = new Map();
+        executionTasks.forEach((task) => mapping.set(task.id, task));
+        return mapping;
+    }, [executionTasks]);
+    const isExecuting = runtime.directorStatus?.running === true;
+    const sessionStatus = resolveSessionStatus(isExecuting, false, executionTasks);
+    // Actions
+    const handleTaskSelect = useCallback((taskId) => {
+        setSelectedTaskId(taskId);
+        const task = executionTasks.find(t => t.id === taskId);
+        if (task) {
+            setTerminalOutput(`选中任务: ${task.name}\n状态: ${task.status}\n类型: ${task.type}\n`);
+        }
+    }, [executionTasks]);
+    const handleExecute = useCallback(() => {
+        const nextAction = isExecuting ? '停止' : '启动';
+        const targetName = selectedTaskId
+            ? executionTasks.find((task) => task.id === selectedTaskId)?.name || selectedTaskId
+            : '当前任务队列';
+        const newLog = `[${new Date().toLocaleTimeString()}] ${nextAction} Director 执行: ${targetName}`;
+        setTerminalOutput(prev => prev + newLog + '\n');
+        onToggleDirector();
+    }, [isExecuting, selectedTaskId, executionTasks, onToggleDirector]);
+    const handlePause = useCallback(() => {
+        if (!isExecuting)
+            return;
+        setTerminalOutput(prev => prev + `[${new Date().toLocaleTimeString()}] 停止 Director 执行\n`);
+        onToggleDirector();
+    }, [isExecuting, onToggleDirector]);
+    const handleReset = useCallback(() => {
+        setSelectedTaskId(null);
+        setTerminalOutput('');
+    }, []);
+    const handleRefresh = useCallback(() => {
+        // Runtime data refreshes through the shared WebSocket transport.
+    }, []);
+    // Compute statistics
+    const runningTasksCount = executionTasks.filter(t => t.status === 'running').length;
+    const completedTasksCount = executionTasks.filter(t => t.status === 'completed').length;
+    const failedTasksCount = executionTasks.filter(t => t.status === 'failed').length;
+    const pendingTasksCount = executionTasks.filter(t => t.status === 'pending').length;
+    const totalTasksCount = executionTasks.length;
+    const progress = totalTasksCount > 0 ? Math.round((completedTasksCount / totalTasksCount) * 100) : 0;
+    const workerBusyCount = runtime.workers.filter(w => w.status === 'busy').length;
+    const workerIdleCount = runtime.workers.filter(w => w.status === 'idle').length;
+    const workerFailedCount = runtime.workers.filter(w => w.status === 'failed').length;
+    // Get current task info from engineStatus
+    const currentTaskId = runtime.engineStatus?.roles?.Director?.task_id ?? null;
+    const currentTaskTitle = runtime.engineStatus?.roles?.Director?.task_title ?? null;
+    const currentTaskStatus = runtime.engineStatus?.roles?.Director?.status ?? null;
+    const state = {
+        workspace,
+        connected: runtime.live,
+        tasks: runtime.tasks,
+        currentTaskId,
+        currentTaskTitle,
+        currentTaskStatus,
+        directorRunning: isExecuting,
+        isStarting: false,
+        workers: runtime.workers,
+        executionLogs: runtime.executionLogs,
+        llmStreamEvents: runtime.llmStreamEvents,
+        processStreamEvents: runtime.processStreamEvents,
+        fileEditEvents: runtime.fileEditEvents,
+        currentPhase: runtime.currentPhase,
+        taskProgressMap: runtime.taskProgressMap,
+        taskTraceMap: runtime.taskTraceMap,
+    };
+    return {
+        state,
+        executionTasks,
+        taskMap,
+        visibleTasks,
+        runningTasksCount,
+        completedTasksCount,
+        failedTasksCount,
+        pendingTasksCount,
+        totalTasksCount,
+        progress,
+        workerBusyCount,
+        workerIdleCount,
+        workerFailedCount,
+        sessionStatus,
+        isExecuting,
+        handleTaskSelect,
+        handleExecute,
+        handlePause,
+        handleReset,
+        handleRefresh,
+    };
+}
+// ============================================================
+// 纯函数导出（供测试）
+// ============================================================
+export const selectors = {
+    resolveTaskExecutionStatus,
+    resolveSessionStatus,
+    computePatchLineStats,
+    buildTaskRealtimeTelemetry,
+    formatTelemetryTime,
+};

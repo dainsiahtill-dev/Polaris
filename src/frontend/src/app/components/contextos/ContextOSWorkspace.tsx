@@ -52,6 +52,7 @@ import {
   contextOSFormat,
   decisionMatchesRole,
   safeText,
+  summarizeRoleContextState,
   type ContextOSModel,
   type DecisionRow,
   type EventTypeSlice,
@@ -1222,8 +1223,12 @@ function ContextStructurePanel({ model, telemetry }: { model: ContextOSModel; te
                           style={{ width: `${Math.max(4, Math.min(100, ctx.eventCount * 12))}%` }}
                         />
                       </div>
-                      <div className="mt-1 truncate font-mono text-[9px] text-text-dim">
-                        T{ctx.eventCount} · W{ctx.workingMemoryItems ?? 0}{ctx.workingMemoryEstimated ? '~' : ''} · P{ctx.projectionCount} · R{ctx.receiptCount}
+                      <div
+                        className="mt-1 truncate text-[9px] text-text-dim"
+                        title="事件数 / 在窗上下文项 / 上下文装配次数 / 落盘回执数"
+                      >
+                        事件 {ctx.eventCount} · 在窗 {ctx.workingMemoryItems ?? 0}
+                        {ctx.workingMemoryEstimated ? '~' : ''} · 装配 {ctx.projectionCount} · 回执 {ctx.receiptCount}
                       </div>
                     </div>
                     <span
@@ -1275,6 +1280,8 @@ function ContextStructurePanel({ model, telemetry }: { model: ContextOSModel; te
 function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewContext: (ref: string) => void }) {
   const ctx = role.internalContext;
   const style = STATE_STYLES[ctx.state];
+  // 人话摘要：把 TruthLog/WorkingMem/... 术语翻译成「在执行 / 待机 / 受阻」的明确结论。
+  const summary = summarizeRoleContextState(ctx);
 
   const pipeline: PipelineStage[] = [
     { id: 'truthlog', label: 'TruthLog', component: '事件真值流', hint: '角色专属事件流', state: ctx.eventCount > 0 ? 'active' : 'idle', metric: `${ctx.eventCount} 事件` },
@@ -1334,6 +1341,24 @@ function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewCont
             <span className="text-[9px] text-gold/70">tok</span>
           </div>
         )}
+      </div>
+
+      {/* 人话摘要：一句话说清该角色现在到底在干什么 */}
+      <div
+        data-testid={`contextos-role-summary-${role.id}`}
+        className={cn('mb-3 rounded-lg border px-3 py-2', STATE_STYLES[summary.tone].ring)}
+      >
+        <div className="flex items-start gap-2">
+          <span className={cn('mt-[5px] h-2 w-2 shrink-0 rounded-full', STATE_STYLES[summary.tone].dot)} />
+          <div className="min-w-0 space-y-0.5">
+            <div className={cn('text-[12px] font-semibold leading-snug', STATE_STYLES[summary.tone].text)}>
+              {summary.headline}
+            </div>
+            {summary.detail && (
+              <div className="text-[10px] leading-relaxed text-text-muted">{summary.detail}</div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* 该角色的内部 ContextOS 管线 */}

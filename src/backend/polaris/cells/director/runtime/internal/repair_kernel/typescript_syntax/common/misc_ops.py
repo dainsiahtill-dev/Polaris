@@ -4,19 +4,36 @@ import json
 import posixpath
 import re
 from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
-from pathlib import PurePosixPath
 from typing import Any
 
-from ...contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from ...javascript_syntax import repair_javascript_export_contract_placeholders
-from ...path_files import normalize_base_files_strict, normalize_repair_path_strict
+from ...contracts import RepairDiagnostic, RepairOperation, sha256_text
 from ..constants import *  # noqa: F403
+from .parse_ops import *  # noqa: F403
 from .path_ops import *  # noqa: F403
 from .plan_ops import *  # noqa: F403
-from .parse_ops import *  # noqa: F403
 
 """Shared TypeScript repair helpers: misc_ops."""
+
+
+def _strip_javascript_callable_type_match(match: re.Match[str]) -> str:
+    params = []
+    for raw_param in str(match.group("params") or "").split(","):
+        param = raw_param.strip()
+        if not param:
+            continue
+        default = ""
+        head = param
+        if "=" in param:
+            head, default_value = param.split("=", 1)
+            default = " = " + default_value.strip()
+        head = re.sub(
+            r"^(?P<name>\.\.\.[A-Za-z_$][\w$]*|[A-Za-z_$][\w$]*)\s*:\s*[^=,]+$",
+            r"\g<name>",
+            head.strip(),
+        )
+        params.append(f"{head}{default}")
+    return f"{match.group('prefix')}({', '.join(params)}){match.group('brace')}"
+
 
 def _functions_accepting_type(*, base_files: Mapping[str, str], type_name: str) -> list[str]:
     """Return exported function names whose first parameter is ``type_name``."""
@@ -34,6 +51,7 @@ def _functions_accepting_type(*, base_files: Mapping[str, str], type_name: str) 
                 seen.add(name)
                 names.append(name)
     return names
+
 
 def _pick_function_alias(*, current: str, candidates: Sequence[str]) -> str:
     """Pick the best alternative function name for a wrong-domain callee (R161)."""
@@ -67,6 +85,7 @@ def _pick_function_alias(*, current: str, candidates: Sequence[str]) -> str:
     scored.sort(key=lambda item: (-item[0], item[1]))
     best_score, best = scored[0]
     return best if best_score >= 4 else ""
+
 
 def _package_json_enable_node_test_script_operation(
     *,
@@ -126,12 +145,14 @@ def _package_json_enable_node_test_script_operation(
         },
     )
 
+
 def _json_object(text: str) -> dict[str, Any]:
     try:
         payload = json.loads(str(text or "{}"))
     except json.JSONDecodeError:
         return {}
     return dict(payload) if isinstance(payload, dict) else {}
+
 
 def _javascript_annotation_candidate_paths(
     base_files: Mapping[str, str],
@@ -147,10 +168,12 @@ def _javascript_annotation_candidate_paths(
         candidates.extend(path for path in base_files if path.endswith(".js"))
     return _dedupe_preserve_order(candidates)
 
+
 def _strip_typescript_annotations_from_javascript(text: str) -> str:
     repaired = _JS_FUNCTION_DECL_RE.sub(_strip_javascript_callable_type_match, str(text or ""))
     repaired = _JS_METHOD_DECL_RE.sub(_strip_javascript_callable_type_match, repaired)
     return _JS_VARIABLE_TYPE_RE.sub(r"\g<kind> \g<name>\g<assign>", repaired)
+
 
 def _normalize_ts_class_field_initialization(line: str) -> str:
     match = _TS_CLASS_FIELD_DECL_RE.match(line)
@@ -164,6 +187,7 @@ def _normalize_ts_class_field_initialization(line: str) -> str:
         return f"{indent}{name}?: {type_text};"
     return f"{indent}{name}: {type_text} = {_typescript_default_value_for_type(type_text)};"
 
+
 def _normalize_typeorm_detached_field_type(type_text: str) -> str:
     stripped = str(type_text or "unknown").strip() or "unknown"
     if re.fullmatch(r"[A-Z][A-Za-z0-9_]*\[\]", stripped):
@@ -171,6 +195,7 @@ def _normalize_typeorm_detached_field_type(type_text: str) -> str:
     if re.fullmatch(r"[A-Z][A-Za-z0-9_]*", stripped):
         return "unknown"
     return stripped
+
 
 def _typescript_matching_brace_index(text: str, open_brace: int) -> int:
     if open_brace < 0 or open_brace >= len(text) or text[open_brace] != "{":
@@ -199,19 +224,23 @@ def _typescript_matching_brace_index(text: str, open_brace: int) -> int:
                 return index
     return -1
 
+
 def _text_line_start_offsets(text: str) -> list[int]:
     offsets = [0]
     for match in re.finditer(r"\n", str(text or "")):
         offsets.append(match.end())
     return offsets
 
+
 def _typescript_symbol_is_called(text: str, symbol: str) -> bool:
     token = str(text or "")
     call_re = re.compile(rf"(?<!new\s)\b{re.escape(symbol)}\s*\(")
     return bool(call_re.search(token))
 
+
 def _typescript_module_declares_symbol(module_text: str, symbol: str) -> bool:
     return bool(_typescript_module_declared_symbol_kind(module_text, symbol))
+
 
 def _typescript_module_declared_symbol_kind(module_text: str, symbol: str) -> str:
     if not _TS_IDENTIFIER_RE.fullmatch(symbol):
@@ -224,6 +253,7 @@ def _typescript_module_declared_symbol_kind(module_text: str, symbol: str) -> st
     )
     match = declaration_re.search(module_text)
     return str(match.group("kind") or "").strip() if match else ""
+
 
 def _find_typescript_similar_runtime_declaration(module_text: str, symbol: str) -> str:
     wanted = _normalize_typescript_identifier_for_similarity(symbol)
@@ -253,6 +283,7 @@ def _find_typescript_similar_runtime_declaration(module_text: str, symbol: str) 
             best_score = score
     return best
 
+
 def _normalize_typescript_identifier_for_similarity(symbol: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9]+", "", str(symbol or "")).lower()
     for suffix in ("checks", "check", "results", "result", "items", "item"):
@@ -260,6 +291,7 @@ def _normalize_typescript_identifier_for_similarity(symbol: str) -> str:
             normalized = normalized[: -len(suffix)]
             break
     return normalized
+
 
 def _typescript_declared_type_kind(*, base_files: Mapping[str, str], type_name: str) -> str:
     if not _TS_IDENTIFIER_RE.fullmatch(type_name):
@@ -270,6 +302,7 @@ def _typescript_declared_type_kind(*, base_files: Mapping[str, str], type_name: 
         if match:
             return str(match.group("kind") or "")
     return ""
+
 
 def _extend_typescript_declare_const_type_literal_operation(
     *,
@@ -318,6 +351,7 @@ def _extend_typescript_declare_const_type_literal_operation(
         },
     )
 
+
 def _resolve_relative_ts_module_path(importer_path: str, module_ref: str, base_files: Mapping[str, str]) -> str:
     if not module_ref.startswith("."):
         return ""
@@ -340,6 +374,7 @@ def _resolve_relative_ts_module_path(importer_path: str, module_ref: str, base_f
             return normalized
     return ""
 
+
 def _typescript_duplicate_identifier_targets(diagnostics: Sequence[RepairDiagnostic]) -> dict[str, set[str]]:
     targets: dict[str, set[str]] = {}
     for diagnostic in diagnostics:
@@ -354,6 +389,7 @@ def _typescript_duplicate_identifier_targets(diagnostics: Sequence[RepairDiagnos
             targets.setdefault(path, set()).add(name)
     return targets
 
+
 def _typescript_string_brand_type_sources(base_files: Mapping[str, str]) -> dict[str, str]:
     sources: dict[str, str] = {}
     for path, content in base_files.items():
@@ -366,6 +402,7 @@ def _typescript_string_brand_type_sources(base_files: Mapping[str, str]) -> dict
                 sources.setdefault(name, normalized)
     return sources
 
+
 def _typescript_type_only_value_usage_symbol(diagnostic: RepairDiagnostic) -> str:
     text = f"{diagnostic.message}\n{diagnostic.raw}"
     match = _TS_TYPE_ONLY_VALUE_USAGE_MESSAGE_RE.search(text)
@@ -373,6 +410,7 @@ def _typescript_type_only_value_usage_symbol(diagnostic: RepairDiagnostic) -> st
         return ""
     candidate = str(match.group("name") or "").strip()
     return candidate if _TS_IDENTIFIER_RE.fullmatch(candidate) else ""
+
 
 def _typescript_missing_identifier_usage_is_type_position(text: str, item: Mapping[str, str]) -> bool:
     line_number = _to_positive_int(item.get("line"))
@@ -382,6 +420,7 @@ def _typescript_missing_identifier_usage_is_type_position(text: str, item: Mappi
     symbol = re.escape(str(item.get("symbol") or ""))
     return bool(re.search(rf"[:<,|&([]\s*{symbol}\b|\bas\s+{symbol}\b", lines[line_number - 1]))
 
+
 def _resolve_case_variant_base_file(*, base_files: Mapping[str, str], relative_path: str) -> str:
     normalized = _normalize_repair_path(relative_path)
     if not normalized:
@@ -389,6 +428,7 @@ def _resolve_case_variant_base_file(*, base_files: Mapping[str, str], relative_p
     lowered = normalized.lower()
     matches = [path for path in base_files if path.lower() == lowered]
     return matches[0] if len(matches) == 1 else ""
+
 
 def _typescript_import_pairs_from_clause(clause: str) -> list[tuple[str, str]]:
     clause = str(clause or "").strip()
@@ -425,11 +465,13 @@ def _typescript_import_pairs_from_clause(clause: str) -> list[tuple[str, str]]:
             pairs.append((imported, local))
     return pairs
 
+
 def _typescript_identifier_used_outside_span(content: str, name: str, span: tuple[int, int]) -> bool:
     if not _TS_IDENTIFIER_RE.fullmatch(name):
         return False
     outside = content[: span[0]] + content[span[1] :]
     return re.search(rf"\b{re.escape(name)}\b", outside) is not None
+
 
 def _typescript_call_name_from_usage_line(usage_line: str, column: int) -> str:
     prefix = usage_line[: max(0, min(len(usage_line), int(column)))]
@@ -437,6 +479,7 @@ def _typescript_call_name_from_usage_line(usage_line: str, column: int) -> str:
     if not matches:
         matches = list(re.finditer(r"\b(?P<name>[A-Za-z_$][\w$]*)\s*\(", usage_line))
     return str(matches[-1].group("name") if matches else "").strip()
+
 
 def _find_unique_typescript_method_declaration(
     *,
@@ -462,13 +505,16 @@ def _find_unique_typescript_method_declaration(
                 matches.append((path, line_index, line))
     return matches[0] if len(matches) == 1 else None
 
+
 def _split_typescript_params(params_text: str) -> list[str]:
     spans = _split_typescript_argument_spans(params_text, 0, len(params_text))
     return [params_text[start:end].strip() for start, end in spans if params_text[start:end].strip()]
 
+
 def _typescript_libs_allow_es2021(libs: Sequence[str]) -> bool:
     allowed = {"es2021", "es2022", "es2023", "es2024", "esnext"}
     return any(str(item or "").strip().lower() in allowed for item in libs)
+
 
 def _typescript_promote_libs_to_es2021(libs: Sequence[str], target: object) -> list[str]:
     promoted: list[str] = []
@@ -493,6 +539,7 @@ def _typescript_promote_libs_to_es2021(libs: Sequence[str], target: object) -> l
             promoted.insert(0, "ES2021")
     return list(dict.fromkeys(promoted))
 
+
 def _typescript_property_line_with_default(line: str, member: str) -> str:
     match = re.match(
         rf"^(?P<prefix>\s*(?:(?:public|private|protected)\s+)?(?:readonly\s+)?{re.escape(member)}\s*:\s*)(?P<type>[^;=]+)(?P<suffix>;?\s*)$",
@@ -502,6 +549,7 @@ def _typescript_property_line_with_default(line: str, member: str) -> str:
         return line
     ts_type = str(match.group("type") or "unknown").strip()
     return f"{match.group('prefix')}{ts_type} = {_typescript_default_value_for_type(ts_type)}{match.group('suffix')}"
+
 
 def _typescript_default_value_for_type(ts_type: str) -> str:
     lowered = str(ts_type or "").strip().lower()
@@ -516,6 +564,7 @@ def _typescript_default_value_for_type(ts_type: str) -> str:
     if lowered == "date":
         return "new Date(0)"
     return "undefined"
+
 
 def _typescript_unwrap_phantom_call(line: str, missing_symbol: str) -> str:
     """Replace ``missing(expr)`` with ``expr`` when ``missing`` is undefined."""
@@ -546,6 +595,7 @@ def _typescript_unwrap_phantom_call(line: str, missing_symbol: str) -> str:
         return line
     return line[:start] + inner + line[end + 1 :]
 
+
 def _typescript_local_function_names(lines: Sequence[str]) -> list[str]:
     names: list[str] = []
     for line in lines:
@@ -565,6 +615,7 @@ def _typescript_local_function_names(lines: Sequence[str]) -> list[str]:
         if match:
             names.append(str(match.group("name") or ""))
     return [name for name in names if _TS_IDENTIFIER_RE.fullmatch(name)]
+
 
 def _typescript_best_local_function_alias(missing_symbol: str, candidates: Sequence[str]) -> str:
     """Pick a same-file helper whose name is a close alias of the missing symbol."""
@@ -603,6 +654,7 @@ def _typescript_best_local_function_alias(missing_symbol: str, candidates: Seque
             best = cand
     return best if best_score >= 0.7 else ""
 
+
 def _typescript_identifier_alias_matches(missing_symbol: str, candidate: str) -> bool:
     missing_lower = missing_symbol.lower()
     candidate_lower = candidate.lower()
@@ -610,6 +662,7 @@ def _typescript_identifier_alias_matches(missing_symbol: str, candidate: str) ->
         return False
     prefixes = ("new", "next", "updated", "current", "previous", "prev")
     return any(missing_lower == f"{prefix}{candidate_lower}" for prefix in prefixes)
+
 
 def _function_body_end_offset(content: str, from_index: int) -> int | None:
     """Return exclusive end offset of a function body starting near ``from_index``."""
@@ -665,11 +718,13 @@ def _function_body_end_offset(content: str, from_index: int) -> int | None:
         i += 1
     return None
 
+
 def _strip_typescript_literal_type(value: str) -> str:
     normalized = str(value or "").strip()
     if len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in {"'", '"'}:
         return normalized[1:-1]
     return normalized
+
 
 def _property_call_is_near_columns(start: int, end: int, columns: set[int]) -> bool:
     if not columns:
@@ -682,6 +737,7 @@ def _property_call_is_near_columns(start: int, end: int, columns: set[int]) -> b
             return True
     return False
 
+
 def _column_is_near_span(column: int, span_start: int, span_end: int) -> bool:
     if column <= 0:
         return True
@@ -690,6 +746,7 @@ def _column_is_near_span(column: int, span_start: int, span_end: int) -> bool:
         return True
     return zero_based < span_start and span_start - zero_based <= 120
 
+
 def _line_mentions_assignment_property(lines: Sequence[str], line_number: int, prop: str) -> bool:
     line_index = line_number - 1
     if line_index < 0 or line_index >= len(lines):
@@ -697,6 +754,7 @@ def _line_mentions_assignment_property(lines: Sequence[str], line_number: int, p
     line = str(lines[line_index] or "")
     escaped = re.escape(prop)
     return bool(re.search(rf"(?:\.{escaped}\b|\[['\"]{escaped}['\"]\])\s*(?:[+\-*/%]?=|\+\+|--)", line))
+
 
 def _split_typescript_argument_spans(text: str, start: int, end: int) -> list[tuple[int, int]]:
     spans: list[tuple[int, int]] = []
@@ -725,6 +783,7 @@ def _split_typescript_argument_spans(text: str, start: int, end: int) -> list[tu
     if arg_start <= end:
         spans.append((arg_start, end))
     return spans
+
 
 def _typescript_brace_balance_delta(source: str) -> int:
     depth = 0
@@ -776,13 +835,6 @@ def _typescript_brace_balance_delta(source: str) -> int:
         index += 1
     return depth
 
-def _line_start_offsets(lines: Sequence[str]) -> list[int]:
-    offsets: list[int] = [0]
-    current = 0
-    for line in lines:
-        current += len(line)
-        offsets.append(current)
-    return offsets
 
 def _to_positive_int(value: object) -> int:
     try:
@@ -791,18 +843,6 @@ def _to_positive_int(value: object) -> int:
         return 0
     return parsed if parsed > 0 else 0
 
-def _dedupe_preserve_order(items: Sequence[str]) -> list[str]:
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for item in items:
-        value = str(item or "").strip()
-        if value and value not in seen:
-            seen.add(value)
-            deduped.append(value)
-    return deduped
-
-def _normalize_repair_path(path: str) -> str:
-    return normalize_repair_path_strict(path)
 
 def _typescript_file_looks_truncated(content: str) -> bool:
     text = str(content or "")
@@ -821,6 +861,7 @@ def _typescript_file_looks_truncated(content: str) -> bool:
     depth_brace = text.count("{") - text.count("}")
     depth_paren = text.count("(") - text.count(")")
     return depth_brace > 0 or depth_paren > 0
+
 
 def _typescript_object_freeze_assert_operation(
     *,
@@ -879,6 +920,7 @@ def _typescript_object_freeze_assert_operation(
         },
     )
 
+
 def _typescript_identifier_in_scope(content: str, name: str, *, line: int) -> bool:
     if not _TS_IDENTIFIER_RE.fullmatch(name):
         return False
@@ -890,6 +932,7 @@ def _typescript_identifier_in_scope(content: str, name: str, *, line: int) -> bo
     )
     prefix = "\n".join(content.splitlines()[: max(0, line)])
     return bool(decl.search(prefix)) or bool(re.search(rf"\b{re.escape(name)}\b", prefix))
+
 
 def _typescript_rename_identifier_at_diagnostic(
     *,
@@ -936,6 +979,7 @@ def _typescript_rename_identifier_at_diagnostic(
         },
     )
 
+
 def _typescript_type_field_names(type_name: str, base_files: Mapping[str, str]) -> set[str]:
     name = str(type_name or "").strip()
     if not _TS_IDENTIFIER_RE.fullmatch(name):
@@ -960,6 +1004,7 @@ def _typescript_type_field_names(type_name: str, base_files: Mapping[str, str]) 
             ):
                 fields.add(str(prop.group("prop") or ""))
     return fields
+
 
 def _typescript_types_with_named_properties(
     base_files: Mapping[str, str],
@@ -992,57 +1037,56 @@ def _typescript_types_with_named_properties(
 
 
 __all__ = (
+    "_column_is_near_span",
+    "_extend_typescript_declare_const_type_literal_operation",
+    "_find_typescript_similar_runtime_declaration",
+    "_find_unique_typescript_method_declaration",
+    "_function_body_end_offset",
     "_functions_accepting_type",
-    "_pick_function_alias",
-    "_package_json_enable_node_test_script_operation",
-    "_json_object",
     "_javascript_annotation_candidate_paths",
-    "_strip_typescript_annotations_from_javascript",
+    "_json_object",
+    "_line_mentions_assignment_property",
+    "_normalize_repair_path",
     "_normalize_ts_class_field_initialization",
     "_normalize_typeorm_detached_field_type",
-    "_typescript_matching_brace_index",
-    "_text_line_start_offsets",
-    "_typescript_symbol_is_called",
-    "_typescript_module_declares_symbol",
-    "_typescript_module_declared_symbol_kind",
-    "_find_typescript_similar_runtime_declaration",
     "_normalize_typescript_identifier_for_similarity",
-    "_typescript_declared_type_kind",
-    "_extend_typescript_declare_const_type_literal_operation",
-    "_resolve_relative_ts_module_path",
-    "_typescript_duplicate_identifier_targets",
-    "_typescript_string_brand_type_sources",
-    "_typescript_type_only_value_usage_symbol",
-    "_typescript_missing_identifier_usage_is_type_position",
+    "_package_json_enable_node_test_script_operation",
+    "_pick_function_alias",
+    "_property_call_is_near_columns",
     "_resolve_case_variant_base_file",
-    "_typescript_import_pairs_from_clause",
-    "_typescript_identifier_used_outside_span",
-    "_typescript_call_name_from_usage_line",
-    "_find_unique_typescript_method_declaration",
+    "_resolve_relative_ts_module_path",
+    "_split_typescript_argument_spans",
     "_split_typescript_params",
+    "_strip_javascript_callable_type_match",
+    "_strip_typescript_annotations_from_javascript",
+    "_strip_typescript_literal_type",
+    "_text_line_start_offsets",
+    "_to_positive_int",
+    "_typescript_best_local_function_alias",
+    "_typescript_brace_balance_delta",
+    "_typescript_call_name_from_usage_line",
+    "_typescript_declared_type_kind",
+    "_typescript_default_value_for_type",
+    "_typescript_duplicate_identifier_targets",
+    "_typescript_file_looks_truncated",
+    "_typescript_identifier_alias_matches",
+    "_typescript_identifier_in_scope",
+    "_typescript_identifier_used_outside_span",
+    "_typescript_import_pairs_from_clause",
     "_typescript_libs_allow_es2021",
+    "_typescript_local_function_names",
+    "_typescript_matching_brace_index",
+    "_typescript_missing_identifier_usage_is_type_position",
+    "_typescript_module_declared_symbol_kind",
+    "_typescript_module_declares_symbol",
+    "_typescript_object_freeze_assert_operation",
     "_typescript_promote_libs_to_es2021",
     "_typescript_property_line_with_default",
-    "_typescript_default_value_for_type",
-    "_typescript_unwrap_phantom_call",
-    "_typescript_local_function_names",
-    "_typescript_best_local_function_alias",
-    "_typescript_identifier_alias_matches",
-    "_function_body_end_offset",
-    "_strip_typescript_literal_type",
-    "_property_call_is_near_columns",
-    "_column_is_near_span",
-    "_line_mentions_assignment_property",
-    "_split_typescript_argument_spans",
-    "_typescript_brace_balance_delta",
-    "_line_start_offsets",
-    "_to_positive_int",
-    "_dedupe_preserve_order",
-    "_normalize_repair_path",
-    "_typescript_file_looks_truncated",
-    "_typescript_object_freeze_assert_operation",
-    "_typescript_identifier_in_scope",
     "_typescript_rename_identifier_at_diagnostic",
+    "_typescript_string_brand_type_sources",
+    "_typescript_symbol_is_called",
     "_typescript_type_field_names",
+    "_typescript_type_only_value_usage_symbol",
     "_typescript_types_with_named_properties",
+    "_typescript_unwrap_phantom_call",
 )

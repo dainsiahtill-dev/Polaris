@@ -1538,3 +1538,87 @@ export const contextOSFormat = {
   windowTokens: formatWindowTokens,
   clock: formatClock,
 };
+
+// ---------------------------------------------------------------------------
+// summarizeRoleContextState — 把角色内部 ContextOS 的术语化指标翻译成人话摘要
+//
+// 背景：RoleInternalPanel 直接展示 TruthLog/WorkingMem/ProjectionEngine/ReceiptStore
+// 与 T·W·P·R 代码、「无 usage」等术语，非工程师无法判断当前到底是在执行还是只是
+// 事件在空转。本函数从同一份 RoleInternalContext 派生一句诚实的人话结论，供面板
+// 顶部作为「明确摘要信息」展示。所有结论只来自真实字段，不臆造、不冒充。
+// ---------------------------------------------------------------------------
+
+export interface RoleContextSummary {
+  /** 一句话核心结论（人话）。 */
+  headline: string;
+  /** 补充细节（装配/回执/usage 来源等），可为空字符串。 */
+  detail: string;
+  /** 语义色调：active=运行中、idle=待机/观测、blocked=受阻。 */
+  tone: PipelineState;
+}
+
+/**
+ * 根据角色内部 ContextOS 状态生成人话摘要。
+ *
+ * 判定优先级（每条都对应真实字段，诚实可审计）：
+ *  1. 受阻（state=blocked 且有错误事件）→ blocked，提示查看事件流；
+ *  2. 完全无事件 → 空闲待命；
+ *  3. 有事件但 0 调用 0 token → 「事件观测/待机」而非真正执行（最关键的人话区分）；
+ *  4. 有调用但无 token → usage 缺失（流式未结束或 provider 未回传）；
+ *  5. 有调用且有 token → 运行中，给出真实用量。
+ */
+export function summarizeRoleContextState(ctx: RoleInternalContext): RoleContextSummary {
+  const title = ctx.title || ctx.roleId || '该角色';
+  const errorCount = ctx.events.reduce<number>(
+    (count, event) => count + (event.category === 'error' ? 1 : 0),
+    0,
+  );
+
+  // 1. 受阻：优先暴露错误，避免被「有调用」掩盖。
+  if (ctx.state === 'blocked' && errorCount > 0) {
+    return {
+      tone: 'blocked',
+      headline: `${title} 观测到 ${errorCount} 条错误事件，已受阻`,
+      detail: `请查看下方事件流定位错误${
+        ctx.calls > 0 ? `；此前已调用 ${ctx.calls} 次` : '；尚未成功调用模型'
+      }`,
+    };
+  }
+
+  // 2. 完全无事件。
+  if (ctx.eventCount === 0) {
+    return {
+      tone: 'idle',
+      headline: `${title} 尚未产生运行事件`,
+      detail: '本会话没有观测到该角色的实时活动',
+    };
+  }
+
+  // 3. 有事件、但既无调用也无 token ——「事件观测 / 待机」而非执行。
+  if (ctx.calls === 0 && ctx.totalTokens === 0) {
+    const assembly = ctx.projectionCount > 0 ? `，上下文已装配 ${ctx.projectionCount} 次` : '';
+    return {
+      tone: 'idle',
+      headline: `已记录 ${ctx.eventCount} 条事件，但还未真正调用模型`,
+      detail: `事件持续到达${assembly}，但没有真实的模型调用或 token 消耗——属于「事件观测 / 待机」状态，不是真正的执行`,
+    };
+  }
+
+  // 4. 有调用但无 token 用量。
+  if (ctx.calls > 0 && ctx.totalTokens === 0) {
+    return {
+      tone: 'idle',
+      headline: `已发起 ${ctx.calls} 次模型调用，但未记录 token`,
+      detail: '调用未返回真实 usage（可能流式未结束，或 provider 未回传用量）',
+    };
+  }
+
+  // 5. 运行中：有调用且有真实 token。
+  const assembly = ctx.projectionCount > 0 ? `；装配 ${ctx.projectionCount} 次` : '';
+  const receipt = ctx.receiptCount > 0 ? `、回执 ${ctx.receiptCount} 条` : '';
+  return {
+    tone: 'active',
+    headline: `已发起 ${ctx.calls} 次模型调用，消耗约 ${formatTokens(ctx.totalTokens)} token`,
+    detail: `提示约 ${formatTokens(ctx.promptTokens)} / 输出约 ${formatTokens(ctx.completionTokens)}${assembly}${receipt}`,
+  };
+}

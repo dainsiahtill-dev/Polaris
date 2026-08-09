@@ -2775,7 +2775,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 phase="quality_repair",
                 archetype=RepairArchetype.WRONG_IMPORT_PATH,
                 priority=1,
-                diagnostic_codes=("typescript_ts18048", "typescript_ts2322", "typescript_ts1259", "typescript_ts2352", "typescript_ts2307", "typescript_ts2580"),
+                diagnostic_codes=("typescript_ts18048", "typescript_ts2322"),
                 risk_level="medium",
                 description=(
                     "Relaxes tsconfig compilerOptions.strict/noUnusedLocals when TS18048 "
@@ -2982,6 +2982,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 priority=1,
                 diagnostic_codes=("typescript_ts2307",),
                 message_terms=("cannot find module",),
+                excluded_message_terms=("node:",),
                 risk_level="low",
                 description=(
                     "Creates a minimal relative TypeScript module stub for TS2307 when a local "

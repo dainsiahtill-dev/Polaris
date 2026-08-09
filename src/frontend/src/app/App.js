@@ -1,0 +1,839 @@
+import { jsx as _jsx, Fragment as _Fragment, jsxs as _jsxs } from "react/jsx-runtime";
+import { lazy, Suspense, useCallback, useEffect, useRef, useMemo, useState } from 'react';
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+import { toast } from 'sonner';
+import { Toaster } from './components/ui/sonner';
+import { useProcessOperations, useUIState, useSettings, useFileManager, useMemos, useMemory, useNotifications, useAgentsReview, useBackendHealthPing, } from '@/hooks';
+import { ControlPanel } from '@/app/components/ControlPanel';
+import { RealTimeStatusBar } from '@/app/components/RealTimeStatusBar';
+import { devLogger } from '@/app/utils/devLogger';
+import { ContextSidebar } from '@/app/components/ContextSidebar';
+import { ProjectProgressPanel } from '@/app/components/ProjectProgressPanel';
+import { HistoryDrawer } from '@/app/components/HistoryDrawer';
+import { EnhancedNotificationManager } from '@/app/components/EnhancedNotificationManager';
+import { AgentsReviewDialog } from '@/app/components/AgentsReviewDialog';
+import { ErrorBoundaryClass } from '@/app/components/ErrorBoundary';
+import { RuntimeErrorDialog } from '@/app/components/RuntimeErrorDialog';
+import { ChiefEngineerPage, DirectorPage, PMPage } from '@/app/pages';
+import { FactoryWorkspace } from '@/app/components/factory/FactoryWorkspace';
+import { BenchStatusStrip } from '@/app/components/factory/BenchStatusStrip';
+import { ResidentWorkspace } from '@/app/components/resident';
+import { LlmRuntimeOverlay } from '@/app/components/LlmRuntimeOverlay';
+import { RuntimeDiagnosticsWorkspace } from '@/app/components/RuntimeDiagnosticsWorkspace';
+import { ContextOSWorkspace } from '@/app/components/contextos';
+import { WorkspaceFilesPage } from '@/app/components/workspace-files/WorkspaceFilesPage';
+import { LauncherWorkspace } from '@/app/launcher/LauncherWorkspace';
+import { openPath, pickWorkspace } from '@/api';
+import { runtimeService } from '@/services';
+import { controlPlaneProjectionFromRuntimeMessage, getControlPlaneProjection, } from '@/services/controlPlane';
+import { useRuntime } from './hooks/useRuntime';
+import { useRuntimeConnectionNotifications } from './hooks/useConnectionNotifications';
+import { RuntimeTransportProvider, useConnectionState as useRuntimeConnectionState, useMessageHandler, useTransportActions, } from '@/runtime/transport';
+import { useLiveTaskQueues } from './hooks/useLiveTaskQueues';
+import { useUsageStats } from './hooks/useUsageStats';
+import { useFactory } from '@/hooks/useFactory';
+import { useFactoryBench } from '@/hooks/useFactoryBench';
+import { shouldEnableGlobalBenchObserver } from '@/app/runtimeScope';
+import { getLatestExecutionActivityLog, readEngineRoleDetail } from '@/app/utils/appRuntime';
+import { mergeProcessAndBenchLogs } from '@/app/utils/benchRuntimeLogs';
+import { applyBenchObservedWorkspaceChange } from '@/app/utils/benchWorkspace';
+import { isLancedbExplicitlyBlocked } from '@/app/utils/lancedbGate';
+import { normalizeStartedAtSeconds } from '@/app/utils/runtimeDisplay';
+import { useLlmRuntimeGate } from './hooks/useLlmRuntimeGate';
+import { isWorkspaceDocsMissing, resolveEffectivePhase, resolveEffectivePmRunning, shouldIncomingSnapshotClearDocsBlocker, shouldSuppressRuntimeIssueAfterPmSuccess, } from './runtimeState';
+import { resolveRunning } from '@/types/app';
+const ProcessMonitorSidebar = lazy(() => import('./components/ProcessMonitorSidebar').then(m => ({ default: m.ProcessMonitorSidebar })));
+const SettingsModal = lazy(() => import('./components/SettingsModal').then(m => ({ default: m.SettingsModal })));
+const DocsInitDialog = lazy(() => import('./components/DocsInitDialog').then(m => ({ default: m.DocsInitDialog })));
+const LogsModal = lazy(() => import('./components/LogsModal').then(m => ({ default: m.LogsModal })));
+const TerminalPanel = lazy(() => import('./components/TerminalPanel').then(m => ({ default: m.TerminalPanel })));
+const InterventionCenter = lazy(() => import('./components/InterventionCenter').then(m => ({ default: m.InterventionCenter })));
+const RUN_ID_PREFIX = 'pm-';
+const RUNTIME_CONTEXT_HISTORY_TAIL_LINES = 240;
+const TERMINAL_FACTORY_RUN_TOKENS = new Set(['completed', 'failed', 'error', 'blocked', 'timeout', 'cancelled', 'canceled']);
+const IDLE_FACTORY_RUN_TOKENS = new Set(['', 'idle', 'pending', 'waiting', 'stopped', 'unknown', 'none']);
+function parseIterationFromRunId(runId) {
+    const raw = runId.trim().toLowerCase();
+    if (!raw.startsWith(RUN_ID_PREFIX))
+        return null;
+    const suffix = raw.slice(RUN_ID_PREFIX.length);
+    if (!/^\d+$/.test(suffix))
+        return null;
+    const value = Number(suffix);
+    return Number.isFinite(value) ? value : null;
+}
+function toIterationValue(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object')
+        return null;
+    const runId = typeof snapshot.run_id === 'string' ? snapshot.run_id : '';
+    const fromRunId = parseIterationFromRunId(runId);
+    if (fromRunId !== null)
+        return fromRunId;
+    const pmState = snapshot.pm_state;
+    if (!pmState || typeof pmState !== 'object')
+        return null;
+    const raw = pmState['pm_iteration'];
+    if (typeof raw === 'number' && Number.isFinite(raw))
+        return raw;
+    if (typeof raw === 'string') {
+        const parsed = Number(raw.trim());
+        if (Number.isFinite(parsed))
+            return parsed;
+    }
+    return null;
+}
+function toRunKey(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object')
+        return '';
+    const runId = typeof snapshot.run_id === 'string' ? snapshot.run_id.trim() : '';
+    if (runId)
+        return runId;
+    const iteration = toIterationValue(snapshot);
+    return iteration !== null ? `${RUN_ID_PREFIX}${String(iteration).padStart(5, '0')}` : '';
+}
+function isDoneLikeStatus(value) {
+    const status = String(value || '').trim().toLowerCase();
+    if (!status)
+        return false;
+    return ['done', 'complete', 'completed', 'success', 'passed', 'pass', 'ok'].some((token) => status.includes(token));
+}
+function areSnapshotTasksDone(snapshot) {
+    const tasks = Array.isArray(snapshot?.tasks) ? snapshot.tasks : [];
+    if (!tasks.length)
+        return false;
+    return tasks.every((task) => {
+        if (!task || typeof task !== 'object')
+            return false;
+        const candidate = task;
+        if (candidate.done === true || candidate.completed === true)
+            return true;
+        return isDoneLikeStatus(candidate.status) || isDoneLikeStatus(candidate.state);
+    });
+}
+function countSnapshotTasks(snapshot) {
+    if (!Array.isArray(snapshot?.tasks)) {
+        return 0;
+    }
+    return snapshot.tasks.filter((task) => Boolean(task && typeof task === 'object')).length;
+}
+function getSnapshotDirectorStatus(snapshot) {
+    const pmState = snapshot?.pm_state;
+    if (!pmState || typeof pmState !== 'object') {
+        return '';
+    }
+    return typeof pmState['last_director_status'] === 'string'
+        ? pmState['last_director_status'].trim()
+        : '';
+}
+function shouldKeepRicherSnapshot(previous, incoming) {
+    if (shouldIncomingSnapshotClearDocsBlocker(previous, incoming)) {
+        return false;
+    }
+    const previousTaskCount = countSnapshotTasks(previous);
+    const incomingTaskCount = countSnapshotTasks(incoming);
+    if (previousTaskCount > 0 && incomingTaskCount === 0) {
+        return true;
+    }
+    const previousDirectorStatus = getSnapshotDirectorStatus(previous);
+    const incomingDirectorStatus = getSnapshotDirectorStatus(incoming);
+    if (previousDirectorStatus && !incomingDirectorStatus && previousTaskCount >= incomingTaskCount) {
+        return true;
+    }
+    return false;
+}
+function isActiveRuntimePhase(value) {
+    const token = String(value || '').trim().toLowerCase();
+    return Boolean(token && !['idle', 'unknown', 'none'].includes(token));
+}
+function isFactoryRunActive(run) {
+    if (!run)
+        return false;
+    const status = String(run.status || '').trim().toLowerCase();
+    const phase = String(run.phase || '').trim().toLowerCase();
+    if (TERMINAL_FACTORY_RUN_TOKENS.has(status) || TERMINAL_FACTORY_RUN_TOKENS.has(phase))
+        return false;
+    return !IDLE_FACTORY_RUN_TOKENS.has(status) || !IDLE_FACTORY_RUN_TOKENS.has(phase);
+}
+function readFactoryRunWorkspace(run) {
+    if (!run || typeof run !== 'object')
+        return '';
+    const metadata = run.metadata;
+    if (!metadata || typeof metadata !== 'object')
+        return '';
+    const request = metadata.factory_start_request;
+    if (!request || typeof request !== 'object')
+        return '';
+    return String(request.workspace || '').trim();
+}
+function isFactoryRunScopedToBenchWorkDir(run, benchWorkDir) {
+    const runWorkspace = readFactoryRunWorkspace(run);
+    const normalizedBenchWorkDir = String(benchWorkDir || '').trim().replace(/\/+$/, '');
+    if (!runWorkspace || !normalizedBenchWorkDir)
+        return false;
+    return runWorkspace === normalizedBenchWorkDir || runWorkspace.startsWith(`${normalizedBenchWorkDir}/`);
+}
+function readInitialWorkspaceBinding() {
+    if (typeof window === 'undefined')
+        return '';
+    const params = new URLSearchParams(window.location.search);
+    return String(params.get('workspace') || params.get('polarisWorkspace') || '').trim();
+}
+function AppContent() {
+    const workspacePanelRef = useRef(null);
+    const terminalPanelRef = useRef(null);
+    const { state: ui, actions: uiActions } = useUIState();
+    const floatingRuntimeSuppressed = ui.isSettingsOpen ||
+        ui.isDocsInitOpen ||
+        ui.isInterventionOpen ||
+        ui.isHistoryDrawerOpen ||
+        ui.isLogsOpen ||
+        ui.isAgentsDialogOpen ||
+        ui.isRuntimeDialogOpen ||
+        ui.isPlanDialogOpen ||
+        ui.isLanceDbDialogOpen ||
+        ui.showTerminal;
+    const [activeRoleView, setActiveRoleView] = useState('main');
+    const [contextSidebarTab, setContextSidebarTab] = useState('dialogue');
+    const [clearingDialogueLogs, setClearingDialogueLogs] = useState(false);
+    const { settings, load: loadSettings, update: updateSettings } = useSettings();
+    const { notifications, remove: removeNotification, error: notifyError } = useNotifications();
+    const settingsWorkspace = settings?.workspace || '';
+    const [benchObservedWorkspace, setBenchObservedWorkspace] = useState('');
+    const workspace = benchObservedWorkspace || settingsWorkspace;
+    const internalBenchFlag = String(import.meta.env.VITE_POLARIS_INTERNAL_BENCH ?? '').trim();
+    const internalBenchEnabled = internalBenchFlag === '1' || (import.meta.env.DEV && internalBenchFlag !== '0');
+    const [progressSnapshot, setProgressSnapshot] = useState(null);
+    const initialWorkspaceBinding = useMemo(() => readInitialWorkspaceBinding(), []);
+    const globalBenchObserverEnabled = shouldEnableGlobalBenchObserver(internalBenchEnabled, initialWorkspaceBinding);
+    const handleBenchWorkspaceChange = useCallback((nextWorkspace) => {
+        applyBenchObservedWorkspaceChange({
+            nextWorkspace,
+            settingsWorkspace,
+            currentWorkspace: workspace,
+            setProgressSnapshot,
+            setBenchObservedWorkspace,
+        });
+    }, [settingsWorkspace, workspace]);
+    useEffect(() => {
+        if (!initialWorkspaceBinding)
+            return;
+        handleBenchWorkspaceChange(initialWorkspaceBinding);
+    }, [handleBenchWorkspaceChange, initialWorkspaceBinding]);
+    const { pmStatus, directorStatus, engineStatus, llmStatus, lancedbStatus, snapshot, anthroState, dialogueEvents, setDialogueEvents, qualityGate, executionLogs, llmStreamEvents, processStreamEvents, currentPhase, fileEditEvents, tasks: runtimeTasks, workers: runtimeWorkers, isConnected: runtimeConnected, runId: runtimeRunId, taskProgressMap, taskTraceMap, } = useRuntime({
+        roles: ['pm', 'chief_engineer', 'director', 'qa'],
+        workspace,
+        includeInternalBench: internalBenchEnabled,
+        tailLines: RUNTIME_CONTEXT_HISTORY_TAIL_LINES,
+    });
+    const { connected: live, reconnecting, attemptCount, } = useRuntimeConnectionState();
+    const { reconnect: reconnectWebSocket, subscribeChannels } = useTransportActions();
+    const { registerMessageHandler } = useMessageHandler();
+    // Connection status notifications for the unified runtime WebSocket.
+    useRuntimeConnectionNotifications({
+        live,
+        reconnecting,
+        reconnect: reconnectWebSocket,
+    });
+    // Factory run state
+    const { currentRun: factoryCurrentRun, events: factoryEvents, artifacts: factoryArtifacts, summaryMd: factorySummaryMd, summaryJson: factorySummaryJson, artifactsError: factoryArtifactsError, isArtifactsLoading: factoryArtifactsLoading, startRun: startFactoryRun, stopRun: stopFactoryRun, pauseRun: pauseFactoryRun, resumeRun: resumeFactoryRun, retryRunFromCheckpoint: retryFactoryRunFromCheckpoint, resumeLatestRun: resumeLatestFactoryRun, isLoading: factoryIsLoading, } = useFactory({ workspace });
+    const factoryBench = useFactoryBench({
+        enabled: globalBenchObserverEnabled,
+        autoSelect: globalBenchObserverEnabled ? 'newest' : 'none',
+        onWorkspaceChange: globalBenchObserverEnabled ? handleBenchWorkspaceChange : undefined,
+    });
+    const { currentSession: factoryBenchSession, events: factoryBenchEvents } = factoryBench;
+    const factoryRuntimeActive = factoryIsLoading || isFactoryRunActive(factoryCurrentRun);
+    const combinedProcessStreamEvents = useMemo(() => mergeProcessAndBenchLogs(processStreamEvents, factoryBenchEvents), [processStreamEvents, factoryBenchEvents]);
+    // Usage stats are derived from the live WebSocket LLM stream (journal raw.data
+    // tokens), not a polled file — see useUsageStats. llmStreamEvents is destructured
+    // from useRuntime above.
+    const { stats: usageStats, loading: usageLoading, error: usageError, refresh: refreshUsage } = useUsageStats(llmStreamEvents);
+    const directorRunning = resolveRunning(directorStatus);
+    const lancedbBlocked = isLancedbExplicitlyBlocked(lancedbStatus);
+    const latestProcessActivity = useMemo(() => getLatestExecutionActivityLog(combinedProcessStreamEvents), [combinedProcessStreamEvents]);
+    const { llmRuntimeState, getLlmRoleBlockedReason, } = useLlmRuntimeGate({
+        workspace,
+        live,
+        llmStatus,
+    });
+    const residentAgiRoleStatus = llmStatus?.roles?.resident_agi;
+    const residentAgiLlmStatus = useMemo(() => ({
+        ready: residentAgiRoleStatus?.ready,
+        providerId: residentAgiRoleStatus?.provider_id,
+        providerName: residentAgiRoleStatus?.provider_name,
+        model: residentAgiRoleStatus?.model,
+        grade: residentAgiRoleStatus?.grade,
+        blocked: llmRuntimeState.blockedRoles.includes('resident_agi') ||
+            Boolean(llmStatus?.blocked_roles?.includes('resident_agi')),
+        unsupported: Boolean(llmStatus?.unsupported_roles?.includes('resident_agi')),
+        readinessIssue: residentAgiRoleStatus?.readiness_issue,
+        runtimeIssue: residentAgiRoleStatus?.runtime_issue,
+        lastUpdated: residentAgiRoleStatus?.timestamp || llmStatus?.last_updated || null,
+    }), [
+        llmRuntimeState.blockedRoles,
+        llmStatus?.blocked_roles,
+        llmStatus?.last_updated,
+        llmStatus?.unsupported_roles,
+        residentAgiRoleStatus?.grade,
+        residentAgiRoleStatus?.model,
+        residentAgiRoleStatus?.provider_id,
+        residentAgiRoleStatus?.provider_name,
+        residentAgiRoleStatus?.readiness_issue,
+        residentAgiRoleStatus?.ready,
+        residentAgiRoleStatus?.runtime_issue,
+        residentAgiRoleStatus?.timestamp,
+    ]);
+    useEffect(() => {
+        const handleOpenIntervention = () => uiActions.openIntervention();
+        window.addEventListener('open-intervention-center', handleOpenIntervention);
+        return () => window.removeEventListener('open-intervention-center', handleOpenIntervention);
+    }, [uiActions.openIntervention]);
+    useEffect(() => {
+        if (!snapshot)
+            return;
+        setProgressSnapshot((previous) => {
+            if (!previous)
+                return snapshot;
+            const previousRun = toRunKey(previous);
+            const incomingRun = toRunKey(snapshot);
+            if (!previousRun || !incomingRun || previousRun === incomingRun) {
+                if (shouldKeepRicherSnapshot(previous, snapshot)) {
+                    return previous;
+                }
+                return snapshot;
+            }
+            const previousDone = areSnapshotTasksDone(previous);
+            const incomingDone = areSnapshotTasksDone(snapshot);
+            // Keep displaying the completed run when the next run is still incomplete,
+            // so the main panel does not visually "roll back" progress.
+            if (previousDone && !incomingDone) {
+                return previous;
+            }
+            return snapshot;
+        });
+    }, [snapshot]);
+    const displaySnapshot = progressSnapshot ?? snapshot;
+    const { isStartingPM, isStoppingPM, isStartingDirector, isStoppingDirector, pmActionError, directorActionError, startPmLoop, togglePm, runPmOnce, toggleDirector, clearPmError, clearDirectorError, } = useProcessOperations({
+        workspace,
+        onStatusChange: () => {
+            loadSettings();
+            // 状态与进度只由 runtime.v2 WebSocket 推送；这里不再补拉快照。
+        },
+        onOpenLogs: (sourceId, banner) => {
+            uiActions.openLogs(sourceId, banner);
+        },
+        lancedbBlocked,
+        lancedbBlockMessage: lancedbBlocked ? lancedbStatus?.error ?? undefined : undefined,
+    });
+    const fileManager = useFileManager({ workspace });
+    const memos = useMemos({ workspace });
+    const memory = useMemory({
+        showMemory: settings?.show_memory,
+        workspace,
+        ramdiskRoot: settings?.ramdisk_root
+    });
+    const backendHealth = useBackendHealthPing();
+    const [controlPlaneProjection, setControlPlaneProjection] = useState(undefined);
+    const refreshControlPlaneProjection = useCallback(async () => {
+        if (!workspace) {
+            setControlPlaneProjection(undefined);
+            return;
+        }
+        const result = await getControlPlaneProjection({ workspace });
+        if (result.ok && result.data) {
+            setControlPlaneProjection(result.data);
+            return;
+        }
+        setControlPlaneProjection({
+            schema_version: 1,
+            source: 'run_ledger_projection',
+            available: false,
+            ok: false,
+            status: 'error',
+            audit_path: '',
+            compat_ledgers_included: false,
+            total: 0,
+            projected: 0,
+            missing: 0,
+            failed: 0,
+            projects: [],
+            detail: result.error || 'Run Ledger projection 读取失败',
+        });
+    }, [workspace]);
+    useEffect(() => {
+        void refreshControlPlaneProjection();
+    }, [refreshControlPlaneProjection]);
+    useEffect(() => {
+        if (!workspace)
+            return;
+        const unsubscribe = subscribeChannels([{ channel: 'status.control_plane', tailLines: 0 }]);
+        const unregister = registerMessageHandler((message) => {
+            const projection = controlPlaneProjectionFromRuntimeMessage(message);
+            if (projection) {
+                setControlPlaneProjection(projection);
+            }
+        });
+        return () => {
+            unregister();
+            unsubscribe();
+        };
+    }, [workspace, subscribeChannels, registerMessageHandler]);
+    const agentsReview = useAgentsReview({
+        agentsReview: snapshot?.agents_review ?? null,
+        isOpen: ui.isAgentsDialogOpen,
+        runtimeIssue: snapshot?.runtime_issues?.[0],
+    });
+    const liveSnapshotTasks = useMemo(() => {
+        if (!Array.isArray(snapshot?.tasks))
+            return [];
+        return snapshot.tasks.filter((task) => Boolean(task && typeof task === 'object'));
+    }, [snapshot]);
+    const displaySnapshotTasks = useMemo(() => {
+        if (!Array.isArray(displaySnapshot?.tasks))
+            return [];
+        return displaySnapshot.tasks.filter((task) => Boolean(task && typeof task === 'object'));
+    }, [displaySnapshot]);
+    const liveTaskQueues = useLiveTaskQueues({
+        snapshotTasks: liveSnapshotTasks,
+        directorRealtime: {
+            tasks: runtimeTasks,
+            isConnected: runtimeConnected,
+            runId: runtimeRunId,
+        },
+    });
+    const displayTaskQueues = useLiveTaskQueues({
+        snapshotTasks: displaySnapshotTasks,
+        directorRealtime: {
+            tasks: runtimeTasks,
+            isConnected: runtimeConnected,
+            runId: runtimeRunId,
+        },
+    });
+    const { pmTasks, directorTasks, directorTaskSource, isDirectorRealtimeConnected, } = liveTaskQueues;
+    const { pmTasks: progressPmTasks, directorTasks: progressDirectorTasks, directorTaskSource: progressDirectorTaskSource, isDirectorRealtimeConnected: isProgressDirectorRealtimeConnected, } = displayTaskQueues;
+    const directorWorkspaceTasks = progressDirectorTasks.length > 0 ? progressDirectorTasks : directorTasks;
+    const directorSeedTasks = progressPmTasks.length > 0 ? progressPmTasks : pmTasks;
+    const runtimeIssue = useMemo(() => snapshot?.runtime_issues?.[0] ?? null, [snapshot?.runtime_issues]);
+    const engineRuntimeIssue = useMemo(() => {
+        if (!engineStatus)
+            return null;
+        const phase = String(engineStatus.phase || '').trim().toLowerCase();
+        const errorCode = String(engineStatus.error || '').trim();
+        const recoveryCode = String(engineStatus.recovery_code || '').trim();
+        const orphanedRecovered = (engineStatus.orphaned === true
+            || engineStatus.stale === true
+            || errorCode === 'ENGINE_ORPHANED'
+            || recoveryCode === 'ENGINE_ORPHANED');
+        if (orphanedRecovered && (!errorCode || errorCode === 'ENGINE_ORPHANED'))
+            return null;
+        if (!errorCode && phase !== 'failed')
+            return null;
+        const detailLines = [];
+        if (phase)
+            detailLines.push(`阶段: ${phase}`);
+        if (errorCode)
+            detailLines.push(`错误码: ${errorCode}`);
+        const roles = engineStatus.roles && typeof engineStatus.roles === 'object'
+            ? engineStatus.roles
+            : null;
+        const pmDetail = readEngineRoleDetail(roles, ['PM']);
+        const chiefEngineerDetail = readEngineRoleDetail(roles, ['ChiefEngineer', 'Chief Engineer', 'chief_engineer']);
+        const directorDetail = readEngineRoleDetail(roles, ['Director']);
+        const qaDetail = readEngineRoleDetail(roles, ['QA']);
+        if (pmDetail)
+            detailLines.push(`PM: ${pmDetail}`);
+        if (chiefEngineerDetail)
+            detailLines.push(`Chief Engineer: ${chiefEngineerDetail}`);
+        if (directorDetail)
+            detailLines.push(`Director: ${directorDetail}`);
+        if (qaDetail)
+            detailLines.push(`QA: ${qaDetail}`);
+        const summary = engineStatus.summary && typeof engineStatus.summary === 'object'
+            ? engineStatus.summary
+            : null;
+        const total = Number(summary?.total || 0);
+        const failures = Number(summary?.failures || 0);
+        const blocked = Number(summary?.blocked || 0);
+        if (total > 0 || failures > 0 || blocked > 0) {
+            detailLines.push(`任务统计: total=${total}, failures=${failures}, blocked=${blocked}`);
+        }
+        const failedTasks = Array.isArray(snapshot?.tasks)
+            ? snapshot.tasks
+                .filter((task) => Boolean(task && typeof task === 'object'))
+                .filter((task) => {
+                const status = String(task.status || task.state || '').trim().toLowerCase();
+                return status === 'blocked' || status === 'failed';
+            })
+            : [];
+        if (failedTasks.length > 0) {
+            detailLines.push('阻塞任务:');
+            for (const task of failedTasks.slice(0, 3)) {
+                const taskId = String(task.id || task.title || 'unknown').trim() || 'unknown';
+                const taskError = String(task.failure_detail || task.error_code || task.reason || '').trim();
+                detailLines.push(`- ${taskId}: ${taskError || '执行失败（无详细信息）'}`);
+            }
+            if (failedTasks.length > 3) {
+                detailLines.push(`- ... 另有 ${failedTasks.length - 3} 个阻塞任务`);
+            }
+        }
+        if (!detailLines.length) {
+            detailLines.push('引擎执行失败，请查看运行日志。');
+        }
+        return {
+            code: errorCode || 'ENGINE_RUNTIME_FAILED',
+            title: 'Polaris 引擎执行失败',
+            detail: detailLines.join('\n'),
+        };
+    }, [engineStatus, snapshot?.tasks]);
+    const actionRuntimeIssue = useMemo(() => {
+        if (pmActionError) {
+            return {
+                code: 'PM_ACTION_FAILED',
+                title: 'PM 操作失败',
+                detail: pmActionError,
+            };
+        }
+        if (directorActionError) {
+            return {
+                code: 'DIRECTOR_ACTION_FAILED',
+                title: 'Director 操作失败',
+                detail: directorActionError,
+            };
+        }
+        return null;
+    }, [pmActionError, directorActionError]);
+    const pmStateRuntimeIssue = useMemo(() => {
+        const pmState = snapshot?.pm_state;
+        if (!pmState || typeof pmState !== 'object')
+            return null;
+        const lastPmCode = String(pmState['last_pm_error_code'] || '').trim();
+        const lastPmDetail = String(pmState['last_pm_error_detail'] || '').trim();
+        if (lastPmCode) {
+            return {
+                code: lastPmCode,
+                title: 'PM 运行异常',
+                detail: lastPmDetail || 'PM 运行失败，请查看日志。',
+            };
+        }
+        const directorCode = String(pmState['last_director_error_code'] || '').trim();
+        const directorDetail = String(pmState['last_director_error_detail'] || '').trim();
+        if (directorCode && directorCode !== 'PLAN_MISSING') {
+            return {
+                code: directorCode,
+                title: 'Director 链路异常',
+                detail: directorDetail || 'Director 执行异常，请查看日志。',
+            };
+        }
+        const manualCode = String(pmState['manual_intervention_reason_code'] || '').trim();
+        const manualDetail = String(pmState['manual_intervention_detail'] || '').trim();
+        if (manualCode) {
+            return {
+                code: manualCode,
+                title: '流程暂停等待人工介入',
+                detail: manualDetail || '请处理阻塞后再继续。',
+            };
+        }
+        return null;
+    }, [snapshot?.pm_state]);
+    const activeRuntimeIssue = useMemo(() => {
+        const issue = runtimeIssue ?? engineRuntimeIssue ?? pmStateRuntimeIssue ?? actionRuntimeIssue;
+        if (shouldSuppressRuntimeIssueAfterPmSuccess(pmStatus, issue)) {
+            return null;
+        }
+        return issue;
+    }, [runtimeIssue, engineRuntimeIssue, pmStateRuntimeIssue, actionRuntimeIssue, pmStatus]);
+    const docsReadinessSnapshot = progressSnapshot?.docs_present === true ? progressSnapshot : snapshot;
+    const docsMissing = useMemo(() => isWorkspaceDocsMissing(snapshot, progressSnapshot), [progressSnapshot, snapshot]);
+    const agentsRequired = Boolean(snapshot?.agents_review?.needs_review);
+    const agentsDraftReady = Boolean(snapshot?.agents_review?.draft_path);
+    const agentsDraftFailed = agentsReview.draftFailed;
+    const rawPmRunning = Boolean(pmStatus?.running);
+    const effectivePmRunning = resolveEffectivePmRunning(pmStatus, activeRuntimeIssue);
+    const effectiveCurrentPhase = resolveEffectivePhase(currentPhase, effectivePmRunning, activeRuntimeIssue, directorRunning);
+    const docsStartBlockedReason = docsMissing ? 'docs/ 初始化未完成' : '';
+    const lancedbStartBlockedReason = lancedbBlocked
+        ? String(lancedbStatus?.error || '').trim() || 'LanceDB 不可用'
+        : '';
+    const llmRuntimeUnavailableReason = !live
+        ? 'Runtime WebSocket 未连接，LLM 状态未知'
+        : llmRuntimeState.state === 'UNKNOWN'
+            ? 'LLM runtime 状态未知，等待实时推送'
+            : '';
+    const pmLlmBlockedReason = llmRuntimeState.state === 'READY'
+        ? ''
+        : llmRuntimeUnavailableReason || getLlmRoleBlockedReason('pm', 'PM');
+    const directorLlmBlockedReason = llmRuntimeState.state === 'READY'
+        ? ''
+        : llmRuntimeUnavailableReason || getLlmRoleBlockedReason('director', 'Director');
+    const pmStartBlockedReason = docsStartBlockedReason || lancedbStartBlockedReason || pmLlmBlockedReason;
+    const directorAgentsBlockedReason = agentsRequired && agentsDraftFailed
+        ? 'AGENTS 草稿生成失败'
+        : agentsRequired
+            ? '需要先确认 AGENTS.md'
+            : '';
+    const directorStartBlockedReason = docsStartBlockedReason ||
+        lancedbStartBlockedReason ||
+        directorAgentsBlockedReason ||
+        directorLlmBlockedReason;
+    const runOnceBlockedReason = rawPmRunning
+        ? 'PM 正在运行'
+        : directorRunning
+            ? 'Director 正在运行'
+            : pmStartBlockedReason;
+    const runtimeLlmGateActive = effectivePmRunning || directorRunning || isActiveRuntimePhase(effectiveCurrentPhase);
+    const llmStatusForBar = llmRuntimeState.state === 'READY'
+        ? 'ready'
+        : llmRuntimeState.state === 'BLOCKED' && runtimeLlmGateActive
+            ? 'blocked'
+            : 'unknown';
+    useEffect(() => {
+        if (lancedbBlocked) {
+            uiActions.openLanceDbDialog();
+        }
+        else {
+            uiActions.closeLanceDbDialog();
+        }
+    }, [lancedbBlocked]);
+    useEffect(() => {
+        if (activeRuntimeIssue) {
+            uiActions.openRuntimeDialog();
+            uiActions.closeAgentsDialog();
+            uiActions.closePlanDialog();
+        }
+        else {
+            uiActions.closeRuntimeDialog();
+        }
+    }, [activeRuntimeIssue?.code, activeRuntimeIssue?.detail]);
+    useEffect(() => {
+        if (activeRuntimeIssue || ui.isAgentsDialogOpen)
+            return;
+        const pmState = snapshot?.pm_state;
+        const errorCode = String(pmState?.last_director_error_code || '');
+        if (errorCode === 'PLAN_MISSING') {
+            uiActions.openPlanDialog();
+        }
+        else {
+            uiActions.closePlanDialog();
+        }
+    }, [activeRuntimeIssue, ui.isAgentsDialogOpen, snapshot?.pm_state]);
+    const handleRuntimeOpenLogs = () => {
+        const issueCode = String(activeRuntimeIssue?.code || '').toUpperCase();
+        const sourceId = issueCode.includes('DIRECTOR') || issueCode.includes('ENGINE')
+            ? 'director'
+            : 'pm-subprocess';
+        uiActions.closeRuntimeDialog();
+        uiActions.openLogs(sourceId);
+    };
+    const handleRuntimeDismiss = () => {
+        clearPmError();
+        clearDirectorError();
+    };
+    const toggleTerminalMaximize = () => {
+        const terminal = terminalPanelRef.current;
+        const workspacePanel = workspacePanelRef.current;
+        if (!terminal || !workspacePanel)
+            return;
+        if (ui.isTerminalMaximized) {
+            workspacePanel.resize(70);
+            terminal.resize(30);
+            uiActions.setTerminalMaximize(false);
+        }
+        else {
+            workspacePanel.collapse();
+            uiActions.setTerminalMaximize(true);
+        }
+    };
+    const handleRefresh = () => {
+        loadSettings();
+        reconnectWebSocket();
+        void refreshControlPlaneProjection();
+    };
+    const handleOpenBrain = () => {
+        uiActions.setShowCognition(true);
+        setContextSidebarTab(settings?.show_memory ? 'memory' : 'agi');
+    };
+    const handleClearDialogueLogs = async () => {
+        if (clearingDialogueLogs)
+            return;
+        setClearingDialogueLogs(true);
+        try {
+            const result = await runtimeService.clearDialogue();
+            if (result.ok) {
+                setDialogueEvents([]);
+                toast.success('Dialogue logs cleared');
+                reconnectWebSocket();
+            }
+            else {
+                toast.error(result.error || '清空对话日志失败');
+            }
+        }
+        catch (error) {
+            toast.error(error instanceof Error ? error.message : '清空对话日志失败');
+        }
+        finally {
+            setClearingDialogueLogs(false);
+        }
+    };
+    const handlePickWorkspace = async () => {
+        try {
+            const picked = await pickWorkspace(workspace);
+            if (picked) {
+                const updated = await updateSettings({ workspace: picked });
+                if (updated) {
+                    setBenchObservedWorkspace('');
+                    setProgressSnapshot(null);
+                    // WebSocket will auto-reconnect via useRuntime workspace effect
+                    toast.success('Workspace updated');
+                }
+                else {
+                    toast.error('Failed to update workspace');
+                }
+            }
+        }
+        catch (err) {
+            toast.error('Failed to pick workspace');
+        }
+    };
+    const handleOpenWorkspace = async () => {
+        if (!workspace)
+            return;
+        try {
+            const result = await openPath(workspace);
+            if (!result.ok) {
+                toast.error('Failed to open workspace folder');
+            }
+        }
+        catch {
+            toast.error('Failed to open workspace');
+        }
+    };
+    const handleSaveSettings = async (payload) => {
+        const updated = await updateSettings(payload);
+        if (updated) {
+            if (typeof payload.workspace === 'string' && payload.workspace.trim()) {
+                setBenchObservedWorkspace('');
+                setProgressSnapshot(null);
+            }
+            toast.success('Settings saved');
+            return;
+        }
+        toast.error('Failed to save settings');
+    };
+    // Role Workspace handlers
+    const handleEnterPMWorkspace = () => {
+        setActiveRoleView('pm');
+    };
+    const handleEnterChiefEngineerWorkspace = () => {
+        setActiveRoleView('chief_engineer');
+    };
+    const handleEnterDirectorWorkspace = () => {
+        setActiveRoleView('director');
+    };
+    const handleEnterFactoryMode = () => {
+        // Factory 模式：PM -> Chief Engineer -> Director 全链路。
+        setActiveRoleView('factory');
+    };
+    const handleEnterAGIWorkspace = () => {
+        setActiveRoleView('agi');
+    };
+    const handleEnterRuntimeDiagnostics = () => {
+        setActiveRoleView('diagnostics');
+    };
+    const handleEnterContextOS = () => {
+        setActiveRoleView('contextos');
+    };
+    const handleEnterFiles = () => {
+        setActiveRoleView('files');
+    };
+    const handleBackToMain = () => {
+        setActiveRoleView('main');
+    };
+    const settingsModalNode = (_jsx(Suspense, { fallback: null, children: _jsx(SettingsModal, { isOpen: ui.isSettingsOpen, initialTab: ui.settingsInitialTab, onClose: () => uiActions.closeSettings(), settings: settings, onSave: handleSaveSettings }) }));
+    if (activeRoleView === 'chief_engineer') {
+        return (_jsxs(_Fragment, { children: [_jsx(ChiefEngineerPage, { workspace: workspace, engineStatus: engineStatus, tasks: directorWorkspaceTasks, workers: runtimeWorkers, pmState: snapshot?.pm_state ?? null, pmRunning: effectivePmRunning, directorRunning: directorRunning, isStartingDirector: isStartingDirector, isStoppingDirector: isStoppingDirector, directorStartBlockedReason: !directorRunning ? directorStartBlockedReason : '', agentsRequired: agentsRequired, agentsDraftReady: agentsDraftReady, agentsDraftFailed: agentsDraftFailed, onBackToMain: handleBackToMain, onEnterDirectorWorkspace: handleEnterDirectorWorkspace, onOpenSettings: () => uiActions.openSettings(), onToggleDirector: () => toggleDirector(directorRunning, {
+                        required: agentsRequired,
+                        draftReady: agentsDraftReady,
+                    }, directorSeedTasks), websocketLive: live, websocketReconnecting: reconnecting, websocketAttemptCount: attemptCount, internalBenchEnabled: globalBenchObserverEnabled, llmRuntimeState: llmRuntimeState, currentPhase: effectiveCurrentPhase, qualityGate: qualityGate, controlPlaneProjection: controlPlaneProjection, executionLogs: executionLogs, llmStreamEvents: llmStreamEvents, processStreamEvents: combinedProcessStreamEvents, fileEditEvents: fileEditEvents, notifyError: notifyError }), settingsModalNode] }));
+    }
+    // Render Director Workspace
+    if (activeRoleView === 'director') {
+        return (_jsxs(_Fragment, { children: [_jsx(DirectorPage, { workspace: workspace, onBackToMain: handleBackToMain, tasks: directorWorkspaceTasks, workers: runtimeWorkers, directorRunning: directorRunning, pmRunning: effectivePmRunning, isStarting: isStartingDirector, isStopping: isStoppingDirector, directorStartBlockedReason: !directorRunning ? directorStartBlockedReason : '', onToggleDirector: () => toggleDirector(directorRunning, {
+                        required: agentsRequired,
+                        draftReady: agentsDraftReady,
+                    }, directorSeedTasks), onOpenSettings: () => uiActions.openSettings(), currentTaskId: engineStatus?.roles?.Director?.task_id ?? null, currentTaskTitle: engineStatus?.roles?.Director?.task_title ?? null, currentTaskStatus: engineStatus?.roles?.Director?.status ?? null, fileEditEvents: fileEditEvents, executionLogs: executionLogs, llmStreamEvents: llmStreamEvents, processStreamEvents: combinedProcessStreamEvents, currentPhase: effectiveCurrentPhase, taskProgressMap: taskProgressMap, taskTraceMap: taskTraceMap, websocketLive: live, websocketReconnecting: reconnecting, websocketAttemptCount: attemptCount, internalBenchEnabled: globalBenchObserverEnabled, llmRuntimeState: llmRuntimeState, agentsRequired: agentsRequired, agentsDraftReady: agentsDraftReady, agentsDraftFailed: agentsDraftFailed, qualityGate: qualityGate, controlPlaneProjection: controlPlaneProjection, notifyError: notifyError }), settingsModalNode] }));
+    }
+    // Render PM Workspace
+    if (activeRoleView === 'pm') {
+        return (_jsxs(_Fragment, { children: [_jsx(PMPage, { tasks: pmTasks, pmState: snapshot?.pm_state ?? null, pmRunning: effectivePmRunning, directorRunning: directorRunning, pmTerminalStatus: pmStatus, pmStartBlockedReason: pmStartBlockedReason, runtimeIssue: activeRuntimeIssue, isStarting: isStartingPM, isStopping: isStoppingPM, onBackToMain: handleBackToMain, onTogglePm: () => togglePm(rawPmRunning), onRunPmOnce: runPmOnce, workspace: workspace, executionLogs: executionLogs, llmStreamEvents: llmStreamEvents, processStreamEvents: combinedProcessStreamEvents, fileEditEvents: fileEditEvents, currentPhase: effectiveCurrentPhase, qualityGate: qualityGate, controlPlaneProjection: controlPlaneProjection, taskTraceMap: taskTraceMap, onOpenSettings: () => uiActions.openSettings(), websocketLive: live, websocketReconnecting: reconnecting, websocketAttemptCount: attemptCount, internalBenchEnabled: globalBenchObserverEnabled, llmRuntimeState: llmRuntimeState, notifyError: notifyError }), settingsModalNode] }));
+    }
+    // Render Factory Workspace
+    if (activeRoleView === 'factory') {
+        return (_jsxs(ErrorBoundaryClass, { onError: (error) => {
+                notifyError(error.message || '发生未知错误');
+            }, children: [_jsx(FactoryWorkspace, { workspace: workspace, onBackToMain: handleBackToMain, tasks: liveSnapshotTasks, pmTasks: pmTasks, directorTasks: directorTasks, executionLogs: executionLogs, llmStreamEvents: llmStreamEvents, processStreamEvents: combinedProcessStreamEvents, fileEditEvents: fileEditEvents, currentRun: factoryCurrentRun, events: factoryEvents, artifacts: factoryArtifacts, summaryMd: factorySummaryMd, summaryJson: factorySummaryJson, artifactsError: factoryArtifactsError, isArtifactsLoading: factoryArtifactsLoading, onStart: () => startFactoryRun({ workspace, run_director: true }), onCancel: () => factoryCurrentRun && stopFactoryRun(factoryCurrentRun.run_id), onPause: () => factoryCurrentRun && pauseFactoryRun(factoryCurrentRun.run_id, 'operator pause'), onResume: () => factoryCurrentRun && resumeFactoryRun(factoryCurrentRun.run_id, 'operator resume'), onRetryCheckpoint: () => factoryCurrentRun && retryFactoryRunFromCheckpoint(factoryCurrentRun.run_id, 'operator retry'), isLoading: factoryIsLoading, bench: factoryBench, internalBenchEnabled: globalBenchObserverEnabled, websocketLive: live, websocketReconnecting: reconnecting, websocketAttemptCount: attemptCount, controlPlaneProjection: controlPlaneProjection }), _jsx(LlmRuntimeOverlay, { activeView: activeRoleView, websocketLive: live, websocketReconnecting: reconnecting, websocketAttemptCount: attemptCount, pmRunning: effectivePmRunning, directorRunning: directorRunning, llmState: llmRuntimeState.state, llmBlockedRoles: llmRuntimeState.blockedRoles, llmRequiredRoles: llmRuntimeState.requiredRoles, llmLastUpdated: llmRuntimeState.lastUpdated, factoryRuntimeActive: factoryRuntimeActive, currentPhase: effectiveCurrentPhase, qualityGate: qualityGate, controlPlaneProjection: controlPlaneProjection, executionLogs: executionLogs, llmStreamEvents: llmStreamEvents, processStreamEvents: combinedProcessStreamEvents, fileEditEvents: fileEditEvents }), _jsx(Toaster, { position: "bottom-right" })] }));
+    }
+    if (activeRoleView === 'agi') {
+        return (_jsxs(ErrorBoundaryClass, { onError: (error) => {
+                notifyError(error.message || '发生未知错误');
+            }, children: [_jsx(ResidentWorkspace, { workspace: workspace, onBackToMain: handleBackToMain, residentSnapshot: displaySnapshot?.resident ?? snapshot?.resident ?? null, residentAgiLlmStatus: residentAgiLlmStatus }), !floatingRuntimeSuppressed && (_jsx(LlmRuntimeOverlay, { activeView: activeRoleView, websocketLive: live, websocketReconnecting: reconnecting, websocketAttemptCount: attemptCount, pmRunning: effectivePmRunning, directorRunning: directorRunning, llmState: llmRuntimeState.state, llmBlockedRoles: llmRuntimeState.blockedRoles, llmRequiredRoles: llmRuntimeState.requiredRoles, llmLastUpdated: llmRuntimeState.lastUpdated, currentPhase: effectiveCurrentPhase, qualityGate: qualityGate, controlPlaneProjection: controlPlaneProjection, executionLogs: executionLogs, llmStreamEvents: llmStreamEvents, processStreamEvents: combinedProcessStreamEvents, fileEditEvents: fileEditEvents })), _jsx(Toaster, { position: "bottom-right" })] }));
+    }
+    if (activeRoleView === 'contextos') {
+        return (_jsxs(ErrorBoundaryClass, { onError: (error) => {
+                notifyError(error.message || '发生未知错误');
+            }, children: [_jsx("div", { className: "polaris-soft-scope size-full flex flex-col bg-bg text-text-main overflow-hidden relative", children: _jsx("div", { className: "min-h-0 flex-1", children: _jsx(ContextOSWorkspace, { workspace: workspace, onBackToMain: handleBackToMain, onRefresh: handleRefresh, live: live, reconnecting: reconnecting, usageStats: usageStats, currentPhase: effectiveCurrentPhase, pmRunning: effectivePmRunning, directorRunning: directorRunning, llmRuntimeState: llmRuntimeState, dialogueEvents: dialogueEvents, executionLogs: executionLogs, llmStreamEvents: llmStreamEvents, processStreamEvents: combinedProcessStreamEvents, snapshot: displaySnapshot ?? snapshot, qualityGate: qualityGate, controlPlaneProjection: controlPlaneProjection }) }) }), _jsx(Toaster, { position: "bottom-right" })] }));
+    }
+    if (activeRoleView === 'diagnostics') {
+        return (_jsxs(ErrorBoundaryClass, { onError: (error) => {
+                notifyError(error.message || '发生未知错误');
+            }, children: [_jsx(RuntimeDiagnosticsWorkspace, { workspace: workspace, connectionState: {
+                        live,
+                        reconnecting,
+                        attemptCount,
+                    }, onBackToMain: handleBackToMain }), _jsx(LlmRuntimeOverlay, { activeView: activeRoleView, websocketLive: live, websocketReconnecting: reconnecting, websocketAttemptCount: attemptCount, pmRunning: effectivePmRunning, directorRunning: directorRunning, llmState: llmRuntimeState.state, llmBlockedRoles: llmRuntimeState.blockedRoles, llmRequiredRoles: llmRuntimeState.requiredRoles, llmLastUpdated: llmRuntimeState.lastUpdated, factoryRuntimeActive: factoryRuntimeActive, currentPhase: effectiveCurrentPhase, qualityGate: qualityGate, controlPlaneProjection: controlPlaneProjection, executionLogs: executionLogs, llmStreamEvents: llmStreamEvents, processStreamEvents: combinedProcessStreamEvents, fileEditEvents: fileEditEvents }), _jsx(Toaster, { position: "bottom-right" })] }));
+    }
+    if (activeRoleView === 'files') {
+        return (_jsxs(ErrorBoundaryClass, { onError: (error) => {
+                notifyError(error.message || '发生未知错误');
+            }, children: [_jsx(WorkspaceFilesPage, { workspace: workspace, onBackToMain: handleBackToMain }), _jsx(Toaster, { position: "bottom-right" })] }));
+    }
+    // Render Main View (default)
+    return (_jsx(ErrorBoundaryClass, { onError: (error) => {
+            notifyError(error.message || '发生未知错误');
+        }, children: _jsxs("div", { className: "polaris-soft-scope size-full flex flex-col bg-bg text-text-main font-sans overflow-hidden relative", children: [_jsx(EnhancedNotificationManager, { notifications: notifications, onDismiss: removeNotification, maxVisible: 5 }), _jsx(ControlPanel, { workspace: workspace, pmRunning: effectivePmRunning, directorRunning: directorRunning, pmToggleDisabled: Boolean(pmStartBlockedReason) && !rawPmRunning, pmBlockedReason: !rawPmRunning ? pmStartBlockedReason : '', directorToggleDisabled: Boolean(directorStartBlockedReason) && !directorRunning, directorBlockedReason: !directorRunning ? directorStartBlockedReason : '', runOnceDisabled: Boolean(runOnceBlockedReason), runOnceBlockedReason: runOnceBlockedReason, onOpenSettings: () => uiActions.openSettings(), onPickWorkspace: handlePickWorkspace, onTogglePm: () => togglePm(rawPmRunning), onRunPmOnce: runPmOnce, onResumePm: () => startPmLoop(true), onToggleDirector: () => toggleDirector(directorRunning, {
+                        required: agentsRequired,
+                        draftReady: agentsDraftReady,
+                    }, directorSeedTasks), onRefresh: handleRefresh, onOpenBrain: handleOpenBrain, agentsNeeded: agentsRequired, agentsDraftReady: agentsDraftReady, agentsDraftFailed: agentsDraftFailed, onOpenAgentsReview: () => uiActions.openAgentsDialog(), onGenerateAgentsDraft: runPmOnce, isStartingPM: isStartingPM, isStoppingPM: isStoppingPM, isStartingDirector: isStartingDirector, isStoppingDirector: isStoppingDirector, healthStatus: backendHealth.status, healthStatusDetail: backendHealth.evidence, onPingHealth: () => { void backendHealth.ping(); }, onOpenLogs: () => uiActions.openLogs('pm-subprocess'), isArtifactsOpen: ui.isMonitorOpen, onToggleArtifacts: () => uiActions.toggleMonitor(), onToggleTerminal: uiActions.toggleTerminal, isTerminalOpen: ui.showTerminal, onEnterPMWorkspace: handleEnterPMWorkspace, onEnterChiefEngineerWorkspace: handleEnterChiefEngineerWorkspace, onEnterDirectorWorkspace: handleEnterDirectorWorkspace, onEnterFactoryMode: handleEnterFactoryMode, onEnterAGIWorkspace: handleEnterAGIWorkspace, onEnterRuntimeDiagnostics: handleEnterRuntimeDiagnostics, onEnterContextOS: handleEnterContextOS, onEnterFiles: handleEnterFiles, onOpenIntervention: () => uiActions.openIntervention(), 
+                    // 新增：即时反馈状态
+                    currentPhase: effectiveCurrentPhase, currentTask: engineStatus?.roles?.Director?.task_title ?? undefined, isExecutingTool: Boolean(latestProcessActivity), currentToolName: latestProcessActivity?.message }), _jsx(RealTimeStatusBar, { pmRunning: effectivePmRunning, directorRunning: directorRunning, pmStartedAt: normalizeStartedAtSeconds(pmStatus?.started_at), directorStartedAt: normalizeStartedAtSeconds(directorStatus?.started_at), pmIteration: toIterationValue(displaySnapshot), llmStatus: llmStatusForBar, lancedbOk: lancedbStatus?.ok, fileEditEvents: fileEditEvents }), globalBenchObserverEnabled && (_jsx(BenchStatusStrip, { enabled: globalBenchObserverEnabled, bench: factoryBench, websocketLive: live, websocketReconnecting: reconnecting, websocketAttemptCount: attemptCount })), !floatingRuntimeSuppressed && (_jsx(LlmRuntimeOverlay, { activeView: activeRoleView, websocketLive: live, websocketReconnecting: reconnecting, websocketAttemptCount: attemptCount, pmRunning: effectivePmRunning, directorRunning: directorRunning, llmState: llmRuntimeState.state, llmBlockedRoles: llmRuntimeState.blockedRoles, llmRequiredRoles: llmRuntimeState.requiredRoles, llmLastUpdated: llmRuntimeState.lastUpdated, currentPhase: effectiveCurrentPhase, qualityGate: qualityGate, controlPlaneProjection: controlPlaneProjection, executionLogs: executionLogs, llmStreamEvents: llmStreamEvents, processStreamEvents: combinedProcessStreamEvents, fileEditEvents: fileEditEvents })), _jsxs(PanelGroup, { direction: "horizontal", autoSaveId: "polaris-main-layout-v2", className: "flex-1 flex overflow-hidden", children: [ui.isMonitorOpen && (_jsxs(_Fragment, { children: [_jsx(Panel, { defaultSize: 20, minSize: 15, maxSize: 30, order: 1, children: _jsx("div", { className: "size-full border-r border-white/10 soft-panel-subtle backdrop-blur-md flex flex-col", children: _jsx(Suspense, { fallback: _jsx("div", { className: "flex items-center justify-center h-full text-text-dim", children: "\u52A0\u8F7D\u4E2D..." }), children: _jsx(ProcessMonitorSidebar, { onFileSelect: fileManager.selectFile, selectedFileId: fileManager.selectedFile?.id || null, onOpenWorkspace: handleOpenWorkspace, onOpenHistory: () => uiActions.openHistoryDrawer(), fileStatusLines: snapshot?.file_status ?? null, usageStats: usageStats, usageLoading: usageLoading, usageError: usageError, onRefreshUsage: refreshUsage }) }) }) }), _jsx(PanelResizeHandle, { className: "w-1 bg-white/5 hover:bg-accent transition-colors" })] })), _jsx(Panel, { order: 2, className: "flex flex-col min-w-0", children: _jsxs(PanelGroup, { direction: "vertical", children: [_jsx(Panel, { ref: workspacePanelRef, minSize: 30, collapsible: true, children: _jsxs("div", { className: "flex flex-col h-full", children: [_jsxs("div", { className: "flex items-center justify-between border-b border-white/10 soft-panel-subtle px-4", children: [_jsx("div", { className: "flex items-center gap-3 py-2", children: _jsx("span", { className: "text-sm font-heading font-bold text-text-main", children: "\u5F53\u524D\u6279\u6B21\u4E3B\u6218\u573A" }) }), _jsx("button", { onClick: () => uiActions.openHistoryDrawer(), className: "px-3 py-1.5 text-xs font-medium text-text-dim hover:text-text-main border border-white/10 hover:border-accent/30 rounded-lg transition-colors", children: "\u6848\u5377\u5386\u53F2" })] }), _jsx("div", { className: "flex-1 min-h-0 overflow-hidden", children: _jsx(ProjectProgressPanel, { tasks: progressPmTasks, directorTasks: progressDirectorTasks, directorTaskSource: progressDirectorTaskSource, directorRealtimeConnected: isProgressDirectorRealtimeConnected, pmState: displaySnapshot?.pm_state ?? null, focus: displaySnapshot?.focus ?? null, notes: displaySnapshot?.notes ?? null, goals: displaySnapshot?.goals ?? null, planText: displaySnapshot?.plan_text ?? null, planMtime: displaySnapshot?.plan_mtime ?? null, planTextNormalized: displaySnapshot?.plan_text_normalized ?? false, pmRunning: effectivePmRunning, engineStatus: engineStatus, onOpenDocsPanel: () => uiActions.openDocsInit(), className: "h-full", 
+                                                        // 新增：详细状态
+                                                        qualityGate: qualityGate, executionLogs: executionLogs, dialogueEvents: dialogueEvents, currentPhase: effectiveCurrentPhase, controlPlaneProjection: controlPlaneProjection }) })] }) }), ui.showTerminal && (_jsxs(_Fragment, { children: [_jsx(PanelResizeHandle, { className: "h-1 bg-white/5 hover:bg-accent transition-colors" }), _jsx(Suspense, { fallback: null, children: _jsx(Panel, { ref: terminalPanelRef, defaultSize: 30, minSize: 10, maxSize: 80, collapsible: true, children: _jsx(TerminalPanel, { isVisible: ui.showTerminal, onClose: () => uiActions.setShowTerminal(false), workspacePath: workspace, isMaximized: ui.isTerminalMaximized, onToggleMaximize: toggleTerminalMaximize, isResettingTasks: false }) }) })] }))] }) }), _jsx(PanelResizeHandle, { className: "w-1 bg-white/5 hover:bg-accent transition-colors" }), _jsx(Panel, { defaultSize: 30, minSize: 20, maxSize: 50, order: 3, children: _jsx(ContextSidebar, { dialogueEvents: dialogueEvents, runtimeEvents: combinedProcessStreamEvents, live: live, dialogueLoading: !live && dialogueEvents.length === 0, onClearDialogueLogs: handleClearDialogueLogs, clearingDialogueLogs: clearingDialogueLogs, memoItems: memos.memoItems, memoSelected: memos.memoSelected, memoContent: memos.memoData.content, memoMtime: memos.memoData.mtime, memoLoading: memos.memoLoading, memoError: memos.memoError, onSelectMemo: memos.selectMemo, memoryContent: memory.memoryData.content, memoryMtime: memory.memoryData.mtime, memoryLoading: memory.memoryLoading, memoryError: memory.memoryError, showCognition: ui.showCognition, setShowCognition: uiActions.setShowCognition, settingsShowMemory: !!settings?.show_memory, activeTab: contextSidebarTab, onActiveTabChange: setContextSidebarTab, anthroState: anthroState, snapshotTimestamp: displaySnapshot?.timestamp ?? null, snapshotFileStatus: displaySnapshot?.file_status ?? null, snapshotFilePaths: displaySnapshot?.file_paths ?? null, snapshotDirectorState: displaySnapshot?.director_state ?? null, resident: displaySnapshot?.resident ?? null }) })] }), settingsModalNode, _jsx(Suspense, { fallback: null, children: _jsx(DocsInitDialog, { open: ui.isDocsInitOpen, onOpenChange: (open) => open ? uiActions.openDocsInit() : uiActions.closeDocsInit(), workspace: workspace, workspaceStatus: docsReadinessSnapshot?.workspace_status, docsPresent: docsReadinessSnapshot?.docs_present, onApplied: () => {
+                            uiActions.closeDocsInit();
+                            handleRefresh();
+                        } }) }), _jsx(Suspense, { fallback: null, children: _jsx(LogsModal, { isOpen: ui.isLogsOpen, onClose: () => uiActions.closeLogs(), initialSourceId: ui.logsSourceId, banner: ui.logsBanner, onDismissBanner: uiActions.dismissLogsBanner }) }), _jsx(Suspense, { fallback: null, children: _jsx(InterventionCenter, { isOpen: ui.isInterventionOpen, onClose: () => uiActions.closeIntervention() }) }), _jsx(AgentsReviewDialog, { open: ui.isAgentsDialogOpen, onOpenChange: (open) => open ? uiActions.openAgentsDialog() : uiActions.closeAgentsDialog(), agentsDraftFailed: agentsDraftFailed, agentsReview: snapshot?.agents_review ?? null, onOpenLogs: () => uiActions.openLogs('pm-subprocess'), onOpenDraft: () => {
+                        if (snapshot?.agents_review?.draft_path) {
+                            fileManager.selectFile({
+                                id: 'agents-draft',
+                                name: 'AGENTS.generated.md',
+                                path: snapshot.agents_review.draft_path,
+                            });
+                            uiActions.closeAgentsDialog();
+                        }
+                    }, workspace: workspace, agentsDraftMtime: agentsReview.draftMtime, agentsFeedbackSavedAt: agentsReview.feedbackSavedAt, agentsLoading: agentsReview.loading, agentsDraftContent: agentsReview.draftContent, agentsFeedback: agentsReview.feedback, onAgentsFeedbackChange: agentsReview.updateFeedback, onRetryGenerate: runPmOnce, onSubmitFeedback: agentsReview.saveFeedback, onApplyDraft: agentsReview.applyDraft, agentsApplying: agentsReview.applying }), _jsx(RuntimeErrorDialog, { open: ui.isRuntimeDialogOpen, issue: activeRuntimeIssue, onOpenChange: (open) => open ? uiActions.openRuntimeDialog() : uiActions.closeRuntimeDialog(), onOpenLogs: handleRuntimeOpenLogs, onDismiss: handleRuntimeDismiss }), _jsx(HistoryDrawer, { open: ui.isHistoryDrawerOpen, onOpenChange: (open) => open ? uiActions.openHistoryDrawer() : uiActions.closeHistoryDrawer(), workspace: workspace }), _jsx(Toaster, { position: "bottom-right" })] }) }));
+}
+// App wrapper with RuntimeTransportProvider for unified WebSocket management
+export default function App() {
+    // Global unhandled promise rejection handler
+    useEffect(() => {
+        const handler = (event) => {
+            devLogger.error('[Unhandled Promise Rejection]:', event.reason);
+        };
+        window.addEventListener('unhandledrejection', handler);
+        return () => window.removeEventListener('unhandledrejection', handler);
+    }, []);
+    const launcherMode = window.location.pathname === '/launcher' ||
+        new URLSearchParams(window.location.search).get('launcher') === '1';
+    if (launcherMode) {
+        return (_jsx(RuntimeTransportProvider, { autoConnect: true, children: _jsx(LauncherWorkspace, {}) }));
+    }
+    return (_jsx(RuntimeTransportProvider, { autoConnect: true, children: _jsx(AppContent, {}) }));
+}
