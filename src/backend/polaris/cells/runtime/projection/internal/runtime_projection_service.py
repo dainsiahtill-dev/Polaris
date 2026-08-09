@@ -141,6 +141,212 @@ def _ordered_string_union(*values: Any) -> list[str]:
     return rows
 
 
+_TASK_OBSERVABLE_TEXT_MAX_CHARS = 2_048
+_TASK_OBSERVABLE_LIST_MAX_ITEMS = 64
+_TASK_OBSERVABLE_SUMMARY_SCHEMA = "runtime.task-observable-summary/1"
+_TASK_OBSERVABLE_UNSUPPORTED = object()
+_TASK_OBSERVABLE_FIELDS = frozenset(
+    {
+        "id",
+        "task_id",
+        "subject",
+        "title",
+        "goal",
+        "summary",
+        "description",
+        "status",
+        "state",
+        "execution_state",
+        "running",
+        "done",
+        "completed",
+        "created_at",
+        "updated_at",
+        "started_at",
+        "completed_at",
+        "claimed_at",
+        "blocked_by",
+        "blockedBy",
+        "blocks",
+        "dependencies",
+        "depends_on",
+        "owner",
+        "assignee",
+        "claimed_by",
+        "last_claimed_by",
+        "role_id",
+        "priority",
+        "priority_label",
+        "tags",
+        "estimated_hours",
+        "progress_percent",
+        "current_file",
+        "session_id",
+        "attempt",
+        "claim_attempt",
+        "resume_count",
+        "resume_state",
+        "resume_available",
+        "lease_expires_at",
+        "last_heartbeat_at",
+        "event_type",
+        "run_id",
+        "factory_run_id",
+        "fact_event_seq",
+        "source",
+        "error_category",
+        "error_code",
+        "error_message",
+        "last_error",
+        "failure_class",
+        "failure_reason",
+        "responsible_layer",
+        "result_summary",
+        "target_files",
+        "scope_paths",
+        "files",
+        "acceptance",
+        "acceptance_criteria",
+        "execution_checklist",
+        "steps",
+        "evidence_refs",
+        "receipt_refs",
+        "context_refs",
+        "handoff_ready",
+        "blueprint_path",
+        "runtime_blueprint_path",
+    }
+)
+_TASK_OBSERVABLE_METADATA_FIELDS = frozenset(
+    {
+        "source",
+        "status_source",
+        "target_files",
+        "scope_paths",
+        "files",
+        "dependencies",
+        "depends_on",
+        "blocked_by",
+        "blockedBy",
+        "acceptance",
+        "acceptance_criteria",
+        "execution_checklist",
+        "steps",
+        "evidence_refs",
+        "receipt_refs",
+        "context_refs",
+        "running",
+        "handoff_ready",
+        "blueprint_path",
+        "runtime_blueprint_path",
+        "error_category",
+        "error_code",
+        "error_message",
+        "last_error",
+        "failure_class",
+        "failure_reason",
+        "responsible_layer",
+    }
+)
+_TASK_OBSERVABLE_KEY_SUFFIXES = (
+    "_id",
+    "_ids",
+    "_ref",
+    "_refs",
+    "_hash",
+    "_hashes",
+    "_count",
+    "_counts",
+    "_code",
+)
+
+
+def _is_task_observable_key(key: str, *, metadata: bool) -> bool:
+    allowed = _TASK_OBSERVABLE_METADATA_FIELDS if metadata else _TASK_OBSERVABLE_FIELDS
+    return key in allowed or key.endswith(_TASK_OBSERVABLE_KEY_SUFFIXES)
+
+
+def _bounded_task_observable_value(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:_TASK_OBSERVABLE_TEXT_MAX_CHARS]
+    if isinstance(value, (list, tuple, set, frozenset)):
+        source_values = sorted(value, key=str) if isinstance(value, (set, frozenset)) else value
+        bounded: list[Any] = []
+        for item in source_values:
+            if len(bounded) >= _TASK_OBSERVABLE_LIST_MAX_ITEMS:
+                break
+            projected = _bounded_task_observable_value(item)
+            if projected is _TASK_OBSERVABLE_UNSUPPORTED or isinstance(projected, list):
+                continue
+            bounded.append(projected)
+        return bounded
+    return _TASK_OBSERVABLE_UNSUPPORTED
+
+
+def _project_task_observable_fields(
+    source: dict[str, Any],
+    *,
+    metadata: bool,
+) -> tuple[dict[str, Any], set[str]]:
+    projected: dict[str, Any] = {}
+    retained_keys: set[str] = set()
+    for raw_key, value in source.items():
+        key = str(raw_key or "").strip()
+        if not key or not _is_task_observable_key(key, metadata=metadata):
+            continue
+        bounded = _bounded_task_observable_value(value)
+        if bounded is _TASK_OBSERVABLE_UNSUPPORTED:
+            continue
+        projected[key] = bounded
+        retained_keys.add(key)
+        if isinstance(value, (list, tuple, set, frozenset)):
+            projected.setdefault(f"{key}_count", len(value))
+    return projected, retained_keys
+
+
+def _project_task_error_fields(target: dict[str, Any], source: dict[str, Any]) -> None:
+    raw_error = source.get("error")
+    if not isinstance(raw_error, dict):
+        return
+    for target_key, source_keys in (
+        ("error_code", ("code", "error_code", "category")),
+        ("error_message", ("message", "error_message", "detail")),
+    ):
+        if target_key in target:
+            continue
+        for source_key in source_keys:
+            bounded = _bounded_task_observable_value(raw_error.get(source_key))
+            if bounded is _TASK_OBSERVABLE_UNSUPPORTED or bounded is None or bounded == "":
+                continue
+            target[target_key] = bounded
+            break
+
+
+def _project_observable_task_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Return bounded transport summary without mutating TaskRuntime evidence."""
+
+    summary, retained_row_keys = _project_task_observable_fields(row, metadata=False)
+    _project_task_error_fields(summary, row)
+
+    raw_metadata = row.get("metadata")
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+    metadata_summary, retained_metadata_keys = _project_task_observable_fields(metadata, metadata=True)
+    _project_task_error_fields(metadata_summary, metadata)
+    if metadata_summary:
+        summary["metadata"] = metadata_summary
+
+    summary["observable_summary"] = {
+        "schema_version": _TASK_OBSERVABLE_SUMMARY_SCHEMA,
+        "source_field_count": len(row),
+        "omitted_field_count": max(0, len(row) - len(retained_row_keys) - (1 if "metadata" in row else 0)),
+        "source_metadata_field_count": len(metadata),
+        "omitted_metadata_field_count": max(0, len(metadata) - len(retained_metadata_keys)),
+    }
+    return summary
+
+
 def _is_pm_contract_path(path: str) -> bool:
     """Return True for PM task contract paths emitted by runtime storage."""
 
@@ -2040,17 +2246,21 @@ def select_task_rows_from_projection(projection: RuntimeProjection) -> list[dict
 
 
 def load_runtime_task_rows(workspace: str) -> list[dict[str, Any]]:
-    """Load task-runtime-owned observable rows for runtime projection.
+    """Load bounded task-runtime-owned rows for runtime transport projection.
 
     TaskRuntimeService owns both the transitional file-backed rows and the
     execution fact read model; runtime projection only consumes that owner
-    projection and never queries/parses the fact stream directly.
+    projection and never queries/parses the fact stream directly. Raw durable
+    evidence remains owned by TaskRuntime; this transport projection retains
+    task identity, state, dependency, target, reference, hash, count, and error
+    fields while excluding large execution-internal payloads.
     """
     workspace_token = str(workspace or "").strip()
     if not workspace_token:
         return []
     try:
-        return TaskRuntimeService(workspace_token).list_observable_task_rows()
+        rows = TaskRuntimeService(workspace_token).list_observable_task_rows()
+        return [_project_observable_task_row(row) for row in rows if isinstance(row, dict)]
     except (RuntimeError, ValueError) as exc:
         logger.debug("failed to load runtime task rows: %s", exc)
         return []

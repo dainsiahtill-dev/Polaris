@@ -84,6 +84,7 @@ from .execution_session import (
     project_task_row_execution_event,
     project_task_row_from_execution_fact_payload,
     project_task_row_runtime_state,
+    project_task_runtime_realtime_event_payload,
     sanitize_summary,
     task_row_status_counts,
     terminal_session_timestamp,
@@ -8457,22 +8458,7 @@ class TaskRuntimeService:
                 get_log_jetstream_publisher,
             )
 
-            event_payload = dict(payload)
-            if "task_row_snapshot" in event_payload:
-                # The complete row snapshot is authoritative durable evidence
-                # in ``task_runtime.execution``.  Re-sending it through the
-                # realtime Factory channel duplicates potentially multi-MB
-                # adapter/provider evidence and can exceed NATS max_payload.
-                # Runtime consumers can resolve the fact by the immutable
-                # event/stream/sequence receipt carried here.
-                event_payload.pop("task_row_snapshot", None)
-                event_payload["task_row_snapshot_projection"] = {
-                    "schema_version": "task-runtime.realtime-row-snapshot-projection/1",
-                    "status": "durable_fact_only",
-                    "fact_event_id": fact_event_id,
-                    "fact_event_seq": fact_event_seq,
-                    "fact_stream": str(event_payload.get("fact_stream") or TASK_RUNTIME_EXECUTION_STREAM_V1),
-                }
+            event_payload = project_task_runtime_realtime_event_payload(payload)
             director_run_id = str(event_payload.get("run_id") or "").strip()
             if director_run_id and director_run_id != factory_run_id:
                 event_payload["director_run_id"] = director_run_id

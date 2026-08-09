@@ -22,7 +22,6 @@ from polaris.cells.runtime.projection.public.service import (
 from polaris.delivery.ws.endpoints.helpers import normalize_roles
 from polaris.delivery.ws.endpoints.models import WebSocketSendError, is_websocket_disconnect_runtime_error
 from polaris.delivery.ws.endpoints.protocol import build_status_payload
-from polaris.delivery.ws.endpoints.stream import send_json_safe
 
 if TYPE_CHECKING:
     from polaris.cells.runtime.state_owner.public.service import AppState, Auth
@@ -173,15 +172,11 @@ async def runtime_websocket(
         connection_state.last_updated_at = time.time()
 
     # Create helper functions for main loop
-    async def send_status(force: bool = False, last_sig: str = "") -> tuple[str, dict[str, Any]]:
+    async def build_status() -> tuple[str, dict[str, Any]]:
         from polaris.delivery.ws.endpoints.helpers import status_signature
 
         payload = await build_status_payload(state, resolved_workspace, cache_root, roles_filter)
         sig = status_signature(payload)
-        if (force or sig != last_sig) and not await send_json_safe(
-            websocket, payload, connection_id, client, resolved_workspace
-        ):
-            raise WebSocketSendError("send_failed", "Failed to send status")
         return sig, payload
 
     # Run main loop (imported from websocket_loop.py)
@@ -204,7 +199,7 @@ async def runtime_websocket(
             v2_client_id=v2_client_id,
             v2_channels=v2_channels,
             v2_cursor=v2_cursor,
-            send_status_func=send_status,
+            build_status_func=build_status,
         )
     except WebSocketDisconnect as exc:
         close_code = getattr(exc, "code", None)

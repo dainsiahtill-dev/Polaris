@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
+from unittest.mock import patch
 
 from polaris.delivery.ws.endpoints.json_utils import (
     elide_oversized_frame,
@@ -198,3 +200,40 @@ class TestElideOversizedFrame:
         once = elide_oversized_frame(payload, 100_000)
         twice = elide_oversized_frame(once, 100_000)
         assert once == twice
+
+    def test_five_megabyte_nested_payload_uses_at_most_three_full_serializations(self) -> None:
+        payload = {
+            "type": "EVENT",
+            "cursor": 91,
+            "event": {
+                "kind": "task_runtime",
+                "payload": {"adapter_result": {"primary_llm": "x" * 5_000_000}},
+            },
+        }
+        original_dumps = json.dumps
+        with patch("polaris.delivery.ws.endpoints.json_utils.json.dumps", wraps=original_dumps) as dumps:
+            elided = elide_oversized_frame(payload, 120_000)
+
+        assert dumps.call_count <= 3
+        assert _byte_size(elided) <= 120_000
+        assert elided["type"] == "EVENT"
+        assert elided["cursor"] == 91
+        assert "ws-elided" in elided["event"]["payload"]["adapter_result"]["primary_llm"]
+
+    def test_unicode_and_json_escapes_are_bounded_without_mutating_input(self) -> None:
+        escaped = '魔法宠物\\"\n\t' * 350_000
+        payload = {
+            "type": "EVENT",
+            "cursor": 13,
+            "event": {"payload": {"message": escaped, "status": "completed"}},
+        }
+        before = deepcopy(payload)
+
+        elided = elide_oversized_frame(payload, 64_000)
+
+        assert payload == before
+        assert _byte_size(elided) <= 64_000
+        assert elided["type"] == "EVENT"
+        assert elided["cursor"] == 13
+        assert elided["event"]["payload"]["status"] == "completed"
+        assert "ws-elided" in elided["event"]["payload"]["message"]

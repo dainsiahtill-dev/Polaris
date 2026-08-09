@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -28,6 +29,56 @@ _TASK_ROW_STATUS_COUNT_KEYS = (
     "failed",
     "blocked",
     "cancelled",
+)
+_REALTIME_EVENT_MAX_BYTES = 64 * 1024
+_REALTIME_TEXT_MAX_CHARS = 512
+_REALTIME_LIST_MAX_ITEMS = 32
+_REALTIME_EVENT_FIELDS = frozenset(
+    {
+        "event_type",
+        "workspace",
+        "task_id",
+        "status",
+        "execution_state",
+        "subject",
+        "session_id",
+        "run_id",
+        "claimed_by",
+        "last_claimed_by",
+        "attempt",
+        "resume_count",
+        "resume_state",
+        "resume_available",
+        "lease_expires_at",
+        "last_heartbeat_at",
+        "last_error",
+        "last_result_summary",
+        "timestamp",
+        "factory_run_id",
+        "factory_bench_session_id",
+        "factory_bench_project_id",
+        "workspace_lease_fencing_token",
+        "fact_event_id",
+        "fact_event_seq",
+        "fact_stream",
+        "fact_storage_path",
+    }
+)
+_REALTIME_DETAIL_FIELDS = frozenset(
+    {
+        "source",
+        "reason",
+        "previous_status",
+        "result_summary",
+        "error",
+        "error_code",
+        "error_message",
+        "failure_class",
+        "responsible_layer",
+        "row_write_receipt",
+        "session_write_receipt",
+        "dependency_satisfaction",
+    }
 )
 
 
@@ -428,6 +479,86 @@ def build_task_runtime_execution_event_payload(
     if factory_project_id:
         payload["factory_bench_project_id"] = factory_project_id
     return payload
+
+
+def _bounded_realtime_value(value: Any, *, depth: int = 0) -> Any:
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:_REALTIME_TEXT_MAX_CHARS]
+    if isinstance(value, Mapping) and depth < 2:
+        mapping_result: dict[str, Any] = {}
+        for index, (raw_key, item) in enumerate(value.items()):
+            if index >= _REALTIME_LIST_MAX_ITEMS:
+                break
+            key = str(raw_key or "").strip()
+            if not key:
+                continue
+            projected = _bounded_realtime_value(item, depth=depth + 1)
+            if projected is not None:
+                mapping_result[key] = projected
+        return mapping_result
+    if isinstance(value, (list, tuple, set, frozenset)):
+        source = sorted(value, key=str) if isinstance(value, (set, frozenset)) else value
+        sequence_result: list[Any] = []
+        for index, item in enumerate(source):
+            if index >= _REALTIME_LIST_MAX_ITEMS:
+                break
+            projected = _bounded_realtime_value(item, depth=depth + 1)
+            if projected is not None and not isinstance(projected, Mapping):
+                sequence_result.append(projected)
+        return sequence_result
+    return None
+
+
+def project_task_runtime_realtime_event_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Project one durable execution fact into bounded runtime.v2 transport.
+
+    Durable ``task_runtime.execution`` facts retain complete details and row
+    snapshots. Runtime WebSocket delivery carries only semantic transition
+    fields plus immutable fact coordinates. Arbitrary provider/tool bodies
+    never cross this observer boundary.
+    """
+
+    projected: dict[str, Any] = {}
+    for key in _REALTIME_EVENT_FIELDS:
+        if key not in payload:
+            continue
+        value = _bounded_realtime_value(payload.get(key))
+        if value is not None:
+            projected[key] = value
+
+    details_raw = payload.get("details")
+    details = details_raw if isinstance(details_raw, Mapping) else {}
+    detail_projection: dict[str, Any] = {}
+    for key in _REALTIME_DETAIL_FIELDS:
+        if key not in details:
+            continue
+        value = _bounded_realtime_value(details.get(key))
+        if value is not None:
+            detail_projection[key] = value
+    if detail_projection:
+        projected["details"] = detail_projection
+
+    projected["task_row_snapshot_projection"] = {
+        "schema_version": "task-runtime.realtime-row-snapshot-projection/1",
+        "status": "durable_fact_only",
+        "fact_event_id": str(payload.get("fact_event_id") or "").strip(),
+        "fact_event_seq": _coerce_fact_event_seq(payload.get("fact_event_seq")),
+        "fact_stream": str(payload.get("fact_stream") or "task_runtime.execution").strip(),
+    }
+    projected["realtime_projection"] = {
+        "schema_version": "task-runtime.realtime-execution-summary/1",
+        "source_field_count": len(payload),
+        "omitted_field_count": max(0, len(payload) - len(projected)),
+        "source_detail_count": len(details),
+        "omitted_detail_count": max(0, len(details) - len(detail_projection)),
+    }
+    encoded = json.dumps(projected, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    if len(encoded) > _REALTIME_EVENT_MAX_BYTES:
+        projected.pop("details", None)
+        projected["realtime_projection"]["details_omitted_for_transport_budget"] = True
+    return projected
 
 
 def _coerce_fact_event_seq(value: Any) -> int | None:

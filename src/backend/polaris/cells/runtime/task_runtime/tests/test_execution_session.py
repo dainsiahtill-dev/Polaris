@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -21,6 +22,7 @@ from polaris.cells.runtime.task_runtime.internal.execution_session import (
     project_task_row_execution_event,
     project_task_row_from_execution_fact_payload,
     project_task_row_runtime_state,
+    project_task_runtime_realtime_event_payload,
     task_row_status_counts,
     terminal_session_timestamp,
     terminal_task_status_value_for_session_status,
@@ -297,6 +299,37 @@ def test_build_task_runtime_execution_event_payload_projects_runtime_state() -> 
     assert event_payload["task_row_snapshot"] == task_row
     assert event_payload["task_row_snapshot"] is not task_row
     assert event_payload["task_row_snapshot"]["metadata"] is not task_row["metadata"]
+
+
+def test_realtime_execution_projection_bounds_large_details_without_mutating_fact() -> None:
+    huge = "界" * (5 * 1024 * 1024)
+    payload = {
+        "event_type": "failed",
+        "task_id": "TASK-1",
+        "factory_run_id": "factory-current",
+        "status": "failed",
+        "details": {
+            "error_code": "director_materialization_quality_failed",
+            "error_message": huge,
+            "adapter_result": {"output": huge},
+            "primary_llm": {"output": huge},
+        },
+        "task_row_snapshot": {"metadata": {"adapter_result": {"output": huge}}},
+        "fact_event_id": "fact-1",
+        "fact_event_seq": 41,
+        "fact_stream": "task_runtime.execution",
+    }
+
+    projected = project_task_runtime_realtime_event_payload(payload)
+
+    assert len(json.dumps(projected, ensure_ascii=False).encode("utf-8")) < 64 * 1024
+    assert projected["details"]["error_code"] == "director_materialization_quality_failed"
+    assert len(projected["details"]["error_message"]) == 512
+    assert "adapter_result" not in projected["details"]
+    assert "primary_llm" not in projected["details"]
+    assert "task_row_snapshot" not in projected
+    assert projected["task_row_snapshot_projection"]["fact_event_seq"] == 41
+    assert payload["details"]["adapter_result"]["output"] == huge
 
 
 def test_build_task_row_snapshot_returns_json_compatible_deep_copy() -> None:

@@ -8404,6 +8404,12 @@ def test_task_runtime_factory_event_keeps_durable_snapshot_out_of_realtime_proje
             }
         },
     }
+    huge_details = {
+        "error_code": "director_materialization_quality_failed",
+        "error_message": "界" * 2_000_000,
+        "adapter_result": {"output": "x" * 2_000_000},
+        "primary_llm": {"output": "x" * 2_000_000},
+    }
 
     ok = service._publish_factory_execution_event(
         {
@@ -8416,6 +8422,7 @@ def test_task_runtime_factory_event_keeps_durable_snapshot_out_of_realtime_proje
             "fact_event_seq": 63,
             "fact_stream": "task_runtime.execution",
             "task_row_snapshot": huge_snapshot,
+            "details": huge_details,
         }
     )
 
@@ -8432,7 +8439,11 @@ def test_task_runtime_factory_event_keeps_durable_snapshot_out_of_realtime_proje
         "fact_event_seq": 63,
         "fact_stream": "task_runtime.execution",
     }
-    assert len(json.dumps(envelope, ensure_ascii=False).encode("utf-8")) < 1_048_576
+    assert payload["details"]["error_code"] == "director_materialization_quality_failed"
+    assert len(payload["details"]["error_message"]) == 512
+    assert "adapter_result" not in payload["details"]
+    assert "primary_llm" not in payload["details"]
+    assert len(json.dumps(envelope, ensure_ascii=False).encode("utf-8")) < 64 * 1024
 
 
 def test_create_task_row_projects_fact_event_seq_matching_fact_stream(tmp_path: Path) -> None:
@@ -10894,8 +10905,8 @@ def test_typed_heartbeat_is_bounded_by_real_spawned_session_lock(tmp_path: Path)
     assert renewed.evidence_anchor["session_write_receipt"]["session_id"] == identity.session_id
 
 
-def test_typed_heartbeat_rejects_every_forged_identity_field_without_mutation(tmp_path: Path) -> None:
-    """The bounded mutation path fences every canonical identity component."""
+def test_typed_heartbeat_rejects_every_forged_stable_identity_field_without_mutation(tmp_path: Path) -> None:
+    """The bounded mutation path fences every stable authority component."""
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -10925,7 +10936,6 @@ def test_typed_heartbeat_rejects_every_forged_identity_field_without_mutation(tm
         (replace(identity, worker_id="forged-worker"), "worker_mismatch"),
         (replace(identity, run_id="forged-run"), "run_mismatch"),
         (replace(identity, external_task_id="forged-task"), "external_task_id_mismatch"),
-        (replace(identity, lease_expires_at="2000-01-01T00:00:00+00:00"), "lease_version_mismatch"),
     )
     for forged_identity, expected_reason in forged_identities:
         verdict = heartbeat_task_runtime_execution_attempt(
@@ -10939,3 +10949,25 @@ def test_typed_heartbeat_rejects_every_forged_identity_field_without_mutation(tm
         assert verdict.success is False
         assert verdict.reason == expected_reason
         assert _sha256_utf8_file(session_path) == before_hash
+
+    # R145/R171: active same-owner lease expiry is a renewable TTL, not an
+    # authority/fencing token. Multi-step Director/DEO work may retain an old
+    # expiry snapshot while another heartbeat advances the durable session.
+    # The service ignores the caller's expiry value and renews from server time
+    # only after every stable identity field above has matched.
+    stale_lease = replace(identity, lease_expires_at="2000-01-01T00:00:00+00:00")
+    renewed = heartbeat_task_runtime_execution_attempt(
+        HeartbeatTaskRuntimeExecutionAttemptCommandV1(
+            workspace=str(workspace),
+            identity=stale_lease,
+            lease_ttl_seconds=30,
+            lock_timeout_seconds=0.5,
+        )
+    )
+    assert renewed.success is True
+    assert renewed.reason == "heartbeat_renewed"
+    assert renewed.renewed_identity is not None
+    assert renewed.renewed_identity.lease_expires_at not in {
+        stale_lease.lease_expires_at,
+        identity.lease_expires_at,
+    }

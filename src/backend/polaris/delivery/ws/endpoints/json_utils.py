@@ -115,80 +115,130 @@ def resolve_journal_event_channel(raw_line: str) -> str:
 
 
 def _frame_byte_size(value: Any) -> int:
-    """Serialized UTF-8 byte size of a JSON-encodable value (best effort)."""
+    """Serialized UTF-8 byte size of one complete frame (best effort).
+
+    This deliberately remains a top-level operation. Recursive elision uses
+    structural byte accounting below; serializing every subtree turns a deep,
+    multi-megabyte runtime event into quadratic CPU and allocation work.
+    """
     try:
         return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
     except (TypeError, ValueError):
         return len(str(value).encode("utf-8"))
 
 
-# Worst-case byte length of the ``…[ws-elided N bytes]`` marker suffix.
-_ELIDE_MARKER_OVERHEAD = 40
-
-
-def _truncate_string(text: str, budget: int) -> str:
-    """Truncate ``text`` to fit ``budget`` bytes, appending an elision marker."""
-    encoded = text.encode("utf-8")
-    if len(encoded) <= max(0, budget):
-        return text
-    keep = min(len(encoded), _ELIDE_STRING_PREVIEW_BYTES, max(0, budget - _ELIDE_MARKER_OVERHEAD))
-    preview = encoded[:keep].decode("utf-8", "ignore")
-    return f"{preview}…[ws-elided {len(encoded)} bytes]"
-
-
-def _elide_mapping(value: Mapping[str, Any], budget: int) -> dict[str, Any]:
-    """Shrink a mapping to ``budget`` bytes, keeping small fields, shrinking large ones."""
-    small: dict[str, Any] = {}
-    large: list[tuple[str, Any]] = []
-    for raw_key, item in value.items():
-        key = str(raw_key)
-        if _frame_byte_size({key: item}) <= _ELIDE_SMALL_FIELD_BYTES:
-            small[key] = item
+def _json_string_byte_size(text: str) -> int:
+    """Exact ``ensure_ascii=False`` JSON byte size without serializing ``text``."""
+    size = 2  # quotes
+    for char in text:
+        codepoint = ord(char)
+        if char in {'"', "\\"} or char in {"\b", "\t", "\n", "\f", "\r"}:
+            size += 2
+        elif codepoint < 0x20:
+            size += 6  # ``\u00XX``
         else:
-            large.append((key, item))
-    out: dict[str, Any] = dict(small)
-    if not large:
-        return out
-    remaining = max(0, budget - _frame_byte_size(small))
-    per_field = max(_ELIDE_SMALL_FIELD_BYTES, remaining // len(large))
-    for key, item in large:
-        out[key] = _elide_value(item, per_field)
-    return out
+            size += len(char.encode("utf-8"))
+    return size
 
 
-def _elide_sequence(value: list[Any] | tuple[Any, ...], budget: int) -> list[Any]:
-    """Shrink a sequence to ``budget`` bytes, shrinking elements and dropping the tail."""
-    seq = list(value)
-    out: list[Any] = []
-    used = 2  # account for the enclosing brackets
-    for index, item in enumerate(seq):
-        remaining = budget - used - _ELIDE_MARKER_OVERHEAD
-        if remaining <= 0 and out:
-            out.append(f"…[ws-elided {len(seq) - index} more items]")
-            break
-        per_item = min(max(0, remaining), max(_ELIDE_SMALL_FIELD_BYTES, remaining // max(1, len(seq) - index)))
-        shrunk = _elide_value(item, per_item)
-        item_size = _frame_byte_size(shrunk) + 1  # trailing comma
-        if used + item_size > budget - _ELIDE_MARKER_OVERHEAD and out:
-            out.append(f"…[ws-elided {len(seq) - index} more items]")
-            break
-        out.append(shrunk)
-        used += item_size
-    return out
-
-
-def _elide_value(value: Any, budget: int) -> Any:
-    """Best-effort shrink of ``value`` so its serialized size is roughly ``<= budget``."""
-    budget = max(0, budget)
-    if _frame_byte_size(value) <= budget:
-        return value
+def _scalar_byte_size(value: Any) -> int | None:
+    """Exact JSON size for native scalar values; ``None`` means container/unknown."""
+    if value is None:
+        return 4
+    if value is True:
+        return 4
+    if value is False:
+        return 5
     if isinstance(value, str):
-        return _truncate_string(value, budget)
+        return _json_string_byte_size(value)
+    if isinstance(value, int):
+        return len(str(value).encode("utf-8"))
+    if isinstance(value, float):
+        if value != value:
+            return 3  # NaN
+        if value == float("inf") or value == float("-inf"):
+            return 9 if value < 0 else 8  # -Infinity / Infinity
+        return len(str(value).encode("utf-8"))
+    return None
+
+
+def _truncate_string(text: str, budget: int) -> tuple[str, int]:
+    """Truncate ``text`` within serialized ``budget`` and return exact output size."""
+    budget = max(0, budget)
+    original_size = _json_string_byte_size(text)
+    if original_size <= budget:
+        return text, original_size
+
+    raw_size = len(text.encode("utf-8"))
+    marker = f"…[ws-elided {raw_size} bytes]"
+    marker_size = _json_string_byte_size(marker)
+    if marker_size > budget:
+        marker = "…" if _json_string_byte_size("…") <= budget else ""
+
+    preview_chars: list[str] = []
+    preview_bytes = 0
+    for char in text:
+        char_bytes = len(char.encode("utf-8"))
+        if preview_bytes + char_bytes > _ELIDE_STRING_PREVIEW_BYTES:
+            break
+        candidate = "".join((*preview_chars, char, marker))
+        if _json_string_byte_size(candidate) > budget:
+            break
+        preview_chars.append(char)
+        preview_bytes += char_bytes
+    result = "".join((*preview_chars, marker))
+    return result, _json_string_byte_size(result)
+
+
+def _elide_mapping(value: Mapping[Any, Any], budget: int) -> tuple[dict[str, Any], int]:
+    """Copy a mapping once, assigning remaining bytes across sibling fields."""
+    items = [(str(raw_key), item) for raw_key, item in value.items()]
+    fixed_size = 2  # braces
+    if items:
+        fixed_size += 2 * (len(items) - 1)  # default JSON ``, `` separator
+        fixed_size += sum(_json_string_byte_size(key) + 2 for key, _ in items)  # ``: ``
+
+    remaining = max(0, budget - fixed_size)
+    out: dict[str, Any] = {}
+    child_sizes = 0
+    for index, (key, item) in enumerate(items):
+        fields_left = len(items) - index
+        field_budget = remaining // max(1, fields_left)
+        shrunk, item_size = _elide_value(item, field_budget)
+        out[key] = shrunk
+        child_sizes += item_size
+        remaining = max(0, remaining - item_size)
+    return out, fixed_size + child_sizes
+
+
+def _elide_sequence(value: list[Any] | tuple[Any, ...], budget: int) -> tuple[list[Any], int]:
+    """Copy a sequence once, assigning remaining bytes across its elements."""
+    fixed_size = 2 + max(0, len(value) - 1) * 2  # brackets + default ``, `` separators
+    remaining = max(0, budget - fixed_size)
+    out: list[Any] = []
+    child_sizes = 0
+    for index, item in enumerate(value):
+        items_left = len(value) - index
+        item_budget = remaining // max(1, items_left)
+        shrunk, item_size = _elide_value(item, item_budget)
+        out.append(shrunk)
+        child_sizes += item_size
+        remaining = max(0, remaining - item_size)
+    return out, fixed_size + child_sizes
+
+
+def _elide_value(value: Any, budget: int) -> tuple[Any, int]:
+    """Build one bounded structural copy without serializing recursive subtrees."""
+    budget = max(0, budget)
+    scalar_size = _scalar_byte_size(value)
+    if scalar_size is not None:
+        if scalar_size <= budget:
+            return value, scalar_size
+        return _truncate_string(str(value), budget)
     if isinstance(value, Mapping):
         return _elide_mapping(value, budget)
     if isinstance(value, (list, tuple)):
         return _elide_sequence(value, budget)
-    # A non-container scalar that is somehow oversized — stringify and truncate.
     return _truncate_string(str(value), budget)
 
 
@@ -219,9 +269,8 @@ def _hard_floor_frame(payload: Any, budget: int) -> dict[str, Any]:
             if key not in payload:
                 continue
             val = payload[key]
-            if (isinstance(val, (str, int, float, bool)) or val is None) and _frame_byte_size(
-                {key: val}
-            ) <= _ELIDE_SMALL_FIELD_BYTES:
+            scalar_size = _scalar_byte_size(val)
+            if scalar_size is not None and scalar_size <= _ELIDE_SMALL_FIELD_BYTES:
                 keep[str(key)] = val
     keep["__ws_frame_elided__"] = True
     return keep
@@ -237,10 +286,19 @@ def elide_oversized_frame(payload: Any, max_bytes: int) -> Any:
     elision cannot fit (e.g. thousands of sibling fields).
     """
     budget = max(0, max_bytes)
-    result = _elide_value(payload, budget)
-    if _frame_byte_size(result) <= budget:
-        return result
-    return _hard_floor_frame(payload, budget)
+    if _frame_byte_size(payload) <= budget:
+        return payload
+    pathological_siblings = isinstance(payload, Mapping) and (len(payload) * _ELIDE_SMALL_FIELD_BYTES > budget)
+    if not pathological_siblings:
+        result, _estimated_size = _elide_value(payload, budget)
+        if _frame_byte_size(result) <= budget:
+            return result
+    hard_floor = _hard_floor_frame(payload, budget)
+    if _frame_byte_size(hard_floor) <= budget:
+        return hard_floor
+    # JSON has no representation smaller than one byte. Tiny synthetic budgets
+    # cannot retain envelope semantics; return the smallest valid values possible.
+    return {} if budget >= 2 else 0
 
 
 __all__ = [

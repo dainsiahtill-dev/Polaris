@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock
@@ -1249,6 +1250,85 @@ class TestLoadRuntimeTaskRows:
         assert rows[0]["task_id"] == "TASK-5"
         assert rows[0]["subject"] == "Fact-backed runtime task"
         assert rows[0]["metadata"]["source"] == "task_runtime.execution_fact"
+
+    def test_snapshot_projects_large_task_metadata_to_bounded_observable_summary(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        huge_body = "x" * (5 * 1024 * 1024)
+        raw_row: dict[str, Any] = {
+            "id": "TASK-BOUND-1",
+            "task_id": "TASK-BOUND-1",
+            "subject": "Bound runtime transport projection",
+            "status": "in_progress",
+            "blocked_by": [1, 2],
+            "depends_on": ["TASK-ROOT"],
+            "evidence_refs": ["receipt://task-bound-1"],
+            "error": {
+                "code": "director_materialization_quality_failed",
+                "message": "materialization needs repair",
+            },
+            "metadata": {
+                "source": "task_runtime.execution_fact",
+                "target_files": ["src/main.py", "tests/test_main.py"],
+                "context_snapshot_ref": "0123456789abcdef01234567",
+                "effect_receipt_ref": "receipt://effect-1",
+                "runtime_blueprint_path": "runtime/blueprints/task-bound-1.json",
+                "blueprint_hash": "b" * 64,
+                "tool_result_count": 17,
+                "adapter_result": {"output": huge_body},
+                "primary_llm": {"output": huge_body},
+                "quality_repair_attempts": [{"output": huge_body}],
+                "tool_results": [{"content": huge_body}],
+                "prompt": huge_body,
+                "output": huge_body,
+            },
+        }
+
+        class _FakeTaskRuntimeService:
+            def __init__(self, workspace: str) -> None:
+                self.workspace = workspace
+
+            def list_observable_task_rows(self) -> list[dict[str, Any]]:
+                return [raw_row]
+
+        monkeypatch.setattr(projection_service, "TaskRuntimeService", _FakeTaskRuntimeService)
+
+        snapshot = build_snapshot_payload_from_projection(
+            RuntimeProjection(),
+            workspace=str(tmp_path),
+            cache_root=tmp_path,
+        )
+
+        task = snapshot["tasks"][0]
+        metadata = task["metadata"]
+        encoded = json.dumps(snapshot["tasks"], ensure_ascii=False).encode("utf-8")
+
+        assert len(encoded) < 64_000
+        assert task["id"] == "TASK-BOUND-1"
+        assert task["status"] == "in_progress"
+        assert task["blocked_by"] == [1, 2]
+        assert task["depends_on"] == ["TASK-ROOT"]
+        assert task["evidence_refs"] == ["receipt://task-bound-1"]
+        assert task["error_code"] == "director_materialization_quality_failed"
+        assert metadata["target_files"] == ["src/main.py", "tests/test_main.py"]
+        assert metadata["context_snapshot_ref"] == "0123456789abcdef01234567"
+        assert metadata["effect_receipt_ref"] == "receipt://effect-1"
+        assert metadata["runtime_blueprint_path"] == "runtime/blueprints/task-bound-1.json"
+        assert metadata["blueprint_hash"] == "b" * 64
+        assert metadata["tool_result_count"] == 17
+        for private_key in (
+            "adapter_result",
+            "primary_llm",
+            "quality_repair_attempts",
+            "tool_results",
+            "prompt",
+            "output",
+        ):
+            assert private_key not in metadata
+        assert task["observable_summary"]["omitted_metadata_field_count"] == 6
+        assert raw_row["metadata"]["adapter_result"]["output"] == huge_body
 
 
 # =============================================================================

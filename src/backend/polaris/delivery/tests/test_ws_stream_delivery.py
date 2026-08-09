@@ -43,7 +43,7 @@ class FakeRuntimeWebSocket(FakeWebSocket):
         self.messages.append({"type": "closed", "code": code})
 
 
-async def _send_status(**_kwargs: Any) -> tuple[str, dict[str, Any]]:
+async def _build_status() -> tuple[str, dict[str, Any]]:
     return "status-sig", {"type": "status"}
 
 
@@ -62,7 +62,7 @@ def _run_loop_kwargs(manager: Any, websocket: Any) -> dict[str, Any]:
         "v2_client_id": "client-1",
         "v2_channels": ["*"],
         "v2_cursor": 0,
-        "send_status_func": _send_status,
+        "build_status_func": _build_status,
     }
 
 
@@ -297,6 +297,9 @@ def test_handle_client_message_rejects_legacy_subscribe_protocol() -> None:
 
 def test_run_main_loop_disconnects_v2_consumer_on_receive_disconnect() -> None:
     class DisconnectingWebSocket:
+        async def send_text(self, _data: str) -> None:
+            return None
+
         async def receive_text(self) -> str:
             raise WebSocketDisconnect(code=1001)
 
@@ -571,8 +574,8 @@ def test_run_main_loop_does_not_advance_v2_cursor_when_send_fails(monkeypatch: p
 
         manager = OneEventConsumerManager()
 
-        async def _send_json_fails(*_args: Any, **_kwargs: Any) -> bool:
-            return False
+        async def _send_json_fails(_websocket: Any, payload: dict[str, Any], **_kwargs: Any) -> bool:
+            return payload.get("type") != "EVENT"
 
         monkeypatch.setattr(websocket_loop, "send_json_safe", _send_json_fails)
 
