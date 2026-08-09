@@ -366,7 +366,7 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "src/backend/polaris/cells/roles/adapters/internal/director/helpers.py",
             "src/backend/polaris/cells/roles/adapters/internal/director/execution.py",
             "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate.py",
-            "src/backend/polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py",
+            "src/backend/polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax/",
             "src/backend/polaris/cells/director/runtime/internal/repair_kernel/generic_hygiene_syntax.py",
             "src/backend/polaris/cells/director/runtime/internal/repair_kernel/registry.py",
             "src/backend/polaris/cells/director/runtime/internal/repair_kernel/schedule_catalog.py",
