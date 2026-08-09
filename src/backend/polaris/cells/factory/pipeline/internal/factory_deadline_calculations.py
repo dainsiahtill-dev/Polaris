@@ -164,25 +164,46 @@ def factory_deadline_budget_policy(
     context: dict[str, Any],
     *,
     chief_engineer_generation_floor_seconds: float = 0.0,
+    director_first_task_min_seconds: float | None = None,
+    quality_gate_reserved_seconds: float | None = None,
+    director_settlement_barrier_seconds: int | None = None,
 ) -> FactoryDeadlineBudgetPolicyV1:
-    """Resolve infrastructure configuration into the pure deadline policy."""
+    """Resolve infrastructure configuration into the pure deadline policy.
+
+    Optional resolved inputs preserve the executor's test/override seam while
+    keeping policy construction in this pure helper. The extraction previously
+    bypassed monkeypatched executor resolvers and silently reverted budgets to
+    module defaults.
+    """
+
+    resolved_director_first = (
+        director_first_materialization_min_budget_seconds(context)
+        if director_first_task_min_seconds is None
+        else director_first_task_min_seconds
+    )
+    resolved_quality_reserve = (
+        quality_gate_reserved_budget_seconds(context)
+        if quality_gate_reserved_seconds is None
+        else quality_gate_reserved_seconds
+    )
+    resolved_settlement_barrier = (
+        director_dispatch_timeout_settle_grace_seconds(context)
+        if director_settlement_barrier_seconds is None
+        else director_settlement_barrier_seconds
+    )
 
     return FactoryDeadlineBudgetPolicyV1(
         chief_engineer_min_start_seconds=math.ceil(_CHIEF_ENGINEER_MIN_LLM_START_BUDGET_SECONDS),
-        director_first_task_min_seconds=math.ceil(
-            director_first_materialization_min_budget_seconds(context),
-        ),
+        director_first_task_min_seconds=math.ceil(resolved_director_first),
         director_followup_task_min_seconds=math.ceil(FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS),
-        quality_gate_reserved_seconds=math.ceil(
-            quality_gate_reserved_budget_seconds(context),
-        ),
+        quality_gate_reserved_seconds=math.ceil(resolved_quality_reserve),
         quality_gate_min_start_reserved_seconds=math.ceil(
             _QUALITY_GATE_MIN_START_BUDGET_SECONDS + _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS,
         ),
         safety_seconds=int(_DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS),
         director_settlement_barrier_seconds=min(
             _DIRECTOR_SETTLEMENT_BARRIER_BUDGET_SECONDS,
-            director_dispatch_timeout_settle_grace_seconds(context),
+            resolved_settlement_barrier,
         ),
         chief_engineer_generation_floor_seconds=math.ceil(chief_engineer_generation_floor_seconds),
     )

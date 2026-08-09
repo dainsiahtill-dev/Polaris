@@ -2524,6 +2524,13 @@ class OrchestrationStageExecutor:
         return deadline_calc.factory_deadline_budget_policy(
             context,
             chief_engineer_generation_floor_seconds=chief_engineer_generation_floor_seconds,
+            director_first_task_min_seconds=(
+                OrchestrationStageExecutor._director_first_materialization_min_budget_seconds(context)
+            ),
+            quality_gate_reserved_seconds=OrchestrationStageExecutor._quality_gate_reserved_budget_seconds(context),
+            director_settlement_barrier_seconds=(
+                OrchestrationStageExecutor._director_dispatch_timeout_settle_grace_seconds(context)
+            ),
         )
 
     @staticmethod
