@@ -162,6 +162,29 @@ _TASK_BOUNDARY_OWNER_REWORK_REASON = "task_boundary_owner_task_retry_required"
 _PLAN_PROBE_UNPLANNABLE_STATUS = "coverage_matched_but_unplannable"
 
 
+def _stage_local_rework_is_authorized(result: Any, *, expected_reason: str) -> bool:
+    """Accept only the service-issued projection of a committed TaskMarket requeue.
+
+    A router flag or a failed stage is not recovery authority.  FactoryRunService
+    emits this projection only after it validates the canonical TaskMarket receipt
+    and the owner task's binding to the active Factory run.  Without it, the
+    terminal stage has already drained its lease and must not be replayed.
+    """
+
+    metadata = getattr(result, "metadata", None)
+    metadata_map = metadata if isinstance(metadata, Mapping) else {}
+    deferred = metadata_map.get("factory_terminal_drain_deferred")
+    deferred_map = deferred if isinstance(deferred, Mapping) else {}
+    receipt_ref = str(deferred_map.get("requeue_receipt_ref") or "").strip()
+    return (
+        str(deferred_map.get("schema_version") or "").strip() == "factory.terminal-drain-deferred.v1"
+        and str(deferred_map.get("reason") or "").strip() == expected_reason
+        and str(deferred_map.get("decision_owner") or "").strip() == "factory_orchestration"
+        and bool(str(deferred_map.get("owner_task_id") or "").strip())
+        and re.fullmatch(r"[0-9a-f]{64}", receipt_ref) is not None
+    )
+
+
 def _get_service(workspace: str) -> FactoryRunService:
     """Get a service instance bound to the current workspace."""
     return FactoryRunService(workspace=Path(workspace))
@@ -2305,7 +2328,14 @@ async def _execute_run_with_service(
                 )
                 return "cancelled"
             if result.status != "success":
-                if allow_chief_engineer_rework and active_stage == "chief_engineer_review":
+                if (
+                    allow_chief_engineer_rework
+                    and active_stage == "chief_engineer_review"
+                    and _stage_local_rework_is_authorized(
+                        result,
+                        expected_reason="chief_engineer_local_rework_decision_pending",
+                    )
+                ):
                     rework_summary = {
                         "schema_version": "factory.chief_engineer_local_rework.v1",
                         "cycle": chief_engineer_rework_cycle,
@@ -2319,7 +2349,14 @@ async def _execute_run_with_service(
                         rework_summary,
                     )
                     return "chief_engineer_rework_requested"
-                if allow_director_rework and active_stage == "director_dispatch":
+                if (
+                    allow_director_rework
+                    and active_stage == "director_dispatch"
+                    and _stage_local_rework_is_authorized(
+                        result,
+                        expected_reason="director_local_rework_decision_pending",
+                    )
+                ):
                     reset_result = TaskRuntimeService(workspace).reset_task_rows_for_reexecution(
                         source="factory.director_dispatch.local_rework",
                         preserve_completed=True,
@@ -2344,7 +2381,14 @@ async def _execute_run_with_service(
                         payload.metadata["director_local_rework_evidence"] = dict(rework_summary)
                         await _record_director_local_rework_request(director_rework_cycle, rework_summary)
                         return "director_rework_requested"
-                if allow_quality_rework and active_stage == "quality_gate":
+                if (
+                    allow_quality_rework
+                    and active_stage == "quality_gate"
+                    and _stage_local_rework_is_authorized(
+                        result,
+                        expected_reason="quality_rework_decision_pending",
+                    )
+                ):
                     task_boundary_rework = _apply_quality_gate_task_boundary_rework_requests(workspace)
                     rework_summary = _read_quality_gate_rework_summary(workspace)
                     if bool(task_boundary_rework.get("evaluated_count")) or bool(task_boundary_rework.get("error")):

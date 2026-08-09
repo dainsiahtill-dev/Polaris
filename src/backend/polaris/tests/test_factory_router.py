@@ -1904,7 +1904,9 @@ def test_quality_gate_task_boundary_validation_reports_unknown_owner_handoff(tem
     assert "qa_rework_requested" not in rows["PM-0001-2-step-3"]["metadata"]
 
 
-def test_execute_run_reenters_director_when_quality_gate_requests_rework(temp_workspace: Path) -> None:
+def test_execute_run_does_not_reenter_director_for_qa_without_committed_requeue_receipt(
+    temp_workspace: Path,
+) -> None:
     executor = QualityReworkStageExecutor(temp_workspace)
     service = FactoryRunService(
         temp_workspace,
@@ -1926,18 +1928,14 @@ def test_execute_run_reenters_director_when_quality_gate_requests_rework(temp_wo
 
     updated = asyncio.run(service.get_run(run.id))
     assert updated is not None
-    assert updated.status == FactoryRunStatus.COMPLETED
-    assert executor.director_calls == 2
-    assert executor.qa_calls == 2
+    assert updated.status == FactoryRunStatus.FAILED
+    assert executor.director_calls == 1
+    assert executor.qa_calls == 1
     history = updated.metadata.get("quality_rework_history")
-    assert isinstance(history, list) and len(history) == 1
-    assert history[0]["summary"]["requested_count"] == 1
-    summary_json = updated.metadata.get("summary_json")
-    assert isinstance(summary_json, dict)
-    assert summary_json.get("status") == "PASS"
+    assert history is None
 
 
-def test_execute_run_retries_director_locally_without_rerunning_upstream_roles(temp_workspace: Path) -> None:
+def test_execute_run_does_not_replay_director_without_committed_requeue_receipt(temp_workspace: Path) -> None:
     executor = DirectorLocalReworkStageExecutor(temp_workspace)
     service = FactoryRunService(
         temp_workspace,
@@ -1964,20 +1962,79 @@ def test_execute_run_retries_director_locally_without_rerunning_upstream_roles(t
 
     updated = asyncio.run(service.get_run(run.id))
     assert updated is not None
-    assert updated.status == FactoryRunStatus.COMPLETED
-    assert executor.director_calls == 2
-    assert executor.qa_calls == 1
+    assert updated.status == FactoryRunStatus.FAILED
+    assert executor.director_calls == 1
+    assert executor.qa_calls == 0
     assert updated.stages_completed.count("pm_planning") == 1
     assert updated.stages_completed.count("chief_engineer_review") == 1
     history = updated.metadata.get("director_local_rework_history")
-    assert isinstance(history, list) and len(history) == 1
-    assert history[0]["summary"]["reset_files"] == [f"task_{executor.failed_task_id}.json"]
-    assert history[0]["summary"]["preserved_files"] == [f"task_{executor.completed_task_id}.json"]
-    assert history[0]["summary"]["excluded_files"] == [f"task_{executor.internal_task_id}.json"]
-    assert history[0]["summary"]["eligible_external_task_ids"] == ["TASK-1", "TASK-2"]
+    assert history is None
 
 
-def test_execute_run_retries_chief_engineer_locally_without_rerunning_pm(temp_workspace: Path) -> None:
+def test_stage_local_rework_projection_accepts_service_projection_shape() -> None:
+    result = SimpleNamespace(
+        metadata={
+            "factory_terminal_drain_deferred": {
+                "schema_version": "factory.terminal-drain-deferred.v1",
+                "reason": "chief_engineer_local_rework_decision_pending",
+                "decision_owner": "factory_orchestration",
+                "owner_task_id": "TASK-1",
+                "requeue_receipt_ref": "a" * 64,
+            }
+        }
+    )
+
+    assert factory_router_module._stage_local_rework_is_authorized(
+        result,
+        expected_reason="chief_engineer_local_rework_decision_pending",
+    )
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected_reason"),
+    [
+        ({}, "chief_engineer_local_rework_decision_pending"),
+        (
+            {
+                "factory_terminal_drain_deferred": {
+                    "schema_version": "factory.terminal-drain-deferred.v1",
+                    "reason": "chief_engineer_local_rework_decision_pending",
+                    "decision_owner": "factory_orchestration",
+                    "owner_task_id": "TASK-1",
+                    "requeue_receipt_ref": "forged",
+                }
+            },
+            "chief_engineer_local_rework_decision_pending",
+        ),
+        (
+            {
+                "factory_terminal_drain_deferred": {
+                    "schema_version": "factory.terminal-drain-deferred.v1",
+                    "reason": "director_local_rework_decision_pending",
+                    "decision_owner": "factory_orchestration",
+                    "owner_task_id": "TASK-1",
+                    "requeue_receipt_ref": "b" * 64,
+                }
+            },
+            "chief_engineer_local_rework_decision_pending",
+        ),
+    ],
+)
+def test_stage_local_rework_projection_rejects_missing_forged_or_wrong_scope(
+    metadata: dict[str, Any],
+    expected_reason: str,
+) -> None:
+    result = SimpleNamespace(metadata=metadata)
+
+    assert not factory_router_module._stage_local_rework_is_authorized(
+        result,
+        expected_reason=expected_reason,
+    )
+
+
+def test_execute_run_does_not_replay_chief_engineer_without_committed_requeue_receipt(
+    temp_workspace: Path,
+) -> None:
     executor = ChiefEngineerLocalReworkStageExecutor()
     service = FactoryRunService(temp_workspace, executor=executor)
     run = asyncio.run(
@@ -2001,15 +2058,17 @@ def test_execute_run_retries_chief_engineer_locally_without_rerunning_pm(temp_wo
 
     updated = asyncio.run(service.get_run(run.id))
     assert updated is not None
-    assert updated.status == FactoryRunStatus.COMPLETED
+    assert updated.status == FactoryRunStatus.FAILED
     assert executor.pm_calls == 1
-    assert executor.chief_engineer_calls == 2
-    assert executor.director_calls == 1
-    assert executor.qa_calls == 1
+    assert executor.chief_engineer_calls == 1
+    assert executor.director_calls == 0
+    assert executor.qa_calls == 0
     assert updated.stages_completed.count("pm_planning") == 1
     history = updated.metadata.get("chief_engineer_local_rework_history")
-    assert isinstance(history, list) and len(history) == 1
-    assert history[0]["summary"]["preserved_pm_contract"] is True
+    assert history is None
+    failure = updated.metadata.get("failure")
+    assert isinstance(failure, dict)
+    assert "factory_physical_attempt_recovered_run_permanently_closed" not in str(failure)
 
 
 def test_execute_run_bounds_chief_engineer_local_rework_without_upstream_replay(temp_workspace: Path) -> None:
@@ -2038,14 +2097,16 @@ def test_execute_run_bounds_chief_engineer_local_rework_without_upstream_replay(
     assert updated is not None
     assert updated.status == FactoryRunStatus.FAILED
     assert executor.pm_calls == 1
-    assert executor.chief_engineer_calls == 3
+    assert executor.chief_engineer_calls == 1
     assert executor.director_calls == 0
     assert executor.qa_calls == 0
     history = updated.metadata.get("chief_engineer_local_rework_history")
-    assert isinstance(history, list) and len(history) == 2
+    assert history is None
 
 
-def test_execute_run_reenters_director_when_quality_gate_reports_task_boundary_triage(temp_workspace: Path) -> None:
+def test_quality_task_boundary_triage_does_not_bypass_committed_requeue_receipt(
+    temp_workspace: Path,
+) -> None:
     executor = TaskBoundaryQualityReworkStageExecutor(temp_workspace)
     service = FactoryRunService(
         temp_workspace,
@@ -2067,15 +2128,11 @@ def test_execute_run_reenters_director_when_quality_gate_reports_task_boundary_t
 
     updated = asyncio.run(service.get_run(run.id))
     assert updated is not None
-    assert updated.status == FactoryRunStatus.COMPLETED
-    assert executor.director_calls == 2
-    assert executor.qa_calls == 2
+    assert updated.status == FactoryRunStatus.FAILED
+    assert executor.director_calls == 1
+    assert executor.qa_calls == 1
     history = updated.metadata.get("quality_rework_history")
-    assert isinstance(history, list) and len(history) == 1
-    summary = history[0]["summary"]
-    assert summary["requested_count"] == 1
-    assert summary["task_boundary_rework_bridge"]["reopened_count"] == 1
-    assert summary["tasks"][0]["reason"] == "task_boundary_interface_discrepancy_required"
+    assert history is None
 
 
 def test_execute_run_preserves_qa_llm_unavailable_root_cause(temp_workspace: Path) -> None:

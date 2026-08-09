@@ -2689,6 +2689,17 @@ class TestChiefEngineerHandoffGuards:
         assert f"Excluded prior output UTF-8 character count: {len(invalid_output)}" in objective
         assert 'Validated PM task ids: ["TASK-1", "TASK-2"]' in objective
         assert "placeholder syntax" in objective
+        assert "project_completion_contract" in objective
+        assert "project_completion_contract.obligations" in objective
+        assert "artifacts, entrypoints, and verification" in objective
+        contract = OrchestrationStageExecutor._chief_engineer_structured_output_contract(("TASK-1", "TASK-2"))
+        assert set(contract.json_schema["required"]) == {
+            "construction_plan",
+            "project_completion_contract",
+            "risk_flags",
+        }
+        assert "required top-level keys: construction_plan, project_completion_contract, risk_flags" in objective
+        assert "optional scope_for_apply" in objective
 
     def test_chief_engineer_schema_repair_is_bounded_to_one_attempt(
         self,

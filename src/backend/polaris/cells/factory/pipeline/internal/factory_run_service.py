@@ -1952,7 +1952,13 @@ class FactoryRunService:
         result.started_at = result.started_at or started_at
         result.completed_at = result.completed_at or self._now()
         failed_stage = str(result.stage or "").strip()
-        result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        result.metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
+        # This key is a service-owned authority projection.  Stage executors may
+        # report a rework schedule, but they cannot self-issue terminal-drain
+        # deferral or replay authority.  Remove any caller-carried value before
+        # validating the canonical TaskMarket receipt below.
+        result.metadata.pop("factory_terminal_drain_deferred", None)
+        result_metadata = result.metadata
         rework_schedule = result_metadata.get("factory_local_rework_schedule")
         rework_schedule_map = rework_schedule if isinstance(rework_schedule, Mapping) else {}
         failure_fingerprint = self._factory_stage_failure_fingerprint(result)

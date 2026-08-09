@@ -444,9 +444,11 @@ Sub-Agent 报告的 `execution_summary` 或 `architecture_blueprint` 必须按�
 10. 若任务边界不足以安全写代码，Sub-Agent 必须返回 `status=blocked` 并说明缺口；不得猜测授权范围或扩大 scope。
 
 ```bash
-claude -p "<Agent 01 完整提示词>" --dangerously-skip-permissions --output-format json --json-schema '<JSON_SCHEMA>' > /tmp/polaris-subagent-<batch>-01.json &
-claude -p "<Agent 02 完整提示词>" --dangerously-skip-permissions --output-format json --json-schema '<JSON_SCHEMA>' > /tmp/polaris-subagent-<batch>-02.json &
-claude -p "<Agent 03 完整提示词>" --dangerously-skip-permissions --output-format json --json-schema '<JSON_SCHEMA>' > /tmp/polaris-subagent-<batch>-03.json &
+REPORT_DIR="$HOME/.polaris/audit_archives/subagents/<batch>"
+mkdir -p "$REPORT_DIR"
+claude -p "<Agent 01 完整提示词>" --dangerously-skip-permissions --output-format json --json-schema '<JSON_SCHEMA>' > "$REPORT_DIR/agent-01.json" &
+claude -p "<Agent 02 完整提示词>" --dangerously-skip-permissions --output-format json --json-schema '<JSON_SCHEMA>' > "$REPORT_DIR/agent-02.json" &
+claude -p "<Agent 03 完整提示词>" --dangerously-skip-permissions --output-format json --json-schema '<JSON_SCHEMA>' > "$REPORT_DIR/agent-03.json" &
 wait
 ```
 
@@ -456,7 +458,7 @@ OpenCode 兼容路径只允许在 Claude CLI 不可用或用户显式要求时�
 
 ### 输出 JSON Schema 基线
 
-每个 Sub-Agent 必须按 schema 输出机器可读 JSON，并同时由 shell 重定向落盘到 `/tmp/polaris-subagent-<batch>-<id>.json`。推荐最小 schema：
+每个 Sub-Agent 必须按 schema 输出机器可读 JSON，并同时由 shell 重定向落盘到 `~/.polaris/audit_archives/subagents/<batch>/agent-<id>.json`。`/tmp` 仅允许保存可丢弃 scratch，不得作为唯一报告或审计证据源。推荐最小 schema：
 
 ```json
 {
@@ -610,7 +612,7 @@ Claude CLI 的 `--output-format json` stdout 是 Claude 执行 envelope，不一
 5. 修复必须针对根因，禁止表层绕过、硬编码成功、静默 fallback 或只改测试。
 6. 不得违反任务列出的架构约束。
 7. 修改后必须运行全部验收命令。
-8. 最终必须按调用方提供的 JSON schema 输出执行报告，并由调用方落盘到 /tmp/polaris-subagent-<batch>-<id>.json。
+8. 最终必须按调用方提供的 JSON schema 输出执行报告，并由调用方落盘到 ~/.polaris/audit_archives/subagents/<batch>/agent-<id>.json。
 9. 充分使用codegraph。
 10. 所有文本读写必须显式使用 UTF-8。
 11. 动代码前必须先形成架构蓝图，并在 JSON `architecture_blueprint` 中记录系统拓扑、模块职责、数据流、状态转移和技术取舍。
@@ -675,7 +677,7 @@ Claude CLI 的 `--output-format json` stdout 是 Claude 执行 envelope，不一
 
 ### 结果回收
 
-所有 Sub-Agent 完成后，主 Agent 不得直接相信其报告，必须读取 `/tmp/polaris-subagent-*.json` 并重新审计：
+所有 Sub-Agent 完成后，主 Agent 不得直接相信其报告，必须读取 `~/.polaris/audit_archives/subagents/<batch>/agent-*.json` 并重新审计：
 
 ```bash
 rtk git status
