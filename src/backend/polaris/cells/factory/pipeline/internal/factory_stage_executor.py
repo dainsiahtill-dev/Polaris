@@ -7037,10 +7037,39 @@ class OrchestrationStageExecutor:
             command = result.get("command")
             command_text = " ".join(str(part) for part in command) if isinstance(command, list) else str(command or "")
             output = self._trim_command_output("\n".join(output_parts))
-            errors.append(
-                "Artifact quality scan failed: workspace validation command failed"
-                f" ({command_text or 'unknown command'}): {output}"
-            )
+            # The command row is durable verifier evidence, but its wrapper is
+            # not itself a repair diagnostic.  Feeding the entire wrapper into
+            # Director Runtime makes the actionable nested compiler/runtime
+            # diagnostic compete with generic ``workspace_validation_failed``
+            # rows.  Coverage then fails closed even when an executable repair
+            # binding exists.  Project through the public Director diagnostic
+            # normalizer and transport only actionable raw diagnostics.  Keep
+            # the wrapper as a fail-closed fallback when no actionable signal
+            # can be extracted; command/phase/stdout/stderr provenance remains
+            # authoritative in ``workspace-validation.json.commands``.
+            try:
+                from polaris.cells.director.runtime.public import normalize_director_repair_diagnostics
+
+                diagnostics = normalize_director_repair_diagnostics((output,))
+            except (ImportError, RuntimeError, TypeError, ValueError):
+                diagnostics = ()
+            actionable = [
+                diagnostic
+                for diagnostic in diagnostics
+                if str(diagnostic.code or "").strip()
+                not in {"artifact_quality_error", "workspace_validation_failed"}
+            ]
+            if actionable:
+                errors.extend(
+                    str(diagnostic.metadata.get("raw") or diagnostic.message or "").strip()
+                    for diagnostic in actionable
+                    if str(diagnostic.metadata.get("raw") or diagnostic.message or "").strip()
+                )
+            else:
+                errors.append(
+                    "Artifact quality scan failed: workspace validation command failed"
+                    f" ({command_text or 'unknown command'}): {output}"
+                )
 
         try:
             from polaris.kernelone.quality import scan_workspace_artifact_quality_evidence

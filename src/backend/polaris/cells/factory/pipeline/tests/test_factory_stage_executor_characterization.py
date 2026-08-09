@@ -1445,6 +1445,83 @@ def test_workspace_quality_plan_probe_reads_relevant_base_files(
     assert "TS2322" in typed_issue["message"]
 
 
+def test_workspace_quality_repair_transports_nested_command_diagnostics_without_wrapper_gaps(
+    tmp_path: Path,
+) -> None:
+    """Real verifier output must reach M10 as repairable diagnostics, not gate wrappers."""
+
+    src = tmp_path / "src"
+    tests = tmp_path / "tests"
+    src.mkdir()
+    tests.mkdir()
+    (tmp_path / "package.json").write_text(
+        '{"type":"module","scripts":{"build":"tsc","test":"node --test tests/verify.test.ts"},'
+        '"devDependencies":{"typescript":"5.5.4"}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions":{"module":"ESNext","moduleResolution":"Bundler"}}\n',
+        encoding="utf-8",
+    )
+    (src / "web.ts").write_text(
+        "interface DrawingSurface { width: number; height: number }\n"
+        "declare const ctx: CanvasRenderingContext2D;\n"
+        "declare function render(surface: DrawingSurface): void;\n"
+        "render(ctx);\n",
+        encoding="utf-8",
+    )
+    (src / "verify.ts").write_text("export const verify = (): boolean => true;\n", encoding="utf-8")
+    (tests / "verify.test.ts").write_text(
+        'import { verify } from "../src/verify.js";\nvoid verify;\n',
+        encoding="utf-8",
+    )
+    executor = _executor(tmp_path)
+    results = [
+        {
+            "command": ["npm", "run", "build"],
+            "phase": "check",
+            "exit_code": 2,
+            "passed": False,
+            "stdout_tail": (
+                "src/web.ts(4,8): error TS2345: Argument of type 'CanvasRenderingContext2D' "
+                "is not assignable to parameter of type 'DrawingSurface'.\n"
+                "  Type 'CanvasRenderingContext2D' is missing the following properties "
+                "from type 'DrawingSurface': width, height"
+            ),
+            "stderr_tail": "",
+        },
+        {
+            "command": ["npm", "test"],
+            "phase": "check",
+            "exit_code": 1,
+            "passed": False,
+            "stdout_tail": (
+                "Error [ERR_MODULE_NOT_FOUND]: Cannot find module "
+                f"'{src / 'verify.js'}' imported from {tests / 'verify.test.ts'}"
+            ),
+            "stderr_tail": "",
+        },
+    ]
+
+    repair_errors = executor._workspace_quality_repair_errors(results)
+    coverage = executor._workspace_quality_repair_coverage_report(repair_errors)
+    probe = executor._workspace_quality_repair_plan_probe_report(repair_errors)
+
+    assert len(repair_errors) == 2
+    assert all("workspace validation command failed" not in error for error in repair_errors)
+    assert any("TS2345" in error for error in repair_errors)
+    assert any("ERR_MODULE_NOT_FOUND" in error for error in repair_errors)
+    assert coverage["uncovered_diagnostic_count"] == 0
+    assert probe["status"] != "coverage_gap_uncovered_diagnostics"
+    matched_tools = {
+        source_tool
+        for item in coverage["items"]
+        for source_tool in item["matched_source_tools"]
+    }
+    assert "deterministic_typescript_argument_shape_adapter_repair" in matched_tools
+    assert "deterministic_typescript_local_js_import_repair" in matched_tools
+
+
 def test_quality_gate_failure_stage_does_not_add_qa_llm_warning_for_deterministic_blocker(
     tmp_path: Path,
 ) -> None:

@@ -3455,13 +3455,28 @@ def _to_public_repair_composition_summary(
 
 
 def _to_public_repair_diagnostic(diagnostic: RepairDiagnostic) -> RepairDiagnosticV1:
+    metadata = dict(diagnostic.metadata)
+    # RepairDiagnosticV1 intentionally keeps the compact public shape, so the
+    # lossless fields required to round-trip a compiler/runtime diagnostic live
+    # in metadata.  Dropping ``raw`` here forced cross-cell callers to choose
+    # between reparsing display prose and forwarding generic gate wrappers;
+    # both paths can hide an already-covered executable repair.
+    for key, value in {
+        "diagnostic_id": diagnostic.diagnostic_id,
+        "raw": diagnostic.raw,
+        "line": diagnostic.line,
+        "column": diagnostic.column,
+        "span_start": diagnostic.span_start,
+        "span_end": diagnostic.span_end,
+    }.items():
+        metadata.setdefault(key, value)
     return RepairDiagnosticV1(
         source=diagnostic.source,
         code=diagnostic.code,
         message=diagnostic.message,
         path=diagnostic.path,
         severity=diagnostic.severity,
-        metadata=diagnostic.metadata,
+        metadata=metadata,
     )
 
 
