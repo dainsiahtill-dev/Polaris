@@ -32,6 +32,7 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import FactoryR
 from polaris.cells.factory.pipeline.internal.factory_stage_executor import OrchestrationStageExecutor
 from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
     evaluate_canonical_factory_authority,
+    recover_terminal_runtime_delivery_authority,
 )
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
 from polaris.cells.runtime.task_runtime.public.contracts import ObservableTaskRowsProjectionV1
@@ -264,6 +265,66 @@ def test_completed_verified_boundary_does_not_override_failed_runtime() -> None:
     assert authority.reason_code == "task_runtime_not_converged"
 
 
+def test_settle_recovery_authorizes_terminal_runtime_with_canonical_delivery_boundary() -> None:
+    """After settle, delivery authority may coexist with immutable failed history."""
+
+    projection = _canonical_projection()
+    runtime_row = projection["task_runtime_projection"]["rows"][0]
+    runtime_row["status"] = "cancelled"
+    runtime_row["execution_state"] = "cancelled"
+    verdict = projection["task_boundary"]["latest_by_task"]["TASK-1"]
+    verdict.update(
+        {
+            "failure_class": "PASSED",
+            "run_id": "director-task-1",
+            "append_id": "boundary-append-1",
+            "content_id": "boundary-content-1",
+            "evidence_refs": ["effect-receipt-1"],
+            "missing_target_files": [],
+            "missing_entrypoint_targets": [],
+            "unresolved_local_imports": [],
+            "artifact_semantic_mismatches": [],
+            "downstream_pending_artifacts": [],
+            "blocked_dependencies": [],
+            "missing_required_evidence_modalities": [],
+            "failed_required_evidence_modalities": [],
+            "missing_required_verifiers": [],
+            "failed_required_verifiers": [],
+        }
+    )
+
+    authority = evaluate_canonical_factory_authority(projection)
+
+    assert authority.director_stage_authorized is True
+    assert authority.task_runtime_converged is False
+    assert authority.terminal_runtime_delivery_recovered is True
+    assert authority.recovered_runtime_task_ids == ("TASK-1",)
+    assert authority.reason_code == "terminal_runtime_delivery_recovered"
+
+
+@pytest.mark.parametrize("state", ["pending", "in_progress", "blocked"])
+def test_settle_recovery_rejects_nonterminal_runtime_even_with_green_boundary(state: str) -> None:
+    projection = _canonical_projection()
+    runtime_row = projection["task_runtime_projection"]["rows"][0]
+    runtime_row["status"] = state
+    runtime_row["execution_state"] = state
+    verdict = projection["task_boundary"]["latest_by_task"]["TASK-1"]
+    verdict.update(
+        {
+            "failure_class": "PASSED",
+            "run_id": "director-task-1",
+            "append_id": "boundary-append-1",
+            "content_id": "boundary-content-1",
+            "evidence_refs": ["effect-receipt-1"],
+        }
+    )
+
+    authority = evaluate_canonical_factory_authority(projection)
+
+    assert recover_terminal_runtime_delivery_authority(projection, authority) is None
+    assert authority.director_stage_authorized is False
+
+
 def test_r181_failed_runtime_without_boundary_still_incomplete() -> None:
     """Pending/failed without completed_verified boundary stays fail-closed."""
 
@@ -366,6 +427,18 @@ def test_canonical_projection_filters_task_rows_to_current_run(
                 },
             },
             {
+                "task_id": "TASK-INTERNAL",
+                "workflow_run_id": "factory-current",
+                "factory_run_id": "factory-current",
+                "status": "completed",
+                "execution_state": "completed",
+                "fact_event_seq": 14,
+                "metadata": {
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                },
+            },
+            {
                 "task_id": "TASK-UNBOUND",
                 "status": "completed",
                 "execution_state": "completed",
@@ -393,6 +466,11 @@ def test_canonical_projection_filters_task_rows_to_current_run(
         lambda *_args, **_kwargs: {"source": "run_ledger"},
     )
     executor = OrchestrationStageExecutor(tmp_path)
+    monkeypatch.setattr(
+        executor,
+        "_load_pm_plan_tasks",
+        lambda: [{"id": "TASK-CURRENT"}],
+    )
 
     observable_rows = executor._read_observable_task_rows(factory_run_id="factory-current")
     projection = executor._canonical_factory_projection(
@@ -400,11 +478,12 @@ def test_canonical_projection_filters_task_rows_to_current_run(
         {},
     )
 
-    assert [row["task_id"] for row in observable_rows] == ["TASK-CURRENT"]
+    assert [row["task_id"] for row in observable_rows] == ["TASK-CURRENT", "TASK-INTERNAL"]
     authority = projection["task_runtime_projection"]
     assert authority["requested_factory_run_id"] == "factory-current"
-    assert authority["total_row_count"] == 3
+    assert authority["total_row_count"] == 4
     assert authority["row_count"] == 1
+    assert authority["owner_scope"] == "pm_contract_tasks"
     assert authority["rows"] == [
         {
             "task_id": "TASK-CURRENT",

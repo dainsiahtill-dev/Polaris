@@ -1722,11 +1722,19 @@ class FactoryRunService:
         result.started_at = result.started_at or started_at
         result.completed_at = result.completed_at or self._now()
         failed_stage = str(result.stage or "").strip()
+        result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        rework_schedule = result_metadata.get("factory_local_rework_schedule")
+        rework_schedule_map = rework_schedule if isinstance(rework_schedule, Mapping) else {}
+        committed_local_rework = (
+            str(rework_schedule_map.get("status") or "").strip().lower() == "committed"
+            and bool(str(rework_schedule_map.get("owner_task_id") or "").strip())
+            and bool(str(rework_schedule_map.get("requeue_receipt_ref") or "").strip())
+        )
         local_rework_decision_pending = failed_stage in {
             "chief_engineer_review",
             "director_dispatch",
             "quality_gate",
-        } and (str(result.status or "").strip().lower() == "failed")
+        } and (str(result.status or "").strip().lower() == "failed") and committed_local_rework
         if local_rework_decision_pending:
             rework_reason = {
                 "chief_engineer_review": "chief_engineer_local_rework_decision_pending",
@@ -1738,6 +1746,8 @@ class FactoryRunService:
                 "schema_version": "factory.terminal-drain-deferred.v1",
                 "reason": rework_reason,
                 "decision_owner": "factory_orchestration",
+                "owner_task_id": str(rework_schedule_map.get("owner_task_id") or "").strip(),
+                "requeue_receipt_ref": str(rework_schedule_map.get("requeue_receipt_ref") or "").strip(),
             }
         terminal_after_stage = False
         async with run_lock:

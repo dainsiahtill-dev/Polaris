@@ -7728,7 +7728,40 @@ class OrchestrationStageExecutor:
                 exc,
             )
             return projection
-        projection["task_runtime_projection"] = task_runtime_projection.to_authority_dict(factory_run_id=run.id)
+        task_runtime_authority = task_runtime_projection.to_authority_dict(factory_run_id=run.id)
+        # Factory portfolios also create internal settlement / verification
+        # TaskRuntime rows under the same factory_run_id. Director completion
+        # authority owns only PM contract tasks; auxiliary lifecycle rows must
+        # remain observable without becoming extra delivery obligations.
+        plan_task_ids: set[str] = set()
+        for task in self._load_pm_plan_tasks():
+            task_id = str(task.get("id") or task.get("task_id") or "").strip()
+            if not task_id:
+                continue
+            plan_task_ids.add(task_id)
+            alternate = helpers._alternate_task_id_token(task_id)
+            if alternate:
+                plan_task_ids.add(alternate)
+        if plan_task_ids:
+            authority_rows = task_runtime_authority.get("rows")
+            scoped_rows = (
+                [
+                    row
+                    for row in authority_rows
+                    if isinstance(row, dict)
+                    and (
+                        str(row.get("task_id") or "").strip() in plan_task_ids
+                        or helpers._alternate_task_id_token(str(row.get("task_id") or "").strip()) in plan_task_ids
+                    )
+                ]
+                if isinstance(authority_rows, list)
+                else []
+            )
+            task_runtime_authority["rows"] = scoped_rows
+            task_runtime_authority["row_count"] = len(scoped_rows)
+            task_runtime_authority["owner_scope"] = "pm_contract_tasks"
+            task_runtime_authority["owned_task_ids"] = sorted(plan_task_ids)
+        projection["task_runtime_projection"] = task_runtime_authority
         return projection
 
     def _workspace_quality_task_boundary_blocker(
@@ -7959,246 +7992,31 @@ class OrchestrationStageExecutor:
         context: dict[str, Any],
         prior_authority: helpers.CanonicalFactoryAuthority,
     ) -> helpers.CanonicalFactoryAuthority | None:
-        """Re-append disk-reconciled boundary verdicts and re-evaluate authority.
+        """Re-evaluate Director authority from canonical post-settle facts.
 
-        After materialization settle, failed TaskRuntime rows may still block
-        ``director_stage_authorized`` even when targets already exist on disk.
-        Re-evaluate incomplete tasks against the workspace, append
-        ``completed_verified`` when delivery is complete, then re-load the
-        canonical projection.
-
-        Fail-closed: does not invent success when delivery surface is missing
-        or when incomplete rows are still pending/active (non-terminal).
-
-        R181/M06 binding rules:
-        - Append under the TaskRuntime row's ``workflow_run_id`` (director child)
-          when present so factory-scoped projection joins the event.
-        - Dual-write task keys ``N`` and ``TASK-N`` so boundary/runtime aliases
-          both observe ``completed_verified``.
+        TaskRuntime history remains immutable. Recovery is allowed only when
+        every non-completed PM-contract task is terminal and canonical
+        TaskBoundary evidence independently proves ``completed_verified``.
+        Active, blocked, disk-only, or synthetic evidence remains fail-closed.
         """
 
         if prior_authority.director_stage_authorized:
             return prior_authority
-        # Durable completion authority never lets a disk scan or synthetic
-        # TaskBoundary verdict override failed/pending TaskRuntime facts.  Local
-        # convergence must reopen the owning Director task and produce fresh
-        # receipts; this compatibility hook therefore cannot manufacture stage
-        # authorization from an on-disk delivery surface.
-        return None
-        if not self._workspace_has_delivery_surface():
-            return None
-
-        from polaris.cells.control_plane.run_ledger.public import (
-            AppendRunLedgerEventCommandV1,
-            append_run_ledger_event,
-            build_completed_task_boundary_verdict,
-            evaluate_task_boundary_verdict,
-        )
-
-        delivery_targets = [
-            path
-            for path in self._director_stage_materialization_settle_target_files(diagnostics=[])
-            if path and (self.workspace / path).exists()
-        ]
-        for pattern in ("src/**/*.ts", "src/**/*.tsx", "src/**/*.py", "tests/**/*.ts", "index.html"):
-            for path in self.workspace.glob(pattern):
-                try:
-                    rel = str(path.relative_to(self.workspace)).replace("\\", "/")
-                except ValueError:
-                    continue
-                if rel not in delivery_targets:
-                    delivery_targets.append(rel)
-        if not delivery_targets:
-            return None
-        source_file_count = sum(
-            1 for pattern in ("src/**/*.ts", "src/**/*.tsx", "src/**/*.py") for _ in self.workspace.glob(pattern)
-        )
-        solid_delivery = (self.workspace / "package.json").is_file() and source_file_count >= 3
-
-        # Up to two passes: settle may leave additional rows non-completed after
-        # the first recovery appends (timeout cancel fanout). Always re-read
-        # incomplete ids from a fresh projection.
-        recovered_total = 0
-        last_authority: helpers.CanonicalFactoryAuthority | None = None
-        for _pass in range(2):
-            try:
-                projection = self._canonical_factory_projection(run, context)
-                last_authority = helpers.evaluate_canonical_factory_authority(projection)
-            except (OSError, RuntimeError, TypeError, ValueError) as exc:
-                logger.warning("Director stage authority re-eval after settle failed: %s", exc)
-                return None
-            if last_authority.director_stage_authorized:
-                return last_authority
-            incomplete = list(
-                dict.fromkeys(
-                    [
-                        *prior_authority.incomplete_task_ids,
-                        *last_authority.incomplete_task_ids,
-                        *prior_authority.incomplete_runtime_task_ids,
-                        *last_authority.incomplete_runtime_task_ids,
-                        *prior_authority.missing_task_boundary_ids,
-                        *last_authority.missing_task_boundary_ids,
-                    ]
-                )
-            )
-            # Also recover every non-completed runtime row in the live projection.
-            runtime_rows = (projection.get("task_runtime_projection") or {}).get("rows") or []
-            runtime_row_by_task: dict[str, Mapping[str, Any]] = {}
-            if isinstance(runtime_rows, list):
-                for row in runtime_rows:
-                    if not isinstance(row, Mapping):
-                        continue
-                    tid = str(row.get("task_id") or row.get("id") or "").strip()
-                    if not tid:
-                        continue
-                    runtime_row_by_task[tid] = row
-                    alt = helpers._alternate_task_id_token(tid)
-                    if alt and alt not in runtime_row_by_task:
-                        runtime_row_by_task[alt] = row
-                    state = str(row.get("execution_state") or row.get("status") or "").strip().lower()
-                    if state != "completed" and tid not in incomplete:
-                        incomplete.append(tid)
-            if not incomplete:
-                return last_authority
-            # R188/M06: blocked/pending portfolio rows may never receive a director
-            # child workflow_run_id (never claimed). Boundary recovery that only
-            # appends under factory_run_id is invisible to TaskBoundary joins that
-            # key on director child runs — L1-01 r7 left incomplete_task_ids=['3']
-            # with no TASK-3/3 completed_verified while 1/2 recovered under
-            # director-* run ids. Prefer sibling director child run ids when the
-            # row itself has no workflow binding.
-            director_child_run_ids: list[str] = []
-            for row in runtime_row_by_task.values():
-                if not isinstance(row, Mapping):
-                    continue
-                child = str(row.get("workflow_run_id") or row.get("run_id") or row.get("director_run_id") or "").strip()
-                if child.startswith("director-") and child not in director_child_run_ids:
-                    director_child_run_ids.append(child)
-            factory_run_id = str(run.id or "").strip()
-            pass_recovered = 0
-            for task_id in incomplete:
-                token = str(task_id or "").strip()
-                if not token:
-                    continue
-                row = runtime_row_by_task.get(token) or runtime_row_by_task.get(
-                    helpers._alternate_task_id_token(token) or ""
-                )
-                ledger_run_ids: list[str] = []
-                if isinstance(row, Mapping):
-                    primary = str(
-                        row.get("workflow_run_id") or row.get("run_id") or row.get("director_run_id") or ""
-                    ).strip()
-                    if primary:
-                        ledger_run_ids.append(primary)
-                if not ledger_run_ids:
-                    ledger_run_ids.extend(director_child_run_ids)
-                if factory_run_id and factory_run_id not in ledger_run_ids:
-                    ledger_run_ids.append(factory_run_id)
-                if not ledger_run_ids:
-                    continue
-                task_keys = [token]
-                alt = helpers._alternate_task_id_token(token)
-                if alt and alt not in task_keys:
-                    task_keys.append(alt)
-                # Prefer TASK-N form for director-owned rows when available.
-                preferred_task_id = next((key for key in task_keys if key.upper().startswith("TASK-")), token)
-                verdict_dict: dict[str, Any] | None = None
-                try:
-                    verdict = evaluate_task_boundary_verdict(
-                        workspace=self.workspace,
-                        task_id=preferred_task_id,
-                        run_id=ledger_run_ids[0],
-                        target_files=delivery_targets,
-                        completed_artifacts=delivery_targets,
-                        downstream_pending_artifacts=[],
-                    )
-                    if verdict.ok and str(verdict.status or "").strip().lower() == "completed_verified":
-                        verdict_dict = verdict.to_dict()
-                except (OSError, RuntimeError, TypeError, ValueError) as exc:
-                    logger.warning(
-                        "Director stage delivery recovery boundary eval failed task=%s: %s",
-                        preferred_task_id,
-                        exc,
-                    )
-                if verdict_dict is None and solid_delivery:
-                    verdict_dict = build_completed_task_boundary_verdict(
-                        task_id=preferred_task_id,
-                        run_id=ledger_run_ids[0],
-                        target_files=delivery_targets,
-                        evidence_refs=(
-                            "factory_stage_executor.delivery_settle_recovery",
-                            f"source_files={source_file_count}",
-                        ),
-                    ).to_dict()
-                    verdict_dict["reason"] = (
-                        "Post-settle workspace delivery surface present; incomplete TaskRuntime "
-                        "row superseded by on-disk package/src materialization"
-                    )
-                if not verdict_dict:
-                    continue
-                wrote_any = False
-                for ledger_run_id in ledger_run_ids:
-                    for key in task_keys:
-                        event_verdict = dict(verdict_dict)
-                        event_verdict["task_id"] = key
-                        event_verdict["run_id"] = ledger_run_id
-                        try:
-                            append_run_ledger_event(
-                                AppendRunLedgerEventCommandV1(
-                                    workspace=str(self.workspace),
-                                    run_id=ledger_run_id,
-                                    event={
-                                        "event_type": "task_boundary_verdict",
-                                        "stage": "task_boundary",
-                                        "task_id": key,
-                                        "run_id": ledger_run_id,
-                                        "task_boundary_verdict": event_verdict,
-                                        "job_token": {
-                                            "run_id": ledger_run_id,
-                                            "task_id": key,
-                                            "project_id": key or "unknown",
-                                            "capability_audit": {"ok": True, "issues": []},
-                                            "gate_policy": {},
-                                        },
-                                        "metadata": {
-                                            "source": "factory_stage_executor.delivery_settle_recovery",
-                                            "recovered_after_materialization_settle": True,
-                                            "factory_run_id": factory_run_id,
-                                            "alias_task_ids": list(task_keys),
-                                            "ledger_run_ids": list(ledger_run_ids),
-                                            "orphan_runtime_without_director_child": not bool(
-                                                isinstance(row, Mapping)
-                                                and str(
-                                                    row.get("workflow_run_id")
-                                                    or row.get("run_id")
-                                                    or row.get("director_run_id")
-                                                    or ""
-                                                ).strip()
-                                            ),
-                                        },
-                                    },
-                                )
-                            )
-                            wrote_any = True
-                        except (OSError, RuntimeError, TypeError, ValueError) as exc:
-                            logger.warning(
-                                "Director stage delivery recovery ledger append failed task=%s run=%s: %s",
-                                key,
-                                ledger_run_id,
-                                exc,
-                            )
-                if wrote_any:
-                    pass_recovered += 1
-                    recovered_total += 1
-            if pass_recovered <= 0:
-                break
-        if recovered_total <= 0:
-            return last_authority
+        # Re-read only canonical owner facts after settle. TaskRuntime history
+        # remains immutable; recovery is allowed solely when every contract task
+        # has a canonical completed_verified boundary with ledger coordinates and
+        # evidence, while every non-completed runtime row is terminal. No disk
+        # scan or synthetic verdict may authorize this transition.
         try:
-            return helpers.evaluate_canonical_factory_authority(self._canonical_factory_projection(run, context))
+            projection = self._canonical_factory_projection(run, context)
+            latest_authority = helpers.evaluate_canonical_factory_authority(projection)
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning("Director stage authority re-eval after settle failed: %s", exc)
-            return last_authority
+            return None
+        return helpers.recover_terminal_runtime_delivery_authority(
+            projection,
+            latest_authority,
+        )
 
     def _seal_director_stage_missing_tool_lifecycles(
         self,

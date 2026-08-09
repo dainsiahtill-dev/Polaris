@@ -19,7 +19,7 @@ import os
 import re
 import shutil
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +73,7 @@ class CanonicalFactoryAuthority:
     source_valid: bool
     task_runtime_projection_authoritative: bool
     task_runtime_converged: bool
+    terminal_runtime_delivery_recovered: bool
     task_boundary_present: bool
     task_boundary_completed_verified: bool
     qa_verdict_present: bool
@@ -88,15 +89,17 @@ class CanonicalFactoryAuthority:
     incomplete_task_ids: tuple[str, ...]
     incomplete_runtime_task_ids: tuple[str, ...]
     missing_task_boundary_ids: tuple[str, ...]
+    recovered_runtime_task_ids: tuple[str, ...]
 
     @property
     def director_stage_authorized(self) -> bool:
         """Return whether all owned tasks reached ``completed_verified``."""
 
+        runtime_delivery_authorized = self.task_runtime_converged or self.terminal_runtime_delivery_recovered
         return (
             self.source_valid
             and self.task_runtime_projection_authoritative
-            and self.task_runtime_converged
+            and runtime_delivery_authorized
             and self.task_boundary_present
             and self.task_boundary_completed_verified
         )
@@ -323,10 +326,11 @@ def evaluate_canonical_factory_authority(
         reason_code = "run_ledger_projection_failed"
         detail = "Canonical Run Ledger integrity or outcome projection failed"
 
-    return CanonicalFactoryAuthority(
+    authority = CanonicalFactoryAuthority(
         source_valid=source_valid,
         task_runtime_projection_authoritative=task_runtime_projection_authoritative,
         task_runtime_converged=task_runtime_converged,
+        terminal_runtime_delivery_recovered=False,
         task_boundary_present=task_boundary_present,
         task_boundary_completed_verified=task_boundary_completed_verified,
         qa_verdict_present=qa_verdict_present,
@@ -342,6 +346,117 @@ def evaluate_canonical_factory_authority(
         incomplete_task_ids=incomplete_task_ids,
         incomplete_runtime_task_ids=incomplete_runtime_task_ids,
         missing_task_boundary_ids=missing_task_boundary_ids,
+        recovered_runtime_task_ids=(),
+    )
+    # Canonical completed_verified boundaries carry their own ledger coordinates
+    # and evidence. When TaskRuntime is already terminal, the same immutable
+    # projection must yield the same Director-to-QA authority in every stage;
+    # keeping recovery only in one caller would make QA immediately fail again.
+    return recover_terminal_runtime_delivery_authority(payload, authority) or authority
+
+
+_TERMINAL_DELIVERY_RECOVERY_STATES = frozenset({"failed", "cancelled"})
+_TASK_BOUNDARY_BLOCKING_FIELDS = (
+    "missing_target_files",
+    "missing_entrypoint_targets",
+    "unresolved_local_imports",
+    "artifact_semantic_mismatches",
+    "downstream_pending_artifacts",
+    "blocked_dependencies",
+    "missing_required_evidence_modalities",
+    "failed_required_evidence_modalities",
+    "missing_required_verifiers",
+    "failed_required_verifiers",
+)
+
+
+def recover_terminal_runtime_delivery_authority(
+    projection: Mapping[str, Any] | None,
+    authority: CanonicalFactoryAuthority,
+) -> CanonicalFactoryAuthority | None:
+    """Authorize Director-to-QA handoff after settle without rewriting history.
+
+    TaskRuntime remains the immutable execution-lifecycle record. A terminal
+    failed/cancelled row may nevertheless have a later canonical TaskBoundary
+    verdict proving every delivery obligation. Factory may use that independent
+    delivery fact only after its settle phase. Active, pending, blocked,
+    non-authoritative, evidence-free, or failed-boundary rows remain fail-closed.
+    """
+
+    if authority.director_stage_authorized:
+        return authority
+    if not authority.source_valid or not authority.task_runtime_projection_authoritative:
+        return None
+
+    payload = dict(projection or {})
+    task_runtime = payload.get("task_runtime_projection")
+    task_runtime_map = task_runtime if isinstance(task_runtime, Mapping) else {}
+    runtime_rows = task_runtime_map.get("rows")
+    runtime_row_items = (
+        [row for row in runtime_rows if isinstance(row, Mapping)] if isinstance(runtime_rows, list) else []
+    )
+    if not runtime_row_items:
+        return None
+
+    task_boundary = payload.get("task_boundary")
+    task_boundary_map = task_boundary if isinstance(task_boundary, Mapping) else {}
+    if task_boundary_map.get("ok") is not True or task_boundary_map.get("failed"):
+        return None
+    latest_by_task = task_boundary_map.get("latest_by_task")
+    latest_by_task_map = latest_by_task if isinstance(latest_by_task, Mapping) else {}
+    verdict_by_task: dict[str, Mapping[str, Any]] = {}
+    for task_id, verdict in latest_by_task_map.items():
+        token = str(task_id or "").strip()
+        if not token or not isinstance(verdict, Mapping):
+            continue
+        verdict_by_task[token] = verdict
+        alternate = _alternate_task_id_token(token)
+        if alternate and alternate not in verdict_by_task:
+            verdict_by_task[alternate] = verdict
+
+    recovered_task_ids: list[str] = []
+    for row in runtime_row_items:
+        task_id = str(row.get("task_id") or row.get("id") or "").strip()
+        if not task_id:
+            return None
+        state = str(row.get("execution_state") or row.get("status") or "").strip().lower()
+        if state != "completed":
+            if state not in _TERMINAL_DELIVERY_RECOVERY_STATES:
+                return None
+            recovered_task_ids.append(task_id)
+
+        verdict = verdict_by_task.get(task_id) or verdict_by_task.get(_alternate_task_id_token(task_id))
+        if not isinstance(verdict, Mapping):
+            return None
+        if not bool(verdict.get("ok")) or str(verdict.get("status") or "").strip().lower() != "completed_verified":
+            return None
+        if str(verdict.get("failure_class") or "").strip().upper() != "PASSED":
+            return None
+        if not str(verdict.get("run_id") or "").strip():
+            return None
+        if not str(verdict.get("append_id") or "").strip() or not str(verdict.get("content_id") or "").strip():
+            return None
+        evidence_refs = verdict.get("evidence_refs")
+        if not isinstance(evidence_refs, list) or not any(str(item or "").strip() for item in evidence_refs):
+            return None
+        if any(verdict.get(field_name) for field_name in _TASK_BOUNDARY_BLOCKING_FIELDS):
+            return None
+
+    if not recovered_task_ids:
+        return None
+    recovered_ids = tuple(sorted(set(recovered_task_ids)))
+    return replace(
+        authority,
+        terminal_runtime_delivery_recovered=True,
+        task_boundary_completed_verified=True,
+        reason_code="terminal_runtime_delivery_recovered",
+        detail=(
+            "Canonical TaskBoundary delivery evidence authorizes QA after settle; "
+            "terminal TaskRuntime failures remain preserved as execution history"
+        ),
+        failure_class="",
+        responsible_layer="execution_control_plane",
+        recovered_runtime_task_ids=recovered_ids,
     )
 
 

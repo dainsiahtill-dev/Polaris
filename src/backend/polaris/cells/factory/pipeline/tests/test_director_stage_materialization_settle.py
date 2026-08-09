@@ -85,12 +85,7 @@ def test_r181_recover_director_stage_authority_after_delivery_settle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Shipped recovery: failed TaskRuntime + on-disk delivery → director authorized.
-
-    Drives ``_recover_director_stage_authority_after_delivery_settle`` with the
-    real evaluator path; projection is sequenced so the second load sees the
-    completed_verified boundary written by recovery (r181 false-incomplete).
-    """
+    """Disk delivery alone cannot synthesize missing TaskBoundary authority."""
 
     from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
         evaluate_canonical_factory_authority,
@@ -224,7 +219,7 @@ def test_r181_recover_director_stage_authority_after_delivery_settle(
     )
     assert recovered is None
     assert appends == []
-    assert loads["n"] == 0
+    assert loads["n"] == 1
 
 
 def test_recover_director_stage_authority_orphan_blocked_uses_sibling_director_run(
