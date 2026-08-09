@@ -2558,6 +2558,144 @@ def test_projection_exposes_task_boundary_failure() -> None:
     assert summary["detail"] == "run ledger projection task boundary failed: MISSING_ENTRYPOINT_TARGET"
 
 
+def test_projection_preserves_completed_boundary_after_zero_effect_mutation_bypass() -> None:
+    projection = build_run_ledger_projection(
+        [
+            {
+                "event_type": "gate_evaluated",
+                "stage": "director",
+                "gate": {"name": "director", "ok": True, "summary": "started"},
+                "job_token": {
+                    "token_id": "token-1",
+                    "project_id": "P1",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+                "physical_evidence": {},
+            },
+            {
+                "event_type": "task_boundary_verdict",
+                "run_id": "director-1",
+                "task_id": "TASK-1",
+                "append_id": "append-complete",
+                "content_id": "content-complete",
+                "task_boundary_verdict": {
+                    "task_id": "TASK-1",
+                    "run_id": "director-1",
+                    "status": "completed_verified",
+                    "ok": True,
+                    "failure_class": "PASSED",
+                    "reason": "all delivery obligations passed",
+                    "evidence_refs": ["receipt-complete"],
+                },
+            },
+            {
+                "event_type": "task_boundary_verdict",
+                "run_id": "director-1",
+                "task_id": "TASK-1",
+                "append_id": "append-deferred",
+                "content_id": "content-deferred",
+                "task_boundary_verdict": {
+                    "task_id": "TASK-1",
+                    "run_id": "director-1",
+                    "status": "deferred_followup_required",
+                    "ok": False,
+                    "failure_class": "DEFERRED_FOLLOWUP_REQUIRED",
+                    "reason": "mutation_bypass_blocked",
+                    "evidence_refs": ["receipt-read-only"],
+                    "target_files": [],
+                    "completed_artifacts": [],
+                    "tool_dispatch": {},
+                },
+            },
+            _successful_tool_lifecycle_event(),
+        ]
+    )
+
+    boundary = projection["task_boundary"]
+    assert boundary["ok"] is True
+    assert boundary["verdict_count"] == 2
+    assert boundary["historical_failed_count"] == 1
+    assert boundary["suppressed_non_mutating_deferred_count"] == 1
+    assert boundary["latest"]["status"] == "completed_verified"
+    assert boundary["latest_by_task"]["TASK-1"]["status"] == "completed_verified"
+
+
+def test_projection_does_not_suppress_mutation_bypass_without_completed_boundary() -> None:
+    projection = build_run_ledger_projection(
+        [
+            {
+                "event_type": "task_boundary_verdict",
+                "run_id": "director-1",
+                "task_id": "TASK-1",
+                "append_id": "append-deferred",
+                "content_id": "content-deferred",
+                "task_boundary_verdict": {
+                    "task_id": "TASK-1",
+                    "run_id": "director-1",
+                    "status": "deferred_followup_required",
+                    "ok": False,
+                    "failure_class": "DEFERRED_FOLLOWUP_REQUIRED",
+                    "reason": "mutation_bypass_blocked",
+                    "evidence_refs": ["receipt-read-only"],
+                    "target_files": [],
+                    "completed_artifacts": [],
+                    "tool_dispatch": {},
+                },
+            }
+        ]
+    )
+
+    boundary = projection["task_boundary"]
+    assert boundary["ok"] is False
+    assert boundary["suppressed_non_mutating_deferred_count"] == 0
+    assert boundary["latest"]["status"] == "deferred_followup_required"
+
+
+def test_projection_real_boundary_failure_invalidates_completed_boundary() -> None:
+    projection = build_run_ledger_projection(
+        [
+            {
+                "event_type": "task_boundary_verdict",
+                "run_id": "director-1",
+                "task_id": "TASK-1",
+                "append_id": "append-complete",
+                "content_id": "content-complete",
+                "task_boundary_verdict": {
+                    "task_id": "TASK-1",
+                    "run_id": "director-1",
+                    "status": "completed_verified",
+                    "ok": True,
+                    "failure_class": "PASSED",
+                    "reason": "all delivery obligations passed",
+                    "evidence_refs": ["receipt-complete"],
+                },
+            },
+            {
+                "event_type": "task_boundary_verdict",
+                "run_id": "director-1",
+                "task_id": "TASK-1",
+                "append_id": "append-failed",
+                "content_id": "content-failed",
+                "task_boundary_verdict": {
+                    "task_id": "TASK-1",
+                    "run_id": "director-1",
+                    "status": "missing_entrypoint_target",
+                    "ok": False,
+                    "failure_class": "MISSING_ENTRYPOINT_TARGET",
+                    "reason": "entrypoint disappeared",
+                    "missing_entrypoint_targets": ["src/index.ts"],
+                },
+            },
+        ]
+    )
+
+    boundary = projection["task_boundary"]
+    assert boundary["ok"] is False
+    assert boundary["suppressed_non_mutating_deferred_count"] == 0
+    assert boundary["latest"]["failure_class"] == "MISSING_ENTRYPOINT_TARGET"
+
+
 def test_public_projection_summary_normalizes_task_boundary_failure_alias() -> None:
     summary = summarize_run_ledger_projection(
         {
@@ -3462,15 +3600,14 @@ def test_read_run_provenance_bundle_exposes_missing_authority_hashes(tmp_path: P
     assert bundle["handoff_decision_hash"] == "missing:handoff_decision_hash"
     assert bundle["execution_envelope_hash"] == "missing:execution_envelope_hash"
 
-
-
 def test_summarize_run_ledger_projection_tool_result_failed_is_recoverable_not_integrity() -> None:
     """M08 (caller side): summarize_run_ledger_projection must respect failure_status.failed.
     A recoverable TOOL_RESULT_FAILED (tool ran, ok=False) is product-quality, not integrity.
     L1-01 r27 still died on TOOL_RESULT_FAILED because this caller checked the summary's
     raw ok flag instead of the M08 failed verdict.
     """
-    from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import build_tool_call_lifecycle_receipt, project_tool_lifecycle_event
+    from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import build_tool_call_lifecycle_receipt
+
     receipt = build_tool_call_lifecycle_receipt(
         run_id="run-1", task_id="TASK-1", turn_id="turn-1", role="director",
         native_tool_calls_count=1, decoded_tool_calls_count=1, dispatched_tool_calls_count=1,

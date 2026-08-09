@@ -77,6 +77,65 @@ def _task_boundary_task_key(verdict: dict[str, Any]) -> str:
     return f"run:{run_id}|turn:{turn_id}"
 
 
+_TASK_BOUNDARY_BLOCKING_FIELDS = (
+    "missing_target_files",
+    "missing_entrypoint_targets",
+    "unresolved_local_imports",
+    "artifact_semantic_mismatches",
+    "downstream_pending_artifacts",
+    "blocked_dependencies",
+    "missing_required_evidence_modalities",
+    "failed_required_evidence_modalities",
+    "missing_required_verifiers",
+    "failed_required_verifiers",
+)
+
+
+def _preserves_completed_task_boundary(
+    current: dict[str, Any] | None,
+    candidate: dict[str, Any],
+) -> bool:
+    """Keep proven delivery authoritative across a zero-effect repair attempt.
+
+    ``mutation_bypass_blocked`` means the follow-up turn was rejected before
+    any requested mutation was dispatched.  It is useful stagnation evidence,
+    but it cannot erase an earlier, ledger-bound ``completed_verified`` fact
+    for the same task/run.  Real boundary defects and failed verifier evidence
+    still replace the prior verdict and remain fail-closed.
+    """
+
+    if not isinstance(current, dict):
+        return False
+    if not (
+        bool(current.get("ok"))
+        and _clean_string(current.get("status")).lower() == "completed_verified"
+        and _clean_string(current.get("failure_class")).upper() == "PASSED"
+    ):
+        return False
+    if not (
+        not bool(candidate.get("ok"))
+        and _clean_string(candidate.get("status")).lower() == "deferred_followup_required"
+        and _clean_string(candidate.get("failure_class")).upper() == "DEFERRED_FOLLOWUP_REQUIRED"
+        and _clean_string(candidate.get("reason")).lower() == "mutation_bypass_blocked"
+    ):
+        return False
+    if _clean_string(current.get("run_id")) != _clean_string(candidate.get("run_id")):
+        return False
+    if not (
+        _clean_string(current.get("append_id"))
+        and _clean_string(current.get("content_id"))
+        and _string_list(current.get("evidence_refs"))
+    ):
+        return False
+    if any(candidate.get(field_name) for field_name in _TASK_BOUNDARY_BLOCKING_FIELDS):
+        return False
+    return not (
+        _string_list(candidate.get("target_files"))
+        or _string_list(candidate.get("completed_artifacts"))
+        or _dict_value(candidate.get("tool_dispatch"))
+    )
+
+
 def _merge_evidence_modality(
     modalities: dict[str, dict[str, Any]],
     name: str,
@@ -1064,12 +1123,20 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     evidence_policy_integrity_ok = bool(gates) and not missing_required_modalities
     evidence_policy_outcome_ok = bool(gates) and not failed_required_modalities
     evidence_policy_ok = evidence_policy_integrity_ok and evidence_policy_outcome_ok
-    latest_task_boundary = task_boundary_verdicts[-1] if task_boundary_verdicts else {}
     latest_task_boundary_by_task: dict[str, dict[str, Any]] = {}
+    suppressed_non_mutating_deferred_count = 0
     for verdict in task_boundary_verdicts:
         task_key = _task_boundary_task_key(verdict)
+        if _preserves_completed_task_boundary(latest_task_boundary_by_task.get(task_key), verdict):
+            suppressed_non_mutating_deferred_count += 1
+            continue
         latest_task_boundary_by_task.pop(task_key, None)
         latest_task_boundary_by_task[task_key] = dict(verdict)
+    latest_task_boundary = {}
+    if task_boundary_verdicts:
+        latest_task_boundary = dict(
+            latest_task_boundary_by_task.get(_task_boundary_task_key(task_boundary_verdicts[-1]), {})
+        )
     historical_failed_task_boundary_count = sum(not bool(verdict.get("ok")) for verdict in task_boundary_verdicts)
     failed_task_boundaries = [
         verdict for verdict in latest_task_boundary_by_task.values() if not bool(verdict.get("ok"))
@@ -1141,6 +1208,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             "ok": task_boundary_ok,
             "verdict_count": len(task_boundary_verdicts),
             "historical_failed_count": historical_failed_task_boundary_count,
+            "suppressed_non_mutating_deferred_count": suppressed_non_mutating_deferred_count,
             "latest": latest_task_boundary,
             "latest_by_task": latest_task_boundary_by_task,
             "failed": failed_task_boundaries,

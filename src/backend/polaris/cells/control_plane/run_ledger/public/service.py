@@ -790,12 +790,16 @@ def _merge_task_boundary(projects: list[dict[str, Any]]) -> dict[str, Any]:
     failed: list[dict[str, Any]] = []
     verdict_count = 0
     historical_failed_count = 0
+    suppressed_non_mutating_deferred_count = 0
     for project in projects:
         boundary = project.get("task_boundary")
         if not isinstance(boundary, dict):
             continue
         verdict_count += _count_value(boundary.get("verdict_count"))
         historical_failed_count += _count_value(boundary.get("historical_failed_count"))
+        suppressed_non_mutating_deferred_count += _count_value(
+            boundary.get("suppressed_non_mutating_deferred_count")
+        )
         boundary_latest = boundary.get("latest")
         if isinstance(boundary_latest, dict) and boundary_latest:
             latest = dict(boundary_latest)
@@ -812,6 +816,7 @@ def _merge_task_boundary(projects: list[dict[str, Any]]) -> dict[str, Any]:
         "ok": not failed,
         "verdict_count": verdict_count,
         "historical_failed_count": historical_failed_count,
+        "suppressed_non_mutating_deferred_count": suppressed_non_mutating_deferred_count,
         "latest": latest,
         "latest_by_task": latest_by_task,
         "failed": failed,
