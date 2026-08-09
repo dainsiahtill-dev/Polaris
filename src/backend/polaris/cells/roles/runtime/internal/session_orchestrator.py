@@ -66,6 +66,8 @@ _role_profile_cache: dict[str, tuple[str, list[dict[str, Any]]]] = {}  # role ->
 
 logger = logging.getLogger(__name__)
 
+_MAX_MUTATION_BYPASS_LOCAL_RECOVERY_TURNS = 2
+
 
 def _write_checkpoint_sync(checkpoint_path: Path, serialized: str) -> None:
     """Atomically persist a serialized checkpoint (atomic replace + fsync).
@@ -882,6 +884,7 @@ class RoleSessionOrchestrator:
                     session_completed_reason = "missing_completion_event"
                     break
 
+                envelope = self._apply_mutation_bypass_local_recovery(envelope)
                 envelope = self._state_reducer.enforce_materialize_changes_guard(envelope)
                 envelope = self._apply_read_only_termination_exemption(envelope)
 
@@ -1663,7 +1666,9 @@ class RoleSessionOrchestrator:
         elif turn_kind == "final_answer":
             continuation_mode = TurnContinuationMode.END_SESSION
         elif turn_kind in ("inline_patch_escape_blocked", "mutation_bypass_blocked"):
-            # Blocked finalization kinds must end the session, not AUTO_CONTINUE
+            # Instance-level authority decides whether a Director materialize
+            # session may locally recover from mutation_bypass_blocked.  Keep
+            # the role-agnostic projection fail-closed by default.
             continuation_mode = TurnContinuationMode.END_SESSION
         else:
             # tool_batch_with_receipt → 默认自动继续
@@ -1693,6 +1698,69 @@ class RoleSessionOrchestrator:
             next_intent=next_intent,
             session_patch=session_patch,
             failure_class=failure_class,
+        )
+
+    def _apply_mutation_bypass_local_recovery(self, envelope: TurnOutcomeEnvelope) -> TurnOutcomeEnvelope:
+        """Retry a Director materialization miss in-session under a hard budget.
+
+        This gate is deliberately instance-level: the CompletionEvent projection
+        is shared by every role, while only the owning Director in
+        MATERIALIZE_CHANGES mode has authority to turn a missing mutation into a
+        local retry.  The hard bypass budget is independent of adaptive
+        ContinuationPolicy extra turns, preventing phase oscillation from
+        consuming unbounded provider tokens.
+        """
+        if envelope.turn_result.kind != "mutation_bypass_blocked":
+            return envelope
+        if self.role.strip().lower() != "director" or not self._state_reducer._is_materialize_changes_mode():
+            return envelope
+
+        prior_bypasses = sum(
+            1 for record in self.state.turn_history if record.get("turn_kind") == "mutation_bypass_blocked"
+        )
+        session_patch = dict(envelope.session_patch)
+        if prior_bypasses >= _MAX_MUTATION_BYPASS_LOCAL_RECOVERY_TURNS:
+            exhausted_reason = (
+                "director_quality_repair_stalled: mutation_bypass_retry_budget_exhausted; "
+                "model_ceiling; retry_scope=same_director_task_only"
+            )
+            session_patch.update(
+                {
+                    "error_summary": exhausted_reason,
+                    "retry_scope": "same_director_task_only",
+                    "model_ceiling": True,
+                }
+            )
+            return TurnOutcomeEnvelope(
+                turn_result=envelope.turn_result,
+                continuation_mode=TurnContinuationMode.END_SESSION,
+                next_intent=exhausted_reason,
+                session_patch=session_patch,
+                artifacts_to_persist=list(envelope.artifacts_to_persist),
+                speculative_hints=dict(envelope.speculative_hints),
+                failure_class=envelope.failure_class,
+            )
+
+        mandatory_instruction = (
+            "MUTATION_BYPASS_LOCAL_RECOVERY: 已读取 owner task 文件但尚无权威写入 receipt。"
+            "保留当前合同与读取上下文，下一 turn 必须直接使用 edit_file/write_file 完成最小修复，"
+            "然后只重跑受影响 verifier；禁止重启 PM/Chief Engineer 或重新规划。"
+        )
+        session_patch.update(
+            {
+                "mandatory_instruction": mandatory_instruction,
+                "retry_scope": "same_director_task_only",
+                "mutation_bypass_attempt": prior_bypasses + 1,
+            }
+        )
+        return TurnOutcomeEnvelope(
+            turn_result=envelope.turn_result,
+            continuation_mode=TurnContinuationMode.AUTO_CONTINUE,
+            next_intent=mandatory_instruction,
+            session_patch=session_patch,
+            artifacts_to_persist=list(envelope.artifacts_to_persist),
+            speculative_hints=dict(envelope.speculative_hints),
+            failure_class=envelope.failure_class,
         )
 
     def _update_artifact_hashes(self) -> None:

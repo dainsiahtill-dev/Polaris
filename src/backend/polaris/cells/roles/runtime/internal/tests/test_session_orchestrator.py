@@ -1,5 +1,7 @@
 """Tests for RoleSessionOrchestrator."""
 
+import hashlib
+import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -25,6 +27,7 @@ from polaris.cells.roles.kernel.public.turn_events import (
     TurnPhaseEvent,
 )
 from polaris.cells.roles.runtime.internal.session_orchestrator import RoleSessionOrchestrator
+from polaris.kernelone.tool_execution.runtime_executor import BackendToolRuntime
 
 
 def _make_local_workspace(prefix: str) -> str:
@@ -39,11 +42,13 @@ class MockKernel:
     def __init__(self, events_per_turn) -> None:
         self.events_per_turn = events_per_turn
         self.call_count = 0
+        self.contexts = []
         self.tool_runtime = AsyncMock()
 
     async def execute_stream(self, turn_id, context, tool_definitions, **kwargs):
         turn_index = self.call_count
         self.call_count += 1
+        self.contexts.append(context)
         for event in self.events_per_turn[turn_index]:
             yield event
 
@@ -361,6 +366,10 @@ class TestRoleSessionOrchestrator:
         monkeypatch.setattr(
             "polaris.cells.roles.runtime.internal.session_orchestrator.resolve_delivery_mode",
             lambda _prompt: SimpleNamespace(mode=DeliveryMode.MATERIALIZE_CHANGES),
+        )
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway.default",
+            AsyncMock(return_value=None),
         )
 
         def _build_envelope(event):
@@ -728,6 +737,228 @@ class TestRoleSessionOrchestrator:
         envelope = RoleSessionOrchestrator._build_envelope_from_completion(event)
         assert envelope.continuation_mode == TurnContinuationMode.AUTO_CONTINUE
         assert envelope.turn_result.kind == "continue_multi_turn"
+
+    @pytest.mark.asyncio
+    async def test_build_envelope_mutation_bypass_is_role_agnostic_fail_closed(self, tmp_workspace):
+        """共享 CompletionEvent 投影不得替任意角色授予局部恢复 authority。"""
+        event = CompletionEvent(
+            turn_id="t0",
+            status="success",
+            visible_content="已读取目标文件，但尚未写入。",
+            turn_kind="mutation_bypass_blocked",
+            batch_receipt={
+                "results": [
+                    {
+                        "tool_name": "read_file",
+                        "status": "success",
+                        "arguments": {"path": "package.json"},
+                        "result": {"content": '{"scripts": {"build": "tsc"}}'},
+                    }
+                ]
+            },
+        )
+
+        envelope = RoleSessionOrchestrator._build_envelope_from_completion(event)
+
+        assert envelope.continuation_mode == TurnContinuationMode.END_SESSION
+        assert envelope.turn_result.kind == "mutation_bypass_blocked"
+
+    @pytest.mark.asyncio
+    async def test_director_materialize_mutation_bypass_retries_same_session(self, tmp_workspace):
+        """仅 owner Director materialize session 可把 mutation bypass 转成本地重试。"""
+        orch = RoleSessionOrchestrator(
+            session_id="sess-director-local-repair",
+            kernel=AsyncMock(),
+            workspace=tmp_workspace,
+            role="director",
+        )
+        orch.state.delivery_mode = DeliveryMode.MATERIALIZE_CHANGES.value
+        raw = RoleSessionOrchestrator._build_envelope_from_completion(
+            CompletionEvent(
+                turn_id="t0",
+                status="success",
+                visible_content="read complete",
+                turn_kind="mutation_bypass_blocked",
+            )
+        )
+
+        envelope = orch._apply_mutation_bypass_local_recovery(raw)
+
+        assert envelope.continuation_mode == TurnContinuationMode.AUTO_CONTINUE
+        assert envelope.session_patch["retry_scope"] == "same_director_task_only"
+        assert envelope.session_patch["mutation_bypass_attempt"] == 1
+
+    @pytest.mark.asyncio
+    async def test_non_director_mutation_bypass_cannot_gain_local_recovery(self, tmp_workspace):
+        """PM/CE/QA 即使收到异常 kind 也必须保持 fail-closed。"""
+        orch = RoleSessionOrchestrator(
+            session_id="sess-pm",
+            kernel=AsyncMock(),
+            workspace=tmp_workspace,
+            role="pm",
+        )
+        orch.state.delivery_mode = DeliveryMode.MATERIALIZE_CHANGES.value
+        raw = RoleSessionOrchestrator._build_envelope_from_completion(
+            CompletionEvent(turn_id="t0", status="success", turn_kind="mutation_bypass_blocked")
+        )
+
+        assert orch._apply_mutation_bypass_local_recovery(raw).continuation_mode == TurnContinuationMode.END_SESSION
+
+    @pytest.mark.asyncio
+    async def test_mutation_bypass_hard_budget_ignores_adaptive_extra_turns(self, tmp_workspace):
+        """两次局部 bypass 后必须硬停；阶段振荡不得扩充该预算。"""
+        orch = RoleSessionOrchestrator(
+            session_id="sess-budget",
+            kernel=AsyncMock(),
+            workspace=tmp_workspace,
+            role="director",
+            max_auto_turns=1,
+        )
+        orch.state.delivery_mode = DeliveryMode.MATERIALIZE_CHANGES.value
+        orch.state.turn_count = 3
+        orch.state.turn_history = [
+            {"turn_kind": "mutation_bypass_blocked", "task_progress": "implementing"},
+            {"turn_kind": "mutation_bypass_blocked", "task_progress": "verifying"},
+        ]
+        orch.state.structured_findings["_findings_trajectory"] = [
+            {"task_progress": "implementing"},
+            {"task_progress": "verifying"},
+            {"task_progress": "implementing"},
+        ]
+        raw = RoleSessionOrchestrator._build_envelope_from_completion(
+            CompletionEvent(turn_id="t2", status="success", turn_kind="mutation_bypass_blocked")
+        )
+
+        exhausted = orch._apply_mutation_bypass_local_recovery(raw)
+
+        assert orch.policy.should_allow_extra_turns(orch.state) is True
+        assert exhausted.continuation_mode == TurnContinuationMode.END_SESSION
+        assert exhausted.session_patch["model_ceiling"] is True
+        assert "mutation_bypass_retry_budget_exhausted" in str(exhausted.next_intent)
+
+    @pytest.mark.asyncio
+    async def test_build_envelope_inline_patch_escape_remains_fail_closed(self, tmp_workspace):
+        """策略禁止的 inline patch 逃逸仍应结束，不能借重试绕过。"""
+        event = CompletionEvent(
+            turn_id="t0",
+            status="success",
+            visible_content="inline patch blocked",
+            turn_kind="inline_patch_escape_blocked",
+        )
+
+        envelope = RoleSessionOrchestrator._build_envelope_from_completion(event)
+
+        assert envelope.continuation_mode == TurnContinuationMode.END_SESSION
+
+    @pytest.mark.asyncio
+    async def test_mutation_bypass_real_read_then_write_stays_in_one_session(self, tmp_workspace, monkeypatch):
+        """同一 session 经真实 BackendToolRuntime read/write 并产生 capability receipt。"""
+        workspace = Path(tmp_workspace)
+        target = workspace / "package.json"
+        original = '{"scripts":{"build":"tsc"}}\n'
+        repaired = '{"scripts":{"build":"tsc"},"devDependencies":{"@types/node":"latest"}}\n'
+        target.write_text(original, encoding="utf-8")
+        before_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+        runtime = BackendToolRuntime(
+            str(workspace),
+            job_token={
+                "source": "control_plane.job_token",
+                "token_id": "tok-local-repair",
+                "run_id": "run-local-repair",
+                "project_id": "P1",
+                "stage": "director_mutation",
+                "allowed_paths": ["package.json"],
+                "contract_hash": "contract-hash",
+                "blueprint_hash": "blueprint-hash",
+                "capability_audit": {"ok": True},
+            },
+        )
+
+        class RealToolKernel:
+            def __init__(self) -> None:
+                self.call_count = 0
+                self.contexts = []
+                self.tool_runtime = runtime
+                self.write_result = None
+
+            async def execute_stream(self, turn_id, context, tool_definitions, **kwargs):
+                self.contexts.append(context)
+                self.call_count += 1
+                if self.call_count == 1:
+                    result = runtime.invoke("read_file", {"path": "package.json"}, cwd=str(workspace))
+                    yield CompletionEvent(
+                        turn_id="t0",
+                        status="success",
+                        visible_content="已定位 package.json。",
+                        turn_kind="mutation_bypass_blocked",
+                        batch_receipt={
+                            "results": [
+                                {
+                                    "tool_name": result["tool"],
+                                    "status": "success",
+                                    "arguments": {"path": "package.json"},
+                                    "result": result["result"],
+                                }
+                            ]
+                        },
+                    )
+                    return
+                self.write_result = runtime.invoke(
+                    "create_file",
+                    {"filename": "package.json", "text": repaired},
+                    cwd=str(workspace),
+                )
+                yield CompletionEvent(
+                    turn_id="t1",
+                    status="success",
+                    visible_content="依赖修复已写入。",
+                    turn_kind="final_answer",
+                    batch_receipt={
+                        "results": [
+                            {
+                                "tool_name": self.write_result["tool"],
+                                "status": "success",
+                                "arguments": {"path": "package.json"},
+                                "result": self.write_result["result"],
+                            }
+                        ]
+                    },
+                )
+
+        kernel = RealToolKernel()
+        orch = RoleSessionOrchestrator(
+            session_id="sess-mutation-repair",
+            kernel=kernel,
+            workspace=tmp_workspace,
+            max_auto_turns=3,
+        )
+        monkeypatch.setattr(
+            "polaris.cells.roles.runtime.internal.session_orchestrator.resolve_delivery_mode",
+            lambda _prompt: SimpleNamespace(mode=DeliveryMode.MATERIALIZE_CHANGES),
+        )
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway.default",
+            AsyncMock(return_value=None),
+        )
+
+        events = [event async for event in orch.execute_stream("修复 package.json 并运行构建")]
+
+        assert kernel.call_count == 2
+        assert orch.state.turn_history[0]["continuation_mode"] == "auto_continue"
+        assert orch.state.turn_history[0]["turn_kind"] == "mutation_bypass_blocked"
+        assert orch.state.turn_history[1]["continuation_mode"] == "end_session"
+        assert "package.json" in orch.state.read_files
+        after_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+        assert after_hash != before_hash
+        assert json.loads(target.read_text(encoding="utf-8")) == json.loads(repaired)
+        assert kernel.write_result is not None
+        effect_receipt = kernel.write_result["result"]["effect_receipt"]
+        assert effect_receipt["director_policy"]["capability_token"]["token_id"] == "tok-local-repair"
+        continuation_user_prompt = kernel.contexts[1][-1]["content"]
+        assert "package.json" in continuation_user_prompt
+        assert "edit_file" in continuation_user_prompt or "write_file" in continuation_user_prompt
+        assert isinstance(events[-1], SessionCompletedEvent)
 
     @pytest.mark.asyncio
     async def test_continuation_prompt_includes_recent_reads(self, tmp_workspace):
