@@ -5,6 +5,7 @@ from __future__ import annotations
 import gzip
 import io
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -69,6 +70,34 @@ class TestStreamArchiverArchiveTurn:
             )
 
         assert archive_id == "t1"
+
+    @pytest.mark.asyncio
+    async def test_archive_turn_serializes_datetime_as_iso8601(self, mock_archiver: MagicMock) -> None:
+        stream_archiver = StreamArchiver(mock_archiver)
+        timestamp = datetime(2026, 8, 10, 3, 30, tzinfo=timezone.utc)
+
+        with patch.object(Path, "mkdir"):
+            await stream_archiver.archive_turn(
+                session_id="s1",
+                turn_id="t1",
+                events=[{"type": "chunk", "timestamp": timestamp}],
+            )
+
+        compressed = mock_archiver._kernel_fs.workspace_write_bytes.call_args.args[1]
+        with gzip.GzipFile(fileobj=io.BytesIO(compressed), mode="rb") as gz:
+            records = [json.loads(line) for line in gz.read().decode("utf-8").splitlines()]
+        assert records[1]["event"]["timestamp"] == timestamp.isoformat()
+
+    @pytest.mark.asyncio
+    async def test_archive_turn_rejects_unsupported_event_value(self, mock_archiver: MagicMock) -> None:
+        stream_archiver = StreamArchiver(mock_archiver)
+
+        with pytest.raises(StreamArchiverError, match="unsupported archive event value"):
+            await stream_archiver.archive_turn(
+                session_id="s1",
+                turn_id="t1",
+                events=[{"type": "chunk", "value": object()}],
+            )
 
     @pytest.mark.asyncio
     async def test_archive_turn_os_error(self, mock_archiver: MagicMock) -> None:

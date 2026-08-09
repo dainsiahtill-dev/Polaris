@@ -657,7 +657,9 @@ def publish_instances_update(
         "schema_version": "runtime.v2",
         "event_id": event_id,
         "workspace_key": "instances",
-        "run_id": "",
+        # Platform-global instance events are not tied to one Factory run, but
+        # runtime.v2 still requires a stable, non-empty run identity.
+        "run_id": "instance-registry",
         "channel": "status.instances",
         "kind": "instance_registry_update",
         "ts": now.isoformat(),

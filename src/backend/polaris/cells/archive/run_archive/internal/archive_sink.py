@@ -13,7 +13,7 @@ from typing import Any
 from polaris.kernelone.events.message_bus import Message, MessageBus, MessageType
 from polaris.kernelone.events.topics import TOPIC_RUNTIME_STREAM
 
-from .stream_archiver import create_stream_archiver
+from .stream_archiver import StreamArchiverError, create_stream_archiver
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +107,7 @@ class ArchiveSink:
                 archive_id,
                 len(events),
             )
-        except OSError as exc:
+        except (OSError, StreamArchiverError) as exc:
             logger.error(
                 "ArchiveSink failed to archive turn: turn_id=%s error=%s",
                 turn_id,

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from polaris.cells.archive.run_archive.internal.archive_sink import (
     _ARCHIVE_FLUSH_EVENTS,
     ArchiveSink,
 )
+from polaris.cells.archive.run_archive.internal.stream_archiver import StreamArchiverError
 from polaris.kernelone.events.message_bus import MessageType
 from polaris.kernelone.events.topics import TOPIC_RUNTIME_STREAM
 
@@ -178,6 +179,25 @@ class TestArchiveSinkFlushAll:
         bus = MagicMock()
         sink = ArchiveSink(bus)
         await sink._flush_all()
+        assert sink._buffers == {}
+
+    @pytest.mark.asyncio
+    async def test_flush_turn_contains_archiver_failure(self) -> None:
+        bus = MagicMock()
+        sink = ArchiveSink(bus)
+        sink._buffers = {"t1": [{"type": "complete"}]}
+        sink._meta = {"t1": {"workspace": "/tmp/ws", "session_id": "s1"}}
+        archiver = MagicMock()
+        archiver.archive_turn = AsyncMock(
+            side_effect=StreamArchiverError("serialization failed", archive_id="t1")
+        )
+
+        with patch(
+            "polaris.cells.archive.run_archive.internal.archive_sink.create_stream_archiver",
+            return_value=archiver,
+        ):
+            await sink._flush_turn("t1")
+
         assert sink._buffers == {}
 
     @pytest.mark.asyncio

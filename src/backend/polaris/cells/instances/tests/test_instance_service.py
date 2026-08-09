@@ -23,6 +23,7 @@ from polaris.cells.instances.internal.service import (
     RegistryReadError,
     publish_instances_update,
 )
+from polaris.infrastructure.messaging.nats.nats_types import RuntimeEventEnvelope
 
 _WAIT_FOR_BACKEND_IDENTITY = InstanceSupervisor._wait_for_backend_identity
 
@@ -1757,6 +1758,8 @@ def test_instance_update_event_redacts_token(tmp_path: Path, monkeypatch: Any) -
     assert publish_instances_update(action="saved", record=record, records=[record]) is True
     payload = published[0]["payload"]
     assert published[0]["subject"] == "hp.runtime.instances.status.instances"
+    assert payload["run_id"] == "instance-registry"
+    assert RuntimeEventEnvelope.from_dict(payload).run_id == "instance-registry"
     assert payload["channel"] == "status.instances"
     assert payload["payload"]["instance"]["instance_id"] == "project-a"
     assert "token" not in payload["payload"]["instance"]

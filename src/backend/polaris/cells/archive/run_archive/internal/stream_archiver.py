@@ -20,7 +20,7 @@ import hashlib
 import io
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from polaris.cells.archive.run_archive.internal.history_archive_service import (
@@ -28,6 +28,13 @@ from polaris.cells.archive.run_archive.internal.history_archive_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _json_event_default(value: Any) -> str:
+    """Serialize supported temporal event values without hiding bad payloads."""
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    raise TypeError(f"unsupported archive event value: {type(value).__name__}")
 
 # ---------------------------------------------------------------------------
 # Internal archiver (no public contract dependency)
@@ -105,7 +112,13 @@ class StreamArchiver:
                     "seq": seq,
                     "event": event,
                 }
-                lines.append(json.dumps(record, ensure_ascii=False))
+                lines.append(
+                    json.dumps(
+                        record,
+                        ensure_ascii=False,
+                        default=_json_event_default,
+                    )
+                )
 
             uncompressed = "\n".join(lines).encode("utf-8")
 
@@ -158,7 +171,7 @@ class StreamArchiver:
             )
             return archive_id
 
-        except OSError as exc:
+        except (OSError, TypeError, ValueError) as exc:
             logger.error(
                 "StreamArchiver archive_turn failed: session_id=%s turn_id=%s error=%s",
                 session_id,
