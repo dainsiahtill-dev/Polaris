@@ -1829,6 +1829,21 @@ async def test_durable_completion_action_issues_quality_local_rework_projection(
         "action_id": "a" * 64,
         "diagnostic_id": "diagnostic-1",
     }
+    assert result.metadata["project_completion_advance"] == {
+        "schema_version": "factory.project-completion-advance.v1",
+        "status": "waiting",
+        "reason_codes": ["owner_action_receipt_committed"],
+        "action_id": "a" * 64,
+        "diagnostic_id": "diagnostic-1",
+        "next_action": "run_deterministic_repair",
+        "source_stage": "quality_gate",
+        "source_stage_status": "failed",
+    }
+    events = await service.store.get_events(run.id)
+    projected = [event for event in events if event.get("type") == "project_completion_advance"]
+    assert len(projected) == 1
+    assert projected[0]["next_action"] == "run_deterministic_repair"
+    assert projected[0]["source_stage"] == "quality_gate"
 
 
 @pytest.mark.asyncio

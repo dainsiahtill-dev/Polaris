@@ -1,7 +1,7 @@
 {
   "schema_version": "polaris.defect_manifest.v1",
   "defect_id": "P0-DURABLE-FACTORY-STAGE-DRIVER-20260809",
-  "status": "IN_VERIFICATION",
+  "status": "IMPLEMENTED_BENCH_PENDING",
   "severity": "P0",
   "title": "Committed same-task local rework lacks a lifespan-owned Factory stage driver",
   "original_symptom": {
@@ -24,6 +24,8 @@
     "legacy TaskMarket and stage-metadata terminal-drain projections are rejected"
     ,
     "Factory run task lifetime is backend-lifespan-owned and startup recovery includes pending exact-row actions"
+    ,
+    "Backend process restart replays and closes the old physical-attempt epoch before opening a newer fenced execution epoch"
   ],
   "implemented_fix": [
     "Factory stage-loop task lifecycle moved out of direct HTTP Router scheduling into a backend lifespan-owned platform service.",
@@ -31,6 +33,8 @@
     "Recover committed unconsumed claims at backend startup without HTTP polling or a new client request.",
     "Run only the owning Director task and affected verifier; do not restart PM or Chief Engineer.",
     "Existing Factory stage claim and physical effect receipts remain the execution fence across crashes."
+    ,
+    "Strict restart replay does not resurrect an ambiguous provider attempt; resume_recovered_run creates a new coordinator under a higher workspace fencing token."
   ],
   "required_tests": [
     "action commit then backend crash then restart automatically resumes exact owner task",
@@ -48,6 +52,7 @@
   "evidence": [
     "src/backend/polaris/bootstrap/factory_run_driver_runtime.py",
     "src/backend/polaris/tests/unit/bootstrap/test_factory_run_driver_runtime.py",
+    "src/backend/polaris/tests/integration/test_factory_run_driver_process_recovery.py: 1 passed in 44.12s",
     "src/backend/polaris/delivery/http/routers/factory.py:_execute_run_with_service",
     "src/backend/polaris/bootstrap/project_completion_convergence_runtime.py",
     "src/backend/polaris/bootstrap/project_completion_task_runtime_action_owner.py",

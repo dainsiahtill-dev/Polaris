@@ -1137,6 +1137,27 @@ def test_artifact_quality_evidence_uses_direct_html_module_script_issue(tmp_path
     assert metadata["diagnostic_kind"] == "html_module_script_typescript_source"
 
 
+def test_artifact_quality_evidence_detects_inline_module_typescript_import(tmp_path: Path) -> None:
+    """Inline browser modules must not bypass the static TypeScript-entrypoint gate."""
+
+    (tmp_path / "index.html").write_text(
+        "<html><body><script type=\"module\">\n"
+        "import { start } from './src/web.ts';\n"
+        "start();\n"
+        "</script></body></html>\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["index.html"])
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: HTML module script references TypeScript source "
+        "'./src/web.ts' in index.html; static entrypoints must load JavaScript",
+    )
+    assert evidence.issues[0].code == "html_module_script_typescript_source"
+    assert evidence.issues[0].metadata["script_src"] == "./src/web.ts"
+
+
 def test_artifact_quality_evidence_reports_html_js_entrypoint_backed_by_typescript_source(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "web.ts").write_text("export function startBrowser(): void {}\n", encoding="utf-8")

@@ -802,7 +802,11 @@ class FactoryRunService:
     ) -> FactoryWorkspaceRunLeaseV1:
         current = self._admission.current()
         if (
-            operation not in {"recover_run", "recover_stale_workspace_owner"}
+            operation not in {
+                "recover_run",
+                "recover_stale_workspace_owner",
+                "resume_recovered_run",
+            }
             and current is not None
             and current.run_id == run.id
             and (
@@ -1802,6 +1806,31 @@ class FactoryRunService:
                 completion_action_id = str(getattr(completion_result, "action_id", None) or "").strip()
                 completion_reason_codes = tuple(getattr(completion_result, "reason_codes", ()) or ())
                 completion_next_action = str(getattr(completion_result, "next_action", None) or "").strip()
+                completion_projection = {
+                    "schema_version": "factory.project-completion-advance.v1",
+                    "status": str(getattr(completion_result, "status", None) or "unknown"),
+                    "reason_codes": list(completion_reason_codes),
+                    "action_id": completion_action_id,
+                    "diagnostic_id": str(getattr(completion_result, "diagnostic_id", None) or "").strip(),
+                    "next_action": completion_next_action,
+                    "source_stage": result.stage,
+                    "source_stage_status": result.status,
+                }
+                # The convergence store is authoritative for replay; this event is
+                # the durable, machine-readable Factory projection explaining why
+                # the exact downstream task will be resumed (or why it is parked).
+                # It prevents operators and recovery code from inferring a PM/CE
+                # restart merely from a failed Director/QA StageResult.
+                result.metadata["project_completion_advance"] = completion_projection
+                await self._append_event(
+                    run_id,
+                    {
+                        "type": "project_completion_advance",
+                        **completion_projection,
+                        "terminal": False,
+                        "timestamp": self._now(),
+                    },
+                )
                 if (
                     result.status != "success"
                     and len(completion_action_id) == 64
@@ -1819,7 +1848,7 @@ class FactoryRunService:
                         ),
                         "decision_owner": "orchestration.workflow_orchestration",
                         "action_id": completion_action_id,
-                        "diagnostic_id": str(getattr(completion_result, "diagnostic_id", None) or "").strip(),
+                        "diagnostic_id": completion_projection["diagnostic_id"],
                     }
             except (OSError, RuntimeError, TypeError, ValueError) as exc:
                 logger.error(
@@ -2147,6 +2176,111 @@ class FactoryRunService:
                 elif run.metadata.get("factory_physical_attempt_admission_dead") is True:
                     run.updated_at = self._now()
                     await self.store.save_run(run)
+                raise
+
+    async def resume_recovered_run(self, run_id: str) -> FactoryRun:
+        """Open one fresh execution epoch after strict restart replay.
+
+        Restart replay permanently closes the *old* physical-attempt
+        coordinator so an ambiguous provider request can never be repeated.
+        That safety fence must not permanently kill the whole Factory run.
+        After replay has drained and released the old workspace authority,
+        this explicit lifecycle transition acquires a newer fencing token and
+        installs an empty coordinator for future stage claims.
+        """
+
+        run_lock = self._get_run_lock(run_id)
+        async with run_lock:
+            run = await self.store.get_run(run_id)
+            if run is None:
+                raise ValueError(f"Run {run_id} not found")
+            run = await self.assert_mutation_allowed(run_id, current_run=run)
+            if run.status in TERMINAL_RUN_STATUSES:
+                return run
+            if run.status is not FactoryRunStatus.RECOVERING:
+                raise FactoryPhysicalAttemptControlError(
+                    "factory_physical_attempt_resume_requires_recovering_run"
+                )
+            if run.metadata.get("factory_physical_attempt_admission_dead") is not True:
+                raise FactoryPhysicalAttemptControlError(
+                    "factory_physical_attempt_resume_requires_replay_fence"
+                )
+
+            replayed = self._physical_attempt_coordinator(run.id)
+            replay_drain = replayed.close()
+            if not replay_drain.settled:
+                raise FactoryPhysicalAttemptReplayError(
+                    "factory_physical_attempt_replay_terminal_settlement_incomplete"
+                )
+            current = self._admission.current()
+            if (
+                current is None
+                or current.run_id != run.id
+                or current.state.value != "released"
+                or current.lifecycle_operation_claim is not None
+                or current.release_evidence is None
+                or current.release_evidence.details.get("physical_attempt_replay_fence") is not True
+            ):
+                raise FactoryPhysicalAttemptControlError(
+                    "factory_physical_attempt_resume_replay_release_evidence_missing"
+                )
+
+            operation = "resume_recovered_run"
+            nonce = f"lifecycle_{uuid.uuid4().hex}"
+            claimed = False
+            try:
+                lease = self._claim_lifecycle_operation(
+                    run,
+                    operation=operation,
+                    nonce=nonce,
+                    acquire_if_available=True,
+                )
+                claimed = True
+                new_epoch = max(
+                    2,
+                    int(run.metadata.get("factory_physical_attempt_execution_epoch") or 1) + 1,
+                )
+                self._physical_attempt_coordinators[run.id] = FactoryPhysicalAttemptLiveControlPort(
+                    factory_run_id=run.id,
+                    revalidate_active_stage_claim=self._revalidate_active_physical_attempt_stage_claim,
+                )
+                run.metadata.pop("factory_physical_attempt_admission_dead", None)
+                run.metadata["factory_physical_attempt_execution_epoch"] = new_epoch
+                run.metadata["factory_physical_attempt_restart_replay"] = {
+                    "previous_epoch_closed": True,
+                    "previous_epoch_settled": True,
+                    "new_epoch": new_epoch,
+                    "new_workspace_fencing_token": lease.fencing_token,
+                    "resumed_at": self._now(),
+                }
+                run.updated_at = self._now()
+                await self.store.save_run(run)
+                await self._append_event(
+                    run.id,
+                    {
+                        "type": "physical_attempt_execution_epoch_reopened",
+                        "execution_epoch": new_epoch,
+                        "workspace_fencing_token": lease.fencing_token,
+                        "message": "Restart replay closed the old attempt epoch; a new fenced epoch is active",
+                        "timestamp": run.updated_at,
+                    },
+                )
+                await self._release_lifecycle_operation(
+                    run,
+                    operation=operation,
+                    nonce=nonce,
+                )
+                claimed = False
+                return run
+            except Exception:
+                self._physical_attempt_coordinators[run.id] = replayed
+                if claimed:
+                    await self._rollback_lifecycle_operation(
+                        run,
+                        operation=operation,
+                        nonce=nonce,
+                        reason="resume_recovered_run_failed",
+                    )
                 raise
 
     async def retry_run_from_stage(

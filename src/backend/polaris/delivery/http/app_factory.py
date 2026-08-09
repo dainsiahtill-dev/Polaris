@@ -163,6 +163,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise
 
     app.state.container = container
+    app_state = getattr(app.state, "app_state", None)
+    if app_state is None:
+        # ``create_app`` installs the canonical state before FastAPI enters
+        # lifespan, but the lifespan contract is also exercised directly by
+        # integration tests and embedding hosts.  Driver ownership must not
+        # make those valid startup paths fail before recovery can run.
+        app_state = AppState(settings=app.state.settings)
+        app.state.app_state = app_state
 
     # Refresh Auth from the environment at startup time so that tokens
     # injected after create_app() (e.g. in tests or subprocesses) are picked up.
@@ -239,7 +247,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             factory_run_driver_runtime = FactoryRunDriverRuntimeV1(
                 workspace=workspace,
                 service=_get_service(workspace),
-                state=app.state.app_state,
+                state=app_state,
                 execute=_execute_run_with_service,
                 build_recovery_payload=_build_retry_start_request,
                 recover_committed_run_ids=lambda: recover_committed_factory_run_ids(workspace),

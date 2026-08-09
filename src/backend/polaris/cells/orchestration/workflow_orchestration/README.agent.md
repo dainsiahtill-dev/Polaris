@@ -12,10 +12,10 @@ claim-bound action dispatch, receipt revalidation, budgets, and terminal policy.
 `workflow_runtime` supplies only the private typed cursor/CAS port.
 The lifespan supervisor recovers nonterminal commands from that durable cursor.
 Local process events are latency hints, never restart or completion authority.
-Bootstrap composition (outside this Cell) binds the public action port to
-`runtime.task_market` and replays its transactional outbox before scheduling;
-TaskMarket is therefore an integration dependency of bootstrap, not a direct
-dependency or state owner of this Cell.
+Bootstrap composition (outside this Cell) binds the public action port to the
+exact `runtime.task_runtime` owner row. The backend-lifespan Factory driver
+recovers committed pending local-rework actions and resumes the owning run;
+an HTTP Router may submit work but is not the task-lifetime authority.
 
 Project action/no-progress/dispatch budgets are retry bounds, never terminal
 model-capability evidence. Budget exhaustion parks as `control_plane_blocked`

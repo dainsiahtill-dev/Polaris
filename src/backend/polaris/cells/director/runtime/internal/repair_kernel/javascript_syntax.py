@@ -484,7 +484,11 @@ def build_javascript_test_missing_target_plan(
             continue
         content = build_javascript_node_smoke_test_content(target, normalized_base)
         if _can_build_frontend_smoke_test(declared_paths):
-            content = build_javascript_frontend_smoke_test_content(target, declared_paths)
+            content = build_javascript_frontend_smoke_test_content(
+                target,
+                declared_paths,
+                use_esm=_javascript_node_smoke_test_uses_esm(target, normalized_base, package_payload or {}),
+            )
         operations.append(
             RepairOperation(
                 kind="write_file",
@@ -499,7 +503,7 @@ def build_javascript_test_missing_target_plan(
                 },
             )
         )
-    script_update = _node_test_script_directory_update(package_payload)
+    script_update = _node_test_script_target_update(normalized_base, package_payload)
     package_text = normalized_base.get("package.json")
     if script_update and package_text:
         operations.append(
@@ -892,16 +896,29 @@ console.log(
 """
 
 
-def build_javascript_frontend_smoke_test_content(test_rel_path: str, declared_paths: Sequence[str]) -> str:
-    """Return a deterministic CommonJS smoke test for declared frontend files."""
+def build_javascript_frontend_smoke_test_content(
+    test_rel_path: str,
+    declared_paths: Sequence[str],
+    *,
+    use_esm: bool = False,
+) -> str:
+    """Return a deterministic smoke test compatible with the package module kind."""
 
     root_depth = len(PurePosixPath(test_rel_path).parent.parts)
     root_args = ", ".join(["'..'"] * root_depth)
     root_expr = f"path.resolve(__dirname, {root_args})" if root_args else "path.resolve(__dirname)"
     declared_json = json.dumps(list(declared_paths), ensure_ascii=True)
-    return f"""const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
+    preamble = (
+        "import assert from 'node:assert';\n"
+        "import fs from 'node:fs';\n"
+        "import path from 'node:path';\n"
+        "import { fileURLToPath } from 'node:url';\n\n"
+        "const __filename = fileURLToPath(import.meta.url);\n"
+        "const __dirname = path.dirname(__filename);"
+        if use_esm
+        else "const assert = require('assert');\nconst fs = require('fs');\nconst path = require('path');"
+    )
+    return f"""{preamble}
 
 const projectRoot = {root_expr};
 const declaredFiles = {declared_json};
@@ -1672,9 +1689,20 @@ def _missing_javascript_test_targets(
     for diagnostic in diagnostics:
         target = _normalize_repair_path(str(diagnostic.path or ""))
         if target:
-            targets.append((diagnostic, target))
+            targets.append(
+                (
+                    diagnostic,
+                    _source_javascript_test_target_for_missing_compiled_target(target, base_files),
+                )
+            )
             continue
-        targets.extend((diagnostic, inferred_target) for inferred_target in inferred_targets)
+        targets.extend(
+            (
+                diagnostic,
+                _source_javascript_test_target_for_missing_compiled_target(inferred_target, base_files),
+            )
+            for inferred_target in inferred_targets
+        )
     return tuple((diagnostic, target) for diagnostic, target in targets if _is_javascript_test_target_path(target))
 
 
@@ -1754,6 +1782,55 @@ def _normalize_node_test_target(
         extension = "ts" if _has_typescript_context(base_files, package_payload) else "js"
         return f"{normalized}/smoke.test.{extension}"
     return normalized
+
+
+def _source_javascript_test_target_for_missing_compiled_target(
+    target: str,
+    base_files: Mapping[str, str],
+) -> str:
+    """Keep generated smoke tests in source when the missing dist target has a TS peer.
+
+    A file written directly under ``outDir`` is erased by the next build and is
+    not source evidence.  If a package points at ``dist/tests/foo.js`` while
+    ``tests/foo.ts`` exists outside the configured ``rootDir``, create a durable
+    JavaScript smoke test beside that source and rewrite the package verifier.
+    """
+
+    normalized = _normalize_repair_path(target)
+    package_payload = _parse_package_json(str(base_files.get("package.json") or "")) or {}
+    if not _has_typescript_context(base_files, package_payload):
+        return normalized
+    out_dir = _normalize_repair_path(_typescript_compiler_option(base_files, "outDir") or "dist").rstrip("/")
+    prefix = f"{out_dir}/" if out_dir else ""
+    if not prefix or not normalized.startswith(prefix) or PurePosixPath(normalized).suffix.lower() != ".js":
+        return normalized
+    source_target = normalized.removeprefix(prefix)
+    source_path = PurePosixPath(source_target)
+    typescript_peers = (
+        str(source_path.with_suffix(".ts")),
+        str(source_path.with_suffix(".tsx")),
+    )
+    return source_target if any(peer in base_files for peer in typescript_peers) else normalized
+
+
+def _node_test_script_target_update(
+    base_files: Mapping[str, str],
+    package_payload: Mapping[str, Any] | None,
+) -> str:
+    if not isinstance(package_payload, Mapping):
+        return ""
+    scripts = package_payload.get("scripts")
+    if not isinstance(scripts, Mapping):
+        return ""
+    original = str(scripts.get("test") or "")
+    if not original:
+        return ""
+    updated = _node_test_script_directory_update(package_payload) or original
+    for target in _node_test_targets_from_package(base_files):
+        replacement = _source_javascript_test_target_for_missing_compiled_target(target, base_files)
+        if replacement and replacement != target:
+            updated = updated.replace(target, replacement)
+    return updated if updated != original else ""
 
 
 def _node_test_script_directory_update(package_payload: Mapping[str, Any] | None) -> str:

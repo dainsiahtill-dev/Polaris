@@ -188,8 +188,31 @@ def _stage_local_rework_is_authorized(result: Any, *, expected_reason: str) -> b
 
 
 def _get_service(workspace: str) -> FactoryRunService:
-    """Get a service instance bound to the current workspace."""
-    return FactoryRunService(workspace=Path(workspace))
+    """Return the lifespan-owned Factory service for the bound workspace.
+
+    Physical-attempt coordinators are deliberately process-local.  Creating a
+    second ``FactoryRunService`` in the HTTP request path therefore creates a
+    second, empty coordinator registry and cannot be submitted to the
+    lifespan-owned driver.  Reuse the bound instance when its canonical
+    workspace matches; unbound/test/other-workspace reads retain the detached
+    construction path.
+    """
+
+    resolved_workspace = Path(workspace).resolve()
+    try:
+        from polaris.bootstrap.factory_run_driver_runtime import get_factory_run_driver_runtime
+
+        runtime = get_factory_run_driver_runtime()
+    except RuntimeError:
+        runtime = None
+    if runtime is not None:
+        bound_service = runtime.service
+        bound_workspace = Path(str(getattr(bound_service, "workspace", ""))).resolve()
+        if bound_workspace == resolved_workspace:
+            if not isinstance(bound_service, FactoryRunService):
+                raise RuntimeError("factory_run_driver_service_binding_invalid")
+            return bound_service
+    return FactoryRunService(workspace=resolved_workspace)
 
 
 def _metadata_float(metadata: dict[str, Any], *keys: str) -> float | None:

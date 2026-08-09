@@ -1090,7 +1090,7 @@ class TestFactoryRunService:
         assert created.id not in restarted._physical_attempt_coordinators
 
     @pytest.mark.asyncio
-    async def test_recovered_run_cannot_reopen_physical_attempt_admission(self, temp_workspace) -> None:
+    async def test_recovered_run_requires_explicit_fresh_execution_epoch(self, temp_workspace) -> None:
         cache_root = temp_workspace / "runtime"
         creator = FactoryRunService(
             temp_workspace,
@@ -1104,6 +1104,8 @@ class TestFactoryRunService:
             executor=FakeStageExecutor(),
         )
         recovered = await restarted.recover_run(created.id)
+        replayed = restarted._physical_attempt_coordinator(created.id)
+        replay_token = recovered.metadata["factory_workspace_run_lease"]["fencing_token"]
         before = recovered.to_dict()
 
         with pytest.raises(RuntimeError, match="factory_physical_attempt_recovered_run_permanently_closed"):
@@ -1115,6 +1117,19 @@ class TestFactoryRunService:
         durable = restarted._admission.current()
         assert durable is not None
         assert durable.lifecycle_operation_claim is None
+
+        resumed = await restarted.resume_recovered_run(created.id)
+        resumed_token = resumed.metadata["factory_workspace_run_lease"]["fencing_token"]
+
+        assert resumed.status == FactoryRunStatus.RECOVERING
+        assert resumed_token > replay_token
+        assert resumed.metadata["factory_physical_attempt_execution_epoch"] == 2
+        assert "factory_physical_attempt_admission_dead" not in resumed.metadata
+        assert replayed.admission_closed is True
+        assert restarted._physical_attempt_coordinator(created.id).admission_closed is False
+
+        started = await restarted.start_run(created.id)
+        assert started.status == FactoryRunStatus.RECOVERING
 
     @pytest.mark.asyncio
     async def test_terminal_release_waits_for_physical_attempt_drain(

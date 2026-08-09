@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-08T17:38:39.671211Z",
-  "source_hash": "48a1976c08ac7b65",
+  "generated_at": "2026-08-09T12:52:27.321885Z",
+  "source_hash": "9d704ba453734af6",
   "cell_id": "orchestration.workflow_orchestration",
-  "workspace": "/tmp/polaris-unattended-completion-wt/src/backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -530,6 +530,12 @@
       "type": "function",
       "name": "clear_project_completion_convergence_runtime",
       "description": "Release process-local composition state during lifespan shutdown/tests.",
+      "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion_bootstrap.py"
+    },
+    {
+      "type": "function",
+      "name": "create_event_driven_project_completion_supervisor",
+      "description": "Compose the private event-driven supervisor through the Cell boundary.",
       "defined_in": "polaris/cells/orchestration/workflow_orchestration/public/project_completion_bootstrap.py"
     },
     {

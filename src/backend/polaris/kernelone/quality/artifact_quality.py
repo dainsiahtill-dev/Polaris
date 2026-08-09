@@ -290,6 +290,14 @@ _HTML_JAVASCRIPT_MODULE_SCRIPT_RE = re.compile(
     r"<script\b(?=[^>]*\btype\s*=\s*['\"]module['\"])[^>]*\bsrc\s*=\s*['\"](?P<src>[^'\"]+\.js)['\"][^>]*>",
     re.IGNORECASE,
 )
+_HTML_INLINE_MODULE_SCRIPT_RE = re.compile(
+    r"<script\b(?=[^>]*\btype\s*=\s*['\"]module['\"])[^>]*>(?P<body>.*?)</script\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+_HTML_INLINE_TYPESCRIPT_IMPORT_RE = re.compile(
+    r"\b(?:from|import)\s*['\"](?P<src>[^'\"]+\.(?:ts|tsx))['\"]",
+    re.IGNORECASE,
+)
 _TS_ZOD_INFERRED_TYPE_RE = re.compile(
     r"(?:^|\n)\s*(?:export\s+)?type\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*"
     r"z\.infer\s*<\s*typeof\s+[A-Za-z_$][\w$]*\s*>\s*;",
@@ -1956,6 +1964,13 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
     errors.extend(typescript_import_evidence.errors)
     issues.extend(typescript_import_evidence.issues)
     typescript_red_flag_evidence = _scan_typescript_syntax_red_flag_evidence(root_full, full_path, text, relative_path)
+    if typescript_red_flag_evidence.issues:
+        # Prefer the typed, directly repairable TS red-flag contract over the
+        # environment-dependent generic syntax checker projection for the same
+        # file. Keeping both duplicates one defect and can schedule competing
+        # repairs; the typed issue retains the precise repair archetype.
+        errors = [error for error in errors if not error.startswith("Artifact quality scan failed: syntax error in ")]
+        issues = [issue for issue in issues if issue.code != "syntax_error"]
     errors.extend(typescript_red_flag_evidence.errors)
     issues.extend(typescript_red_flag_evidence.issues)
     html_module_script_evidence = _scan_html_typescript_module_script_evidence(
@@ -2317,6 +2332,18 @@ def _scan_html_typescript_module_script_evidence(
     for match in _HTML_TYPESCRIPT_MODULE_SCRIPT_RE.finditer(text):
         src = str(match.group("src") or "").strip()
         if src:
+            error = (
+                "Artifact quality scan failed: HTML module script references TypeScript source "
+                f"{src!r} in {relative_path}; static entrypoints must load JavaScript"
+            )
+            errors.append(error)
+            issues.append(_html_module_script_quality_issue(error, relative_path, src=src))
+    for script_match in _HTML_INLINE_MODULE_SCRIPT_RE.finditer(text):
+        body = str(script_match.group("body") or "")
+        for import_match in _HTML_INLINE_TYPESCRIPT_IMPORT_RE.finditer(body):
+            src = str(import_match.group("src") or "").strip()
+            if not src:
+                continue
             error = (
                 "Artifact quality scan failed: HTML module script references TypeScript source "
                 f"{src!r} in {relative_path}; static entrypoints must load JavaScript"

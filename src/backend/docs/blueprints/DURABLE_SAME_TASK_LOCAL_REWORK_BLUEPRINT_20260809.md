@@ -1,6 +1,6 @@
 # Durable Same-Task Local Rework Blueprint
 
-- 状态: Implementation complete; restart integration and fresh Bench verification pending
+- 状态: Restart integration complete; fresh Bench verification pending
 - 日期: 2026-08-09
 - 关联: ADR-0100, ADR-0101
 
@@ -42,6 +42,13 @@ backend 启动会恢复 `RUNNING/RECOVERING` runs，并合并 pending exact-row 
 actions，因此 action commit 后重启不再依赖新 HTTP 请求。执行算法 callback 仍位于
 delivery module，后续可做代码归属迁移，但任务生命周期已不再由 Router-owned task 掌控。
 
+进程重启恢复采用两阶段物理尝试代际切换：先严格 replay 并永久关闭旧 coordinator，
+确认所有旧 start receipt 已有 terminal settlement；再通过显式
+`resume_recovered_run` lifecycle claim 获取更高 workspace fencing token，创建空的新
+execution epoch。禁止复活旧 attempt authority，也禁止把“旧 epoch 永久关闭”扩大为
+“整个 Factory run 永久关闭”。真实后端子进程测试已证明无需新 HTTP start 请求即可
+从 `RUNNING → RECOVERING → terminal`。
+
 ## 模块职责
 
 - `factory.pipeline`: 只在 CE contract、Director/QA/Run Ledger owner facts 变化后发送
@@ -77,6 +84,8 @@ delivery module，后续可做代码归属迁移，但任务生命周期已不�
    Router 内存 task 或 process-local queue 均不得计作 durable progress。
 10. backend 在 action commit、Director edit、verifier rerun 任一切点重启后，必须从
     durable claim 恢复且最多产生一次物理 effect。
+11. restart replay 只永久关闭旧 physical-attempt epoch；新 epoch 必须使用更高
+    workspace fencing token，旧进程/旧 grant/旧 provider request 永远不可复活。
 
 ## 失败防御
 

@@ -18,9 +18,17 @@ class _FactoryRunServicePort(Protocol):
 
     async def get_run(self, run_id: str) -> object | None: ...
 
+    async def recover_run(self, run_id: str) -> object: ...
 
-FactoryRunExecutePort = Callable[[object, str, object, object], Coroutine[Any, Any, None]]
-FactoryRunRecoveryPayloadPort = Callable[[object, str], object]
+    async def resume_recovered_run(self, run_id: str) -> object: ...
+
+
+# The composition root supplies concrete Factory service/run/payload/state
+# types.  Keeping this bootstrap owner free of delivery-layer imports requires
+# an intentionally structural ``Any`` boundary here; the service field itself
+# remains constrained by ``_FactoryRunServicePort``.
+FactoryRunExecutePort = Callable[[Any, str, Any, Any], Coroutine[Any, Any, None]]
+FactoryRunRecoveryPayloadPort = Callable[[Any, str], Any]
 FactoryCommittedRunIdsPort = Callable[[], tuple[str, ...]]
 
 
@@ -96,6 +104,16 @@ class FactoryRunDriverRuntimeV1:
                 "recovering",
             }:
                 continue
+            # A process restart loses the process-local physical-attempt
+            # coordinator and workspace lifecycle claim.  Replaying those
+            # authorities is a mandatory predecessor to any router mutation;
+            # executing the persisted run directly would fail closed with
+            # ``factory_physical_attempt_replay_required`` and leave the run
+            # stranded.  Terminal runs selected only by a committed same-task
+            # action already went through closeout and must not be recovered.
+            if run_id in status_resumable_ids:
+                run = await self.service.recover_run(run_id)
+                run = await self.service.resume_recovered_run(run_id)
             payload = self.build_recovery_payload(run, self.workspace)
             self.submit(run_id, payload=payload)
 

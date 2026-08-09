@@ -1,0 +1,61 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "P0-M06-DEFERRED-REPAIR-RECEIPT-PROJECTION-20260809",
+  "status": "IMPLEMENTED_BENCH_PENDING",
+  "severity": "P0",
+  "module_id": "M06_director_multi_task",
+  "title": "Factory settle misclassifies successful DEO receipts, skips revalidation, and executes redundant repair candidates after convergence",
+  "symptom": {
+    "bench_run": "factory_706f8755cf38",
+    "project": "L1-01",
+    "terminal_stage": "director_dispatch",
+    "factory_reason": "deferred_repair_commit_failed",
+    "reported_counts": {
+      "committed_receipt_count": 0,
+      "failed_receipt_count": 10,
+      "tool_result_count": 3
+    },
+    "delivery_fact": "package.json was physically updated with @types/node but Factory still marked the settle task failed"
+  },
+  "physical_evidence": {
+    "runtime_authority": "/home/dains/.cache/kernelone/.polaris/projects/24d8f92c888edf8ad4bddd8e-bf54ec32f23b/runtime",
+    "parent_registry": "first DEO wave closed with receipt_count=2 and aborted_count=2",
+    "operation_lifecycle": "two forward members reached EFFECT_STARTED then RECEIPT_COMMITTED with receipt_outcome=succeeded; two rollback contingencies were correctly aborted",
+    "workspace_manifest": "devDependencies contains @types/node ^22.10.0 after the settle write",
+    "remaining_verifier_failure": "node_modules was installed before the manifest mutation, so tsc still reported TS2688 until dependencies were refreshed",
+    "verification_run": "factory_1a036d843a74 (fresh isolated L1-01 r3)",
+    "verification_delivery": "npm build exit 0, npm test exit 0, Playwright HTTP 200 with nonblank canvas and no console/resource errors",
+    "verification_control_plane_residual": "the first candidate produced two succeeded receipts and reduced diagnostics 6->0, but two later candidates added a dead-letter parent; completed settlement then correctly failed with settlement_effect_outcome_conflict"
+  },
+  "root_cause": {
+    "category": "control_plane_receipt_contract_projection_and_revalidation_gap",
+    "producer_contract": "commit_materialization_deferred_repairs returns normalized BatchReceipt dictionaries using success_count/failure_count and nested result.status",
+    "consumer_bug": "Factory checked only receipt.success is True, a field canonical BatchReceipt does not contain",
+    "secondary_bug": "Factory did not refresh dependencies or rerun materialization diagnostics after successful manifest writes",
+    "tertiary_bug": "Factory treated alternative repair candidates as mandatory sequential effects and executed later candidates after the physical verifier was already green, polluting one TaskRuntime attempt with avoidable dead-letter evidence",
+    "not_model_ceiling": true,
+    "not_repair_coverage_gap": true
+  },
+  "implemented_fix": [
+    "Interpret canonical BatchReceipt success_count/failure_count and nested result statuses while preserving legacy receipt compatibility.",
+    "After at least one authoritative DEO success, refresh the TypeScript toolchain and rerun materialization diagnostics.",
+    "Commit deferred repair candidates one at a time with distinct turn identities; stop immediately after authoritative revalidation reaches zero diagnostics.",
+    "Allow partial repair-wave failure only when authoritative post-commit diagnostics are empty; otherwise remain fail-closed.",
+    "Expose pre/post diagnostic counts and failed receipt counts in the settle projection."
+  ],
+  "required_tests": [
+    "canonical BatchReceipt with success_count=1 is accepted without a top-level success flag",
+    "post-commit dependency refresh runs once after an authoritative write",
+    "post-commit diagnostics must be empty before settle reports success",
+    "deferred repair with no successful receipt remains failed",
+    "legacy top-level success receipt remains compatible",
+    "later repair candidates are not admitted after the first candidate reaches verified convergence",
+    "fresh isolated L1-01 reaches COMPLETED_VERIFIED"
+  ],
+  "evidence": [
+    "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+    "src/backend/polaris/cells/factory/pipeline/tests/test_director_stage_materialization_settle.py",
+    "targeted materialization settle regression: 19 passed",
+    "combined materialization settle + TaskRuntime settlement regression: 62 passed"
+  ]
+}

@@ -1,6 +1,6 @@
 # ADR-0101: Durable Project-Completion Actions Use TaskRuntime Authority
 
-- 状态: Implemented; restart integration and fresh Bench verification pending
+- 状态: Implemented; restart integration complete; fresh Bench verification pending
 - 日期: 2026-08-09
 - 关联: ADR-0097, ADR-0100
 
@@ -30,6 +30,9 @@ TaskMarket work item。使用 TaskMarket 会增加不可达的第二生命周期
 7. HTTP Router 不得拥有 durable execution lifecycle。需要一个 backend lifespan-owned
    Factory stage driver 查询 committed action/TaskRuntime exact row，持久化 driver claim，
    执行 Director/affected verifier，并在进程重启后自动恢复。
+8. restart recovery 必须先 replay/settle 并永久关闭旧 physical-attempt epoch；随后只允许
+   通过显式 lifecycle claim 和更高 workspace fencing token 创建新 epoch。旧 provider
+   attempt 不可重放，但同一 Factory run 不得因此永久失去继续执行能力。
 
 ## 被拒绝方案
 
@@ -47,8 +50,8 @@ TaskMarket work item。使用 TaskMarket 会增加不可达的第二生命周期
 - TaskRuntime 保持唯一 execution lifecycle owner。
 - workflow orchestration 与 TaskRuntime 增加 typed public contract，需要同步 graph/catalog 和测试。
 - backend lifespan-owned driver 已恢复 live/recovering runs 与 pending local-rework
-  actions；尚需真实 backend crash/restart 集成证据和 fresh isolated `COMPLETED_VERIFIED`
-  才能宣称无人值守闭环。
+  actions；真实 backend process restart 已验证旧 epoch 关闭、新 epoch 续跑且无需新
+  HTTP 请求。尚需 fresh isolated `COMPLETED_VERIFIED` 才能宣称无人值守闭环。
 
 ## 验收
 

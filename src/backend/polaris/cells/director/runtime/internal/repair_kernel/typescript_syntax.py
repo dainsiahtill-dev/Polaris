@@ -2519,7 +2519,8 @@ def _build_html_typescript_module_script_plan(
         )
         truncated_repairs.append({"file": path, **meta})
         rewritten_paths.add(path)
-        for script in meta.get("scripts") or ():
+        script_rows = meta.get("scripts")
+        for script in script_rows if isinstance(script_rows, Sequence) else ():
             if isinstance(script, Mapping):
                 repaired.append(
                     {
@@ -2543,11 +2544,16 @@ def _build_html_typescript_module_script_plan(
             replacement = _html_compiled_javascript_entrypoint_for_script(source_ref, base_files=base_files)
         if not original or not replacement:
             continue
-        for quote in ('"', "'"):
-            expected = f"src={quote}{source_ref}{quote}"
-            start = original.find(expected)
-            if start < 0:
-                continue
+        reference_pattern = re.compile(
+            rf"(?P<prefix>\bsrc\s*=\s*|\b(?:from|import)\s*)(?P<quote>['\"])"
+            rf"{re.escape(source_ref)}(?P=quote)",
+            re.IGNORECASE,
+        )
+        for match in reference_pattern.finditer(original):
+            expected = str(match.group(0) or "")
+            quote = str(match.group("quote") or '"')
+            prefix = str(match.group("prefix") or "")
+            start = match.start()
             operations.append(
                 RepairOperation(
                     kind="text_replace",
@@ -2555,7 +2561,7 @@ def _build_html_typescript_module_script_plan(
                     span_start=start,
                     span_end=start + len(expected),
                     expected=expected,
-                    replacement=f"src={quote}{replacement}{quote}",
+                    replacement=f"{prefix}{quote}{replacement}{quote}",
                     before_hash=sha256_text(original),
                     metadata={
                         "repair_kind": "html_typescript_module_script",
@@ -2565,7 +2571,6 @@ def _build_html_typescript_module_script_plan(
                 )
             )
             repaired.append({"file": path, "source": source_ref, "replacement": replacement})
-            break
 
     rule_id = "html.typescript_module_script"
     if (truncated_repairs and not repaired) or truncated_repairs:

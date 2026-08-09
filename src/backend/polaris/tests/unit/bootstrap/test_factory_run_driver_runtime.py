@@ -17,12 +17,24 @@ class _Run:
 class _Service:
     def __init__(self, runs: list[_Run]) -> None:
         self._runs = {run.id: run for run in runs}
+        self.recovered_run_ids: list[str] = []
+        self.resumed_run_ids: list[str] = []
 
     async def list_runs(self) -> list[dict[str, str]]:
         return [{"id": run.id, "status": run.status} for run in self._runs.values()]
 
     async def get_run(self, run_id: str) -> _Run | None:
         return self._runs.get(run_id)
+
+    async def recover_run(self, run_id: str) -> _Run:
+        self.recovered_run_ids.append(run_id)
+        run = self._runs[run_id]
+        run.status = "recovering"
+        return run
+
+    async def resume_recovered_run(self, run_id: str) -> _Run:
+        self.resumed_run_ids.append(run_id)
+        return self._runs[run_id]
 
 
 @pytest.mark.asyncio
@@ -55,6 +67,8 @@ async def test_start_recovers_running_and_recovering_runs_without_http_request()
         ("run-recovering", "payload:run-recovering"),
         ("run-running", "payload:run-running"),
     ]
+    assert service.recovered_run_ids == ["run-recovering", "run-running"]
+    assert service.resumed_run_ids == ["run-recovering", "run-running"]
 
 
 @pytest.mark.asyncio
@@ -79,6 +93,8 @@ async def test_start_recovers_failed_run_with_committed_local_rework_action() ->
     await runtime.stop()
 
     assert executed == ["run-failed"]
+    assert service.recovered_run_ids == []
+    assert service.resumed_run_ids == []
 
 
 @pytest.mark.asyncio

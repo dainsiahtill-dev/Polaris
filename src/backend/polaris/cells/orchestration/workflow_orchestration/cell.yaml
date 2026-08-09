@@ -9,8 +9,9 @@ purpose: 'Owns the OrchestrationService public contract, RuntimeOrchestrator por
   WorkflowEngine instance and workflow_activity for concrete workflow/activity definitions.  Coordinates
   workflow submission, signals, cancellation, and progress tracking. Project-completion
   supervision recovers from the durable cursor through public owner/action ports;
-  local process events are latency hints only. Bootstrap composition may bind those ports
-  to TaskMarket and replay its transactional outbox without making TaskMarket a Cell dependency.
+  local process events are latency hints only. Bootstrap composition binds the
+  completion action port to the exact runtime.task_runtime owner row, while a
+  backend-lifespan Factory driver consumes the durable action after restart.
   Retry-budget exhaustion parks with the owner next action; only an exact sealed
   workflow_runtime ModelCeilingTerminalResultV1 may terminate as model_ceiling,
   and replay must revalidate its authority binding hash.

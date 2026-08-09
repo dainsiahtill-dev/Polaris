@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-08T23:52:52.707885Z",
-  "source_hash": "4c3e96229a5fd1ca",
+  "generated_at": "2026-08-09T12:52:34.168994Z",
+  "source_hash": "b37e50d17bdf8417",
   "cell_id": "runtime.task_runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -108,6 +108,20 @@
       "type": "class",
       "name": "PrepareOwnerReworkExecutionCommandV1",
       "description": "Request TaskRuntime preparation after TaskMarket has granted a claim.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PrepareSameTaskLocalReworkCommandV1",
+      "description": "Apply one workflow-owned completion action to the exact Director task.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SameTaskLocalReworkPreparationResultV1",
+      "description": "",
       "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
       "methods": []
     },

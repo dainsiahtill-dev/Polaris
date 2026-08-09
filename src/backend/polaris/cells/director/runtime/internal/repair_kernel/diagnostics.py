@@ -181,6 +181,16 @@ def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
                 continue
             residuals.append(residual)
         return expanded + residuals
+    lowered = blob.lower()
+    if (
+        ("npm run test" in lowered or "npm test" in lowered)
+        and ("module_not_found" in lowered or "cannot find module" in lowered or "could not find" in lowered)
+    ):
+        # A Node verifier failure is one causal diagnostic. Splitting its stack
+        # trace into independent rows discards the conjunction between the npm
+        # test command and MODULE_NOT_FOUND, so coverage becomes unplannable and
+        # the Director needlessly escalates instead of editing the exact task.
+        return [_normalize_one_error(blob.strip())]
     # Non-TS blob: preserve one diagnostic per non-empty line.
     per_line = [_normalize_one_error(line.strip()) for line in blob.splitlines() if line.strip()]
     return per_line if per_line else [_normalize_one_error(blob.strip())]

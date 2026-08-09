@@ -6302,6 +6302,47 @@ def test_public_javascript_missing_test_target_covers_npm_module_not_found() -> 
     assert "assert.ok(packageJson.name" in smoke_content
 
 
+def test_public_javascript_frontend_smoke_target_respects_esm_package() -> None:
+    """Regression: a ``type=module`` package cannot execute a generated require()-based test."""
+
+    source_tool = js_syntax.JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL
+    diagnostic = (
+        "artifact_quality_error: npm test failed (exit=1): "
+        "Could not find 'dist/tests/verify.test.js'"
+    )
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={
+                "package.json": (
+                    '{"name":"web-ts-app","type":"module","main":"dist/main.js",'
+                    '"scripts":{"build":"tsc -p tsconfig.json",'
+                    '"test":"npm run build && node --test dist/tests/verify.test.js"}}\n'
+                ),
+                "tsconfig.json": '{"compilerOptions":{"outDir":"dist","rootDir":"src"}}\n',
+                "index.html": '<script type="module" src="./dist/web.js"></script>\n',
+                "src/main.ts": "console.log('ok');\n",
+                "tests/verify.test.ts": "import assert from 'node:assert';\nassert.ok(true);\n",
+                "dist/main.js": "console.log('ok');\n",
+                "dist/web.js": "console.log('web');\n",
+            },
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    )
+    payload = planning_result.to_dict()
+
+    assert payload["ok"] is True
+    assert payload["planned"] is True
+    assert payload["composition_summary"]["changed_paths"] == ["package.json", "tests/verify.test.js"]
+    patches = {patch["path"]: patch["content_after"] for patch in payload["composition_summary"]["patches"]}
+    assert "node --test tests/verify.test.js" in patches["package.json"]
+    smoke_content = patches["tests/verify.test.js"]
+    assert "import assert from 'node:assert';" in smoke_content
+    assert "fileURLToPath(import.meta.url)" in smoke_content
+    assert "require('assert')" not in smoke_content
+
+
 def test_public_javascript_typescript_annotation_repair_updates_placeholder_contracts() -> None:
     source_tool = ts_syntax.JAVASCRIPT_TYPESCRIPT_ANNOTATION_SOURCE_TOOL
     diagnostic = (
@@ -7120,6 +7161,40 @@ def test_public_html_module_script_rewrites_dot_slash_src_typescript_to_dist() -
     assert planning["planned"] is True
     repaired = planning["composition_summary"]["patches"][0]["content_after"]
     assert 'src="./dist/web.js"' in repaired
+
+
+def test_public_html_module_script_rewrites_external_and_inline_typescript_refs() -> None:
+    """One scanner diagnostic repairs every browser import of the same TS entrypoint."""
+
+    diagnostic = (
+        "Artifact quality scan failed: HTML module script references TypeScript source "
+        "'./src/web.ts' in index.html; static entrypoints must load JavaScript"
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.HTML_TYPESCRIPT_MODULE_SCRIPT_SOURCE_TOOL,
+            base_files={
+                "index.html": (
+                    '<script type="module" src="./src/web.ts"></script>\n'
+                    '<script type="module">\n'
+                    "import { startWhenReady } from './src/web.ts';\n"
+                    "startWhenReady('garden');\n"
+                    "</script>\n"
+                ),
+                "tsconfig.json": '{"compilerOptions":{"outDir":"dist","rootDir":"src"}}\n',
+                "src/web.ts": "export const startWhenReady = () => {};\n",
+            },
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["operation_count"] == 2
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert repaired.count("./dist/web.js") == 2
+    assert "./src/web.ts" not in repaired
     assert "./src/web.ts" not in repaired
     assert "./src/web.js" not in repaired
 

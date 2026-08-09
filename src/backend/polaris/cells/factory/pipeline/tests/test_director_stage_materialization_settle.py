@@ -444,6 +444,232 @@ async def test_run_director_stage_materialization_quality_settle_invokes_schedul
 
 
 @pytest.mark.asyncio
+async def test_materialization_settle_accepts_canonical_batch_receipt_and_revalidates(
+    tmp_path: Path,
+) -> None:
+    """Regression: DEO BatchReceipt success is not a top-level ``success`` flag.
+
+    L1-01 r2 physically committed the package.json dependency repair, but Factory
+    counted every canonical receipt as failed because it only checked
+    ``receipt["success"] is True``.  The settle path must consume the canonical
+    ``success_count``/``failure_count`` contract and re-run diagnostics after the
+    physical commit.
+    """
+
+    (tmp_path / "package.json").write_text('{"name":"x"}\n', encoding="utf-8")
+    executor = OrchestrationStageExecutor(tmp_path)
+    run = _run(tmp_path)
+    fake_attempt = SimpleNamespace(workspace=str(tmp_path), task_id=1, external_task_id="settle-x")
+    deferred_results = [
+        {
+            "tool": "deferred_director_repair",
+            "success": True,
+            "result": {
+                "status": "deferred_repair_effects_pending",
+                "deferred_request": object(),
+            },
+        }
+    ]
+    canonical_batch_receipt = {
+        "batch_id": "batch-1",
+        "turn_id": "turn-1",
+        "success_count": 1,
+        "failure_count": 0,
+        "pending_async_count": 0,
+        "has_pending_async": False,
+        "results": [
+            {
+                "call_id": "repair-1",
+                "tool_name": "write_file",
+                "status": "success",
+                "effect_receipt": {"after_hash": "a" * 64},
+            }
+        ],
+        "raw_results": [],
+        "effect_receipts": [{"after_hash": "a" * 64}],
+    }
+
+    with (
+        patch.object(
+            executor,
+            "_claim_director_stage_materialization_settle_attempt",
+            return_value=("settle-x", 1, fake_attempt),
+        ),
+        patch.object(
+            executor,
+            "_apply_workspace_quality_repairs",
+            return_value=(deferred_results, {"ok": True}),
+        ),
+        patch.object(
+            executor,
+            "_collect_director_stage_materialization_diagnostics",
+            side_effect=[["error TS2688: Cannot find type definition file for 'node'"], []],
+        ) as diagnostics,
+        patch.object(
+            executor,
+            "_ensure_director_stage_materialization_typescript_toolchain",
+        ) as ensure_toolchain,
+        patch.object(
+            executor,
+            "_settle_director_stage_materialization_attempt",
+            return_value={"success": True},
+        ) as settle_attempt,
+        patch(
+            "polaris.cells.roles.adapters.public.commit_materialization_deferred_repairs",
+            return_value=[canonical_batch_receipt],
+        ),
+        patch(
+            "polaris.cells.runtime.task_runtime.public.create_task_runtime_execution_attempt_authority",
+            return_value=object(),
+        ),
+    ):
+        settle = await executor._run_director_stage_materialization_quality_settle(
+            run=run,
+            stage_status="failed",
+            error_code="director.canonical_task_boundary_missing",
+        )
+
+    assert settle["ok"] is True
+    assert settle["committed_receipt_count"] == 1
+    assert settle["failed_receipt_count"] == 0
+    assert settle["post_commit_diagnostic_count"] == 0
+    assert settle["mutated"] is True
+    assert diagnostics.call_count == 2
+    ensure_toolchain.assert_called_once_with()
+    assert settle_attempt.call_args.kwargs["stage_status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_materialization_settle_stops_after_first_verified_repair_candidate(
+    tmp_path: Path,
+) -> None:
+    """Do not execute later repair candidates after the verifier is green.
+
+    L1-01 r3 proved that the first DEO candidate could clear every physical
+    diagnostic while later candidates produced dead-letter receipts.  Keeping
+    all candidates inside one TaskRuntime attempt then made a truthful
+    ``completed`` settlement impossible.  Convergence is therefore evaluated
+    after each candidate, and the remaining candidates must not be admitted.
+    """
+
+    (tmp_path / "package.json").write_text('{"name":"x"}\n', encoding="utf-8")
+    executor = OrchestrationStageExecutor(tmp_path)
+    run = _run(tmp_path)
+    fake_attempt = SimpleNamespace(workspace=str(tmp_path), task_id=1, external_task_id="settle-x")
+    deferred_results = [
+        {
+            "tool": "deferred_director_repair",
+            "success": True,
+            "result": {
+                "status": "deferred_repair_effects_pending",
+                "deferred_request": object(),
+                "candidate": candidate,
+            },
+        }
+        for candidate in ("first", "redundant")
+    ]
+    canonical_batch_receipt = {
+        "batch_id": "batch-1",
+        "turn_id": "turn-1",
+        "success_count": 1,
+        "failure_count": 0,
+        "results": [{"status": "success"}],
+    }
+
+    with (
+        patch.object(
+            executor,
+            "_claim_director_stage_materialization_settle_attempt",
+            return_value=("settle-x", 1, fake_attempt),
+        ),
+        patch.object(
+            executor,
+            "_apply_workspace_quality_repairs",
+            return_value=(deferred_results, {"ok": True}),
+        ),
+        patch.object(
+            executor,
+            "_collect_director_stage_materialization_diagnostics",
+            side_effect=[["error TS2688"], []],
+        ),
+        patch.object(executor, "_ensure_director_stage_materialization_typescript_toolchain"),
+        patch.object(
+            executor,
+            "_settle_director_stage_materialization_attempt",
+            return_value={"success": True},
+        ),
+        patch(
+            "polaris.cells.roles.adapters.public.commit_materialization_deferred_repairs",
+            return_value=[canonical_batch_receipt],
+        ) as commit,
+        patch(
+            "polaris.cells.runtime.task_runtime.public.create_task_runtime_execution_attempt_authority",
+            return_value=object(),
+        ),
+    ):
+        settle = await executor._run_director_stage_materialization_quality_settle(
+            run=run,
+            stage_status="failed",
+            error_code="director.canonical_task_boundary_missing",
+        )
+
+    assert settle["ok"] is True
+    assert settle["post_commit_diagnostic_count"] == 0
+    assert commit.call_count == 1
+    assert commit.call_args.kwargs["tool_results"] == [deferred_results[0]]
+    assert commit.call_args.kwargs["turn_id"].endswith(":candidate0")
+
+
+@pytest.mark.asyncio
+async def test_materialization_settle_fails_when_verifier_residual_has_no_candidate(
+    tmp_path: Path,
+) -> None:
+    """Residual verifier evidence cannot be reported as a successful settle."""
+
+    (tmp_path / "package.json").write_text('{"name":"x"}\n', encoding="utf-8")
+    executor = OrchestrationStageExecutor(tmp_path)
+    run = _run(tmp_path)
+    fake_attempt = SimpleNamespace(workspace=str(tmp_path), task_id=1, external_task_id="settle-x")
+
+    with (
+        patch.object(
+            executor,
+            "_claim_director_stage_materialization_settle_attempt",
+            return_value=("settle-x", 1, fake_attempt),
+        ),
+        patch.object(
+            executor,
+            "_collect_director_stage_materialization_diagnostics",
+            return_value=["artifact_quality_error: npm test failed"],
+        ),
+        patch.object(
+            executor,
+            "_apply_workspace_quality_repairs",
+            return_value=([], {"ok": False}),
+        ),
+        patch.object(
+            executor,
+            "_settle_director_stage_materialization_attempt",
+            return_value={"success": True},
+        ) as settle_attempt,
+        patch(
+            "polaris.cells.runtime.task_runtime.public.create_task_runtime_execution_attempt_authority",
+            return_value=object(),
+        ),
+    ):
+        settle = await executor._run_director_stage_materialization_quality_settle(
+            run=run,
+            stage_status="failed",
+            error_code="director.canonical_task_boundary_missing",
+        )
+
+    assert settle["ok"] is False
+    assert settle["reason"] == "materialization_verifier_residual"
+    assert settle["post_commit_diagnostic_count"] == 1
+    assert settle_attempt.call_args.kwargs["stage_status"] == "failed"
+
+
+@pytest.mark.asyncio
 async def test_materialization_settle_reports_deferred_commit_failure(
     tmp_path: Path,
 ) -> None:
@@ -658,7 +884,8 @@ async def test_run_director_stage_materialization_quality_settle_forwards_tsc_di
             error_code="director.dispatch_timeout",
         )
 
-    assert settle["ok"] is True
+    assert settle["ok"] is False
+    assert settle["reason"] == "materialization_verifier_residual"
     assert settle["diagnostic_count"] == 1
     assert captured["errors"] == diags
 
@@ -727,6 +954,33 @@ def test_director_stage_materialization_settle_commit_context_builds_job_token(
     assert context["execution_envelope"]["authorization"]["capability_token_hash"] == context["capability_token_hash"]
 
 
+def test_materialization_settle_scope_includes_plannable_derived_targets(tmp_path: Path) -> None:
+    """DEO scope includes changed paths proven by the read-only repair plan probe."""
+
+    (tmp_path / "package.json").write_text('{"name":"x"}\n', encoding="utf-8")
+    executor = OrchestrationStageExecutor(tmp_path)
+    with patch.object(
+        executor,
+        "_workspace_quality_repair_plan_probe_report",
+        return_value={
+            "items": [
+                {
+                    "status": "covered_plannable",
+                    "changed_paths": ["index.html", "dist/tests/verify.test.js"],
+                },
+                {"status": "covered_unplannable", "changed_paths": ["forbidden.txt"]},
+            ]
+        },
+    ):
+        targets = executor._director_stage_materialization_settle_target_files(
+            diagnostics=["artifact_quality_error: npm test failed"]
+        )
+
+    assert "index.html" in targets
+    assert "dist/tests/verify.test.js" in targets
+    assert "forbidden.txt" not in targets
+
+
 def test_collect_director_stage_materialization_diagnostics_parses_tsc_stderr(
     tmp_path: Path,
 ) -> None:
@@ -752,6 +1006,63 @@ def test_collect_director_stage_materialization_diagnostics_parses_tsc_stderr(
 
     assert len(diags) == 1
     assert "TS6133" in diags[0]
+
+
+def test_collect_materialization_diagnostics_includes_html_entrypoint_quality(
+    tmp_path: Path,
+) -> None:
+    """A green compiler must not hide an HTML entrypoint that imports raw TS."""
+
+    (tmp_path / "package.json").write_text('{"name":"x"}\n', encoding="utf-8")
+    (tmp_path / "index.html").write_text(
+        '<!doctype html><script type="module" src="./src/web.ts"></script>\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "web.ts").write_text("export const ready = true;\n", encoding="utf-8")
+
+    diagnostics = OrchestrationStageExecutor(
+        tmp_path
+    )._collect_director_stage_materialization_diagnostics()
+
+    assert any("HTML module script references TypeScript source" in item for item in diagnostics)
+    assert any("./src/web.ts" in item for item in diagnostics)
+
+
+def test_collect_materialization_diagnostics_runs_declared_npm_test(
+    tmp_path: Path,
+) -> None:
+    """Settle revalidation includes the real package test command, not tsc alone."""
+
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "x",
+                "scripts": {"test": "node --test dist/tests/verify.test.js"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "verify.test.ts").write_text("export {};\n", encoding="utf-8")
+    executor = OrchestrationStageExecutor(tmp_path)
+    failed_test = SimpleNamespace(
+        stdout="",
+        stderr="Could not find 'dist/tests/verify.test.js'\n",
+        returncode=1,
+    )
+
+    with patch(
+        "polaris.cells.factory.pipeline.internal.factory_stage_executor.subprocess.run",
+        return_value=failed_test,
+    ) as run_command:
+        diagnostics = executor._collect_director_stage_materialization_diagnostics()
+
+    assert run_command.call_args.args[0] == ["npm", "test"]
+    assert any("npm test failed" in item for item in diagnostics)
+    assert any("dist/tests/verify.test.js" in item for item in diagnostics)
 
 
 def test_seal_director_stage_missing_tool_lifecycles_appends_blocked_receipt(

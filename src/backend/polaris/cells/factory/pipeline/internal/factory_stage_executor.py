@@ -8166,10 +8166,13 @@ class OrchestrationStageExecutor:
         }
 
     def _collect_director_stage_materialization_diagnostics(self) -> list[str]:
-        """Best-effort tsc/compiler diagnostics for settle-time materialization.
+        """Collect physical settle-time diagnostics from source and real verifiers.
 
-        Fail-open: missing node_modules or tsc failures still return whatever
-        stderr lines we got so content-driven smoke can run with empty errors.
+        Compiler-only revalidation is not convergence.  A Director candidate may
+        make ``tsc`` green while leaving the declared package test or static HTML
+        entrypoint physically broken.  Collect all three surfaces up front so the
+        existing repair schedule can admit the corresponding deterministic
+        candidates in one same-task settle attempt.
 
         R167/M10: when package.json declares typescript but ``node_modules/.bin/tsc``
         is absent (quality_gate never ran after director fail), best-effort
@@ -8184,15 +8187,25 @@ class OrchestrationStageExecutor:
         package_json = self.workspace / "package.json"
         if not package_json.is_file():
             return []
+        try:
+            from polaris.kernelone.quality import scan_workspace_artifact_quality
+
+            diagnostics.extend(scan_workspace_artifact_quality(str(self.workspace)))
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Director stage materialization artifact scan skipped for %s: %s",
+                self.workspace,
+                exc,
+            )
         # Missing on-disk tests referenced by package.json scripts.test is a
         # first-class settle diagnostic (not a compiler error).
         try:
             payload = json.loads(package_json.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
             payload = None
+        test_script = ""
         if isinstance(payload, Mapping):
             scripts = payload.get("scripts")
-            test_script = ""
             if isinstance(scripts, Mapping):
                 test_script = str(scripts.get("test") or "").strip()
             has_test_files = False
@@ -8221,30 +8234,68 @@ class OrchestrationStageExecutor:
         node_modules = self.workspace / "node_modules"
         tsc_bin = node_modules / ".bin" / "tsc"
         tsconfig = self.workspace / "tsconfig.json"
-        if not tsconfig.is_file():
-            return diagnostics
-        if not tsc_bin.is_file():
-            self._ensure_director_stage_materialization_typescript_toolchain()
-            tsc_bin = node_modules / ".bin" / "tsc"
-        if not tsc_bin.is_file():
-            return diagnostics
-        try:
-            completed = subprocess.run(
-                [str(tsc_bin), "-p", "tsconfig.json", "--noEmit"],
-                cwd=str(self.workspace),
-                capture_output=True,
-                text=True,
-                timeout=90,
-                check=False,
-            )
-        except (OSError, TimeoutError, ValueError):
-            return diagnostics
-        combined = f"{completed.stdout or ''}\n{completed.stderr or ''}"
-        tsc_lines = [
-            line.strip() for line in combined.splitlines() if "error TS" in line or ": error " in line.lower()
-        ][:200]
-        diagnostics.extend(tsc_lines)
-        return diagnostics
+        if tsconfig.is_file():
+            if not tsc_bin.is_file():
+                self._ensure_director_stage_materialization_typescript_toolchain()
+                tsc_bin = node_modules / ".bin" / "tsc"
+            if tsc_bin.is_file():
+                try:
+                    completed = subprocess.run(
+                        [str(tsc_bin), "-p", "tsconfig.json", "--noEmit"],
+                        cwd=str(self.workspace),
+                        capture_output=True,
+                        text=True,
+                        timeout=90,
+                        check=False,
+                    )
+                except (OSError, TimeoutError, ValueError):
+                    completed = None
+                if completed is not None:
+                    combined = f"{completed.stdout or ''}\n{completed.stderr or ''}"
+                    diagnostics.extend(
+                        line.strip()
+                        for line in combined.splitlines()
+                        if "error TS" in line or ": error " in line.lower()
+                    )
+
+        if test_script:
+            try:
+                test_result = subprocess.run(
+                    ["npm", "test"],
+                    cwd=str(self.workspace),
+                    capture_output=True,
+                    text=True,
+                    timeout=_WORKSPACE_VALIDATION_TIMEOUT_SECONDS,
+                    check=False,
+                    env={**os.environ, "CI": "1"},
+                )
+            except subprocess.TimeoutExpired:
+                diagnostics.append(
+                    "artifact_quality_error: npm test timed out after "
+                    f"{_WORKSPACE_VALIDATION_TIMEOUT_SECONDS}s"
+                )
+            except (OSError, TimeoutError, ValueError) as exc:
+                diagnostics.append(f"artifact_quality_error: npm test could not execute: {type(exc).__name__}: {exc}")
+            else:
+                if int(test_result.returncode or 0) != 0:
+                    combined = f"{test_result.stdout or ''}\n{test_result.stderr or ''}".strip()
+                    # Coverage normalisation treats each line as a separate
+                    # diagnostic. Keep the command identity (``npm test``) and
+                    # terminal error (for example ``Could not find ...``) in
+                    # one record so an existing executable rule can match the
+                    # complete verifier fact instead of seeing unrelated lines.
+                    signal_lines = [
+                        line.strip()
+                        for line in combined.splitlines()
+                        if line.strip() and not line.lstrip().startswith(">")
+                    ]
+                    compact = " ".join(signal_lines[-40:]) or " ".join(combined.split())
+                    bounded = compact[-_WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS:]
+                    diagnostics.append(
+                        f"artifact_quality_error: npm test failed (exit={test_result.returncode}): {bounded}"
+                    )
+
+        return list(dict.fromkeys(item.strip() for item in diagnostics if str(item or "").strip()))[:200]
 
     def _ensure_director_stage_materialization_typescript_toolchain(self) -> None:
         """Best-effort npm install so settle can collect tsc diagnostics (R167)."""
@@ -8426,13 +8477,37 @@ class OrchestrationStageExecutor:
         *,
         diagnostics: list[str],
     ) -> list[str]:
-        """Resolve write scope for settle DEO commit (plan targets + workspace surface)."""
+        """Resolve DEO write scope from owner targets plus plannable repairs.
+
+        Some legitimate deterministic repairs create a derived target that is
+        absent from the CE target list (for example
+        ``dist/tests/verify.test.js`` referenced by the package verifier).  The
+        repair-kernel plan probe is read-only authority for those changed paths;
+        include them before minting the JobToken instead of letting DEO reject a
+        valid existing repair as out of scope.
+        """
 
         target_files = self._workspace_quality_repair_target_files()
         if not target_files:
             target_files = self._workspace_quality_repair_diagnostic_target_files(diagnostics)
         if not target_files:
             target_files = self._workspace_quality_repair_changed_files()
+        planned_paths: list[str] = []
+        probe = self._workspace_quality_repair_plan_probe_report(diagnostics)
+        probe_items = probe.get("items") if isinstance(probe, Mapping) else None
+        if isinstance(probe_items, list):
+            for item in probe_items:
+                if not isinstance(item, Mapping) or str(item.get("status") or "") != "covered_plannable":
+                    continue
+                changed_paths = item.get("changed_paths")
+                if not isinstance(changed_paths, list):
+                    continue
+                for raw_path in changed_paths:
+                    normalized = os.path.normpath(str(raw_path or "").strip().replace("\\", "/")).replace(
+                        "\\", "/"
+                    )
+                    if normalized and _is_workspace_quality_repair_path(normalized):
+                        planned_paths.append(normalized)
         extras: list[str] = []
         for candidate in (
             "package.json",
@@ -8443,7 +8518,7 @@ class OrchestrationStageExecutor:
         ):
             if candidate not in target_files:
                 extras.append(candidate)
-        return list(dict.fromkeys([*target_files, *extras]))
+        return list(dict.fromkeys([*target_files, *planned_paths, *extras]))
 
     def _director_stage_materialization_settle_commit_context(
         self,
@@ -8575,6 +8650,38 @@ class OrchestrationStageExecutor:
             "task_execution_envelope": dict(execution_envelope),
         }
 
+    @staticmethod
+    def _director_stage_materialization_receipt_succeeded(receipt: Mapping[str, Any]) -> bool:
+        """Interpret both legacy tool rows and canonical ``BatchReceipt`` rows.
+
+        The DEO bridge returns normalized batch receipts whose authoritative
+        outcome is expressed by ``success_count`` / ``failure_count`` and the
+        nested result statuses.  It does not add a top-level ``success`` flag.
+        Treating those rows like legacy tool-result dictionaries turned real
+        ``RECEIPT_COMMITTED(succeeded)`` effects into Factory failures.
+        """
+
+        if "success" in receipt:
+            return receipt.get("success") is True
+        try:
+            success_count = int(receipt.get("success_count", 0) or 0)
+            failure_count = int(receipt.get("failure_count", 0) or 0)
+        except (TypeError, ValueError):
+            return False
+        if failure_count > 0:
+            return False
+        if success_count > 0:
+            return True
+        results = receipt.get("results")
+        if not isinstance(results, list) or not results:
+            return False
+        statuses = [
+            str(item.get("status") or "").strip().lower()
+            for item in results
+            if isinstance(item, Mapping)
+        ]
+        return len(statuses) == len(results) and bool(statuses) and all(status == "success" for status in statuses)
+
     async def _run_director_stage_materialization_quality_settle(
         self,
         *,
@@ -8607,6 +8714,8 @@ class OrchestrationStageExecutor:
         task_row_id: int | None = None
         execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None
         committed_receipts: list[dict[str, Any]] = []
+        post_commit_diagnostics = list(diagnostics)
+        deferred_candidates: list[Mapping[str, Any]] = []
         try:
             from polaris.cells.roles.adapters.public import (
                 commit_materialization_deferred_repairs,
@@ -8630,14 +8739,42 @@ class OrchestrationStageExecutor:
                 run_id=run_id,
                 diagnostics=diagnostics,
             )
-            committed_receipts = await commit_materialization_deferred_repairs(
-                workspace=str(execution_attempt.workspace),
-                tool_results=tool_results,
-                execution_attempt=execution_attempt,
-                execution_attempt_authority=authority,
-                turn_id=f"director-stage-mat-settle-{run_id}",
-                context=commit_context,
-            )
+            deferred_candidates = [
+                item
+                for item in tool_results
+                if isinstance(item, Mapping)
+                and isinstance(item.get("result"), Mapping)
+                and (
+                    item["result"].get("deferred_request") is not None
+                    or str(item["result"].get("status") or "").strip()
+                    in {"deferred_repair_effects_pending", "deferred_command_effect_pending"}
+                )
+            ]
+            # Each candidate is an alternative repair strategy, not another
+            # mandatory effect.  Commit one candidate, revalidate the physical
+            # workspace, and stop as soon as it converges.  Executing every
+            # candidate after the verifier is already green both wastes work
+            # and can add a dead-letter parent to the same TaskRuntime attempt,
+            # making its otherwise truthful completed settlement impossible.
+            for candidate_index, candidate in enumerate(deferred_candidates):
+                candidate_receipts = await commit_materialization_deferred_repairs(
+                    workspace=str(execution_attempt.workspace),
+                    tool_results=[candidate],
+                    execution_attempt=execution_attempt,
+                    execution_attempt_authority=authority,
+                    turn_id=f"director-stage-mat-settle-{run_id}:candidate{candidate_index}",
+                    context=commit_context,
+                )
+                committed_receipts.extend(candidate_receipts)
+                if not any(
+                    isinstance(item, Mapping) and self._director_stage_materialization_receipt_succeeded(item)
+                    for item in candidate_receipts
+                ):
+                    continue
+                self._ensure_director_stage_materialization_typescript_toolchain()
+                post_commit_diagnostics = self._collect_director_stage_materialization_diagnostics()
+                if not post_commit_diagnostics:
+                    break
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning(
                 "Director stage materialization quality settle failed for run %s: %s",
@@ -8659,25 +8796,23 @@ class OrchestrationStageExecutor:
                 "diagnostic_count": len(diagnostics),
             }
         summary_dict = dict(summary) if isinstance(summary, Mapping) else {}
-        deferred_expected = any(
-            isinstance(item, Mapping)
-            and isinstance(item.get("result"), Mapping)
-            and (
-                item["result"].get("deferred_request") is not None
-                or str(item["result"].get("status") or "").strip()
-                in {"deferred_repair_effects_pending", "deferred_command_effect_pending"}
-            )
-            for item in tool_results
-        )
+        deferred_expected = bool(deferred_candidates)
+        successful_receipts = [
+            dict(item)
+            for item in committed_receipts
+            if isinstance(item, Mapping) and self._director_stage_materialization_receipt_succeeded(item)
+        ]
         failed_receipts = [
             dict(item)
             for item in committed_receipts
-            if not isinstance(item, Mapping) or item.get("success") is not True
+            if not isinstance(item, Mapping) or not self._director_stage_materialization_receipt_succeeded(item)
         ]
-        successful_receipts = [
-            dict(item) for item in committed_receipts if isinstance(item, Mapping) and item.get("success") is True
-        ]
-        commit_failed = bool(failed_receipts) or (deferred_expected and not committed_receipts)
+        # Partial DEO failures remain evidence, but must not erase a verified
+        # successful repair candidate.  The post-commit verifier is the
+        # authority for whether the same Director task still needs local rework.
+        missing_commit_receipt = deferred_expected and not successful_receipts
+        verifier_residual = bool(post_commit_diagnostics)
+        commit_failed = missing_commit_receipt or verifier_residual
         mutated = bool(successful_receipts) or any(
             self._workspace_quality_repair_result_has_mutation(dict(item))
             for item in tool_results
@@ -8697,19 +8832,28 @@ class OrchestrationStageExecutor:
             )
         settlement_failed = settlement_result.get("success") is not True
         if commit_failed or settlement_failed:
+            failure_reason = (
+                "deferred_repair_commit_failed"
+                if missing_commit_receipt
+                else "materialization_verifier_residual"
+                if verifier_residual
+                else "settle_attempt_close_failed"
+            )
             return {
                 "ok": False,
-                "reason": "deferred_repair_commit_failed" if commit_failed else "settle_attempt_close_failed",
+                "reason": failure_reason,
                 "detail": (
-                    "materialization deferred repair did not reach terminal TaskRuntime settlement "
+                    "materialization settle did not reach a verifier-clean terminal state "
                     f"(expected={deferred_expected}, receipts={len(committed_receipts)}, "
-                    f"failed={len(failed_receipts)}, settle_reason="
+                    f"failed={len(failed_receipts)}, residual={len(post_commit_diagnostics)}, settle_reason="
                     f"{settlement_result.get('reason') or 'unknown'!s})"
                 ),
                 "tool_result_count": len(tool_results),
                 "committed_receipt_count": len(successful_receipts),
                 "failed_receipt_count": len(failed_receipts),
                 "diagnostic_count": len(diagnostics),
+                "post_commit_diagnostic_count": len(post_commit_diagnostics),
+                "post_commit_diagnostics": post_commit_diagnostics[:20],
                 "mutated": mutated,
                 "external_task_id": external_task_id,
             }
@@ -8723,8 +8867,9 @@ class OrchestrationStageExecutor:
             ),
             "tool_result_count": len(tool_results),
             "committed_receipt_count": len(successful_receipts),
-            "failed_receipt_count": 0,
+            "failed_receipt_count": len(failed_receipts),
             "diagnostic_count": len(diagnostics),
+            "post_commit_diagnostic_count": len(post_commit_diagnostics),
             "mutated": mutated,
             "external_task_id": external_task_id,
             "summary_keys": sorted(str(key) for key in summary_dict)[:24],

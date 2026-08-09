@@ -18,6 +18,7 @@ verification_card:
     - production project-completion action owner now commits the exact TaskRuntime row.
     - Factory now advances convergence after Director failure and quality-gate fact commits.
     - FactoryRunDriverRuntimeV1 owns task lifetime and recovers runnable or committed-local-rework runs at startup.
+    - restart replay permanently closes the old physical-attempt epoch, then a newer workspace fencing token opens a fresh epoch.
   premortem:
     - risk: staged TaskMarket item is absent; defense: current same-task action mutates TaskRuntime authority directly.
     - risk: stale action reopens a newer run; defense: bind run, contract, cursor claim and owner execution anchor.
@@ -26,6 +27,7 @@ verification_card:
     - risk: Factory creates a second retry loop; defense: durable workflow cursor remains sole convergence owner.
     - risk: same diagnostic loops forever; defense: semantic fingerprint plus max three attempts and stagnation policy.
     - risk: backend restarts after action commit; defense: lifespan driver merges run status with pending exact-row actions.
+    - risk: replay safety permanently kills the whole run; defense: old epoch stays closed while an explicit fenced lifecycle transition creates a new epoch.
   verification_plan:
     - test: task-runtime same-task command rejects forged receipt and cross-run identity.
     - test: task-runtime reopens exact terminal row and leaves unrelated rows unchanged.
@@ -42,9 +44,8 @@ verification_card:
   success_evidence_pending:
     - focused tests green
     - independent skeptical review clear
-    - lifecycle-owned Factory stage driver survives backend restart
     - fresh isolated L1-01 reaches COMPLETED_VERIFIED
   residual_boundary:
     - this change handles ordinary QA code failures only.
     - immutable PM contract or CE architecture failures remain upstream-authority blockers.
-    - exact-row reopen is durable, but autonomous post-crash stage execution is not closed yet.
+    - autonomous post-crash stage execution is closed at process level; project-level COMPLETED_VERIFIED remains pending.
