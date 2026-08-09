@@ -13,6 +13,7 @@ from polaris.cells.factory.pipeline.public.project_completion_bootstrap import (
 )
 from polaris.cells.factory.pipeline.public.project_completion_notification import (
     FactoryProjectCompletionIdentityV1,
+    FactoryProjectCompletionNotificationResultV1,
 )
 from polaris.cells.factory.verification_guard.public.contracts import (
     ProjectCompletionDiagnosticsV1,
@@ -25,7 +26,6 @@ from polaris.cells.orchestration.workflow_orchestration.public.project_completio
     AdvanceProjectCompletionCommandV1,
     ProjectCompletionIdentityV1,
     advance_project_completion,
-    notify_project_completion,
 )
 from polaris.cells.orchestration.workflow_orchestration.public.project_completion_bootstrap import (
     EventDrivenProjectCompletionSupervisorV1,
@@ -55,8 +55,8 @@ from polaris.cells.runtime.task_market.public.service import (
 from polaris.infrastructure.db.repositories.workflow_runtime_store import SqliteRuntimeStore
 from polaris.kernelone.storage import resolve_runtime_path
 
-from .project_completion_task_market_action_owner import (
-    TaskMarketProjectCompletionActionOwnerV1,
+from .project_completion_task_runtime_action_owner import (
+    TaskRuntimeProjectCompletionActionOwnerV1,
 )
 
 
@@ -79,8 +79,8 @@ class _FactoryProjectCompletionNotificationPort:
     async def notify_project_completion(
         self,
         identity: FactoryProjectCompletionIdentityV1,
-    ) -> None:
-        await notify_project_completion(
+    ) -> FactoryProjectCompletionNotificationResultV1:
+        result = await advance_project_completion(
             AdvanceProjectCompletionCommandV1(
                 identity=ProjectCompletionIdentityV1(
                     workspace=identity.workspace,
@@ -89,6 +89,13 @@ class _FactoryProjectCompletionNotificationPort:
                     completion_contract_hash=identity.completion_contract_hash,
                 )
             )
+        )
+        return FactoryProjectCompletionNotificationResultV1(
+            status=result.status,
+            reason_codes=result.reason_codes,
+            action_id=result.action_id,
+            diagnostic_id=result.diagnostic_id,
+            next_action=result.next_action,
         )
 
 
@@ -217,7 +224,7 @@ def configure_project_completion_convergence_runtime(
         cursor=cursor,
         outcome_port=_ProjectOutcomePort(),
         diagnostics_port=_ProjectDiagnosticsPort(),
-        action_port=TaskMarketProjectCompletionActionOwnerV1(task_market),
+        action_port=TaskRuntimeProjectCompletionActionOwnerV1(),
         model_ceiling_port=_ProjectModelCeilingPort(),
     )
 

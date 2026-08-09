@@ -304,7 +304,7 @@ verify_targets:
     - ReserveBudgetCommandV1
     - AppendFactEventCommandV1
 migration_notes:
-  - "Project-completion supervision is restart-safe: nonterminal identity and bounded limits are recovered from the workflow-runtime cursor, and process-local wake events are latency hints only. Bootstrap composition outside the orchestration Cell binds its public action port to runtime.task_market and replays the TaskMarket transactional outbox before scheduling."
+  - "Project-completion supervision is restart-safe: nonterminal identity and bounded limits are recovered from the workflow-runtime cursor, and process-local wake events are latency hints only. Bootstrap composition binds the public completion action port to the exact runtime.task_runtime owner row; Factory consumes that durable action for stage-local re-entry without replaying PM or Chief Engineer."
   - Project-completion diagnostics treat TaskRuntime, TaskBoundary, and Run Ledger gate summaries as prerequisites only; the current public owner APIs lack exact per-obligation effect/command receipt bindings, so completion evidence fails closed as missing rather than inferring pass/fail.
   - Subgraph declared during business-cell convergence; some legacy routes may still proxy to Polaris entrypoints.
   - Director's projection-oriented execution backend is opt-in and currently routed through roles.adapters during migration.

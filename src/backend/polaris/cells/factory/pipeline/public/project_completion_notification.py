@@ -22,12 +22,30 @@ class FactoryProjectCompletionIdentityV1:
             object.__setattr__(self, name, value)
 
 
+@dataclass(frozen=True, slots=True)
+class FactoryProjectCompletionNotificationResultV1:
+    """Factory-safe projection of one synchronous durable convergence step."""
+
+    status: str
+    reason_codes: tuple[str, ...]
+    action_id: str | None = None
+    diagnostic_id: str | None = None
+    next_action: str | None = None
+
+    def __post_init__(self) -> None:
+        status = str(self.status or "").strip()
+        if not status:
+            raise ValueError("status must be non-empty")
+        object.__setattr__(self, "status", status)
+        object.__setattr__(self, "reason_codes", tuple(str(item).strip() for item in self.reason_codes if str(item).strip()))
+
+
 @runtime_checkable
 class FactoryProjectCompletionNotificationPortV1(Protocol):
     async def notify_project_completion(
         self,
         identity: FactoryProjectCompletionIdentityV1,
-    ) -> None: ...
+    ) -> FactoryProjectCompletionNotificationResultV1: ...
 
 
 _notification_port: FactoryProjectCompletionNotificationPortV1 | None = None
@@ -56,16 +74,22 @@ def _clear_factory_project_completion_notification_port(
             _notification_port = None
 
 
-async def notify_factory_project_completion(identity: FactoryProjectCompletionIdentityV1) -> None:
+async def notify_factory_project_completion(
+    identity: FactoryProjectCompletionIdentityV1,
+) -> FactoryProjectCompletionNotificationResultV1:
     with _notification_port_lock:
         port = _notification_port
     if port is None:
         raise RuntimeError("factory_project_completion_notification_port_unbound")
-    await port.notify_project_completion(identity)
+    result = await port.notify_project_completion(identity)
+    if type(result) is not FactoryProjectCompletionNotificationResultV1:
+        raise TypeError("completion notification port must return the exact result contract")
+    return result
 
 
 __all__ = [
     "FactoryProjectCompletionIdentityV1",
     "FactoryProjectCompletionNotificationPortV1",
+    "FactoryProjectCompletionNotificationResultV1",
     "notify_factory_project_completion",
 ]

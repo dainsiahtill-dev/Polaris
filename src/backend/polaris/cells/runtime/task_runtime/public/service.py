@@ -45,8 +45,10 @@ from .contracts import (
     OpenTaskRuntimeExecutionAttemptAuthorityCommandV1,
     OwnerReworkExecutionPreparationResultV1,
     PrepareOwnerReworkExecutionCommandV1,
+    PrepareSameTaskLocalReworkCommandV1,
     ReconcileAmbiguousDirectedEffectsCommandV1,
     RuntimeTaskFactoryRunBindingResultV1,
+    SameTaskLocalReworkPreparationResultV1,
     SealDirectedEffectInventoryCommandV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
     TaskRuntimeExecutionAttemptAuthorityHeartbeatVerdictV1,
@@ -782,6 +784,15 @@ def prepare_owner_rework_execution(
     return runtime.prepare_owner_rework_execution(command)
 
 
+def prepare_same_task_local_rework(
+    command: PrepareSameTaskLocalReworkCommandV1,
+) -> SameTaskLocalReworkPreparationResultV1:
+    """Project a canonical QA requeue receipt into the exact TaskRuntime row."""
+
+    runtime = TaskRuntimeService(command.workspace)
+    return runtime.prepare_same_task_local_rework(command)
+
+
 __all__ = [
     "TaskRuntimeExecutionAttemptAuthorityV1",
     "TaskRuntimeService",
@@ -799,6 +810,7 @@ __all__ = [
     "heartbeat_task_runtime_execution_attempt",
     "open_task_runtime_execution_attempt_authority",
     "prepare_owner_rework_execution",
+    "prepare_same_task_local_rework",
     "query_factory_run_settlement",
     "query_observable_task_rows",
     "reset_runtime_task_records",

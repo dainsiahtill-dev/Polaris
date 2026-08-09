@@ -544,6 +544,7 @@ cells:
         - BindRuntimeTaskToFactoryRunCommandV1
         - FenceExpiredFactoryRunSessionsCommandV1
         - PrepareOwnerReworkExecutionCommandV1
+        - PrepareSameTaskLocalReworkCommandV1
         - OpenTaskRuntimeExecutionAttemptAuthorityCommandV1
         - HeartbeatTaskRuntimeExecutionAttemptCommandV1
         - SettleTaskRuntimeExecutionAttemptCommandV1
@@ -576,6 +577,7 @@ cells:
         - RuntimeTaskFactoryRunBindingResultV1
         - ExpiredFactoryRunSessionFenceResultV1
         - OwnerReworkExecutionPreparationResultV1
+        - SameTaskLocalReworkPreparationResultV1
         - TaskRuntimeExecutionAttemptValidationVerdictV1
         - TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1
         - TaskRuntimeExecutionAttemptHeartbeatVerdictV1
@@ -3833,8 +3835,9 @@ cells:
       signals, cancellation, and progress tracking. Project-completion
       supervision recovers from the durable cursor through public owner/action
       ports; local process events are latency hints only. Bootstrap composition
-      may bind those ports to TaskMarket and replay its transactional outbox
-      without making TaskMarket a Cell dependency.
+      binds same-task completion actions to runtime.task_runtime, while the
+      Factory stage driver consumes that durable preparation without reopening
+      PM or Chief Engineer.
     current_modules:
       - polaris.cells.orchestration.workflow_orchestration.public.contracts
       - polaris.cells.orchestration.workflow_orchestration.public.project_completion

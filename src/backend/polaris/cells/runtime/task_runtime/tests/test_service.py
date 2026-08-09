@@ -39,11 +39,13 @@ from polaris.cells.runtime.task_runtime.internal.task_board import (
 )
 from polaris.cells.runtime.task_runtime.public.contracts import (
     OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1,
+    SAME_TASK_LOCAL_REWORK_AUTHORIZATION_SCHEMA_V1,
     BindRuntimeTaskToFactoryRunCommandV1,
     FenceExpiredFactoryRunSessionsCommandV1,
     HeartbeatTaskRuntimeExecutionAttemptCommandV1,
     OwnerReworkExecutionAuthorizationV1,
     PrepareOwnerReworkExecutionCommandV1,
+    PrepareSameTaskLocalReworkCommandV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
     TaskRuntimeExecutionFactV1,
@@ -10530,6 +10532,151 @@ def test_prepare_owner_rework_execution_rejects_malformed_handoff_and_missing_ro
     assert malformed_result.code == "owner_rework_authorization_malformed"
     assert missing_row_result.ok is False
     assert missing_row_result.code == "runtime_task_not_found"
+
+
+def test_prepare_same_task_local_rework_reopens_exact_factory_owner_and_reclaims(
+    tmp_path: Path,
+) -> None:
+    """A run-bound QA receipt reopens only its PM owner and preserves diagnostics."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    owner = service.ensure_task_row(external_task_id="TASK-1", subject="source owner")
+    unrelated = service.ensure_task_row(external_task_id="TASK-2", subject="unrelated task")
+    owner_id = int(owner["id"])
+    unrelated_id = int(unrelated["id"])
+    unrelated_before_status = str(unrelated.get("status") or "")
+    assert service.bind_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=str(workspace),
+            task_id=str(owner_id),
+            factory_run_id="factory-current",
+        )
+    ).ok is True
+    assert service.bind_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=str(workspace),
+            task_id=str(unrelated_id),
+            factory_run_id="factory-current",
+        )
+    ).ok is True
+    claimed = service.claim_execution(
+        owner_id,
+        worker_id="director-initial",
+        role_id="director",
+        run_id="director-initial",
+        external_task_id="TASK-1",
+    )
+    assert claimed["success"] is True
+    assert _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="done")["success"]
+
+    diagnostic = {
+        "diagnostic_id": "diagnostic-1",
+        "obligation_id": "obligation-1",
+        "owner_task_id": "TASK-1",
+        "affected_target": "src/main.ts",
+        "allowed_next_action": "run_deterministic_repair",
+        "required_verifier_ids": ["npm.run.build"],
+    }
+    command = PrepareSameTaskLocalReworkCommandV1(
+        schema_version=SAME_TASK_LOCAL_REWORK_AUTHORIZATION_SCHEMA_V1,
+        workspace=str(workspace),
+        factory_run_id="factory-current",
+        external_task_id="TASK-1",
+        completion_contract_hash="a" * 64,
+        action_id="b" * 64,
+        diagnostic_id="diagnostic-1",
+        obligation_id="obligation-1",
+        action_kind="run_deterministic_repair",
+        owner_snapshot_hash="c" * 64,
+        owner_bundle_hash="d" * 64,
+        dispatch_claim={
+            "identity": {
+                "workspace": str(workspace.resolve()),
+                "run_id": "factory-current",
+                "completion_contract_hash": "a" * 64,
+            },
+            "action_id": "b" * 64,
+            "claim_id": "e" * 64,
+            "attempt_ordinal": 1,
+        },
+        diagnostic=diagnostic,
+    )
+
+    prepared = service.prepare_same_task_local_rework(command)
+    repeated = service.prepare_same_task_local_rework(command)
+
+    assert prepared.ok is True
+    assert prepared.code == "same_task_local_rework_prepared"
+    assert prepared.reopened is True
+    assert prepared.runtime_task_id == str(owner_id)
+    assert repeated.ok is True
+    assert repeated.idempotent is True
+    owner_row = service.get_task("TASK-1")
+    unrelated_row = service.get_task("TASK-2")
+    assert owner_row is not None
+    assert owner_row["metadata"]["last_failure"] == diagnostic
+    assert unrelated_row is not None
+    assert unrelated_row["status"] == unrelated_before_status
+    retried = service.claim_execution(
+        owner_id,
+        worker_id="director-local-rework",
+        role_id="director",
+        run_id="director-local-rework",
+        external_task_id="TASK-1",
+    )
+    assert retried["success"] is True
+    assert retried["task"]["metadata"]["last_failure"] == diagnostic
+
+
+def test_prepare_same_task_local_rework_rejects_cross_run_claim(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    created = service.ensure_task_row(external_task_id="TASK-1", subject="owner")
+    assert service.bind_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=str(workspace),
+            task_id=str(created["id"]),
+            factory_run_id="factory-current",
+        )
+    ).ok is True
+    result = service.prepare_same_task_local_rework(
+        PrepareSameTaskLocalReworkCommandV1(
+            schema_version=SAME_TASK_LOCAL_REWORK_AUTHORIZATION_SCHEMA_V1,
+            workspace=str(workspace),
+            factory_run_id="factory-current",
+            external_task_id="TASK-1",
+            completion_contract_hash="1" * 64,
+            action_id="2" * 64,
+            diagnostic_id="diagnostic-1",
+            obligation_id="obligation-1",
+            action_kind="run_required_verifier",
+            owner_snapshot_hash="3" * 64,
+            owner_bundle_hash="4" * 64,
+            dispatch_claim={
+                "identity": {
+                    "workspace": str(workspace.resolve()),
+                    "run_id": "factory-old",
+                    "completion_contract_hash": "1" * 64,
+                },
+                "action_id": "2" * 64,
+                "claim_id": "5" * 64,
+                "attempt_ordinal": 1,
+            },
+            diagnostic={
+                "diagnostic_id": "diagnostic-1",
+                "obligation_id": "obligation-1",
+                "owner_task_id": "TASK-1",
+                "affected_target": "tests/product.test.ts",
+                "allowed_next_action": "run_required_verifier",
+            },
+        )
+    )
+
+    assert result.ok is False
+    assert result.code == "same_task_local_rework_receipt_mismatch"
 
 
 def test_claim_execution_threaded_contenders_have_one_session_winner(tmp_path: Path) -> None:

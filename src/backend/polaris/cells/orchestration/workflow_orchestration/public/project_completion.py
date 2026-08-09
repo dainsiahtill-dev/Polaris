@@ -18,6 +18,7 @@ from typing import Protocol, runtime_checkable
 
 from polaris.cells.factory.verification_guard.public.contracts import (
     ProjectCompletionDiagnosticsV1,
+    ProjectCompletionDiagnosticV1,
 )
 from polaris.cells.orchestration.workflow_runtime.public.model_ceiling import (
     ModelCeilingTerminalResultV1,
@@ -166,12 +167,15 @@ class ProjectCompletionActionCommandV1:
     action_kind: str
     owner_snapshot_hash: str
     owner_bundle_hash: str
+    diagnostic: ProjectCompletionDiagnosticV1
     schema_version: str = field(default="orchestration.workflow_orchestration.project_completion_action.v1", init=False)
     handoff_id: str = field(init=False)
 
     def __post_init__(self) -> None:
         if type(self.identity) is not ProjectCompletionIdentityV1:
             raise TypeError("identity must be an exact ProjectCompletionIdentityV1")
+        if type(self.diagnostic) is not ProjectCompletionDiagnosticV1:
+            raise TypeError("diagnostic must be an exact ProjectCompletionDiagnosticV1")
         action_id = _sha256("action_id", self.action_id)
         object.__setattr__(self, "action_id", action_id)
         object.__setattr__(self, "handoff_id", action_id)
@@ -183,6 +187,13 @@ class ProjectCompletionActionCommandV1:
         object.__setattr__(self, "action_kind", action_kind)
         object.__setattr__(self, "owner_snapshot_hash", _sha256("owner_snapshot_hash", self.owner_snapshot_hash))
         object.__setattr__(self, "owner_bundle_hash", _sha256("owner_bundle_hash", self.owner_bundle_hash))
+        if (
+            self.diagnostic.diagnostic_id != self.diagnostic_id
+            or self.diagnostic.obligation_id != self.obligation_id
+            or self.diagnostic.owner_task_id != self.owner_task_id
+            or self.diagnostic.allowed_next_action != self.action_kind
+        ):
+            raise ValueError("action identity must match the complete owner diagnostic")
 
 
 @dataclass(frozen=True, slots=True)

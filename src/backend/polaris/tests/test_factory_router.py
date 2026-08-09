@@ -1971,15 +1971,15 @@ def test_execute_run_does_not_replay_director_without_committed_requeue_receipt(
     assert history is None
 
 
-def test_stage_local_rework_projection_accepts_service_projection_shape() -> None:
+def test_stage_local_rework_projection_accepts_durable_workflow_action_shape() -> None:
     result = SimpleNamespace(
         metadata={
             "factory_terminal_drain_deferred": {
-                "schema_version": "factory.terminal-drain-deferred.v1",
+                "schema_version": "factory.terminal-drain-deferred.v2",
                 "reason": "chief_engineer_local_rework_decision_pending",
-                "decision_owner": "factory_orchestration",
-                "owner_task_id": "TASK-1",
-                "requeue_receipt_ref": "a" * 64,
+                "decision_owner": "orchestration.workflow_orchestration",
+                "action_id": "a" * 64,
+                "diagnostic_id": "diagnostic-1",
             }
         }
     )

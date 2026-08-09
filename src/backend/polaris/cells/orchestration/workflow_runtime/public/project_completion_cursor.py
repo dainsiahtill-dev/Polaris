@@ -32,6 +32,7 @@ _REQUIRED_TRANSITION_FIELDS: dict[str, dict[str, type[object]]] = {
         "action_kind": str,
         "owner_snapshot_hash": str,
         "owner_bundle_hash": str,
+        "diagnostic": dict,
     },
     "project_completion.dispatch_claimed.v1": {
         "action_id": str,

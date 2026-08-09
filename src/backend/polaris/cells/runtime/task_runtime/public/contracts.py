@@ -114,6 +114,7 @@ def _factory_run_id_from_task_row(row: Mapping[str, Any]) -> str:
 
 
 OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1 = "task-runtime.owner-rework-execution-authorization/1"
+SAME_TASK_LOCAL_REWORK_AUTHORIZATION_SCHEMA_V1 = "task-runtime.same-task-local-rework-authorization/1"
 _OWNER_REWORK_TASK_ROLES = frozenset({"owner", "requester"})
 TASK_RUNTIME_EXECUTION_STREAM_V1: Final[str] = "task_runtime.execution"
 TASK_RUNTIME_EXECUTION_SOURCE_V1: Final[str] = "runtime.task_runtime"
@@ -408,6 +409,98 @@ class PrepareOwnerReworkExecutionCommandV1:
     def __post_init__(self) -> None:
         if not isinstance(self.authorization, OwnerReworkExecutionAuthorizationV1):
             raise ValueError("authorization must be OwnerReworkExecutionAuthorizationV1")
+
+
+@dataclass(frozen=True)
+class PrepareSameTaskLocalReworkCommandV1:
+    """Apply one workflow-owned completion action to the exact Director task."""
+
+    schema_version: str
+    workspace: str
+    factory_run_id: str
+    external_task_id: str
+    completion_contract_hash: str
+    action_id: str
+    diagnostic_id: str
+    obligation_id: str
+    action_kind: str
+    owner_snapshot_hash: str
+    owner_bundle_hash: str
+    dispatch_claim: Mapping[str, Any]
+    diagnostic: Mapping[str, Any]
+    max_rework_attempts: int = 3
+
+    def __post_init__(self) -> None:
+        schema_version = _require_non_empty("schema_version", self.schema_version)
+        if schema_version != SAME_TASK_LOCAL_REWORK_AUTHORIZATION_SCHEMA_V1:
+            raise ValueError(f"schema_version must be {SAME_TASK_LOCAL_REWORK_AUTHORIZATION_SCHEMA_V1!r}")
+        object.__setattr__(self, "schema_version", schema_version)
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "factory_run_id", _require_non_empty("factory_run_id", self.factory_run_id))
+        object.__setattr__(self, "external_task_id", _require_non_empty("external_task_id", self.external_task_id))
+        object.__setattr__(
+            self,
+            "completion_contract_hash",
+            _require_non_empty("completion_contract_hash", self.completion_contract_hash).lower(),
+        )
+        for name in (
+            "completion_contract_hash",
+            "action_id",
+            "owner_snapshot_hash",
+            "owner_bundle_hash",
+        ):
+            value = _require_non_empty(name, getattr(self, name)).lower()
+            if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+                raise ValueError(f"{name} must be a sha256 hex digest")
+            object.__setattr__(self, name, value)
+        for name in ("diagnostic_id", "obligation_id", "action_kind"):
+            object.__setattr__(self, name, _require_non_empty(name, getattr(self, name)))
+        claim = _to_dict_copy(self.dispatch_claim)
+        diagnostic = _to_dict_copy(self.diagnostic)
+        if not claim:
+            raise ValueError("dispatch_claim must not be empty")
+        if not diagnostic:
+            raise ValueError("diagnostic must not be empty")
+        object.__setattr__(self, "dispatch_claim", claim)
+        object.__setattr__(self, "diagnostic", diagnostic)
+        max_attempts = int(self.max_rework_attempts)
+        if not 1 <= max_attempts <= 5:
+            raise ValueError("max_rework_attempts must be between 1 and 5")
+        object.__setattr__(self, "max_rework_attempts", max_attempts)
+
+
+SameTaskLocalReworkPreparationCodeV1 = Literal[
+    "same_task_local_rework_authorization_malformed",
+    "same_task_local_rework_receipt_mismatch",
+    "same_task_local_rework_task_not_found",
+    "same_task_local_rework_task_identity_conflict",
+    "same_task_local_rework_factory_run_mismatch",
+    "same_task_local_rework_active_lease_conflict",
+    "same_task_local_rework_budget_exhausted",
+    "same_task_local_rework_already_prepared",
+    "same_task_local_rework_prepared",
+]
+
+
+@dataclass(frozen=True)
+class SameTaskLocalReworkPreparationResultV1:
+    ok: bool
+    code: SameTaskLocalReworkPreparationCodeV1
+    reason: str
+    external_task_id: str
+    runtime_task_id: str = ""
+    reopened: bool = False
+    idempotent: bool = False
+    rework_attempt: int = 0
+    task_row: Mapping[str, Any] = field(default_factory=dict)
+    execution_event: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "reason", _require_non_empty("reason", self.reason))
+        object.__setattr__(self, "external_task_id", _require_non_empty("external_task_id", self.external_task_id))
+        object.__setattr__(self, "runtime_task_id", str(self.runtime_task_id or "").strip())
+        object.__setattr__(self, "task_row", _to_dict_copy(self.task_row))
+        object.__setattr__(self, "execution_event", _to_dict_copy(self.execution_event))
 
 
 OwnerReworkExecutionPreparationCodeV1 = Literal[
@@ -3348,6 +3441,7 @@ __all__ = [
     "DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V2",
     "DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V3",
     "OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1",
+    "SAME_TASK_LOCAL_REWORK_AUTHORIZATION_SCHEMA_V1",
     "TASK_RUNTIME_EXECUTION_ATTEMPT_IDENTITY_SCHEMA_V1",
     "TASK_RUNTIME_EXECUTION_FACT_SCHEMA_V1",
     "TASK_RUNTIME_EXECUTION_SOURCE_V1",
@@ -3408,12 +3502,15 @@ __all__ = [
     "OwnerReworkExecutionPreparationResultV1",
     "ParentCorrelationV1",
     "PrepareOwnerReworkExecutionCommandV1",
+    "PrepareSameTaskLocalReworkCommandV1",
     "ReopenRuntimeTaskCommandV1",
     "RuntimeTaskFactoryRunBindingCodeV1",
     "RuntimeTaskFactoryRunBindingResultV1",
     "RuntimeTaskLifecycleEventV1",
     "RuntimeTaskResultV1",
     "RuntimeTaskRuntimeError",
+    "SameTaskLocalReworkPreparationCodeV1",
+    "SameTaskLocalReworkPreparationResultV1",
     "SealDirectedEffectInventoryCommandV1",
     "SettleTaskRuntimeExecutionAttemptCommandV1",
     "TaskRuntimeExecutionAttemptAuthorityHeartbeatCodeV1",

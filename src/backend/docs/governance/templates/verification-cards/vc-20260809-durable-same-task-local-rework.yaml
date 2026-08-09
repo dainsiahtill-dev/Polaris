@@ -1,0 +1,50 @@
+verification_card:
+  id: vc-20260809-durable-same-task-local-rework
+  status: active
+  classification: structural
+  scope: durable project-completion residual to exact owning TaskRuntime row local rework
+  assumption_register:
+    - TaskRuntime is the current production execution lifecycle authority.
+    - Factory Director dispatch claims TaskRuntime rows, not TaskMarket work items.
+    - VerificationGuard emits sealed diagnostics with exact owner task and evidence locators.
+    - workflow_runtime cursor is the only durable retry and claim owner.
+    - PM and Chief Engineer authority remain valid during ordinary code repair.
+  code_evidence:
+    - factory.pipeline depends_on runtime.task_runtime in docs/graph/catalog/cells.yaml.
+    - runtime.task_runtime owns runtime/tasks and execution attempts.
+    - runtime.task_market mainline migration is explicitly staged.
+    - L1-01 r22 runtime contains TaskRuntime rows and no task_market work_items.json.
+    - Factory claimable Director task selection reads TaskRuntime observable rows.
+    - production project-completion action owner now commits the exact TaskRuntime row.
+    - Factory now advances convergence after Director failure and quality-gate fact commits.
+    - FactoryRunDriverRuntimeV1 owns task lifetime and recovers runnable or committed-local-rework runs at startup.
+  premortem:
+    - risk: staged TaskMarket item is absent; defense: current same-task action mutates TaskRuntime authority directly.
+    - risk: stale action reopens a newer run; defense: bind run, contract, cursor claim and owner execution anchor.
+    - risk: diagnostic id lacks repair context; defense: action carries affected target and owner evidence refs.
+    - risk: retry races active Director lease; defense: TaskRuntime active-lease rejection.
+    - risk: Factory creates a second retry loop; defense: durable workflow cursor remains sole convergence owner.
+    - risk: same diagnostic loops forever; defense: semantic fingerprint plus max three attempts and stagnation policy.
+    - risk: backend restarts after action commit; defense: lifespan driver merges run status with pending exact-row actions.
+  verification_plan:
+    - test: task-runtime same-task command rejects forged receipt and cross-run identity.
+    - test: task-runtime reopens exact terminal row and leaves unrelated rows unchanged.
+    - test: same receipt is idempotent and active lease is fail-closed.
+    - test: TaskMarket absence does not block a valid same-task TaskRuntime action.
+    - test: action receipt revalidation reads matching TaskRuntime metadata.
+    - test: Factory stage owner-fact commits explicitly wake the existing supervisor without polling.
+    - test: backend restart after action commit resumes exact Director task without a new HTTP run request.
+    - test: crash recovery emits one driver claim and at most one physical effect.
+    - command: ruff check and format over changed files.
+    - command: mypy over changed production modules.
+    - command: focused Factory and TaskRuntime pytest suites.
+    - command: fresh isolated L1-01 with 5400s inner and 6000s outer budgets.
+  success_evidence_pending:
+    - focused tests green
+    - independent skeptical review clear
+    - lifecycle-owned Factory stage driver survives backend restart
+    - fresh isolated L1-01 reaches COMPLETED_VERIFIED
+  residual_boundary:
+    - this change handles ordinary QA code failures only.
+    - immutable PM contract or CE architecture failures remain upstream-authority blockers.
+    - exact-row reopen is durable, but autonomous post-crash stage execution is not closed yet.

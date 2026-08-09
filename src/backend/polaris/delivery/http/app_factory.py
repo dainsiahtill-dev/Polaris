@@ -191,6 +191,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     instance_watchdog_task = None
     settlement_runtime_started = False
     project_completion_runtime = None
+    factory_run_driver_runtime = None
     try:
         if workspace:
             bootstrap_fact_stream_workspace(
@@ -204,6 +205,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         resident_autotick_task = maybe_start_resident_autotick(workspace)
         instance_watchdog_task = maybe_start_instance_watchdog()
         if workspace:
+            from polaris.bootstrap.factory_run_driver_runtime import (
+                FactoryRunDriverRuntimeV1,
+                bind_factory_run_driver_runtime,
+                recover_committed_factory_run_ids,
+            )
             from polaris.bootstrap.managed_process_receipt_owner import (
                 configure_managed_process_receipt_owner,
             )
@@ -224,9 +230,39 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 wake_bridge_required=nats_enabled and nats_required,
             )
             settlement_runtime_started = True
+            from polaris.delivery.http.routers.factory import (
+                _build_retry_start_request,
+                _execute_run_with_service,
+                _get_service,
+            )
+
+            factory_run_driver_runtime = FactoryRunDriverRuntimeV1(
+                workspace=workspace,
+                service=_get_service(workspace),
+                state=app.state.app_state,
+                execute=_execute_run_with_service,
+                build_recovery_payload=_build_retry_start_request,
+                recover_committed_run_ids=lambda: recover_committed_factory_run_ids(workspace),
+            )
+            bind_factory_run_driver_runtime(factory_run_driver_runtime)
+            await factory_run_driver_runtime.start()
 
         yield
     finally:
+        if factory_run_driver_runtime is not None:
+            from polaris.bootstrap.factory_run_driver_runtime import clear_factory_run_driver_runtime
+
+            try:
+                await factory_run_driver_runtime.stop()
+            except (OSError, RuntimeError, ValueError) as exc:
+                logger.error(
+                    "Factory run driver shutdown failed for workspace=%s: %s",
+                    workspace,
+                    exc,
+                    exc_info=True,
+                )
+            finally:
+                clear_factory_run_driver_runtime(factory_run_driver_runtime)
         if project_completion_runtime is not None:
             try:
                 await project_completion_runtime.stop()

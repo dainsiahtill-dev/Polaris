@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import copy
 import hashlib
@@ -84,7 +83,6 @@ from polaris.kernelone.quality import (
     task_record_routing_key,
 )
 from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path, resolve_storage_roots
-from polaris.kernelone.trace import create_task_with_context
 from pydantic import BaseModel, Field
 
 from ._shared import get_state, require_auth
@@ -163,7 +161,7 @@ _PLAN_PROBE_UNPLANNABLE_STATUS = "coverage_matched_but_unplannable"
 
 
 def _stage_local_rework_is_authorized(result: Any, *, expected_reason: str) -> bool:
-    """Accept only the service-issued projection of a committed TaskMarket requeue.
+    """Accept only a durable workflow action committed into TaskRuntime.
 
     A router flag or a failed stage is not recovery authority.  FactoryRunService
     emits this projection only after it validates the canonical TaskMarket receipt
@@ -175,13 +173,17 @@ def _stage_local_rework_is_authorized(result: Any, *, expected_reason: str) -> b
     metadata_map = metadata if isinstance(metadata, Mapping) else {}
     deferred = metadata_map.get("factory_terminal_drain_deferred")
     deferred_map = deferred if isinstance(deferred, Mapping) else {}
-    receipt_ref = str(deferred_map.get("requeue_receipt_ref") or "").strip()
+    action_id = str(deferred_map.get("action_id") or "").strip()
+    workflow_authorized = (
+        str(deferred_map.get("schema_version") or "").strip() == "factory.terminal-drain-deferred.v2"
+        and str(deferred_map.get("decision_owner") or "").strip()
+        == "orchestration.workflow_orchestration"
+        and re.fullmatch(r"[0-9a-f]{64}", action_id) is not None
+        and bool(str(deferred_map.get("diagnostic_id") or "").strip())
+    )
     return (
-        str(deferred_map.get("schema_version") or "").strip() == "factory.terminal-drain-deferred.v1"
-        and str(deferred_map.get("reason") or "").strip() == expected_reason
-        and str(deferred_map.get("decision_owner") or "").strip() == "factory_orchestration"
-        and bool(str(deferred_map.get("owner_task_id") or "").strip())
-        and re.fullmatch(r"[0-9a-f]{64}", receipt_ref) is not None
+        str(deferred_map.get("reason") or "").strip() == expected_reason
+        and workflow_authorized
     )
 
 
@@ -1217,6 +1219,26 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
 
         metadata_raw = record.get("metadata")
         metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+        completion_action_raw = metadata.get("factory_local_rework")
+        completion_action = completion_action_raw if isinstance(completion_action_raw, Mapping) else {}
+        completion_action_id = str(completion_action.get("action_id") or "").strip()
+        if re.fullmatch(r"[0-9a-f]{64}", completion_action_id) is not None:
+            summary["evaluated_count"] += 1
+            summary["reopened_count"] += 1
+            summary["requested"] = True
+            summary["tasks"].append(
+                {
+                    "task_id": str(record.get("id") or record.get("task_id") or "").strip(),
+                    "external_task_id": _resolve_task_identifier(metadata, record),
+                    "retry_count": int(completion_action.get("rework_attempt") or 1),
+                    "max_retries": _resolve_quality_rework_max_cycles(),
+                    "exhausted": False,
+                    "reason": rework_reason,
+                    "project_completion_action_id": completion_action_id,
+                    "transition_owner": "runtime.task_runtime",
+                }
+            )
+            continue
         adapter_result_raw = metadata.get("adapter_result")
         adapter_result: dict[str, Any] = adapter_result_raw if isinstance(adapter_result_raw, dict) else {}
         retry_count = _safe_rework_int(
@@ -2754,33 +2776,12 @@ def _schedule_factory_run_task(
     payload: FactoryStartRequest,
     state: AppState,
 ) -> Any:
-    coro = _execute_run_with_service(service, run_id, payload, state)
-    try:
-        task: Any = create_task_with_context(coro, name=f"factory-run:{run_id}")
-    except BaseException:
-        coro.close()
-        raise
-    if not isinstance(task, asyncio.Task):
-        coro.close()
-        return task
+    from polaris.bootstrap.factory_run_driver_runtime import get_factory_run_driver_runtime
 
-    def _log_orphaned_factory_task_exception(done: asyncio.Task[Any]) -> None:
-        if done.cancelled():
-            return
-        exc = done.exception()
-        if exc is None:
-            return
-        # Defensive: if a future refactor re-introduces a narrow except and the
-        # task dies without terminalizing, surface it instead of silent RUNNING.
-        logger.error(
-            "Factory run task %s finished with unhandled exception: %s",
-            run_id,
-            exc,
-            exc_info=exc,
-        )
-
-    task.add_done_callback(_log_orphaned_factory_task_exception)
-    return task
+    runtime = get_factory_run_driver_runtime()
+    if runtime.service is not service:
+        raise RuntimeError("factory_run_driver_service_binding_mismatch")
+    return runtime.submit(run_id, payload=payload)
 
 
 # ---- Core implementations ----

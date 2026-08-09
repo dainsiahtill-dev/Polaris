@@ -105,9 +105,11 @@ if TYPE_CHECKING:
         ObservableTaskRowsProjectionV1,
         OwnerReworkExecutionPreparationResultV1,
         PrepareOwnerReworkExecutionCommandV1,
+        PrepareSameTaskLocalReworkCommandV1,
         ReconcileAmbiguousDirectedEffectsCommandV1,
         RuntimeTaskFactoryRunBindingCodeV1,
         RuntimeTaskFactoryRunBindingResultV1,
+        SameTaskLocalReworkPreparationResultV1,
     )
     from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeExecutionAttemptAuthorityV1
 
@@ -118,6 +120,7 @@ _EXECUTION_ATTEMPT_SETTLEMENT_LOCK_TIMEOUT_SECONDS = 5.0
 _OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1 = "task-runtime.owner-rework-execution-authorization/1"
 _OWNER_REWORK_HANDOFFS_METADATA_KEY = "owner_rework_handoffs"
 _OWNER_REWORK_EXECUTION_AUTHORIZATION_METADATA_KEY = "owner_rework_execution_authorization"
+_SAME_TASK_LOCAL_REWORK_AUTHORIZATIONS_METADATA_KEY = "same_task_local_rework_authorizations"
 _OWNER_REWORK_ROUTE_SCHEMA_V1 = "task-market.owner-rework-route/1"
 _OWNER_REWORK_RESOLVED_ONLY_DEPENDENCY_MODE = "resolved_only"
 _PENDING_TERMINAL_INTENT_SCHEMA_V1 = "task-runtime.pending-terminal-intent/1"
@@ -1309,6 +1312,261 @@ class TaskRuntimeService:
             task_role=task_role,
             runtime_task_id=str(runtime_task_id),
             reopened=reopened,
+            execution_event=execution_event,
+        )
+
+    @staticmethod
+    def _same_task_local_rework_result(
+        *,
+        ok: bool,
+        code: Any,
+        reason: str,
+        external_task_id: str,
+        runtime_task_id: str = "",
+        reopened: bool = False,
+        idempotent: bool = False,
+        rework_attempt: int = 0,
+        task_row: Mapping[str, Any] | None = None,
+        execution_event: Mapping[str, Any] | None = None,
+    ) -> SameTaskLocalReworkPreparationResultV1:
+        from polaris.cells.runtime.task_runtime.public.contracts import (
+            SameTaskLocalReworkPreparationResultV1,
+        )
+
+        return SameTaskLocalReworkPreparationResultV1(
+            ok=ok,
+            code=code,
+            reason=reason,
+            external_task_id=external_task_id or "unknown",
+            runtime_task_id=runtime_task_id,
+            reopened=reopened,
+            idempotent=idempotent,
+            rework_attempt=rework_attempt,
+            task_row=dict(task_row or {}),
+            execution_event=dict(execution_event or {}),
+        )
+
+    @staticmethod
+    def _same_task_external_aliases(row: Mapping[str, Any]) -> set[str]:
+        metadata_raw = row.get("metadata")
+        metadata = metadata_raw if isinstance(metadata_raw, Mapping) else {}
+        aliases: set[str] = set()
+        for source in (metadata, row):
+            for key in ("external_task_id", "source_task_id", "pm_task_id"):
+                value = str(source.get(key) or "").strip()
+                if value:
+                    aliases.add(value)
+        return aliases
+
+    @staticmethod
+    def _project_completion_action_effect_hash(command: PrepareSameTaskLocalReworkCommandV1) -> str:
+        payload = {
+            "workspace": str(Path(command.workspace).expanduser().resolve(strict=False)),
+            "factory_run_id": command.factory_run_id,
+            "external_task_id": command.external_task_id,
+            "completion_contract_hash": command.completion_contract_hash,
+            "action_id": command.action_id,
+            "diagnostic_id": command.diagnostic_id,
+            "obligation_id": command.obligation_id,
+            "action_kind": command.action_kind,
+            "owner_snapshot_hash": command.owner_snapshot_hash,
+            "owner_bundle_hash": command.owner_bundle_hash,
+            "diagnostic": dict(command.diagnostic),
+        }
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
+
+    def prepare_same_task_local_rework(
+        self,
+        command: PrepareSameTaskLocalReworkCommandV1,
+    ) -> SameTaskLocalReworkPreparationResultV1:
+        """Apply a cursor-claimed completion action to one exact TaskRuntime row."""
+
+        external_task_id = str(command.external_task_id or "").strip()
+        claim = dict(command.dispatch_claim)
+        claim_identity_raw = claim.get("identity")
+        claim_identity = claim_identity_raw if isinstance(claim_identity_raw, Mapping) else {}
+        diagnostic = dict(command.diagnostic)
+        canonical_workspace = str(Path(self.workspace).expanduser().resolve(strict=False))
+        claim_valid = (
+            str(Path(str(claim_identity.get("workspace") or "")).expanduser().resolve(strict=False))
+            == canonical_workspace
+            and str(claim_identity.get("run_id") or "").strip() == command.factory_run_id
+            and str(claim_identity.get("completion_contract_hash") or "").strip()
+            == command.completion_contract_hash
+            and str(claim.get("action_id") or "").strip() == command.action_id
+            and len(str(claim.get("claim_id") or "").strip()) == 64
+            and type(claim.get("attempt_ordinal")) is int
+            and str(diagnostic.get("diagnostic_id") or "").strip() == command.diagnostic_id
+            and str(diagnostic.get("obligation_id") or "").strip() == command.obligation_id
+            and str(diagnostic.get("owner_task_id") or "").strip() == external_task_id
+            and str(diagnostic.get("allowed_next_action") or "").strip() == command.action_kind
+        )
+        if not claim_valid:
+            return self._same_task_local_rework_result(
+                ok=False,
+                code="same_task_local_rework_receipt_mismatch",
+                reason="Workflow dispatch claim and owner diagnostic do not bind this workspace, run, and task",
+                external_task_id=external_task_id,
+            )
+
+        projection = self.query_observable_task_rows_projection().rows_for_factory_run(command.factory_run_id)
+        matching_rows: list[Mapping[str, Any]] = []
+        for row in projection:
+            aliases = self._same_task_external_aliases(row)
+            if len(aliases) > 1:
+                if external_task_id in aliases:
+                    return self._same_task_local_rework_result(
+                        ok=False,
+                        code="same_task_local_rework_task_identity_conflict",
+                        reason="TaskRuntime row exposes conflicting PM task identities",
+                        external_task_id=external_task_id,
+                    )
+                continue
+            if aliases == {external_task_id}:
+                matching_rows.append(row)
+        if len(matching_rows) != 1:
+            return self._same_task_local_rework_result(
+                ok=False,
+                code=(
+                    "same_task_local_rework_task_not_found"
+                    if not matching_rows
+                    else "same_task_local_rework_task_identity_conflict"
+                ),
+                reason="Factory run must expose exactly one TaskRuntime row for the PM task identity",
+                external_task_id=external_task_id,
+            )
+
+        row = matching_rows[0]
+        runtime_task_id = self.normalize_task_id(row.get("id"))
+        if runtime_task_id is None:
+            return self._same_task_local_rework_result(
+                ok=False,
+                code="same_task_local_rework_task_not_found",
+                reason="TaskRuntime owner row has no numeric execution identity",
+                external_task_id=external_task_id,
+            )
+
+        metadata_raw = row.get("metadata")
+        metadata = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
+        records_raw = metadata.get(_SAME_TASK_LOCAL_REWORK_AUTHORIZATIONS_METADATA_KEY)
+        records = [dict(item) for item in records_raw if isinstance(item, Mapping)] if isinstance(records_raw, list) else []
+        for record in records:
+            if str(record.get("action_id") or "").strip() == command.action_id:
+                return self._same_task_local_rework_result(
+                    ok=True,
+                    code="same_task_local_rework_already_prepared",
+                    reason="The exact workflow action was already projected into TaskRuntime",
+                    external_task_id=external_task_id,
+                    runtime_task_id=str(runtime_task_id),
+                    idempotent=True,
+                    rework_attempt=int(record.get("rework_attempt") or 0),
+                    task_row=row,
+                )
+        if len(records) >= command.max_rework_attempts:
+            return self._same_task_local_rework_result(
+                ok=False,
+                code="same_task_local_rework_budget_exhausted",
+                reason="Same-task local rework budget is exhausted",
+                external_task_id=external_task_id,
+                runtime_task_id=str(runtime_task_id),
+                rework_attempt=len(records),
+                task_row=row,
+            )
+
+        session = self._read_session(runtime_task_id)
+        if session is not None and session.status == "active" and not session.is_expired(now=utc_now()):
+            return self._same_task_local_rework_result(
+                ok=False,
+                code="same_task_local_rework_active_lease_conflict",
+                reason="The owning Director task still has an active execution lease",
+                external_task_id=external_task_id,
+                runtime_task_id=str(runtime_task_id),
+                task_row=row,
+            )
+
+        rework_attempt = len(records) + 1
+        record = {
+            "schema_version": "task-runtime.same-task-local-rework-record/1",
+            "factory_run_id": command.factory_run_id,
+            "external_task_id": external_task_id,
+            "completion_contract_hash": command.completion_contract_hash,
+            "action_id": command.action_id,
+            "diagnostic_id": command.diagnostic_id,
+            "obligation_id": command.obligation_id,
+            "action_kind": command.action_kind,
+            "owner_snapshot_hash": command.owner_snapshot_hash,
+            "owner_bundle_hash": command.owner_bundle_hash,
+            "dispatch_claim_id": str(claim.get("claim_id") or "").strip(),
+            "effect_hash": self._project_completion_action_effect_hash(command),
+            "rework_attempt": rework_attempt,
+            "diagnostic": diagnostic,
+            "prepared_at": utc_now_iso(),
+        }
+        records.append(record)
+        metadata_update = {
+            _SAME_TASK_LOCAL_REWORK_AUTHORIZATIONS_METADATA_KEY: records[-command.max_rework_attempts :],
+            "factory_local_rework": record,
+            "last_failure": dict(command.diagnostic),
+        }
+        latest_fact = self._find_latest_execution_fact_row_for_task(runtime_task_id)
+        latest_fact_status = str((latest_fact or {}).get("status") or "").strip().lower()
+        terminal_evidence = (
+            is_terminal_task_row_status(row.get("status"))
+            or is_terminal_task_row_status(latest_fact_status)
+            or (session is not None and is_terminal_session_status(session.status))
+        )
+        reopened = False
+        if terminal_evidence:
+            reopened_row = self.reopen_task_row(
+                runtime_task_id,
+                reason="factory_quality_same_task_local_rework_authorized",
+                metadata=metadata_update,
+            )
+            if reopened_row is None:
+                return self._same_task_local_rework_result(
+                    ok=False,
+                    code="same_task_local_rework_active_lease_conflict",
+                    reason="TaskRuntime could not safely reopen the owning execution row",
+                    external_task_id=external_task_id,
+                    runtime_task_id=str(runtime_task_id),
+                    task_row=row,
+                )
+            reopened = True
+        updated_row = self.update_task_row(runtime_task_id, metadata=metadata_update)
+        if updated_row is None:
+            return self._same_task_local_rework_result(
+                ok=False,
+                code="same_task_local_rework_task_not_found",
+                reason="TaskRuntime owner row disappeared while recording local rework",
+                external_task_id=external_task_id,
+                runtime_task_id=str(runtime_task_id),
+            )
+        prepared_row = self.get_task(external_task_id) or updated_row
+        execution_event = self._append_execution_event(
+            "same_task_local_rework_prepared",
+            task_row=dict(prepared_row),
+            session=self._read_session(runtime_task_id),
+            details={
+                "factory_run_id": command.factory_run_id,
+                "external_task_id": external_task_id,
+                "action_id": command.action_id,
+                "diagnostic_id": command.diagnostic_id,
+                "dispatch_claim_id": str(claim.get("claim_id") or "").strip(),
+                "effect_hash": record["effect_hash"],
+                "rework_attempt": rework_attempt,
+                "reopened": reopened,
+            },
+        )
+        return self._same_task_local_rework_result(
+            ok=True,
+            code="same_task_local_rework_prepared",
+            reason="Exact owning Director task is prepared for local repair",
+            external_task_id=external_task_id,
+            runtime_task_id=str(runtime_task_id),
+            reopened=reopened,
+            rework_attempt=rework_attempt,
+            task_row=dict(prepared_row),
             execution_event=execution_event,
         )
 

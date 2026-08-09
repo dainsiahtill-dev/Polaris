@@ -12,7 +12,7 @@ import asyncio
 import hashlib
 import json
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import cast
@@ -196,12 +196,21 @@ def _action_payload(command: ProjectCompletionActionCommandV1) -> dict[str, obje
         "action_kind": command.action_kind,
         "owner_snapshot_hash": command.owner_snapshot_hash,
         "owner_bundle_hash": command.owner_bundle_hash,
+        "diagnostic": asdict(command.diagnostic),
     }
 
 
 def _action_from_payload(payload: object) -> ProjectCompletionActionCommandV1:
     if not isinstance(payload, Mapping):
         raise TypeError("action event payload must be an exact mapping")
+    diagnostic_payload = payload.get("diagnostic")
+    if not isinstance(diagnostic_payload, Mapping):
+        raise TypeError("action diagnostic payload must be an exact mapping")
+    diagnostic_fields = dict(diagnostic_payload)
+    for key in ("owner_evidence_refs", "dependency_ids", "required_verifier_ids"):
+        value = diagnostic_fields.get(key)
+        if isinstance(value, list):
+            diagnostic_fields[key] = tuple(value)
     action = ProjectCompletionActionCommandV1(
         identity=_identity_from_payload(payload.get("identity")),
         action_id=_payload_str(payload, "action_id"),
@@ -211,6 +220,7 @@ def _action_from_payload(payload: object) -> ProjectCompletionActionCommandV1:
         action_kind=_payload_str(payload, "action_kind"),
         owner_snapshot_hash=_payload_str(payload, "owner_snapshot_hash"),
         owner_bundle_hash=_payload_str(payload, "owner_bundle_hash"),
+        diagnostic=ProjectCompletionDiagnosticV1(**diagnostic_fields),
     )
     if _payload_str(payload, "handoff_id") != action.action_id:
         raise ValueError("reserved handoff_id must equal action_id")
@@ -1000,6 +1010,7 @@ class ProjectCompletionConvergenceEngineV1:
             action_kind=diagnostic.allowed_next_action,
             owner_snapshot_hash=owner_snapshot_hash,
             owner_bundle_hash=owner_bundle_hash,
+            diagnostic=diagnostic,
         )
         try:
             await self._append_transition(

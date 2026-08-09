@@ -1,0 +1,56 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "P0-DURABLE-FACTORY-STAGE-DRIVER-20260809",
+  "status": "IN_VERIFICATION",
+  "severity": "P0",
+  "title": "Committed same-task local rework lacks a lifespan-owned Factory stage driver",
+  "original_symptom": {
+    "live_process": "A durable completion action can reopen the exact TaskRuntime row and the still-running HTTP Router task can re-enter Director and QA.",
+    "after_restart": "The cursor and TaskRuntime row recover, but no production lifespan worker consumes the reopened row without a new HTTP-owned run task."
+  },
+  "root_cause": {
+    "category": "execution_lifecycle_ownership_split",
+    "state_owner": "polaris.cells.runtime.task_runtime",
+    "convergence_owner": "polaris.cells.orchestration.workflow_orchestration",
+    "previous_execution_driver": "polaris.delivery.http.routers.factory._execute_run_with_service scheduled directly by the Router",
+    "implemented_owner": "polaris.bootstrap.factory_run_driver_runtime.FactoryRunDriverRuntimeV1",
+    "false_progress_risk": "Treating pending_exec or a committed action receipt as progress without a durable driver claim"
+  },
+  "closed_subproblems": [
+    "TaskMarket second-authority bridge removed",
+    "ProjectCompletionActionCommandV1 carries full sealed diagnostic",
+    "TaskRuntime exact numeric row reopen is idempotent and owner-bound",
+    "Factory advances convergence after Director failure and quality-gate fact commit",
+    "legacy TaskMarket and stage-metadata terminal-drain projections are rejected"
+    ,
+    "Factory run task lifetime is backend-lifespan-owned and startup recovery includes pending exact-row actions"
+  ],
+  "implemented_fix": [
+    "Factory stage-loop task lifecycle moved out of direct HTTP Router scheduling into a backend lifespan-owned platform service.",
+    "Persist a driver claim bound to workspace, Factory run, completion contract, action, diagnostic, owner task, and TaskRuntime execution anchor.",
+    "Recover committed unconsumed claims at backend startup without HTTP polling or a new client request.",
+    "Run only the owning Director task and affected verifier; do not restart PM or Chief Engineer.",
+    "Existing Factory stage claim and physical effect receipts remain the execution fence across crashes."
+  ],
+  "required_tests": [
+    "action commit then backend crash then restart automatically resumes exact owner task",
+    "crash before effect and crash after effect both produce at most one physical effect",
+    "unrelated TaskRuntime rows remain unchanged",
+    "forged or cross-run driver claims fail closed",
+    "no Router request is required after restart",
+    "fresh isolated project reaches COMPLETED_VERIFIED"
+  ],
+  "stop_conditions": [
+    "Do not count a bare pending TaskRuntime row as progress.",
+    "Do not add another process-local queue, TaskMarket bridge, timer poller, or Bench-owned worker.",
+    "Do not claim unattended completion before restart recovery and fresh isolated COMPLETED_VERIFIED evidence."
+  ],
+  "evidence": [
+    "src/backend/polaris/bootstrap/factory_run_driver_runtime.py",
+    "src/backend/polaris/tests/unit/bootstrap/test_factory_run_driver_runtime.py",
+    "src/backend/polaris/delivery/http/routers/factory.py:_execute_run_with_service",
+    "src/backend/polaris/bootstrap/project_completion_convergence_runtime.py",
+    "src/backend/polaris/bootstrap/project_completion_task_runtime_action_owner.py",
+    "src/backend/polaris/cells/runtime/task_runtime/public/service.py"
+  ]
+}

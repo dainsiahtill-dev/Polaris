@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
 import json
 import logging
 import os  # re-exported for lossless surface + test monkeypatch of ``os.name``
@@ -59,13 +58,6 @@ from polaris.cells.roles.kernel.public.provider_attempt_lifecycle_replay import 
     append_factory_provider_attempt_recovery_terminal,
     factory_provider_attempt_lifecycle_stream,
     query_factory_provider_attempt_lifecycle_replay,
-)
-from polaris.cells.runtime.task_market.public import (
-    QueryTaskRequeueReceiptV1,
-    RequeueTaskCommandV1,
-    TaskMarketError,
-    TaskRequeueReceiptV1,
-    get_task_market_service,
 )
 from polaris.cells.runtime.task_runtime.public.contracts import (
     FenceExpiredFactoryRunSessionsCommandV1,
@@ -1617,183 +1609,6 @@ class FactoryRunService:
         ):
             return None
 
-    async def _validated_local_rework_receipt(
-        self,
-        *,
-        run_id: str,
-        failed_stage: str,
-        failure_fingerprint: str,
-        schedule: Mapping[str, Any],
-    ) -> TaskRequeueReceiptV1 | None:
-        """Resolve a committed TaskMarket receipt before retaining a failed lease.
-
-        Stage metadata is diagnostic only. A non-empty receipt-shaped string
-        cannot keep a terminal Factory workspace lease alive. The receipt must
-        be queryable from TaskMarket and its task must be canonically bound to
-        this Factory run in TaskRuntime.
-        """
-
-        allowed_target_stages = {
-            "chief_engineer_review": frozenset({"pending_design"}),
-            "director_dispatch": frozenset({"pending_exec"}),
-            "quality_gate": frozenset({"pending_exec"}),
-        }
-        allowed_targets = allowed_target_stages.get(str(failed_stage or "").strip())
-        if not allowed_targets or str(schedule.get("status") or "").strip().lower() != "committed":
-            return None
-        owner_task_id = str(schedule.get("owner_task_id") or "").strip()
-        receipt_ref = str(schedule.get("requeue_receipt_ref") or "").strip()
-        idempotency_key = str(schedule.get("requeue_idempotency_key") or "").strip()
-        target_stage = str(schedule.get("target_stage") or "").strip()
-        if (
-            not owner_task_id
-            or not receipt_ref
-            or not idempotency_key
-            or not target_stage
-            or target_stage not in allowed_targets
-            or str(schedule.get("factory_run_id") or "").strip() != run_id
-        ):
-            return None
-        try:
-            pm_proof = await self._revalidated_pm_stage_artifact_binding(run_id)
-            if pm_proof is None or owner_task_id not in set(pm_proof.task_ids):
-                return None
-            expected_command = self._factory_local_rework_command(
-                run_id=run_id,
-                failed_stage=failed_stage,
-                owner_task_id=owner_task_id,
-                target_stage=target_stage,
-                failure_fingerprint=failure_fingerprint,
-            )
-            if idempotency_key != expected_command.idempotency_key:
-                return None
-            receipt = get_task_market_service(str(self.workspace)).query_task_requeue_receipt(
-                QueryTaskRequeueReceiptV1(
-                    workspace=str(self.workspace),
-                    task_id=owner_task_id,
-                    idempotency_key=idempotency_key,
-                )
-            )
-            runtime_rows = TaskRuntimeService(str(self.workspace)).query_observable_task_rows_projection()
-            bound_rows = runtime_rows.rows_for_factory_run(run_id)
-        except (AttributeError, OSError, RuntimeError, TaskMarketError, TypeError, ValueError):
-            return None
-        if receipt is None:
-            return None
-        canonical_workspace = str(self.workspace.expanduser().resolve(strict=False))
-        receipt_workspace = str(Path(receipt.workspace).expanduser().resolve(strict=False))
-        task_bound_to_run = any(
-            str(row.get("task_id") or row.get("id") or "").strip() == owner_task_id
-            for row in bound_rows
-            if isinstance(row, Mapping)
-        )
-        if (
-            receipt_workspace != canonical_workspace
-            or receipt.task_id != owner_task_id
-            or receipt.idempotency_key != idempotency_key
-            or receipt.receipt_hash != receipt_ref
-            or receipt.target_stage != target_stage
-            or receipt.idempotency_fingerprint != expected_command.idempotency_fingerprint
-            or receipt.effect_hash != expected_command.effect_hash
-            or receipt.reason != expected_command.reason
-            or not task_bound_to_run
-        ):
-            return None
-        return receipt
-
-    @staticmethod
-    def _factory_stage_failure_fingerprint(result: StageResult) -> str:
-        """Bind one local-repair decision to the exact Factory stage failure."""
-
-        metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
-        payload = {
-            "schema_version": "factory.local-rework-failure.v1",
-            "stage": str(result.stage or "").strip(),
-            "status": str(result.status or "").strip().lower(),
-            "output_sha256": hashlib.sha256(str(result.output or "").encode("utf-8")).hexdigest(),
-            "artifacts": sorted(str(item or "").strip() for item in result.artifacts if str(item or "").strip()),
-            "error_code": str(metadata.get("error_code") or "").strip(),
-            "root_cause_hint": str(metadata.get("root_cause_hint") or "").strip(),
-            "failure_class": str(metadata.get("failure_class") or "").strip(),
-            "responsible_layer": str(metadata.get("responsible_layer") or "").strip(),
-            "incomplete_task_ids": sorted(
-                str(item or "").strip()
-                for item in metadata.get("incomplete_task_ids", [])
-                if str(item or "").strip()
-            )
-            if isinstance(metadata.get("incomplete_task_ids"), (list, tuple, set, frozenset))
-            else [],
-        }
-        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        return hashlib.sha256(canonical).hexdigest()
-
-    def _factory_local_rework_command(
-        self,
-        *,
-        run_id: str,
-        failed_stage: str,
-        owner_task_id: str,
-        target_stage: str,
-        failure_fingerprint: str,
-    ) -> RequeueTaskCommandV1:
-        """Build the sole Factory-owned, run-bound TaskMarket requeue action."""
-
-        action_payload = {
-            "schema_version": "factory.local-rework-action.v1",
-            "factory_run_id": str(run_id or "").strip(),
-            "failed_stage": str(failed_stage or "").strip(),
-            "owner_task_id": str(owner_task_id or "").strip(),
-            "target_stage": str(target_stage or "").strip(),
-        }
-        failure_token = str(failure_fingerprint or "").strip()
-        action_identity_payload = {
-            **action_payload,
-            # Same failure remains idempotent; a later, materially different
-            # verifier failure gets its own bounded repair action instead of
-            # colliding with the previous TaskMarket receipt.
-            "failure_fingerprint": failure_token,
-        }
-        action_bytes = json.dumps(
-            action_identity_payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        idempotency_key = hashlib.sha256(b"polaris.factory.local-rework.action.v1\0" + action_bytes).hexdigest()
-        fingerprint_payload = dict(action_identity_payload)
-        fingerprint_bytes = json.dumps(
-            fingerprint_payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        idempotency_fingerprint = hashlib.sha256(
-            b"polaris.factory.local-rework.fingerprint.v1\0" + fingerprint_bytes
-        ).hexdigest()
-        source = "factory.pipeline.local_rework"
-        return RequeueTaskCommandV1(
-            workspace=str(self.workspace),
-            task_id=action_payload["owner_task_id"],
-            target_stage=action_payload["target_stage"],
-            reason=f"Factory local repair after {action_payload['failed_stage']} failure",
-            metadata={
-                "source": source,
-                "factory_run_id": action_payload["factory_run_id"],
-                "failed_stage": action_payload["failed_stage"],
-                "owner_task_id": action_payload["owner_task_id"],
-                "failure_fingerprint": fingerprint_payload["failure_fingerprint"],
-                "verification_failure_report": fingerprint_payload,
-            },
-            reopen_policy={
-                "policy_id": "factory.local-rework.v1",
-                "allowed_sources": [source],
-                "max_reopen_count": 3,
-                "requires_failure_report": True,
-            },
-            idempotency_key=idempotency_key,
-            idempotency_fingerprint=idempotency_fingerprint,
-        )
-
     async def execute_stage(
         self,
         run_id: str,
@@ -1951,43 +1766,13 @@ class FactoryRunService:
 
         result.started_at = result.started_at or started_at
         result.completed_at = result.completed_at or self._now()
-        failed_stage = str(result.stage or "").strip()
         result.metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
-        # This key is a service-owned authority projection.  Stage executors may
-        # report a rework schedule, but they cannot self-issue terminal-drain
-        # deferral or replay authority.  Remove any caller-carried value before
-        # validating the canonical TaskMarket receipt below.
+        # Stage executors cannot self-issue terminal-drain deferral.  A legacy
+        # TaskMarket receipt is not enough either: the current execution owner
+        # is TaskRuntime and the durable completion cursor must commit the exact
+        # owner action before this service may keep the run open.
         result.metadata.pop("factory_terminal_drain_deferred", None)
-        result_metadata = result.metadata
-        rework_schedule = result_metadata.get("factory_local_rework_schedule")
-        rework_schedule_map = rework_schedule if isinstance(rework_schedule, Mapping) else {}
-        failure_fingerprint = self._factory_stage_failure_fingerprint(result)
-        canonical_requeue_receipt = await self._validated_local_rework_receipt(
-            run_id=run_id,
-            failed_stage=failed_stage,
-            failure_fingerprint=failure_fingerprint,
-            schedule=rework_schedule_map,
-        )
-        committed_local_rework = canonical_requeue_receipt is not None
-        local_rework_decision_pending = failed_stage in {
-            "chief_engineer_review",
-            "director_dispatch",
-            "quality_gate",
-        } and (str(result.status or "").strip().lower() == "failed") and committed_local_rework
-        if local_rework_decision_pending and canonical_requeue_receipt is not None:
-            rework_reason = {
-                "chief_engineer_review": "chief_engineer_local_rework_decision_pending",
-                "director_dispatch": "director_local_rework_decision_pending",
-                "quality_gate": "quality_rework_decision_pending",
-            }[failed_stage]
-            result.metadata = dict(result.metadata or {})
-            result.metadata["factory_terminal_drain_deferred"] = {
-                "schema_version": "factory.terminal-drain-deferred.v1",
-                "reason": rework_reason,
-                "decision_owner": "factory_orchestration",
-                "owner_task_id": str(rework_schedule_map.get("owner_task_id") or "").strip(),
-                "requeue_receipt_ref": canonical_requeue_receipt.receipt_hash,
-            }
+        local_rework_decision_pending = False
         terminal_after_stage = False
         async with run_lock:
             self._renew_workspace_lease(run, require_active=False)
@@ -2007,6 +1792,53 @@ class FactoryRunService:
                 and current_lease.run_id == run_id
                 and current_lease.state.value in {"active", "draining"}
             )
+        completion_facts_changed = (
+            (result.stage == "director_dispatch" and result.status != "success")
+            or result.stage == "quality_gate"
+        )
+        if completion_facts_changed:
+            try:
+                completion_result = await self._notify_project_completion_supervisor(run_id, result)
+                completion_action_id = str(getattr(completion_result, "action_id", None) or "").strip()
+                completion_reason_codes = tuple(getattr(completion_result, "reason_codes", ()) or ())
+                completion_next_action = str(getattr(completion_result, "next_action", None) or "").strip()
+                if (
+                    result.status != "success"
+                    and len(completion_action_id) == 64
+                    and "owner_action_receipt_committed" in completion_reason_codes
+                    and completion_next_action
+                    in {"publish_owner_rework", "run_deterministic_repair", "run_required_verifier"}
+                ):
+                    local_rework_decision_pending = True
+                    result.metadata["factory_terminal_drain_deferred"] = {
+                        "schema_version": "factory.terminal-drain-deferred.v2",
+                        "reason": (
+                            "director_local_rework_decision_pending"
+                            if result.stage == "director_dispatch"
+                            else "quality_rework_decision_pending"
+                        ),
+                        "decision_owner": "orchestration.workflow_orchestration",
+                        "action_id": completion_action_id,
+                        "diagnostic_id": str(getattr(completion_result, "diagnostic_id", None) or "").strip(),
+                    }
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                logger.error(
+                    "Project completion supervisor notification failed for run %s: %s",
+                    run_id,
+                    exc,
+                    exc_info=True,
+                )
+                await self._append_event(
+                    run_id,
+                    {
+                        "type": "project_completion_control_plane_blocked",
+                        "message": str(exc)[:500],
+                        "error_type": type(exc).__name__,
+                        "timestamp": self._now(),
+                        "terminal": False,
+                    },
+                )
+
         # Success StageResults that authorize claim release settle immediately.
         # Failed StageResults intentionally retain the stage claim for reconcile
         # (see test_failed_settled_stage_retains_exact_claim_*), but terminal
@@ -2037,33 +1869,13 @@ class FactoryRunService:
                     stage,
                     settle_exc,
                 )
-        if result.stage == "chief_engineer_review" and result.status == "success":
-            try:
-                await self._notify_project_completion_supervisor(run_id, result)
-            except (OSError, RuntimeError, TypeError, ValueError) as exc:
-                logger.error(
-                    "Project completion supervisor notification failed for run %s: %s",
-                    run_id,
-                    exc,
-                    exc_info=True,
-                )
-                await self._append_event(
-                    run_id,
-                    {
-                        "type": "project_completion_control_plane_blocked",
-                        "message": str(exc)[:500],
-                        "error_type": type(exc).__name__,
-                        "timestamp": self._now(),
-                        "terminal": False,
-                    },
-                )
         return result
 
     async def _notify_project_completion_supervisor(
         self,
         run_id: str,
         result: StageResult,
-    ) -> None:
+    ) -> object:
         """Emit the CE-owned completion identity after its stage commit.
 
         This is an event-driven call point, not a scan/poll loop.  The CE
@@ -2080,8 +1892,22 @@ class FactoryRunService:
             notify_factory_project_completion,
         )
 
+        authority_result = result
+        if result.stage != "chief_engineer_review":
+            latest_run = await self.store.get_run(run_id)
+            stage_results_raw = (
+                latest_run.metadata.get("stage_results")
+                if latest_run is not None and isinstance(latest_run.metadata, Mapping)
+                else None
+            )
+            stage_results = stage_results_raw if isinstance(stage_results_raw, Mapping) else {}
+            ce_result_raw = stage_results.get("chief_engineer_review")
+            if not isinstance(ce_result_raw, Mapping):
+                raise RuntimeError("chief_engineer_project_completion_result_missing")
+            authority_result = StageResult(**dict(ce_result_raw))
+
         identities: list[FactoryProjectCompletionIdentityV1] = []
-        for logical_ref in result.artifacts:
+        for logical_ref in authority_result.artifacts:
             if not str(logical_ref).startswith("runtime/blueprints/ce_portfolio_"):
                 continue
             physical_ref = Path(resolve_logical_path(str(self.workspace), str(logical_ref)))
@@ -2113,7 +1939,7 @@ class FactoryRunService:
             )
         if len(identities) != 1:
             raise RuntimeError("chief_engineer_project_completion_identity_not_unique")
-        await notify_factory_project_completion(identities[0])
+        return await notify_factory_project_completion(identities[0])
 
     async def _run_stage_heartbeat(
         self,
