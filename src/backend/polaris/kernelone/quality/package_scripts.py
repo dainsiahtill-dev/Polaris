@@ -214,6 +214,13 @@ def _missing_local_node_module_reference_issues(
     script_name: str,
     entrypoint_path: str,
 ) -> tuple[PackageScriptIssue, ...]:
+    # Commands such as ``node --test tests`` legitimately pass a discovery
+    # directory. Its existence satisfies package-script structural validation;
+    # reading it as JavaScript raises EISDIR and turns a runnable script into a
+    # false ``entrypoint_unreadable`` failure. Real command execution remains
+    # authoritative for whether the directory contains runnable tests.
+    if os.path.isdir(entrypoint_path):
+        return ()
     try:
         with open(entrypoint_path, encoding="utf-8") as handle:
             source = handle.read()

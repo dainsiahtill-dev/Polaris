@@ -80,6 +80,12 @@ class TimerOwner {
 }
 """
 
+_VALID_TS_ES_MODULE_WITH_IMPORT_META = """\
+export const moduleUrl = import.meta.url;
+declare const process: { env: Record<string, string | undefined> };
+console.log(moduleUrl, process.env.NODE_ENV);
+"""
+
 
 class TestExtensionMapping:
     def test_known_extensions(self) -> None:
@@ -191,6 +197,13 @@ class TestTypescriptSyntax:
     def test_typescript_type_environment_diagnostics_are_not_syntax_failures(self, tmp_path: Path) -> None:
         f = tmp_path / "timer.ts"
         f.write_text(_VALID_TS_WITH_ENV_TYPE_ERROR, encoding="utf-8")
+        result = check_file_syntax(str(f))
+        assert result.checked is True
+        assert result.ok is True
+
+    def test_import_meta_is_parsed_without_forcing_commonjs_or_loading_dependencies(self, tmp_path: Path) -> None:
+        f = tmp_path / "main.ts"
+        f.write_text(_VALID_TS_ES_MODULE_WITH_IMPORT_META, encoding="utf-8")
         result = check_file_syntax(str(f))
         assert result.checked is True
         assert result.ok is True

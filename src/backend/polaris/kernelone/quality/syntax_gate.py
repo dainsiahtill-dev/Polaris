@@ -17,7 +17,6 @@ broken". Generic: extension → checker mapping carries no project specifics.
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -48,7 +47,35 @@ _SYNTAX_CHECKERS: dict[tuple[str, ...], list[str]] = {
 }
 
 _DEFAULT_TIMEOUT_SECONDS = 20
-_TS_SYNTAX_DIAGNOSTIC_RE = re.compile(r"\bTS1\d{3}\b")
+_TS_PARSE_DIAGNOSTICS_SCRIPT = r"""
+const ts = require(process.argv[1]);
+const fs = require("fs");
+const filename = process.argv[2];
+const source = fs.readFileSync(filename, "utf8");
+const kind = filename.toLowerCase().endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+const sourceFile = ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true, kind);
+for (const diagnostic of sourceFile.parseDiagnostics) {
+  const position = diagnostic.start === undefined
+    ? { line: 0, character: 0 }
+    : sourceFile.getLineAndCharacterOfPosition(diagnostic.start);
+  const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
+  process.stderr.write(
+    `${filename}(${position.line + 1},${position.character + 1}): error TS${diagnostic.code}: ${message}\n`
+  );
+}
+process.exit(sourceFile.parseDiagnostics.length > 0 ? 1 : 0);
+"""
+
+
+def _typescript_compiler_api_path(tsc_tool: str) -> str | None:
+    """Resolve the compiler API shipped beside the available ``tsc`` binary."""
+
+    executable = shutil.which(tsc_tool)
+    if not executable:
+        return None
+    real_executable = os.path.realpath(executable)
+    candidate = os.path.normpath(os.path.join(os.path.dirname(real_executable), "..", "lib", "typescript.js"))
+    return candidate if os.path.isfile(candidate) else None
 
 
 @dataclass(frozen=True)
@@ -87,7 +114,31 @@ def check_file_syntax(path: str, *, timeout_seconds: int = _DEFAULT_TIMEOUT_SECO
     try:
         cwd = os.path.dirname(os.path.abspath(path)) or None
         ext = os.path.splitext(path)[1].lower()
-        if ext in {".rs", ".java"}:
+        if ext in {".ts", ".tsx"}:
+            compiler_api = _typescript_compiler_api_path(tool)
+            node = shutil.which("node")
+            if compiler_api is None or node is None:
+                return SyntaxCheckResult(
+                    path=path,
+                    checked=False,
+                    ok=True,
+                    error="",
+                    reason="TypeScript compiler API unavailable",
+                )
+            # A syntax gate must inspect only this source file's parser output.
+            # Running ``tsc`` as a project compiler pulls in imports/node_modules
+            # and applies an arbitrary module mode; both produced live false
+            # failures (dependency TS1xxx and valid ``import.meta`` under
+            # CommonJS), causing Director to rewrite correct product code.
+            proc = subprocess.run(
+                [node, "-e", _TS_PARSE_DIAGNOSTICS_SCRIPT, compiler_api, path],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        elif ext in {".rs", ".java"}:
             with tempfile.TemporaryDirectory(prefix="polaris-syntax-") as temp_dir:
                 cmdline = [*cmd, "--out-dir" if ext == ".rs" else "-d", temp_dir, path]
                 proc = subprocess.run(
@@ -111,18 +162,6 @@ def check_file_syntax(path: str, *, timeout_seconds: int = _DEFAULT_TIMEOUT_SECO
         return SyntaxCheckResult(path=path, checked=False, ok=True, error="", reason=str(exc))
     ok = proc.returncode == 0
     raw_error = (proc.stderr or proc.stdout or "").strip()
-    if (
-        not ok
-        and os.path.splitext(path)[1].lower() in {".ts", ".tsx"}
-        and not _TS_SYNTAX_DIAGNOSTIC_RE.search(raw_error)
-    ):
-        return SyntaxCheckResult(
-            path=path,
-            checked=True,
-            ok=True,
-            error="",
-            reason="tsc reported non-syntax diagnostics only",
-        )
     error = "" if ok else raw_error[:500]
     return SyntaxCheckResult(path=path, checked=True, ok=ok, error=error, reason="")
 

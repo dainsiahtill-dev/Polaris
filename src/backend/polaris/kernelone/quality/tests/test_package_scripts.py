@@ -58,6 +58,22 @@ def test_check_package_scripts_accepts_node_test_glob_patterns(tmp_path: Path) -
     assert result.ok is True
 
 
+def test_check_package_scripts_accepts_existing_node_test_directory(tmp_path: Path) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "product.test.js").write_text(
+        'import test from "node:test";\ntest("works", () => {});\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"node --test tests","test:unit":"node --test ./tests"}}\n',
+        encoding="utf-8",
+    )
+
+    result = check_package_scripts(str(tmp_path))
+
+    assert result.ok is True
+
+
 def test_check_package_scripts_rejects_missing_local_node_dependency(tmp_path: Path) -> None:
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "build.js").write_text(
