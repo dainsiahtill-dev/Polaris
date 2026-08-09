@@ -398,6 +398,111 @@ def _artifact_quality_error_signature(errors: list[str]) -> tuple[str, ...]:
     return tuple(sorted(set(normalized)))
 
 
+_QUALITY_REPAIR_STAGNATION_LIMIT = 2
+
+
+def _quality_repair_progress_evidence(
+    *,
+    before_files: dict[str, str],
+    after_files: dict[str, str],
+    before_errors: list[str],
+    after_errors: list[str],
+    before_missing_count: int,
+    after_missing_count: int,
+    successful_write_paths: list[str],
+) -> dict[str, Any]:
+    """Project one repair attempt into strict, machine-readable progress evidence.
+
+    A different diagnostic is not necessarily progress.  The attempt advances only
+    when an authoritative write receipt corresponds to an actual workspace mutation,
+    no new diagnostic signature was introduced, and either the diagnostic count or
+    missing-target count decreased.  This keeps a weak-model edit loop local to the
+    owning Director task without allowing read-only/no-op/worsening attempts to renew
+    the Provider budget indefinitely.
+    """
+
+    before_signature = set(_artifact_quality_error_signature(before_errors))
+    after_signature = set(_artifact_quality_error_signature(after_errors))
+    mutated_paths = sorted(
+        path
+        for path in set(before_files) | set(after_files)
+        if before_files.get(path) != after_files.get(path)
+    )
+
+    def _matches_responsible_path(mutated_path: str, raw_responsible_path: str) -> bool:
+        responsible_path = str(raw_responsible_path or "").strip().replace("\\", "/")
+        mutated_path = str(mutated_path or "").strip().replace("\\", "/")
+        if not responsible_path or not mutated_path:
+            return False
+        return (
+            mutated_path == responsible_path
+            or responsible_path.endswith(f"/{mutated_path}")
+            or mutated_path.endswith(f"/{responsible_path}")
+        )
+
+    responsible_mutated_paths = sorted(
+        path
+        for path in mutated_paths
+        if any(_matches_responsible_path(path, candidate) for candidate in successful_write_paths)
+    )
+    introduced = sorted(after_signature - before_signature)
+    resolved = sorted(before_signature - after_signature)
+    error_reduction = len(before_signature) - len(after_signature)
+    missing_reduction = max(0, int(before_missing_count) - int(after_missing_count))
+    mutation_evidenced = bool(successful_write_paths and responsible_mutated_paths)
+    converged = not after_signature and int(after_missing_count) == 0
+    effective_progress = bool(
+        mutation_evidenced
+        and not introduced
+        and (converged or error_reduction > 0 or missing_reduction > 0)
+    )
+    return {
+        "schema_version": "director.quality_repair_progress.v1",
+        "status": "converged" if converged and effective_progress else "progress" if effective_progress else "stalled",
+        "workspace_mutation_evidenced": mutation_evidenced,
+        "successful_write_paths": successful_write_paths[:20],
+        "mutated_paths": mutated_paths[:20],
+        "responsible_mutated_paths": responsible_mutated_paths[:20],
+        "errors_before": len(before_signature),
+        "errors_after": len(after_signature),
+        "net_error_reduction": error_reduction,
+        "missing_targets_before": int(before_missing_count),
+        "missing_targets_after": int(after_missing_count),
+        "missing_target_reduction": missing_reduction,
+        "resolved_diagnostic_signatures": resolved[:20],
+        "introduced_diagnostic_signatures": introduced[:20],
+        "effective_progress": effective_progress,
+    }
+
+
+def _annotate_quality_repair_progress(
+    summary: dict[str, Any] | None,
+    *,
+    evidence: dict[str, Any],
+    stagnant_attempts: int,
+    stopped: bool,
+) -> None:
+    if not isinstance(summary, dict):
+        return
+    summary["progress_evidence"] = dict(evidence)
+    summary["net_error_reduction"] = int(evidence.get("net_error_reduction") or 0)
+    summary["workspace_mutation_evidenced"] = bool(evidence.get("workspace_mutation_evidenced"))
+    summary["stagnant_attempts"] = int(stagnant_attempts)
+    if stopped:
+        summary.update(
+            {
+                "success": False,
+                "convergence_status": "repair_stalled",
+                "stopped_reason": "quality_repair_no_net_progress",
+                "error_code": "director_quality_repair_stalled",
+                "failure_class": "model_ceiling",
+                "responsible_layer": "director",
+                "retry_scope": "same_director_task_only",
+                "pm_ce_restart_allowed": False,
+            }
+        )
+
+
 def _build_empty_write_content_retry_message(
     task: dict[str, Any],
     *,
@@ -3652,32 +3757,14 @@ async def _phase_quality_repair_loop(
         artifact_quality_errors,
         _adapter_workspace,
     )
-    # Progress-aware repair budget: the base budget is 2 attempts, but while
-    # an attempt makes measurable progress on EITHER dimension — fewer missing
-    # declared targets OR fewer quality errors overall — the loop keeps going
-    # (hard cap 5). Live factory-bench L2-11 r1: missing-count convergence
-    # (3→2→1) was cut one file short by the fixed budget. L2-11 r6: an attempt
-    # repaired the truncated index.html (errors 2→1, real progress) but the
-    # missing-only metric (1→1) still cut the loop before diff.test.html.
-    prev_missing_count = len(_missing_declared_target_files(task, _adapter_workspace))
-    prev_error_count = len(artifact_quality_errors)
-    prev_error_signature = _artifact_quality_error_signature(artifact_quality_errors)
+    # Each LLM attempt must prove a responsible workspace mutation and net
+    # verifier improvement.  A changed diagnostic signature alone is not
+    # progress: r14 changed one TypeScript error into multiple syntax/name
+    # errors, yet the old predicate renewed the loop until the hard cap.
+    stagnant_attempts = 0
     for repair_attempt in range(1, _QUALITY_REPAIR_ATTEMPT_HARD_CAP + 1):
         if not artifact_quality_errors:
             break
-        current_missing_count = len(_missing_declared_target_files(task, _adapter_workspace))
-        current_error_count = len(artifact_quality_errors)
-        current_error_signature = _artifact_quality_error_signature(artifact_quality_errors)
-        if repair_attempt > _QUALITY_REPAIR_BASE_ATTEMPTS:
-            missing_progress = 0 < current_missing_count < prev_missing_count
-            error_progress = 0 < current_error_count < prev_error_count
-            signature_progress = bool(current_error_signature) and current_error_signature != prev_error_signature
-            if not (missing_progress or error_progress or signature_progress):
-                break
-        prev_missing_count = current_missing_count
-        prev_error_count = current_error_count
-        prev_error_signature = current_error_signature
-        deterministic_quality_made_progress = False
         deterministic_quality_tool_results, deterministic_quality_summary = (
             _run_materialization_quality_public_boundary(
                 adapter,
@@ -3703,7 +3790,6 @@ async def _phase_quality_repair_loop(
             quality_repair_attempts.append(quality_repair_summary)
             break
         if deterministic_quality_tool_results:
-            deterministic_quality_made_progress = True
             tool_results.extend(deterministic_quality_tool_results)
             # DEO: plan returns deferred_request only; commit physical writes via kernel followup.
             committed_writes = await _commit_deferred_materialization_quality_results(
@@ -3766,6 +3852,9 @@ async def _phase_quality_repair_loop(
             _mark_quality_repair_summary_revalidated(deterministic_quality_summary, artifact_quality_errors)
             if not artifact_quality_errors:
                 break
+        llm_before_files = dict(current_files)
+        llm_before_errors = list(artifact_quality_errors)
+        llm_before_missing_count = len(_missing_declared_target_files(task, _adapter_workspace))
         repair_tool_results, quality_repair_summary = await _run_materialization_quality_repair_retry(
             adapter,
             task=task,
@@ -3780,7 +3869,24 @@ async def _phase_quality_repair_loop(
         )
         quality_repair_attempts.append(quality_repair_summary)
         if not repair_tool_results:
-            if deterministic_quality_made_progress and artifact_quality_errors:
+            progress_evidence = _quality_repair_progress_evidence(
+                before_files=llm_before_files,
+                after_files=dict(current_files),
+                before_errors=llm_before_errors,
+                after_errors=artifact_quality_errors,
+                before_missing_count=llm_before_missing_count,
+                after_missing_count=len(_missing_declared_target_files(task, _adapter_workspace)),
+                successful_write_paths=[],
+            )
+            stagnant_attempts += 1
+            stopped = stagnant_attempts >= _QUALITY_REPAIR_STAGNATION_LIMIT
+            _annotate_quality_repair_progress(
+                quality_repair_summary,
+                evidence=progress_evidence,
+                stagnant_attempts=stagnant_attempts,
+                stopped=stopped,
+            )
+            if not stopped and artifact_quality_errors:
                 continue
             break
         if repair_tool_results:
@@ -3829,6 +3935,28 @@ async def _phase_quality_repair_loop(
                 _adapter_workspace,
             )
             _mark_quality_repair_summary_revalidated(quality_repair_summary, artifact_quality_errors)
+            progress_evidence = _quality_repair_progress_evidence(
+                before_files=llm_before_files,
+                after_files=current_files,
+                before_errors=llm_before_errors,
+                after_errors=artifact_quality_errors,
+                before_missing_count=llm_before_missing_count,
+                after_missing_count=len(_missing_declared_target_files(task, _adapter_workspace)),
+                successful_write_paths=_extract_successful_write_paths(repair_tool_results),
+            )
+            if bool(progress_evidence.get("effective_progress")):
+                stagnant_attempts = 0
+            else:
+                stagnant_attempts += 1
+            stopped = bool(artifact_quality_errors) and stagnant_attempts >= _QUALITY_REPAIR_STAGNATION_LIMIT
+            _annotate_quality_repair_progress(
+                quality_repair_summary,
+                evidence=progress_evidence,
+                stagnant_attempts=stagnant_attempts,
+                stopped=stopped,
+            )
+            if stopped:
+                break
             if artifact_quality_errors:
                 deterministic_quality_tool_results, deterministic_quality_summary = (
                     _run_materialization_quality_public_boundary(
@@ -5309,7 +5437,6 @@ from .execute_method_repair_bridge import (  # noqa: E402  (deferred for circula
 from .quality_gate import (  # noqa: E402  (deferred for circular-import safety)
     _ACCEPTANCE_VERIFY_EXISTS_RE as _ACCEPTANCE_VERIFY_EXISTS_RE,
     _QUALITY_REPAIR_ATTEMPT_HARD_CAP as _QUALITY_REPAIR_ATTEMPT_HARD_CAP,
-    _QUALITY_REPAIR_BASE_ATTEMPTS as _QUALITY_REPAIR_BASE_ATTEMPTS,
     _build_existing_workspace_task_evidence as _build_existing_workspace_task_evidence,
     _build_materialization_quality_repair_message as _build_materialization_quality_repair_message,
     _can_accept_existing_workspace_scope as _can_accept_existing_workspace_scope,

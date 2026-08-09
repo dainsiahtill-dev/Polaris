@@ -1509,6 +1509,132 @@ def test_deterministic_materialization_repair_routes_vitest_globals(tmp_path: An
     assert repaired_package["devDependencies"]["vitest"] == "^2.1.8"
 
 
+def test_quality_repair_progress_requires_mutation_and_net_diagnostic_reduction() -> None:
+    before = ["src/main.ts(1,1): error TS2307: Cannot find module 'node:path'."]
+    after = ["src/main.ts(8,2): error TS2304: Cannot find name 'relative'."]
+
+    changed_signature = execute_method_module._quality_repair_progress_evidence(
+        before_files={"src/main.ts": "old"},
+        after_files={"src/main.ts": "new"},
+        before_errors=before,
+        after_errors=after,
+        before_missing_count=0,
+        after_missing_count=0,
+        successful_write_paths=["src/main.ts"],
+    )
+    assert changed_signature["status"] == "stalled"
+    assert changed_signature["workspace_mutation_evidenced"] is True
+    assert changed_signature["net_error_reduction"] == 0
+    assert changed_signature["introduced_diagnostic_signatures"]
+
+    improved = execute_method_module._quality_repair_progress_evidence(
+        before_files={"src/main.ts": "old"},
+        after_files={"src/main.ts": "new"},
+        before_errors=[*before, *after],
+        after_errors=before,
+        before_missing_count=0,
+        after_missing_count=0,
+        successful_write_paths=["src/main.ts"],
+    )
+    assert improved["status"] == "progress"
+    assert improved["effective_progress"] is True
+    assert improved["net_error_reduction"] == 1
+    assert improved["introduced_diagnostic_signatures"] == []
+
+
+@pytest.mark.asyncio
+async def test_phase_quality_repair_loop_stops_after_two_worsening_director_edits(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _make_adapter(tmp_path)
+    initial_error = "src/main.ts(1,1): error TS2307: Cannot find module 'node:path'."
+    worsened_errors = [
+        "src/main.ts(8,2): error TS2304: Cannot find name 'relative'.",
+        "src/main.ts(12,4): error TS1005: ',' expected.",
+    ]
+    error_rounds = [[initial_error], list(worsened_errors), list(worsened_errors)]
+    llm_calls = 0
+    workspace_round = 0
+
+    def fake_collect_materialization_quality_errors(*args: Any, **kwargs: Any) -> list[str]:
+        return error_rounds.pop(0) if error_rounds else list(worsened_errors)
+
+    async def fake_llm_quality_repair(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        nonlocal llm_calls
+        llm_calls += 1
+        return [
+            {
+                "tool_name": "write_file",
+                "tool": "write_file",
+                "success": True,
+                "result": {"ok": True, "file": "src/main.ts"},
+            }
+        ], {"stage": "llm_quality_repair", "success": False}
+
+    def fake_workspace_diff(*args: Any, **kwargs: Any) -> tuple[dict[str, str], list[str], list[str], list[str]]:
+        nonlocal workspace_round
+        workspace_round += 1
+        return {"src/main.ts": f"v{workspace_round}"}, [], ["src/main.ts"], ["src/main.ts"]
+
+    monkeypatch.setattr(
+        execute_method_module, "_collect_materialization_quality_errors", fake_collect_materialization_quality_errors
+    )
+    monkeypatch.setattr(execute_method_module, "_collect_step_verify_errors", lambda *args, **kwargs: ([], []))
+    monkeypatch.setattr(execute_method_module, "run_python_static_smoke", lambda *args, **kwargs: [])
+    monkeypatch.setattr(execute_method_module, "run_python_runtime_smoke", lambda *args, **kwargs: ([], []))
+    monkeypatch.setattr(
+        execute_method_module, "_filter_satisfied_declared_target_missing_errors", lambda errors, workspace: errors
+    )
+    monkeypatch.setattr(execute_method_module, "_missing_declared_target_files", lambda task, workspace: [])
+    monkeypatch.setattr(
+        execute_method_module,
+        "run_declared_target_contract_repairs",
+        lambda *args, **kwargs: ([], {"stage": "deterministic_contract_repair", "success": False}),
+    )
+    monkeypatch.setattr(
+        execute_method_module,
+        "_run_materialization_quality_public_boundary",
+        lambda *args, **kwargs: ([], {"stage": "deterministic_quality_repair", "success": False}),
+    )
+    monkeypatch.setattr(execute_method_module, "_run_materialization_quality_repair_retry", fake_llm_quality_repair)
+    monkeypatch.setattr(execute_method_module, "_collect_workspace_code_diff", fake_workspace_diff)
+
+    quality_repair_attempts: list[dict[str, Any]] = []
+    _state, residual_errors, summary, _write_evidence = await execute_method_module._phase_quality_repair_loop(
+        adapter,
+        adapter_workspace=str(tmp_path),
+        baseline_files={},
+        context={},
+        llm_call_timeout=1.0,
+        message="repair TypeScript project",
+        quality_repair_attempts=quality_repair_attempts,
+        quality_repair_summary=None,
+        run_id="run-1",
+        target_task_id="task-1",
+        task={"metadata": {"target_files": ["src/main.ts"]}},
+        workspace_name=tmp_path.name,
+        write_tool_evidence=False,
+        state=execute_method_module.MaterializationState(
+            current_files={"src/main.ts": "v0"},
+            new_files=[],
+            modified_files=[],
+            all_affected_files=["src/main.ts"],
+            tool_results=[],
+        ),
+    )
+
+    assert llm_calls == 2
+    assert residual_errors == worsened_errors
+    assert summary is quality_repair_attempts[-1]
+    assert summary["convergence_status"] == "repair_stalled"
+    assert summary["error_code"] == "director_quality_repair_stalled"
+    assert summary["failure_class"] == "model_ceiling"
+    assert summary["retry_scope"] == "same_director_task_only"
+    assert summary["pm_ce_restart_allowed"] is False
+    assert summary["stagnant_attempts"] == 2
+
+
 @pytest.mark.asyncio
 async def test_phase_quality_repair_loop_continues_after_deterministic_progress_when_llm_empty(
     tmp_path: Any,

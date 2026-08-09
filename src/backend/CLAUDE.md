@@ -36,6 +36,7 @@
 - VerificationGuard 负责物理验证和 obligation-bound typed receipts，但不拥有最终成功；caller evidence、TaskBoundary、stage gate、generic audit receipt、日志摘要与磁盘猜测都不是权威。
 - workflow runtime 只拥有 durable convergence cursor，并使用跨进程 CAS、reserve-before-effect、deterministic action id 与 crash replay；不得在 Factory/adapter/bench 中复制重试状态机。
 - 角色失败必须阶段局部恢复，禁止默认重跑整条 `PM -> Chief Engineer -> Director`：CE 输出/schema 失败只重试 `chief_engineer_review`，复用已提交 PM contract 并把失败证据注入下一次最终 provider request；Director 失败只保留已完成 task、重开未完成 task，执行 bounded `edit/repair -> rerun affected verifier`；QA/Verifier 失败只回到 exact owner Director task。PM 仅在 PM contract 本身无效或被显式 supersede 时重跑。TaskMarket requeue 必须以 action id 原子幂等；达到局部预算后输出 model ceiling/blocker，不得把失败改写成 PASS 或自动升级上游。
+- Director 局部 repair 的“进展”必须同时满足：authoritative write receipt 对应负责路径的真实 fingerprint 变化、required verifier 复跑、诊断或 missing target 净减少且不引入新诊断。纯读取、同内容写入、只改变诊断签名、等量换错或错误增多一律记为 stagnation；连续 2 次 stagnation 必须停止 Provider 调用，输出 `director_quality_repair_stalled` + `model_ceiling`，并保持 `retry_scope=same_director_task_only`、禁止回退 PM/CE。
 - runtime.projection 独占 `completed_verified` 签发。`model_ceiling` 必须由 owner-query facts 封存，禁止由自报 attempt/budget/JSON 触发。
 - Bench 仅用于门禁全绿后的稀缺验证；失败必须先落唯一 residual/module attribution。外部 Supervisor 只做项目调度，不进入平台事实源或成功条件。
 
