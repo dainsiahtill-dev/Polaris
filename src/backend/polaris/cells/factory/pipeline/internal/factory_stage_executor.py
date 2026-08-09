@@ -26,7 +26,6 @@ from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -89,7 +88,7 @@ from polaris.cells.runtime.task_runtime.public.service import (
 )
 from polaris.kernelone.constants import (
     DEFAULT_DIRECTOR_MAX_PARALLELISM,
-    MAX_LLM_PROVIDER_TIMEOUT_SECONDS,
+    MAX_LLM_PROVIDER_TIMEOUT_SECONDS,  # noqa: F401 — re-exported for characterization-test surface
 )
 from polaris.kernelone.events.final_request_evidence import canonical_role_final_request_json
 from polaris.kernelone.fs import (
@@ -102,23 +101,30 @@ from polaris.kernelone.fs import (
 from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.llm.budget_policy import (
     FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS,
-    chief_engineer_generation_floor_seconds_for_output_tokens,
-    chief_engineer_portfolio_generation_floor_seconds,
     chief_engineer_portfolio_output_tokens,
 )
 from polaris.kernelone.storage import resolve_storage_roots
 from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
-from . import factory_stage_helpers as helpers
+from . import (
+    factory_ce_evidence as ce_evidence,
+    factory_deadline_calculations as deadline_calc,
+    factory_pm_contract_normalization as pm_contract_norm,
+    factory_stage_helpers as helpers,
+)
 from .factory_artifact_store import ArtifactStore
+from .factory_deadline_calculations import (  # noqa: F401 — re-exported for characterization-test surface
+    _CHIEF_ENGINEER_EXECUTION_ATTEMPT_SETTLEMENT_GRACE_SECONDS,
+    _CHIEF_ENGINEER_LLM_TIMEOUT_ENV_KEYS,
+    _DEFAULT_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS,
+    ChiefEngineerExecutionAttemptLeaseBudget as _ChiefEngineerExecutionAttemptLeaseBudget,
+)
 from .factory_deadline_policy import (
     FactoryDeadlineAdmissionV1,
     FactoryDeadlineBudgetPolicyV1,
     FactoryDeadlineDispositionV1,
     TaskDependencyScheduleV1,
     build_task_dependency_schedule,
-    resolve_chief_engineer_portfolio_admission,
-    resolve_director_dispatch_admission,
 )
 from .factory_role_evidence_authority import (
     FACTORY_ROLE_EVIDENCE_CUTOFF_PORT_CONTEXT_KEY,
@@ -335,19 +341,9 @@ _DIRECTOR_TIMEOUT_ENV_KEYS = (
     "KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS",
     "KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS",
 )
-# Project-level CE portfolios aggregate every PM task, shared interface, and
-# verification contract into one structured provider response.  The former
-# 240-second default was inherited from the retired per-task call path and can
-# expire a healthy reasoning model before it emits any authoritative overlay.
-# Factory deadline admission still clips this request to the exact conserved
-# stage budget, so the longer ceiling cannot consume Director/QA reserves.
-_DEFAULT_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS = 600
-_CHIEF_ENGINEER_EXECUTION_ATTEMPT_SETTLEMENT_GRACE_SECONDS = 30
-_CHIEF_ENGINEER_LLM_TIMEOUT_ENV_KEYS = (
-    "KERNELONE_FACTORY_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS",
-    "KERNELONE_FACTORY_CE_LLM_TIMEOUT_SECONDS",
-    "KERNELONE_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS",
-)
+# CE LLM timeout constants now live in factory_deadline_calculations; they are
+# re-imported above so the characterization-test surface (stage_executor_module.X)
+# continues to resolve.
 _CE_BLUEPRINT_OUTPUT_CONTRACT = """
 
 Chief Engineer output contract:
@@ -382,20 +378,6 @@ Chief Engineer output contract:
   catalog, and verifier-policy evidence.
 - Do not call any other tool or emit code patches, <SESSION_PATCH>, or file edit instructions.
 """
-
-
-@dataclass(frozen=True, slots=True)
-class _ChiefEngineerExecutionAttemptLeaseBudget:
-    """One bounded lease policy derived from the admitted CE timeout."""
-
-    lease_ttl_seconds: int
-    heartbeat_interval_seconds: float
-
-    def __post_init__(self) -> None:
-        if self.lease_ttl_seconds <= 0:
-            raise ValueError("chief_engineer_execution_attempt_lease_ttl_must_be_positive")
-        if not 0 < self.heartbeat_interval_seconds < self.lease_ttl_seconds:
-            raise ValueError("chief_engineer_execution_attempt_heartbeat_interval_out_of_bounds")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1277,180 +1259,36 @@ class OrchestrationStageExecutor:
         )
 
     def _read_catalog_contract(self) -> dict[str, Any]:
-        catalog_path = self.workspace / ".polaris" / "catalog_contract.json"
-        if not catalog_path.exists():
-            return {}
-        try:
-            payload = json.loads(catalog_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            return {}
-        return payload if isinstance(payload, dict) else {}
+        return pm_contract_norm.read_catalog_contract(self.workspace)
 
     @staticmethod
     def _catalog_delivery_depth_contract(catalog: dict[str, Any]) -> dict[str, Any]:
-        level_contract_raw = catalog.get("level_contract")
-        level_contract: dict[str, Any] = level_contract_raw if isinstance(level_contract_raw, dict) else {}
-        if not level_contract:
-            return {}
-        feature_keywords = [
-            str(item).strip() for item in (catalog.get("feature_keywords") or []) if str(item or "").strip()
-        ]
-        minimums = dict(level_contract.get("minimums") or {})
-        return {
-            "schema_version": "polaris.delivery_depth_contract.v1",
-            "source": "factory.catalog_contract",
-            "language": str(catalog.get("primary_language") or "").strip(),
-            "project_type": str(catalog.get("project_type") or "").strip(),
-            "level": level_contract.get("level") or catalog.get("level"),
-            "minimums": minimums,
-            "required_evidence": list(level_contract.get("required_evidence") or []),
-            "anti_hollow_delivery": list(level_contract.get("anti_hollow_delivery") or []),
-            "level_contract": dict(level_contract),
-            "product_intent": {
-                "subject": str(catalog.get("project_id") or catalog.get("project_type") or "").strip(),
-                "primary_entities": feature_keywords,
-            },
-            "behavior_contract": {
-                "minimums": minimums,
-                "required_behavior_tests": [
-                    "normal behavior",
-                    "boundary behavior",
-                    "invalid or edge-case behavior",
-                ],
-            },
-        }
+        return pm_contract_norm.catalog_delivery_depth_contract(catalog)
 
     @staticmethod
     def _merge_string_list(*values: Any) -> list[str]:
-        rows: list[str] = []
-        seen: set[str] = set()
-        for value in values:
-            raw_items = value if isinstance(value, (list, tuple, set, frozenset)) else [value]
-            for item in raw_items:
-                token = str(item or "").strip()
-                if token and token not in seen:
-                    seen.add(token)
-                    rows.append(token)
-        return rows
+        return pm_contract_norm.merge_string_list(*values)
 
     @staticmethod
     def _merge_catalog_delivery_depth_contract(
         existing: dict[str, Any],
         catalog_contract: dict[str, Any],
     ) -> dict[str, Any]:
-        if not existing:
-            return dict(catalog_contract)
-        if not catalog_contract:
-            return dict(existing)
-
-        merged = dict(existing)
-        for key in ("schema_version", "language", "project_type", "level"):
-            if not merged.get(key) and catalog_contract.get(key) not in (None, ""):
-                merged[key] = catalog_contract[key]
-
-        for key in ("minimums", "level_contract"):
-            existing_raw = existing.get(key)
-            catalog_raw = catalog_contract.get(key)
-            existing_map = cast(dict[str, Any], existing_raw) if isinstance(existing_raw, dict) else {}
-            catalog_map = cast(dict[str, Any], catalog_raw) if isinstance(catalog_raw, dict) else {}
-            if existing_map or catalog_map:
-                merged[key] = {**catalog_map, **existing_map}
-
-        for key in ("required_evidence", "anti_hollow_delivery"):
-            merged_list = OrchestrationStageExecutor._merge_string_list(
-                catalog_contract.get(key),
-                existing.get(key),
-            )
-            if merged_list:
-                merged[key] = merged_list
-
-        for key in ("product_intent", "behavior_contract", "acceptance_contract"):
-            existing_raw = existing.get(key)
-            catalog_raw = catalog_contract.get(key)
-            existing_map = cast(dict[str, Any], existing_raw) if isinstance(existing_raw, dict) else {}
-            catalog_map = cast(dict[str, Any], catalog_raw) if isinstance(catalog_raw, dict) else {}
-            if not existing_map and not catalog_map:
-                continue
-            child = {**catalog_map, **existing_map}
-            if key == "behavior_contract":
-                existing_minimums_raw = existing_map.get("minimums")
-                catalog_minimums_raw = catalog_map.get("minimums")
-                existing_minimums = (
-                    cast(dict[str, Any], existing_minimums_raw) if isinstance(existing_minimums_raw, dict) else {}
-                )
-                catalog_minimums = (
-                    cast(dict[str, Any], catalog_minimums_raw) if isinstance(catalog_minimums_raw, dict) else {}
-                )
-                if existing_minimums or catalog_minimums:
-                    child["minimums"] = {**catalog_minimums, **existing_minimums}
-            merged[key] = child
-
-        return merged
+        return pm_contract_norm.merge_catalog_delivery_depth_contract(existing, catalog_contract)
 
     def _inject_catalog_delivery_depth_contract(self, context: dict[str, Any]) -> None:
-        metadata_raw = context.get("metadata")
-        metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
-        catalog = self._read_catalog_contract()
-        catalog_depth_contract = self._catalog_delivery_depth_contract(catalog)
-        context_depth_raw = context.get("delivery_depth_contract")
-        metadata_depth_raw = metadata.get("delivery_depth_contract")
-        if isinstance(context_depth_raw, dict):
-            existing_depth_contract = dict(cast(dict[str, Any], context_depth_raw))
-        elif isinstance(metadata_depth_raw, dict):
-            existing_depth_contract = dict(cast(dict[str, Any], metadata_depth_raw))
-        else:
-            existing_depth_contract = {}
-        depth_contract = self._merge_catalog_delivery_depth_contract(existing_depth_contract, catalog_depth_contract)
-        if not depth_contract:
-            return
-        context["delivery_depth_contract"] = depth_contract
-        level_contract_raw = depth_contract.get("level_contract")
-        level_contract = dict(cast(dict[str, Any], level_contract_raw)) if isinstance(level_contract_raw, dict) else {}
-        if level_contract:
-            context["level_contract"] = level_contract
-        language = str(depth_contract.get("language") or "").strip()
-        if language and not str(context.get("language") or "").strip():
-            context["language"] = language
-        level = depth_contract.get("level")
-        if level is not None and context.get("factory_bench_level") is None:
-            context["factory_bench_level"] = level
-        project_id = str(catalog.get("project_id") or "").strip()
-        if project_id and not str(context.get("factory_bench_project_id") or "").strip():
-            context["factory_bench_project_id"] = project_id
-        title = str(catalog.get("title") or catalog.get("name") or "").strip()
-        if title and not str(context.get("factory_bench_title") or "").strip():
-            context["factory_bench_title"] = title
-        metadata = dict(metadata)
-        metadata_depth_raw = metadata.get("delivery_depth_contract")
-        metadata["delivery_depth_contract"] = self._merge_catalog_delivery_depth_contract(
-            dict(cast(dict[str, Any], metadata_depth_raw)) if isinstance(metadata_depth_raw, dict) else {},
-            depth_contract,
+        pm_contract_norm.inject_catalog_delivery_depth_contract(
+            context,
+            self._read_catalog_contract(),
         )
-        if level_contract:
-            metadata.setdefault("level_contract", level_contract)
-        if language:
-            metadata.setdefault("language", language)
-        if level is not None:
-            metadata.setdefault("factory_bench_level", level)
-        if project_id:
-            metadata.setdefault("factory_bench_project_id", project_id)
-        if title:
-            metadata.setdefault("factory_bench_title", title)
-        context["metadata"] = metadata
 
     @staticmethod
     def _normalize_contract_path(value: Any) -> str:
-        path = str(value or "").strip().replace("\\", "/")
-        while path.startswith("./"):
-            path = path[2:]
-        return path
+        return pm_contract_norm.normalize_contract_path(value)
 
     @classmethod
     def _source_target_suffixes(cls) -> frozenset[str]:
-        suffixes: set[str] = set()
-        for extensions in _LANGUAGE_SOURCE_EXTENSIONS.values():
-            suffixes.update(extensions)
-        return frozenset(suffixes)
+        return pm_contract_norm.source_target_suffixes()
 
     @classmethod
     def _collect_pm_project_declared_target_files(cls, tasks: list[dict[str, Any]]) -> list[str]:
@@ -1460,39 +1298,15 @@ class OrchestrationStageExecutor:
         remains read-only evidence and must not be promoted into this union.
         """
 
-        rows: list[str] = []
-        seen: set[str] = set()
-        for task in tasks:
-            for path in cls._task_string_list(task, "target_files"):
-                normalized = cls._normalize_contract_path(path)
-                if not normalized or normalized in seen:
-                    continue
-                seen.add(normalized)
-                rows.append(normalized)
-        return rows
+        return pm_contract_norm.collect_pm_project_declared_target_files(tasks)
 
     @classmethod
     def _filter_source_target_files(cls, paths: list[str]) -> list[str]:
-        source_suffixes = cls._source_target_suffixes()
-        rows: list[str] = []
-        for path in paths:
-            suffix = Path(path).suffix.lower()
-            if suffix and suffix in source_suffixes:
-                rows.append(path)
-        return rows
+        return pm_contract_norm.filter_source_target_files(paths)
 
     @staticmethod
     def _filter_entrypoint_like_targets(paths: list[str]) -> list[str]:
-        rows: list[str] = []
-        for path in paths:
-            normalized = path.replace("\\", "/")
-            filename = Path(normalized).name.lower()
-            stem = Path(filename).stem.lower()
-            if filename in {"package.json", "pyproject.toml", "go.mod", "cargo.toml"}:
-                continue
-            if stem in {"index", "main", "cli", "app", "server", "runner"}:
-                rows.append(path)
-        return rows
+        return pm_contract_norm.filter_entrypoint_like_targets(paths)
 
     def _inject_project_declared_target_contract(
         self,
@@ -1500,73 +1314,10 @@ class OrchestrationStageExecutor:
         *,
         project_declared_target_files: list[str],
     ) -> None:
-        if not project_declared_target_files:
-            return
-
-        source_targets = self._filter_source_target_files(project_declared_target_files)
-        entrypoint_targets = self._filter_entrypoint_like_targets(project_declared_target_files)
-        context["project_declared_target_files"] = self._merge_string_list(
-            project_declared_target_files,
-            context.get("project_declared_target_files"),
+        pm_contract_norm.inject_project_declared_target_contract(
+            context,
+            project_declared_target_files=project_declared_target_files,
         )
-        if source_targets:
-            context["project_declared_source_targets"] = self._merge_string_list(
-                source_targets,
-                context.get("project_declared_source_targets"),
-            )
-        if entrypoint_targets:
-            context["project_declared_entrypoint_targets"] = self._merge_string_list(
-                entrypoint_targets,
-                context.get("project_declared_entrypoint_targets"),
-            )
-
-        manifest_policy = {
-            "schema_version": "polaris.manifest_entrypoint_contract.v1",
-            "source": "factory.pm_plan_declared_targets",
-            "allowed_local_entrypoints": list(project_declared_target_files),
-            "rule": (
-                "Package manifest scripts/bin/main/module local paths must reference existing files "
-                "or project_declared_target_files; do not invent unowned local entrypoint files."
-            ),
-        }
-        existing_policy_raw = context.get("manifest_entrypoint_contract")
-        existing_policy = (
-            dict(cast(dict[str, Any], existing_policy_raw)) if isinstance(existing_policy_raw, dict) else {}
-        )
-        existing_allowed = existing_policy.get("allowed_local_entrypoints")
-        manifest_policy["allowed_local_entrypoints"] = self._merge_string_list(
-            project_declared_target_files,
-            existing_allowed,
-        )
-        context["manifest_entrypoint_contract"] = {**manifest_policy, **existing_policy}
-
-        metadata_raw = context.get("metadata")
-        metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
-        metadata["project_declared_target_files"] = self._merge_string_list(
-            project_declared_target_files,
-            metadata.get("project_declared_target_files"),
-        )
-        if source_targets:
-            metadata["project_declared_source_targets"] = self._merge_string_list(
-                source_targets,
-                metadata.get("project_declared_source_targets"),
-            )
-        if entrypoint_targets:
-            metadata["project_declared_entrypoint_targets"] = self._merge_string_list(
-                entrypoint_targets,
-                metadata.get("project_declared_entrypoint_targets"),
-            )
-        metadata_policy_raw = metadata.get("manifest_entrypoint_contract")
-        metadata_policy = (
-            dict(cast(dict[str, Any], metadata_policy_raw)) if isinstance(metadata_policy_raw, dict) else {}
-        )
-        metadata_allowed = metadata_policy.get("allowed_local_entrypoints")
-        metadata["manifest_entrypoint_contract"] = {
-            **manifest_policy,
-            **metadata_policy,
-            "allowed_local_entrypoints": self._merge_string_list(project_declared_target_files, metadata_allowed),
-        }
-        context["metadata"] = metadata
 
     def _enrich_pm_plan_contract_artifact(self, relative_path: str = "tasks/plan.json") -> dict[str, Any]:
         target = self._artifact_path(relative_path)
@@ -1725,113 +1476,24 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _pm_plan_tasks_from_payload(payload: Any) -> list[dict[str, Any]]:
-        if not isinstance(payload, dict):
-            return []
-        tasks = payload.get("tasks")
-        if not isinstance(tasks, list):
-            return []
-        task_rows = [dict(item) for item in tasks if isinstance(item, dict)]
-        return OrchestrationStageExecutor._normalize_pm_plan_validation_contracts(task_rows)
+        return pm_contract_norm.pm_plan_tasks_from_payload(payload)
 
-    _PM_TEST_COMMAND_RE = re.compile(
-        r"`?(?:npm\s+(?:run\s+)?test|pnpm\s+(?:run\s+)?test|yarn\s+test|"
-        r"pytest|go\s+test|cargo\s+test|vitest|jest)`?",
-        re.IGNORECASE,
-    )
-    _PM_NON_TEST_COMMAND_RE = re.compile(
-        r"\b(?:build|lint|start|smoke|compile|typecheck|tsc|ruff|mypy)\b",
-        re.IGNORECASE,
-    )
+    _PM_TEST_COMMAND_RE = pm_contract_norm._PM_TEST_COMMAND_RE
+    _PM_NON_TEST_COMMAND_RE = pm_contract_norm._PM_NON_TEST_COMMAND_RE
 
     @staticmethod
     def _normalize_pm_plan_validation_contracts(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Keep per-task test acceptance aligned with the task that owns test targets."""
 
-        if not tasks:
-            return []
-
-        task_ids = [
-            OrchestrationStageExecutor._task_string(task, "id", "task_id", "uid") or f"task-{index}"
-            for index, task in enumerate(tasks, start=1)
-        ]
-        downstream_validation_by_dependency: dict[str, list[str]] = {}
-        for index, task in enumerate(tasks):
-            task_id = task_ids[index]
-            if not task_id:
-                continue
-            validation_targets = [
-                path
-                for path in OrchestrationStageExecutor._task_string_list(task, "target_files", "scope_paths")
-                if OrchestrationStageExecutor._is_pm_validation_target_path(path)
-            ]
-            if not validation_targets:
-                continue
-            for dependency_id in OrchestrationStageExecutor._task_string_list(task, "depends_on", "dependencies"):
-                normalized_dependency = str(dependency_id or "").strip()
-                if not normalized_dependency:
-                    continue
-                downstream_validation_by_dependency.setdefault(normalized_dependency, []).extend(validation_targets)
-
-        normalized_tasks: list[dict[str, Any]] = []
-        for index, task in enumerate(tasks):
-            task_id = task_ids[index]
-            copied = dict(task)
-            acceptance_keys = [key for key in ("acceptance", "acceptance_criteria") if key in copied]
-            if not acceptance_keys:
-                acceptance_keys = ["acceptance"]
-            acceptance = OrchestrationStageExecutor._task_string_list(copied, "acceptance", "acceptance_criteria")
-            has_local_validation_target = any(
-                OrchestrationStageExecutor._is_pm_validation_target_path(path)
-                for path in OrchestrationStageExecutor._task_string_list(copied, "target_files", "scope_paths")
-            )
-            downstream_validation_targets = downstream_validation_by_dependency.get(task_id, [])
-            if acceptance and not has_local_validation_target and downstream_validation_targets:
-                rewritten, removed = OrchestrationStageExecutor._acceptance_without_test_commands(acceptance)
-                if removed:
-                    normalized_acceptance = rewritten or [
-                        "Build/start checks for this task's declared implementation targets pass."
-                    ]
-                    for acceptance_key in acceptance_keys:
-                        copied[acceptance_key] = list(normalized_acceptance)
-                    metadata_raw = copied.get("metadata")
-                    metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
-                    metadata["validation_contract_hygiene"] = {
-                        "reason": "test_acceptance_deferred_to_downstream_validation_task",
-                        "removed_acceptance_items": list(dict.fromkeys(removed)),
-                        "downstream_validation_targets": list(dict.fromkeys(downstream_validation_targets)),
-                    }
-                    copied["metadata"] = metadata
-            normalized_tasks.append(copied)
-        return normalized_tasks
+        return pm_contract_norm.normalize_pm_plan_validation_contracts(tasks)
 
     @staticmethod
     def _is_pm_validation_target_path(path: str) -> bool:
-        normalized = str(path or "").strip().replace("\\", "/").lower()
-        if not normalized:
-            return False
-        name = Path(normalized).name
-        return (
-            normalized.startswith(("tests/", "test/", "__tests__/"))
-            or "/tests/" in normalized
-            or "/__tests__/" in normalized
-            or any(token in name for token in ("test", "spec", "verify"))
-        )
+        return pm_contract_norm.is_pm_validation_target_path(path)
 
     @staticmethod
     def _acceptance_without_test_commands(acceptance: list[str]) -> tuple[list[str], list[str]]:
-        kept: list[str] = []
-        removed: list[str] = []
-        for item in acceptance:
-            text = str(item or "").strip()
-            if not text:
-                continue
-            if not OrchestrationStageExecutor._PM_TEST_COMMAND_RE.search(text):
-                kept.append(text)
-                continue
-            removed.append(text)
-            if OrchestrationStageExecutor._PM_NON_TEST_COMMAND_RE.search(text):
-                kept.append("Build/start checks for this task's declared implementation targets pass.")
-        return list(dict.fromkeys(kept)), removed
+        return pm_contract_norm.acceptance_without_test_commands(acceptance)
 
     def _iter_pm_plan_contract_candidates(self) -> list[Path]:
         candidates: list[Path] = []
@@ -2845,57 +2507,11 @@ class OrchestrationStageExecutor:
         task_count: int,
         materialization_pending: bool = False,
     ) -> int:
-        remaining_task_count = max(1, int(task_count))
-        resolved_timeout: int | None = None
-        raw_override = context.get("director_dispatch_timeout_seconds")
-        if raw_override is not None:
-            with contextlib.suppress(TypeError, ValueError):
-                resolved_timeout = max(1, int(raw_override))
-
-        def _parse_timeout(raw: Any) -> int | None:
-            if raw is None:
-                return None
-            try:
-                value = int(float(str(raw).strip()))
-            except (TypeError, ValueError):
-                return None
-            if value <= 0:
-                return None
-            return value
-
-        stage_timeout = _parse_timeout(context.get("timeout"))
-        if resolved_timeout is None:
-            llm_timeout_candidates: list[int] = []
-            for key in ("director_llm_timeout_seconds", "llm_call_timeout_seconds"):
-                value = _parse_timeout(context.get(key))
-                if value is not None:
-                    llm_timeout_candidates.append(value)
-            for env_key in _DIRECTOR_TIMEOUT_ENV_KEYS:
-                value = _parse_timeout(os.getenv(env_key))
-                if value is not None:
-                    llm_timeout_candidates.append(value)
-            if llm_timeout_candidates:
-                resolved_timeout = max(llm_timeout_candidates) + _DIRECTOR_DISPATCH_TIMEOUT_GRACE_SECONDS
-
-        if resolved_timeout is None:
-            resolved_timeout = stage_timeout or 600
-
-        remaining_seconds = OrchestrationStageExecutor._factory_deadline_remaining_seconds(context)
-        if remaining_seconds is not None:
-            quality_gate_reserve = OrchestrationStageExecutor._director_downstream_reserved_budget_seconds(
-                context,
-                materialization_pending=materialization_pending,
-                remaining_task_count=remaining_task_count,
-            )
-            safety_budget = (
-                quality_gate_reserve
-                if remaining_seconds > quality_gate_reserve
-                else _DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS
-            )
-            deadline_timeout = int(max(1.0, remaining_seconds - safety_budget))
-            return max(1, min(resolved_timeout, deadline_timeout))
-
-        return resolved_timeout
+        return deadline_calc.director_dispatch_timeout_seconds(
+            context,
+            task_count=task_count,
+            materialization_pending=materialization_pending,
+        )
 
     @staticmethod
     def _factory_deadline_budget_policy(
@@ -2905,24 +2521,9 @@ class OrchestrationStageExecutor:
     ) -> FactoryDeadlineBudgetPolicyV1:
         """Resolve infrastructure configuration into the pure deadline policy."""
 
-        return FactoryDeadlineBudgetPolicyV1(
-            chief_engineer_min_start_seconds=math.ceil(_CHIEF_ENGINEER_MIN_LLM_START_BUDGET_SECONDS),
-            director_first_task_min_seconds=math.ceil(
-                OrchestrationStageExecutor._director_first_materialization_min_budget_seconds(context),
-            ),
-            director_followup_task_min_seconds=math.ceil(FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS),
-            quality_gate_reserved_seconds=math.ceil(
-                OrchestrationStageExecutor._quality_gate_reserved_budget_seconds(context),
-            ),
-            quality_gate_min_start_reserved_seconds=math.ceil(
-                _QUALITY_GATE_MIN_START_BUDGET_SECONDS + _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS,
-            ),
-            safety_seconds=int(_DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS),
-            director_settlement_barrier_seconds=min(
-                _DIRECTOR_SETTLEMENT_BARRIER_BUDGET_SECONDS,
-                OrchestrationStageExecutor._director_dispatch_timeout_settle_grace_seconds(context),
-            ),
-            chief_engineer_generation_floor_seconds=math.ceil(chief_engineer_generation_floor_seconds),
+        return deadline_calc.factory_deadline_budget_policy(
+            context,
+            chief_engineer_generation_floor_seconds=chief_engineer_generation_floor_seconds,
         )
 
     @staticmethod
@@ -3046,45 +2647,21 @@ class OrchestrationStageExecutor:
     ) -> FactoryDeadlineAdmissionV1:
         """Return the canonical typed admission for one Director dispatch."""
 
-        return resolve_director_dispatch_admission(
-            remaining_seconds=OrchestrationStageExecutor._factory_deadline_remaining_seconds(context),
+        return deadline_calc.director_dispatch_deadline_admission_decision(
+            context,
             requested_timeout_seconds=requested_timeout_seconds,
-            dependency_schedule=dependency_schedule,
             first_materialization_pending=first_materialization_pending,
             materialization_pending=materialization_pending,
-            policy=OrchestrationStageExecutor._factory_deadline_budget_policy(context),
+            dependency_schedule=dependency_schedule,
         )
 
     @staticmethod
     def _director_first_materialization_min_budget_seconds(context: dict[str, Any]) -> float:
-        raw_value = context.get("director_first_materialization_min_budget_seconds")
-        if raw_value is None:
-            raw_value = context.get("factory_director_first_materialization_min_budget_seconds")
-        if raw_value is None:
-            raw_value = os.getenv(_DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_ENV)
-        try:
-            value = (
-                float(str(raw_value).strip())
-                if raw_value is not None
-                else _DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_SECONDS
-            )
-        except (TypeError, ValueError):
-            value = _DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_SECONDS
-        return max(30.0, min(value, 600.0))
+        return deadline_calc.director_first_materialization_min_budget_seconds(context)
 
     @staticmethod
     def _quality_gate_reserved_budget_seconds(context: dict[str, Any]) -> float:
-        raw_value = context.get("quality_gate_reserved_budget_seconds")
-        if raw_value is None:
-            raw_value = context.get("factory_quality_gate_reserved_budget_seconds")
-        if raw_value is None:
-            raw_value = os.getenv(_QUALITY_GATE_RESERVED_BUDGET_ENV)
-        try:
-            value = float(str(raw_value).strip()) if raw_value is not None else _QUALITY_GATE_RESERVED_BUDGET_SECONDS
-        except (TypeError, ValueError):
-            value = _QUALITY_GATE_RESERVED_BUDGET_SECONDS
-        minimum = _QUALITY_GATE_MIN_START_BUDGET_SECONDS + _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS
-        return max(minimum, min(value, 600.0))
+        return deadline_calc.quality_gate_reserved_budget_seconds(context)
 
     @staticmethod
     def _director_downstream_reserved_budget_seconds(
@@ -3093,68 +2670,21 @@ class OrchestrationStageExecutor:
         materialization_pending: bool,
         remaining_task_count: int,
     ) -> float:
-        """Reserve only executable downstream work at the Director boundary.
+        """Reserve only executable downstream work at the Director boundary."""
 
-        Project quality and QA cannot run while more than one declared owner
-        task still has to materialize its targets. In that state the scheduler
-        retains the minimum budget needed to start both downstream stages,
-        rather than the configured full quality allowance. The final owner (or
-        an already materialized workspace) keeps the full reserve.
-
-        Complexity:
-            O(1) time and memory.
-        """
-
-        configured_reserve = OrchestrationStageExecutor._quality_gate_reserved_budget_seconds(context)
-        minimum_reserve = _QUALITY_GATE_MIN_START_BUDGET_SECONDS + _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS
-        if materialization_pending and max(1, int(remaining_task_count)) > 1:
-            return min(configured_reserve, minimum_reserve)
-        return configured_reserve
+        return deadline_calc.director_downstream_reserved_budget_seconds(
+            context,
+            materialization_pending=materialization_pending,
+            remaining_task_count=remaining_task_count,
+        )
 
     @staticmethod
     def _director_dispatch_timeout_settle_grace_seconds(context: dict[str, Any]) -> int:
-        raw_value = context.get("director_dispatch_timeout_settle_grace_seconds")
-        if raw_value is None:
-            raw_value = os.getenv("KERNELONE_DIRECTOR_DISPATCH_TIMEOUT_SETTLE_GRACE_SECONDS")
-        try:
-            value = int(float(str(raw_value).strip())) if raw_value is not None else 45
-        except (TypeError, ValueError):
-            value = 45
-        return max(0, min(value, 120))
+        return deadline_calc.director_dispatch_timeout_settle_grace_seconds(context)
 
     @staticmethod
     def _chief_engineer_llm_timeout_seconds(context: dict[str, Any]) -> int:
-        def _parse_timeout(raw: Any) -> int | None:
-            if raw is None:
-                return None
-            try:
-                parsed = Decimal(str(raw).strip())
-            except (InvalidOperation, TypeError, ValueError):
-                return None
-            if not parsed.is_finite() or parsed <= 0:
-                return None
-            if parsed >= MAX_LLM_PROVIDER_TIMEOUT_SECONDS:
-                return MAX_LLM_PROVIDER_TIMEOUT_SECONDS
-            value = int(parsed)
-            return value if value > 0 else None
-
-        for key in (
-            "chief_engineer_llm_timeout_seconds",
-            "ce_llm_timeout_seconds",
-            "llm_call_timeout_seconds",
-            "request_timeout_seconds",
-            "timeout_seconds",
-        ):
-            value = _parse_timeout(context.get(key))
-            if value is not None:
-                return value
-
-        for env_key in _CHIEF_ENGINEER_LLM_TIMEOUT_ENV_KEYS:
-            value = _parse_timeout(os.getenv(env_key))
-            if value is not None:
-                return value
-
-        return _DEFAULT_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS
+        return deadline_calc.chief_engineer_llm_timeout_seconds(context)
 
     @staticmethod
     def _chief_engineer_execution_attempt_lease_budget(
@@ -3162,22 +2692,7 @@ class OrchestrationStageExecutor:
     ) -> _ChiefEngineerExecutionAttemptLeaseBudget:
         """Derive one bounded TaskRuntime TTL and heartbeat cadence."""
 
-        if (
-            isinstance(execution_timeout_seconds, bool)
-            or not isinstance(execution_timeout_seconds, int)
-            or execution_timeout_seconds <= 0
-            or execution_timeout_seconds > MAX_LLM_PROVIDER_TIMEOUT_SECONDS
-        ):
-            raise ValueError("chief_engineer_execution_timeout_seconds_out_of_bounds")
-        lease_ttl_seconds = execution_timeout_seconds + _CHIEF_ENGINEER_EXECUTION_ATTEMPT_SETTLEMENT_GRACE_SECONDS
-        heartbeat_interval_seconds = min(
-            float(_CHIEF_ENGINEER_EXECUTION_ATTEMPT_SETTLEMENT_GRACE_SECONDS),
-            lease_ttl_seconds / 3.0,
-        )
-        return _ChiefEngineerExecutionAttemptLeaseBudget(
-            lease_ttl_seconds=lease_ttl_seconds,
-            heartbeat_interval_seconds=heartbeat_interval_seconds,
-        )
+        return deadline_calc.chief_engineer_execution_attempt_lease_budget(execution_timeout_seconds)
 
     @staticmethod
     def _chief_engineer_deadline_projection_decision(
@@ -3187,94 +2702,32 @@ class OrchestrationStageExecutor:
         dependency_schedule: TaskDependencyScheduleV1,
         output_tokens: int | None = None,
     ) -> FactoryDeadlineAdmissionV1:
-        """Return admission for one project-level Chief Engineer LLM call.
+        """Return admission for one project-level Chief Engineer LLM call."""
 
-        ``output_tokens`` overrides the modeled generation floor for bounded
-        sub-calls (e.g. the output-schema repair requests far fewer tokens than
-        a full portfolio); ``None`` models the full portfolio floor.
-        """
-
-        if output_tokens is None:
-            portfolio_task_count = max(1, len(dependency_schedule.active_task_ids))
-            generation_floor_seconds = chief_engineer_portfolio_generation_floor_seconds(portfolio_task_count)
-        else:
-            generation_floor_seconds = chief_engineer_generation_floor_seconds_for_output_tokens(output_tokens)
-        return resolve_chief_engineer_portfolio_admission(
-            remaining_seconds=OrchestrationStageExecutor._factory_deadline_remaining_seconds(context),
+        return deadline_calc.chief_engineer_deadline_projection_decision(
+            context,
             requested_timeout_seconds=requested_timeout_seconds,
             dependency_schedule=dependency_schedule,
-            policy=OrchestrationStageExecutor._factory_deadline_budget_policy(
-                context,
-                chief_engineer_generation_floor_seconds=generation_floor_seconds,
-            ),
+            output_tokens=output_tokens,
         )
 
     @staticmethod
     def _chief_engineer_projection_semantic_terms(task_context: dict[str, Any]) -> list[str]:
-        def _mapping(value: Any) -> dict[str, Any]:
-            return dict(value) if isinstance(value, dict) else {}
-
-        def _extend_terms(raw: Any, terms: list[str]) -> None:
-            values = raw if isinstance(raw, (list, tuple, set)) else [raw]
-            for item in values:
-                token = str(item or "").strip()
-                if token and token not in terms:
-                    terms.append(token)
-
-        terms: list[str] = []
-        depth_contract = _mapping(task_context.get("delivery_depth_contract"))
-        plan_document = _mapping(task_context.get("delivery_plan_document"))
-        product_intent = _mapping(depth_contract.get("product_intent"))
-        product_summary = _mapping(plan_document.get("product_summary"))
-        _extend_terms(product_intent.get("primary_entities"), terms)
-        _extend_terms(product_summary.get("core_terms"), terms)
-        _extend_terms(task_context.get("feature_keywords"), terms)
-        return terms[:8]
+        return deadline_calc.chief_engineer_projection_semantic_terms(task_context)
 
     @staticmethod
     def _enrich_chief_engineer_projection_context(task_context: dict[str, Any]) -> None:
-        terms = OrchestrationStageExecutor._chief_engineer_projection_semantic_terms(task_context)
-        if not terms:
-            return
-
-        semantic_phrase = ", ".join(terms[:4])
-
-        def _string_list(raw: Any) -> list[str]:
-            if isinstance(raw, (list, tuple)):
-                return [str(item).strip() for item in raw if str(item or "").strip()]
-            token = str(raw or "").strip()
-            return [token] if token else []
-
-        def _append_unique(key: str, value: str) -> None:
-            rows = _string_list(task_context.get(key))
-            if value not in rows:
-                rows.append(value)
-            task_context[key] = rows
-
-        _append_unique(
-            "acceptance_criteria",
-            f"Preserve and verify domain behavior for {semantic_phrase}.",
-        )
-        _append_unique(
-            "execution_checklist",
-            f"Carry the PM domain terms through the implementation plan: {semantic_phrase}.",
-        )
-        task_context["chief_engineer_projection_semantic_terms"] = terms
+        deadline_calc.enrich_chief_engineer_projection_context(task_context)
 
     @staticmethod
     def _director_binding_timeout_quarantine_count() -> int:
-        raw = os.environ.get(_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_ENV, "")
-        try:
-            value = int(str(raw).strip()) if str(raw).strip() else _DEFAULT_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT
-        except (TypeError, ValueError):
-            value = _DEFAULT_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT
-        return max(2, value)
+        return deadline_calc.director_binding_timeout_quarantine_count()
 
     # ── Director binding fanout ────────────────────────────────────────────
 
     @staticmethod
     def _director_binding_identity(provider_id: str, model: str, binding_id: str = "") -> str:
-        return f"{str(provider_id or '').strip()}|{str(model or '').strip()}|{str(binding_id or '').strip()}"
+        return deadline_calc.director_binding_identity(provider_id, model, binding_id)
 
     def _record_director_binding_skip(
         self,
@@ -4152,30 +3605,7 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _llm_event_error_text(event: dict[str, Any]) -> str:
-        raw_value = event.get("raw")
-        raw: dict[str, Any] = raw_value if isinstance(raw_value, dict) else {}
-        data_value = raw.get("data")
-        data: dict[str, Any] = data_value if isinstance(data_value, dict) else {}
-        metadata_value = raw.get("metadata")
-        metadata: dict[str, Any] = metadata_value if isinstance(metadata_value, dict) else {}
-        data_metadata_value = data.get("metadata")
-        data_metadata: dict[str, Any] = data_metadata_value if isinstance(data_metadata_value, dict) else {}
-        parts: list[str] = []
-        for source in (event, raw, data, metadata, data_metadata):
-            for key in (
-                "event",
-                "event_type",
-                "error_category",
-                "error_code",
-                "error_message",
-                "message",
-                "status",
-                "retry_decision",
-            ):
-                value = source.get(key) if isinstance(source, dict) else None
-                if isinstance(value, str) and value.strip():
-                    parts.append(value.strip())
-        return "\n".join(parts)
+        return ce_evidence.llm_event_error_text(event)
 
     async def _execute_docs_generation(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing docs generation for run %s", run.id)
@@ -4526,205 +3956,33 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _ce_extract_llm_evidence(ce_result: Any, *, task_id: str, run_id: str) -> dict[str, Any]:
-        def _walk_values(root: Any, keys: set[str]) -> Any:
-            stack: list[Any] = [root]
-            seen_ids: set[int] = set()
-            while stack:
-                item = stack.pop()
-                item_id = id(item)
-                if item_id in seen_ids:
-                    continue
-                seen_ids.add(item_id)
-                if isinstance(item, dict):
-                    for key, value in item.items():
-                        normalized_key = str(key or "").strip().lower()
-                        if normalized_key in keys and str(value or "").strip():
-                            return value
-                    stack.extend(item.values())
-                elif isinstance(item, (list, tuple)):
-                    stack.extend(item)
-            return None
-
-        metadata = dict(getattr(ce_result, "metadata", {}) or {})
-        usage = dict(getattr(ce_result, "usage", {}) or {})
-        roots: list[Any] = [metadata, usage, ce_result]
-        provider = ""
-        model = ""
-        cache_hit = False
-        for root in roots:
-            if not provider:
-                provider = str(_walk_values(root, {"provider_id", "provider", "providerid"}) or "").strip()
-            if not model:
-                model = str(_walk_values(root, {"model", "model_id", "modelid"}) or "").strip()
-            cache_value = _walk_values(root, {"cache_hit", "cached", "cachehit"})
-            if cache_value is not None:
-                cache_hit = bool(cache_value)
-        if not provider:
-            provider = "unknown"
-        if not model:
-            model = "unknown"
-
-        evidence: dict[str, Any] = {
-            "provider": provider,
-            "model": model,
-            "cache_hit": cache_hit,
-            "role": "chief_engineer",
-            "task_id": task_id,
-            "run_id": run_id,
-        }
-        if provider == "unknown" or model == "unknown":
-            missing_parts: list[str] = []
-            if provider == "unknown":
-                missing_parts.append("provider_id/provider")
-            if model == "unknown":
-                missing_parts.append("model/model_id")
-            evidence["provider_model_unknown"] = True
-            evidence["provider_model_unknown_reason"] = (
-                "Runtime result did not contain "
-                + " and ".join(missing_parts)
-                + "; check RoleExecutionKernel and RoleRuntimeService metadata propagation"
-            )
-        final_context_audit = _walk_values(roots, {"final_request_context_audit", "finalrequestcontextaudit"})
-        if isinstance(final_context_audit, dict):
-            evidence["final_request_context_audit"] = dict(final_context_audit)
-        context_os_audit = _walk_values(roots, {"context_os_audit", "contextosaudit"})
-        if isinstance(context_os_audit, dict):
-            evidence["context_os_audit"] = dict(context_os_audit)
-        context_snapshot_ref = str(_walk_values(roots, {"context_snapshot_ref", "contextsnapshotref"}) or "").strip()
-        if context_snapshot_ref:
-            from polaris.kernelone.events.final_request_evidence import normalize_context_snapshot_ref
-
-            normalized_context_snapshot_ref = normalize_context_snapshot_ref(context_snapshot_ref)
-            if normalized_context_snapshot_ref:
-                evidence["context_snapshot_ref"] = normalized_context_snapshot_ref
-        kernel_repair_reasons = _walk_values(roots, {"kernel_repair_reasons", "kernelrepairreasons"})
-        if isinstance(kernel_repair_reasons, list):
-            evidence["kernel_repair_reasons"] = [str(item) for item in kernel_repair_reasons]
-        return evidence
+        return ce_evidence.ce_extract_llm_evidence(ce_result, task_id=task_id, run_id=run_id)
 
     @staticmethod
     def _ce_review_schema_failure_is_recoverable(ce_result: Any, *, raw_output: str) -> bool:
-        if not raw_output.strip():
-            return False
-        if "<SESSION_PATCH" in raw_output or "</SESSION_PATCH>" in raw_output:
-            return False
-        failure_text = " ".join(
-            str(value or "")
-            for value in (
-                getattr(ce_result, "error_code", None),
-                getattr(ce_result, "error_message", None),
-            )
-        ).lower()
-        return any(
-            token in failure_text
-            for token in (
-                "验证失败",
-                "validation_failed",
-                "no json object matched chief_engineer blueprint keys",
-                "json解析错误",
-            )
-        )
+        return ce_evidence.ce_review_schema_failure_is_recoverable(ce_result, raw_output=raw_output)
 
     @staticmethod
     def _ce_portfolio_result_allows_schema_repair(ce_result: Any) -> bool:
-        """Whether one failed CE portfolio result may consume the single repair.
+        """Whether one failed CE portfolio result may consume the single repair."""
 
-        This is deliberately narrower than a generic retryability predicate.
-        Provider/routing/deadline failures remain fatal here.  Only an invalid
-        portfolio payload, or a provider result that contains no visible
-        portfolio payload at all, may use the already-governed schema repair.
-        """
-
-        error_code = str(getattr(ce_result, "error_code", None) or "").strip().lower()
-        if error_code == "output_validation_failed":
-            return True
-        failure_text = " ".join(
-            str(value or "")
-            for value in (
-                getattr(ce_result, "error_category", None),
-                getattr(ce_result, "error_code", None),
-                getattr(ce_result, "error_message", None),
-                getattr(ce_result, "status", None),
-            )
-        ).lower()
-        provider_result_protocol_failures = (
-            "structured_output_payload_schema_mismatch",
-            "structured_output_tool_arguments_invalid_json",
-            "structured_output_tool_arguments_must_be_object",
-            "structured_output_tool_must_be_called_exactly_once",
-        )
-        return (
-            any(
-                token in failure_text
-                for token in (
-                    "thinking-only response",
-                    "thinking only response",
-                    "thinking_only_response",
-                    "empty response",
-                    "no visible output",
-                    "no visible output or tool calls",
-                )
-            )
-            or any(token in failure_text for token in provider_result_protocol_failures)
-            or ("model returned" in failure_text and "awaiting user clarification" in failure_text)
-        )
+        return ce_evidence.ce_portfolio_result_allows_schema_repair(ce_result)
 
     @staticmethod
     def _ce_schema_repair_failure_class(ce_result: Any) -> str:
-        error_code = str(getattr(ce_result, "error_code", None) or "").strip().lower()
-        error_message = str(getattr(ce_result, "error_message", None) or "").strip().lower()
-        if error_code == "output_validation_failed" or any(
-            token in error_message
-            for token in (
-                "structured_output_payload_schema_mismatch",
-                "structured_output_tool_arguments_invalid_json",
-                "structured_output_tool_arguments_must_be_object",
-                "structured_output_tool_must_be_called_exactly_once",
-            )
-        ):
-            return "output_validation_failed"
-        return "thinking_only_response"
+        return ce_evidence.ce_schema_repair_failure_class(ce_result)
 
     @staticmethod
     def _attach_ce_llm_evidence(signal: dict[str, Any], evidence: dict[str, Any]) -> None:
-        for key in (
-            "final_request_context_audit",
-            "context_os_audit",
-            "context_snapshot_ref",
-            "kernel_repair_reasons",
-            "provider_model_unknown",
-            "provider_model_unknown_reason",
-        ):
-            if key in evidence:
-                signal[key] = evidence[key]
+        ce_evidence.attach_ce_llm_evidence(signal, evidence)
 
     @staticmethod
     def _ce_missing_final_request_evidence(evidence: dict[str, Any]) -> list[str]:
-        missing: list[str] = []
-        if not isinstance(evidence.get("final_request_context_audit"), dict):
-            missing.append("final_request_context_audit")
-        if not str(evidence.get("context_snapshot_ref") or "").strip():
-            missing.append("context_snapshot_ref")
-        return missing
+        return ce_evidence.ce_missing_final_request_evidence(evidence)
 
     @staticmethod
     def _architecture_decision_payloads(values: Any) -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
-        source_values = values if isinstance(values, (list, tuple)) else []
-        for item in source_values:
-            if isinstance(item, dict):
-                rows.append(dict(item))
-                continue
-            to_dict = getattr(item, "to_dict", None)
-            if not callable(to_dict):
-                continue
-            try:
-                payload = to_dict()
-            except (TypeError, ValueError):
-                continue
-            if isinstance(payload, dict):
-                rows.append(payload)
-        return rows
+        return ce_evidence.architecture_decision_payloads(values)
 
     def _ensure_chief_engineer_blueprint_artifact_present(
         self,
@@ -5423,58 +4681,7 @@ class OrchestrationStageExecutor:
     ) -> list[str]:
         """Validate the nested project-level CE output contract."""
 
-        errors: list[str] = []
-        required_keys = {"construction_plan", "project_completion_contract", "risk_flags"}
-        missing_keys = sorted(required_keys - set(payload))
-        if missing_keys:
-            errors.append("missing top-level keys: " + ", ".join(missing_keys))
-        construction_plan = payload.get("construction_plan")
-        if not isinstance(construction_plan, Mapping):
-            errors.append("construction_plan must be an object")
-            return errors
-        task_plans = construction_plan.get("task_plans")
-        if not isinstance(task_plans, Mapping):
-            errors.append("construction_plan.task_plans must be an object")
-        else:
-            declared_task_ids = {str(task_id).strip() for task_id in task_plans}
-            missing_task_ids = sorted(set(task_ids) - declared_task_ids)
-            unknown_task_ids = sorted(declared_task_ids - set(task_ids))
-            if missing_task_ids:
-                errors.append("task_plans missing PM task ids: " + ", ".join(missing_task_ids))
-            if unknown_task_ids:
-                errors.append("task_plans contains unknown task ids: " + ", ".join(unknown_task_ids))
-        interface_contract = construction_plan.get("project_interface_contract")
-        if not isinstance(interface_contract, Mapping):
-            errors.append("construction_plan.project_interface_contract must be an object")
-        else:
-            providers = interface_contract.get(
-                "provider_declarations",
-                interface_contract.get("providers"),
-            )
-            consumers = interface_contract.get(
-                "consumer_declarations",
-                interface_contract.get("consumers"),
-            )
-            if not isinstance(providers, list):
-                errors.append("project_interface_contract.provider_declarations must be an array")
-            if not isinstance(consumers, list):
-                errors.append("project_interface_contract.consumer_declarations must be an array")
-        if "scope_for_apply" in payload and not isinstance(payload.get("scope_for_apply"), list):
-            errors.append("scope_for_apply must be an array")
-        if not isinstance(payload.get("risk_flags"), list):
-            errors.append("risk_flags must be an array")
-        completion_contract = payload.get("project_completion_contract")
-        if not isinstance(completion_contract, Mapping):
-            errors.append("project_completion_contract must be an object")
-        else:
-            obligations = completion_contract.get("obligations")
-            if not isinstance(obligations, Mapping):
-                errors.append("project_completion_contract.obligations must be an object")
-            else:
-                for field in ("artifacts", "entrypoints", "verification"):
-                    if not isinstance(obligations.get(field), list):
-                        errors.append(f"project_completion_contract.obligations.{field} must be an array")
-        return errors
+        return ce_evidence.chief_engineer_portfolio_output_errors(payload, task_ids=task_ids)
 
     def _settle_chief_engineer_execution_attempt_after_exception(
         self,
@@ -7755,8 +6962,7 @@ class OrchestrationStageExecutor:
             [
                 row
                 for row in authority_rows
-                if isinstance(row, dict)
-                and helpers._canonical_task_id_token(row.get("task_id")) in expected_task_ids
+                if isinstance(row, dict) and helpers._canonical_task_id_token(row.get("task_id")) in expected_task_ids
             ]
             if isinstance(authority_rows, list)
             else []
@@ -8271,8 +7477,7 @@ class OrchestrationStageExecutor:
                 )
             except subprocess.TimeoutExpired:
                 diagnostics.append(
-                    "artifact_quality_error: npm test timed out after "
-                    f"{_WORKSPACE_VALIDATION_TIMEOUT_SECONDS}s"
+                    f"artifact_quality_error: npm test timed out after {_WORKSPACE_VALIDATION_TIMEOUT_SECONDS}s"
                 )
             except (OSError, TimeoutError, ValueError) as exc:
                 diagnostics.append(f"artifact_quality_error: npm test could not execute: {type(exc).__name__}: {exc}")
@@ -8503,9 +7708,7 @@ class OrchestrationStageExecutor:
                 if not isinstance(changed_paths, list):
                     continue
                 for raw_path in changed_paths:
-                    normalized = os.path.normpath(str(raw_path or "").strip().replace("\\", "/")).replace(
-                        "\\", "/"
-                    )
+                    normalized = os.path.normpath(str(raw_path or "").strip().replace("\\", "/")).replace("\\", "/")
                     if normalized and _is_workspace_quality_repair_path(normalized):
                         planned_paths.append(normalized)
         extras: list[str] = []
@@ -8675,11 +7878,7 @@ class OrchestrationStageExecutor:
         results = receipt.get("results")
         if not isinstance(results, list) or not results:
             return False
-        statuses = [
-            str(item.get("status") or "").strip().lower()
-            for item in results
-            if isinstance(item, Mapping)
-        ]
+        statuses = [str(item.get("status") or "").strip().lower() for item in results if isinstance(item, Mapping)]
         return len(statuses) == len(results) and bool(statuses) and all(status == "success" for status in statuses)
 
     async def _run_director_stage_materialization_quality_settle(
@@ -8774,10 +7973,7 @@ class OrchestrationStageExecutor:
                         tool_results=[candidate],
                         execution_attempt=execution_attempt,
                         execution_attempt_authority=authority,
-                        turn_id=(
-                            f"director-stage-mat-settle-{run_id}:"
-                            f"round{round_index}:candidate{candidate_index}"
-                        ),
+                        turn_id=(f"director-stage-mat-settle-{run_id}:round{round_index}:candidate{candidate_index}"),
                         context=commit_context,
                     )
                     committed_receipts.extend(candidate_receipts)
@@ -10128,16 +9324,7 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _factory_deadline_remaining_seconds(context: dict[str, Any]) -> float | None:
-        raw_deadline = context.get("factory_run_deadline_epoch_seconds")
-        if raw_deadline is None:
-            return None
-        try:
-            deadline_epoch = float(str(raw_deadline).strip())
-        except (TypeError, ValueError):
-            return None
-        if deadline_epoch <= 0:
-            return None
-        return max(0.0, deadline_epoch - datetime.now(timezone.utc).timestamp())
+        return deadline_calc.factory_deadline_remaining_seconds(context)
 
     @staticmethod
     async def _quality_gate_abort_reason(
