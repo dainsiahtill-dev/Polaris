@@ -7943,7 +7943,12 @@ class OrchestrationStageExecutor:
                 "tool_result_count": 0,
                 "diagnostic_count": 0,
             }
-        diagnostics = self._collect_director_stage_materialization_diagnostics()
+        # Compiler/verifier scans and deterministic repair planning are
+        # synchronous and may take minutes on a freshly materialized project.
+        # Keep them off the ASGI event loop so /health, runtime WebSocket, NATS
+        # keepalives, and the runner's status reads remain live while Director
+        # settles the owning task.
+        diagnostics = await asyncio.to_thread(self._collect_director_stage_materialization_diagnostics)
         run_id = str(run.id or "").strip() or "director-stage-settle"
         external_task_id = ""
         task_row_id: int | None = None
@@ -7970,7 +7975,8 @@ class OrchestrationStageExecutor:
             seen_diagnostic_signatures = {tuple(current_diagnostics)}
             for round_index in range(_WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS):
                 repair_round_count += 1
-                round_tool_results, summary = self._apply_workspace_quality_repairs(
+                round_tool_results, summary = await asyncio.to_thread(
+                    self._apply_workspace_quality_repairs,
                     run_id=run_id,
                     artifact_quality_errors=current_diagnostics,
                     task_id=external_task_id,
@@ -8019,8 +8025,10 @@ class OrchestrationStageExecutor:
                     ):
                         continue
                     round_committed = True
-                    self._ensure_director_stage_materialization_typescript_toolchain()
-                    post_commit_diagnostics = self._collect_director_stage_materialization_diagnostics()
+                    await asyncio.to_thread(self._ensure_director_stage_materialization_typescript_toolchain)
+                    post_commit_diagnostics = await asyncio.to_thread(
+                        self._collect_director_stage_materialization_diagnostics
+                    )
                     if not post_commit_diagnostics:
                         break
                 if not post_commit_diagnostics:

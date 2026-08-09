@@ -403,6 +403,8 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "test_public_runtime_dependency_repair_plans_node_types_dev_dependency",
             "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
             "test_public_runtime_dependency_repair_tsconfig_types_when_atypes_node_already_declared",
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
+            "test_typescript_ts2459_declares_locally_reexports_imported_type",
             "src/backend/polaris/cells/director/runtime/tests/test_typescript_m10_strict_compile_repairs.py",
         ),
         invariants=(
@@ -427,6 +429,7 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "import_type_value_conflict_ts2300_ts1361",
             "ts2580_process_adds_atypes_node_and_tsconfig_types",
             "ts2580_existing_atypes_node_still_sets_tsconfig_types",
+            "ts2459_type_reexport_uses_write_file_not_empty_search_edit",
         ),
         depends_on=("M03_tool_batch_deo", "M04_final_request_context", "M06_director_multi_task"),
         sealed_by_defect="",

@@ -8,7 +8,9 @@ the stage itself is failed/timeout.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -441,6 +443,80 @@ async def test_run_director_stage_materialization_quality_settle_invokes_schedul
     assert job_token.get("capability_audit", {}).get("ok") is True
     assert len(str(job_token.get("execution_envelope_hash") or "")) == 64
     assert "tests/verify.test.ts" in (commit_ctx.get("allowed_paths") or [])
+
+
+@pytest.mark.asyncio
+async def test_materialization_settle_keeps_event_loop_live_during_sync_scan(
+    tmp_path: Path,
+) -> None:
+    """Regression: a blocking verifier scan must not freeze ASGI/runtime.v2.
+
+    L1-01 r14 left the isolated backend process alive but made /health, run
+    reads, and the runtime WebSocket unresponsive while the final Director
+    settle synchronously ran compiler scans and repairs on the event loop.
+    """
+
+    (tmp_path / "package.json").write_text('{"name":"x"}\n', encoding="utf-8")
+    executor = OrchestrationStageExecutor(tmp_path)
+    run = _run(tmp_path)
+    fake_attempt = SimpleNamespace(workspace=str(tmp_path), task_id=1, external_task_id="settle-live")
+    scan_started = threading.Event()
+    release_scan = threading.Event()
+    ticker_observed_live_loop = False
+
+    def _blocking_scan() -> list[str]:
+        scan_started.set()
+        release_scan.wait(timeout=1.0)
+        return []
+
+    def _empty_repairs(**_kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        return [], {}
+
+    async def _event_loop_ticker() -> None:
+        nonlocal ticker_observed_live_loop
+        while not scan_started.is_set():
+            await asyncio.sleep(0)
+        ticker_observed_live_loop = not release_scan.is_set()
+
+    timer = threading.Timer(0.1, release_scan.set)
+    timer.start()
+    try:
+        with (
+            patch.object(
+                executor,
+                "_claim_director_stage_materialization_settle_attempt",
+                return_value=("settle-live", 1, fake_attempt),
+            ),
+            patch.object(
+                executor,
+                "_collect_director_stage_materialization_diagnostics",
+                side_effect=_blocking_scan,
+            ),
+            patch.object(executor, "_apply_workspace_quality_repairs", side_effect=_empty_repairs),
+            patch.object(
+                executor,
+                "_settle_director_stage_materialization_attempt",
+                return_value={"success": True},
+            ),
+            patch(
+                "polaris.cells.runtime.task_runtime.public.create_task_runtime_execution_attempt_authority",
+                return_value=object(),
+            ),
+        ):
+            settle, _ = await asyncio.gather(
+                executor._run_director_stage_materialization_quality_settle(
+                    run=run,
+                    stage_status="failed",
+                    error_code="director.canonical_task_boundary_missing",
+                ),
+                _event_loop_ticker(),
+            )
+    finally:
+        release_scan.set()
+        timer.cancel()
+
+    assert settle["ok"] is True
+    assert ticker_observed_live_loop is True
 
 
 @pytest.mark.asyncio

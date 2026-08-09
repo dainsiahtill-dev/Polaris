@@ -3280,6 +3280,12 @@ def _to_public_repair_effect_plan(
             patch.exists_before
             and patch.exists_after
             and len(text_operations) == 1
+            # Empty-search insertions are not a safe ``edit_file`` contract.
+            # The Director execution layer deliberately treats them as
+            # recoverable no-ops (R195), so projecting one here would create a
+            # covered/plannable repair that can never mutate.  Fall through to
+            # the hash-bound whole-file write below for insertions.
+            and str(text_operations[0].expected or "")
             and _can_apply_with_editor(patch.content_before, text_operations)
         )
         if use_precise_editor:

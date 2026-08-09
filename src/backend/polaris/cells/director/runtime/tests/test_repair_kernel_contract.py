@@ -8732,7 +8732,13 @@ def test_typescript_ts2459_declares_locally_reexports_imported_type() -> None:
     assert planning["planned"] is True
     assert planning["plan_summary"]["rule_id"] == "typescript.missing_export"
     repaired = planning["composition_summary"]["patches"][0]["content_after"]
-    assert 'export type { FairyMood } from "./types";' in repaired
+    assert "export type { FairyMood } from './types';" in repaired
+    effect_plan = planning["effect_plan"]
+    forward_effects = [effect for effect in effect_plan["effects"] if effect["contingency_kind"] == "forward"]
+    assert len(forward_effects) == 1
+    assert forward_effects[0]["tool_name"] == "write_file"
+    assert forward_effects[0]["arguments"]["file"] == "src/models/Fairy.ts"
+    assert "export type { FairyMood } from './types';" in forward_effects[0]["arguments"]["content"]
 
     probe = query_director_repair_plan_probe(
         QueryDirectorRepairPlanProbeV1(

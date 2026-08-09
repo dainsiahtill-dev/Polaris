@@ -426,7 +426,13 @@ _TASK_BOUNDARY_BLOCKING_FIELDS = (
     "missing_entrypoint_targets",
     "unresolved_local_imports",
     "artifact_semantic_mismatches",
-    "downstream_pending_artifacts",
+    # ``downstream_pending_artifacts`` belongs to later PM contract tasks, not
+    # to the current task's delivery obligation.  In a multi-task portfolio an
+    # early completed_verified boundary legitimately records those paths until
+    # the later task lands them.  Once every owned task has its own green
+    # boundary, that historical snapshot must not veto terminal-runtime
+    # recovery for a different task.  Missing owned targets and blocked
+    # dependencies remain fail-closed through the fields below/above.
     "blocked_dependencies",
     "missing_required_evidence_modalities",
     "failed_required_evidence_modalities",

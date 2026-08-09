@@ -121,7 +121,10 @@ def _build_typescript_reexport_plan(
                 if not source_path:
                     continue
                 export_line = _build_typescript_reexport_line(
-                    module_path=module_path, source_path=source_path, symbol=symbol
+                    module_path=module_path,
+                    source_path=source_path,
+                    symbol=symbol,
+                    source_text=str(base_files.get(source_path) or ""),
                 )
                 if export_line in module_text:
                     continue
@@ -870,7 +873,10 @@ def _missing_export_operation(
     source_path = _find_unique_runtime_export_source(base_files, exporter, symbol)
     if source_path and not _typescript_reexport_would_cycle(exporter, source_path, base_files):
         export_line = _build_typescript_reexport_line(
-            module_path=exporter, source_path=source_path, symbol=symbol
+            module_path=exporter,
+            source_path=source_path,
+            symbol=symbol,
+            source_text=str(base_files.get(source_path) or ""),
         )
         operation = _append_typescript_missing_export_declaration_operation(
             path=exporter,
@@ -1352,12 +1358,19 @@ def _typescript_reexport_would_cycle(
     _ = module_dir  # reserved for future relative-path hardening
     return False
 
-def _build_typescript_reexport_line(*, module_path: str, source_path: str, symbol: str) -> str:
+def _build_typescript_reexport_line(
+    *,
+    module_path: str,
+    source_path: str,
+    symbol: str,
+    source_text: str = "",
+) -> str:
     module_dir = posixpath.dirname(module_path)
     rel = posixpath.relpath(source_path.removesuffix(".ts").removesuffix(".tsx"), module_dir or ".")
     if not rel.startswith("."):
         rel = f"./{rel}"
-    return f"export {{ {symbol} }} from '{rel}';"
+    prefix = "export type" if _typescript_exported_symbol_is_type_only(source_text, symbol) else "export"
+    return f"{prefix} {{ {symbol} }} from '{rel}';"
 
 def _looks_like_typescript_reexport_signal(diagnostics: Sequence[RepairDiagnostic]) -> bool:
     text = _diagnostic_text(diagnostics).lower()

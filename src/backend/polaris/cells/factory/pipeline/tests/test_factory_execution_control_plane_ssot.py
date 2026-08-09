@@ -327,6 +327,61 @@ def test_settle_recovery_authorizes_terminal_runtime_with_canonical_delivery_bou
     assert authority.reason_code == "terminal_runtime_delivery_recovered"
 
 
+def test_settle_recovery_ignores_historical_downstream_artifacts_owned_by_later_task() -> None:
+    """A prior task's downstream snapshot must not poison a green portfolio.
+
+    L1-01 r14 had TASK-1..3 all completed_verified.  TASK-1/2 correctly
+    recorded artifacts owned by the next task as downstream-pending at their
+    own completion time.  Treating those historical paths as current blockers
+    prevented terminal TASK-3 recovery and kept QA unreachable.
+    """
+
+    projection = _canonical_projection()
+    runtime = projection["task_runtime_projection"]
+    runtime["owned_task_ids"] = ["TASK-1", "TASK-2"]
+    runtime["row_count"] = 2
+    runtime["rows"].append(
+        {
+            "task_id": "TASK-2",
+            "status": "failed",
+            "execution_state": "failed",
+            "fact_event_seq": 2,
+            "source": "task_runtime.execution_fact",
+            "status_source": "task_runtime.execution_fact",
+        }
+    )
+    task_boundary = projection["task_boundary"]
+    task_boundary["verdict_count"] = 2
+    first = task_boundary["latest_by_task"]["TASK-1"]
+    first.update(
+        {
+            "failure_class": "PASSED",
+            "run_id": "director-task-1",
+            "append_id": "boundary-append-1",
+            "content_id": "boundary-content-1",
+            "evidence_refs": ["effect-receipt-1"],
+            "downstream_pending_artifacts": ["src/later-task.ts"],
+        }
+    )
+    task_boundary["latest_by_task"]["TASK-2"] = {
+        "task_id": "TASK-2",
+        "status": "completed_verified",
+        "ok": True,
+        "failure_class": "PASSED",
+        "responsible_layer": "execution_control_plane",
+        "run_id": "director-task-2",
+        "append_id": "boundary-append-2",
+        "content_id": "boundary-content-2",
+        "evidence_refs": ["effect-receipt-2"],
+    }
+
+    authority = evaluate_canonical_factory_authority(projection)
+
+    assert authority.director_stage_authorized is True
+    assert authority.terminal_runtime_delivery_recovered is True
+    assert authority.recovered_runtime_task_ids == ("TASK-2",)
+
+
 @pytest.mark.parametrize("state", ["pending", "in_progress", "blocked"])
 def test_settle_recovery_rejects_nonterminal_runtime_even_with_green_boundary(state: str) -> None:
     projection = _canonical_projection()
