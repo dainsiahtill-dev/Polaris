@@ -114,6 +114,31 @@ def test_instance_registry_round_trip(tmp_path: Path) -> None:
     assert data["instances"][0]["instance_id"] == "project-a"
 
 
+def test_port_probe_enables_safe_rebind_for_restart(monkeypatch: Any) -> None:
+    calls: list[tuple[Any, ...]] = []
+
+    class FakeSocket:
+        def __enter__(self) -> FakeSocket:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def setsockopt(self, *args: Any) -> None:
+            calls.append(("setsockopt", *args))
+
+        def bind(self, address: tuple[str, int]) -> None:
+            calls.append(("bind", address))
+
+    monkeypatch.setattr(instance_service.socket, "socket", lambda *_args: FakeSocket())
+
+    assert instance_service.is_port_free(5173) is True
+    assert calls == [
+        ("setsockopt", socket.SOL_SOCKET, socket.SO_REUSEADDR, 1),
+        ("bind", (instance_service.DEFAULT_HOST, 5173)),
+    ]
+
+
 @pytest.mark.parametrize(
     ("registry_text", "reason"),
     [

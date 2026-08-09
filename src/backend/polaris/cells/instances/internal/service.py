@@ -192,6 +192,13 @@ def is_port_free(port: int, host: str = DEFAULT_HOST) -> bool:
     if port <= 0:
         return False
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        # Match the backend/frontend server restart semantics: a recently
+        # stopped listener can leave a harmless TIME_WAIT tuple behind. Without
+        # SO_REUSEADDR this probe reports the port as occupied even though no
+        # process is listening, making the official InstanceSupervisor unable
+        # to restart main on its fixed 49977/5173 ports. A live listener still
+        # makes bind fail, so exclusive ownership remains fail-closed.
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind((host, int(port)))
         except OSError:
