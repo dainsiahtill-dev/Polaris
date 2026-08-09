@@ -7386,7 +7386,12 @@ class TestRunWorkspaceQualityChecks:
             metadata={
                 "external_task_id": "TASK-1",
                 "factory_run_id": "factory-context",
+                "goal": "Create source and entrypoint",
+                "scope": "Own the JavaScript source repaired by workspace verification",
                 "target_files": ["package.json", "src/engine/rules.js", "src/index.js"],
+                "acceptance_criteria": ["npm test passes"],
+                "blueprint_id": "ce_TASK-1",
+                "runtime_blueprint_path": ".polaris/blueprints/ce_TASK-1.json",
                 "role": "director",
             },
         )
@@ -7474,7 +7479,18 @@ class TestRunWorkspaceQualityChecks:
         assert repair_context["project_type"] == "collaboration_toy"
         assert repair_context["ce_blueprint"]["artifact"] == "runtime/state/blueprints/factory-context.review.json"
         assert "Chief Engineer blueprint" in repair_context["chief_engineer_blueprint_evidence"]
-        assert captured["task"]["metadata"]["ce_blueprint"] == repair_context["ce_blueprint"]
+        # The QA retry must preserve the original TaskRuntime owner contract.
+        # roles.adapters promotes PM/CE final-request evidence from these fields;
+        # replacing them with a target-files-only shell makes the physical
+        # provider request fail closed before Director can repair anything.
+        assert captured["task"]["goal"] == "Create source and entrypoint"
+        assert captured["task"]["scope"] == "Own the JavaScript source repaired by workspace verification"
+        assert captured["task"]["acceptance_criteria"] == ["npm test passes"]
+        assert captured["task"]["metadata"]["blueprint_id"] == "ce_TASK-1"
+        assert captured["task"]["metadata"]["runtime_blueprint_path"] == ".polaris/blueprints/ce_TASK-1.json"
+        from polaris.kernelone.events.final_request_evidence import looks_like_pm_contract_payload
+
+        assert looks_like_pm_contract_payload(captured["task"]) is True
         assert captured["target_task_id"] == "TASK-1"
         execution_attempt = repair_context["task_runtime_execution_attempt"]
         authority = repair_context["task_runtime_execution_attempt_authority"]

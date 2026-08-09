@@ -7654,10 +7654,12 @@ class OrchestrationStageExecutor:
         run_id: str,
         repair_attempt: int,
         target_files: list[str],
-    ) -> tuple[str, int, TaskRuntimeExecutionAttemptIdentityV1]:
+    ) -> tuple[str, int, TaskRuntimeExecutionAttemptIdentityV1, dict[str, Any]]:
         """Claim the Director attempt that owns one post-verifier repair round.
 
-        Workspace verification used to invoke the guarded Director role without
+        Reopen the exact owning task when one exists; create a run-bound helper
+        only when no owner can be resolved. Workspace verification used to invoke
+        the guarded Director role without
         a TaskRuntime execution attempt.  Directed-effect validation therefore
         rejected the turn before the model could edit the failed artifacts.  A
         repair round is real Director work: give it a fresh, run-bound task row,
@@ -7730,6 +7732,8 @@ class OrchestrationStageExecutor:
                 }:
                     raise RuntimeError("workspace_quality_repair_owner_reopen_failed")
             row = owner_row
+            repair_task = dict(owner_row)
+            repair_task_metadata = dict(owner_metadata)
         else:
             external_task_id = (
                 f"factory-quality-gate:{run_id}:llm-repair:{repair_attempt}:"
@@ -7755,6 +7759,45 @@ class OrchestrationStageExecutor:
             task_row_id = task_runtime.normalize_task_id(row.get("id"))
             if task_row_id is None:
                 raise RuntimeError("workspace_quality_repair_task_id_invalid")
+            repair_task = dict(row)
+            row_metadata = row.get("metadata")
+            repair_task_metadata = dict(row_metadata) if isinstance(row_metadata, Mapping) else {}
+        # The quality-repair adapter must receive the original Director task
+        # contract, not a synthetic ``target_files`` shell.  Final-request
+        # qualification reconstructs authoritative PM/CE evidence from this
+        # row (including blueprint_id/runtime_blueprint_path).  Dropping the
+        # owner metadata made a valid local retry fail closed with
+        # missing_required_refs=pm_contract,ce_blueprint after QA had already
+        # reopened the task.
+        repair_task["id"] = external_task_id
+        repair_task["task_id"] = external_task_id
+        repair_task["external_task_id"] = external_task_id
+        for key in (
+            "goal",
+            "description",
+            "scope",
+            "scope_paths",
+            "target_files",
+            "acceptance",
+            "acceptance_criteria",
+            "verification_commands",
+            "blueprint_id",
+            "runtime_blueprint_path",
+            "blueprint_path",
+        ):
+            if not repair_task.get(key) and repair_task_metadata.get(key) is not None:
+                repair_task[key] = repair_task_metadata[key]
+        if not repair_task.get("target_files"):
+            repair_task["target_files"] = sorted(normalized_targets)
+        repair_task_metadata.update(
+            {
+                "external_task_id": external_task_id,
+                "factory_run_id": run_id,
+                "workspace_quality_repair": True,
+                "repair_attempt": repair_attempt,
+            }
+        )
+        repair_task["metadata"] = repair_task_metadata
         binding = bind_runtime_task_to_factory_run(
             BindRuntimeTaskToFactoryRunCommandV1(
                 workspace=str(self.workspace),
@@ -7791,7 +7834,7 @@ class OrchestrationStageExecutor:
             reason = str(claim.get("reason") or "unknown") if isinstance(claim, dict) else "invalid_claim_result"
             raise RuntimeError(f"workspace_quality_repair_claim_failed:{reason}")
         execution_attempt = TaskRuntimeExecutionAttemptIdentityV1.from_record(attempt_record)
-        return external_task_id, task_row_id, execution_attempt
+        return external_task_id, task_row_id, execution_attempt, repair_task
 
     @staticmethod
     def _materialization_settle_attempt_outcome(stage_status: str) -> TaskRuntimeExecutionAttemptSettlementOutcomeV1:
@@ -8637,10 +8680,13 @@ class OrchestrationStageExecutor:
         ):
             if key in context:
                 repair_context[key] = context[key]
-        task_metadata = dict(repair_context)
-        task_metadata["target_files"] = target_files or changed_files
         try:
-            repair_task_id, repair_task_row_id, execution_attempt = self._claim_workspace_quality_repair_attempt(
+            (
+                repair_task_id,
+                repair_task_row_id,
+                execution_attempt,
+                repair_task,
+            ) = self._claim_workspace_quality_repair_attempt(
                 run_id=run_id,
                 repair_attempt=repair_attempt,
                 target_files=target_files or changed_files,
@@ -8676,7 +8722,7 @@ class OrchestrationStageExecutor:
 
             results, summary = await run_director_materialization_quality_repair(
                 str(self.workspace),
-                task={"target_files": target_files or changed_files, "metadata": task_metadata},
+                task=repair_task,
                 target_task_id=repair_task_id,
                 run_id=run_id,
                 context=repair_context,
