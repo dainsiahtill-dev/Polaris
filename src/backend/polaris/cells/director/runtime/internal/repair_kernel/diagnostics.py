@@ -191,6 +191,13 @@ def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
         # test command and MODULE_NOT_FOUND, so coverage becomes unplannable and
         # the Director needlessly escalates instead of editing the exact task.
         return [_normalize_one_error(blob.strip())]
+    # Compiler/runtime wrappers carry the actionable diagnostic on a later
+    # line (Rust locations, Python traceback exceptions, Node ESM errors).
+    # Normalize the causal blob before per-line fallback so the leading
+    # wrapper cannot mask the nested error as a generic validation failure.
+    combined = _normalize_one_error(blob.strip())
+    if combined.code not in {"artifact_quality_error", "workspace_validation_failed"}:
+        return [combined]
     # Non-TS blob: preserve one diagnostic per non-empty line.
     per_line = [_normalize_one_error(line.strip()) for line in blob.splitlines() if line.strip()]
     return per_line if per_line else [_normalize_one_error(blob.strip())]

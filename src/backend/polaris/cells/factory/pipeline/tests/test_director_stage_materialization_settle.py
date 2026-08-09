@@ -617,7 +617,94 @@ async def test_materialization_settle_stops_after_first_verified_repair_candidat
     assert settle["post_commit_diagnostic_count"] == 0
     assert commit.call_count == 1
     assert commit.call_args.kwargs["tool_results"] == [deferred_results[0]]
-    assert commit.call_args.kwargs["turn_id"].endswith(":candidate0")
+    assert commit.call_args.kwargs["turn_id"].endswith(":round0:candidate0")
+
+
+@pytest.mark.asyncio
+async def test_materialization_settle_replans_new_verifier_residuals_in_same_task(
+    tmp_path: Path,
+) -> None:
+    """A successful repair can expose another diagnostic; replan without PM/CE restart."""
+
+    (tmp_path / "package.json").write_text('{"name":"x"}\n', encoding="utf-8")
+    executor = OrchestrationStageExecutor(tmp_path)
+    run = _run(tmp_path)
+    fake_attempt = SimpleNamespace(workspace=str(tmp_path), task_id=1, external_task_id="settle-x")
+    apply_errors: list[list[str]] = []
+
+    def _fake_apply(
+        *,
+        run_id: str,
+        artifact_quality_errors: list[str],
+        task_id: str | None = None,
+        execution_attempt: Any = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        del run_id, task_id, execution_attempt
+        apply_errors.append(list(artifact_quality_errors))
+        marker = artifact_quality_errors[0]
+        return (
+            [
+                {
+                    "tool": "deferred_director_repair",
+                    "success": True,
+                    "result": {
+                        "status": "deferred_repair_effects_pending",
+                        "deferred_request": object(),
+                        "marker": marker,
+                    },
+                }
+            ],
+            {"ok": True, "marker": marker},
+        )
+
+    canonical_batch_receipt = {
+        "batch_id": "batch-1",
+        "turn_id": "turn-1",
+        "success_count": 1,
+        "failure_count": 0,
+        "results": [{"status": "success"}],
+    }
+
+    with (
+        patch.object(
+            executor,
+            "_claim_director_stage_materialization_settle_attempt",
+            return_value=("settle-x", 1, fake_attempt),
+        ),
+        patch.object(executor, "_apply_workspace_quality_repairs", side_effect=_fake_apply) as apply,
+        patch.object(
+            executor,
+            "_collect_director_stage_materialization_diagnostics",
+            side_effect=[["error-a"], ["error-b"], []],
+        ),
+        patch.object(executor, "_ensure_director_stage_materialization_typescript_toolchain"),
+        patch.object(
+            executor,
+            "_settle_director_stage_materialization_attempt",
+            return_value={"success": True},
+        ),
+        patch(
+            "polaris.cells.roles.adapters.public.commit_materialization_deferred_repairs",
+            return_value=[canonical_batch_receipt],
+        ) as commit,
+        patch(
+            "polaris.cells.runtime.task_runtime.public.create_task_runtime_execution_attempt_authority",
+            return_value=object(),
+        ),
+    ):
+        settle = await executor._run_director_stage_materialization_quality_settle(
+            run=run,
+            stage_status="failed",
+            error_code="director.canonical_task_boundary_missing",
+        )
+
+    assert settle["ok"] is True
+    assert settle["repair_round_count"] == 2
+    assert apply.call_count == 2
+    assert apply_errors == [["error-a"], ["error-b"]]
+    assert commit.call_count == 2
+    assert commit.call_args_list[0].kwargs["turn_id"].endswith(":round0:candidate0")
+    assert commit.call_args_list[1].kwargs["turn_id"].endswith(":round1:candidate0")
 
 
 @pytest.mark.asyncio

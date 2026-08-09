@@ -3433,9 +3433,11 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 phase="quality_repair",
                 archetype=RepairArchetype.GENERATED_RESIDUE,
                 priority=0,
-                # Match broad parse-failure codes; planner content-gates on
-                # package-manifest JSON bodies in .ts/.tsx paths (R159).
-                diagnostic_codes=("typescript_ts1005", "typescript_ts1128"),
+                # Coverage must not claim every TS1005/TS1128 parse error.
+                # This content-driven repair remains directly executable by
+                # the runtime schedule, while typed scanners may emit this
+                # dedicated diagnostic when JSON source content is proven.
+                diagnostic_codes=("typescript_json_as_source",),
                 risk_level="low",
                 description=(
                     "Rewrites package-manifest JSON written into .ts/.tsx paths (R159) and "
@@ -3457,7 +3459,8 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 risk_level="low",
                 description=(
                     "Expands string-literal union type aliases when usage emits a missing "
-                    "literal (R160 TS2322 waxing/waning vs MoonPhaseName)."
+                    "literal, or normalizes a type-only string enum to an equivalent literal "
+                    "union when no runtime Enum.Member authority exists."
                 ),
                 runtime_plan_available=True,
                 metadata=_executable_runtime_metadata(scope="typescript_literal_union_expand_text_replace"),
@@ -3771,8 +3774,10 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 phase="syntax",
                 archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
                 priority=0,
-                diagnostic_codes=("typescript_ts1005", "typescript_ts1003", "typescript_ts1109", "typescript_ts1128"),
-                message_terms=("expected",),
+                # Generic parser diagnostics do not prove an EOF truncation.
+                # Keep registry coverage precise; the content-driven runtime
+                # planner still detects imbalance when explicitly scheduled.
+                diagnostic_codes=("typescript_truncated_eof",),
                 risk_level="medium",
                 description=(
                     "Closes truncated TypeScript files that end mid-signature or with unbalanced braces "

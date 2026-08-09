@@ -8716,6 +8716,9 @@ class OrchestrationStageExecutor:
         committed_receipts: list[dict[str, Any]] = []
         post_commit_diagnostics = list(diagnostics)
         deferred_candidates: list[Mapping[str, Any]] = []
+        tool_results: list[dict[str, Any]] = []
+        summary: Mapping[str, Any] = {}
+        repair_round_count = 0
         try:
             from polaris.cells.roles.adapters.public import (
                 commit_materialization_deferred_repairs,
@@ -8728,53 +8731,73 @@ class OrchestrationStageExecutor:
                 self._claim_director_stage_materialization_settle_attempt(run_id=run_id)
             )
             authority = create_task_runtime_execution_attempt_authority(execution_attempt)
-            tool_results, summary = self._apply_workspace_quality_repairs(
-                run_id=run_id,
-                artifact_quality_errors=list(diagnostics),
-                task_id=external_task_id,
-                execution_attempt=execution_attempt,
-            )
-            commit_context = self._director_stage_materialization_settle_commit_context(
-                run=run,
-                run_id=run_id,
-                diagnostics=diagnostics,
-            )
-            deferred_candidates = [
-                item
-                for item in tool_results
-                if isinstance(item, Mapping)
-                and isinstance(item.get("result"), Mapping)
-                and (
-                    item["result"].get("deferred_request") is not None
-                    or str(item["result"].get("status") or "").strip()
-                    in {"deferred_repair_effects_pending", "deferred_command_effect_pending"}
-                )
-            ]
-            # Each candidate is an alternative repair strategy, not another
-            # mandatory effect.  Commit one candidate, revalidate the physical
-            # workspace, and stop as soon as it converges.  Executing every
-            # candidate after the verifier is already green both wastes work
-            # and can add a dead-letter parent to the same TaskRuntime attempt,
-            # making its otherwise truthful completed settlement impossible.
-            for candidate_index, candidate in enumerate(deferred_candidates):
-                candidate_receipts = await commit_materialization_deferred_repairs(
-                    workspace=str(execution_attempt.workspace),
-                    tool_results=[candidate],
+            current_diagnostics = list(diagnostics)
+            seen_diagnostic_signatures = {tuple(current_diagnostics)}
+            for round_index in range(_WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS):
+                repair_round_count += 1
+                round_tool_results, summary = self._apply_workspace_quality_repairs(
+                    run_id=run_id,
+                    artifact_quality_errors=current_diagnostics,
+                    task_id=external_task_id,
                     execution_attempt=execution_attempt,
-                    execution_attempt_authority=authority,
-                    turn_id=f"director-stage-mat-settle-{run_id}:candidate{candidate_index}",
-                    context=commit_context,
                 )
-                committed_receipts.extend(candidate_receipts)
-                if not any(
-                    isinstance(item, Mapping) and self._director_stage_materialization_receipt_succeeded(item)
-                    for item in candidate_receipts
-                ):
-                    continue
-                self._ensure_director_stage_materialization_typescript_toolchain()
-                post_commit_diagnostics = self._collect_director_stage_materialization_diagnostics()
+                tool_results.extend(round_tool_results)
+                commit_context = self._director_stage_materialization_settle_commit_context(
+                    run=run,
+                    run_id=run_id,
+                    diagnostics=current_diagnostics,
+                )
+                round_candidates = [
+                    item
+                    for item in round_tool_results
+                    if isinstance(item, Mapping)
+                    and isinstance(item.get("result"), Mapping)
+                    and (
+                        item["result"].get("deferred_request") is not None
+                        or str(item["result"].get("status") or "").strip()
+                        in {"deferred_repair_effects_pending", "deferred_command_effect_pending"}
+                    )
+                ]
+                deferred_candidates.extend(round_candidates)
+                if not round_candidates:
+                    post_commit_diagnostics = current_diagnostics
+                    break
+
+                # Revalidate after each effect. A newly exposed verifier layer
+                # is replanned inside this same TaskRuntime attempt; PM/CE do not
+                # restart for ordinary code/test defects. Repeated diagnostic
+                # signatures and the shared round cap stop no-progress loops.
+                round_committed = False
+                for candidate_index, candidate in enumerate(round_candidates):
+                    candidate_receipts = await commit_materialization_deferred_repairs(
+                        workspace=str(execution_attempt.workspace),
+                        tool_results=[candidate],
+                        execution_attempt=execution_attempt,
+                        execution_attempt_authority=authority,
+                        turn_id=(
+                            f"director-stage-mat-settle-{run_id}:"
+                            f"round{round_index}:candidate{candidate_index}"
+                        ),
+                        context=commit_context,
+                    )
+                    committed_receipts.extend(candidate_receipts)
+                    if not any(
+                        isinstance(item, Mapping) and self._director_stage_materialization_receipt_succeeded(item)
+                        for item in candidate_receipts
+                    ):
+                        continue
+                    round_committed = True
+                    self._ensure_director_stage_materialization_typescript_toolchain()
+                    post_commit_diagnostics = self._collect_director_stage_materialization_diagnostics()
+                    if not post_commit_diagnostics:
+                        break
                 if not post_commit_diagnostics:
                     break
+                post_signature = tuple(post_commit_diagnostics)
+                if not round_committed or post_signature in seen_diagnostic_signatures:
+                    break
+                seen_diagnostic_signatures.add(post_signature)
+                current_diagnostics = list(post_commit_diagnostics)
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning(
                 "Director stage materialization quality settle failed for run %s: %s",
@@ -8854,6 +8877,7 @@ class OrchestrationStageExecutor:
                 "diagnostic_count": len(diagnostics),
                 "post_commit_diagnostic_count": len(post_commit_diagnostics),
                 "post_commit_diagnostics": post_commit_diagnostics[:20],
+                "repair_round_count": repair_round_count,
                 "mutated": mutated,
                 "external_task_id": external_task_id,
             }
@@ -8870,6 +8894,7 @@ class OrchestrationStageExecutor:
             "failed_receipt_count": len(failed_receipts),
             "diagnostic_count": len(diagnostics),
             "post_commit_diagnostic_count": len(post_commit_diagnostics),
+            "repair_round_count": repair_round_count,
             "mutated": mutated,
             "external_task_id": external_task_id,
             "summary_keys": sorted(str(key) for key in summary_dict)[:24],

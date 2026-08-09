@@ -7395,6 +7395,77 @@ def test_public_typescript_literal_union_expand_adds_missing_literals() -> None:
     assert "MoonPhaseName" in after
 
 
+def test_public_typescript_literal_union_expand_normalizes_type_only_string_enum() -> None:
+    """TS2322 string literals can safely use a type-only string enum as a union."""
+
+    diagnostics = (
+        "src/models/Firefly.ts(10,5): error TS2322: "
+        "Type '\"resting\"' is not assignable to type 'FireflyMode'.",
+        "src/models/Firefly.ts(14,5): error TS2322: "
+        "Type '\"flashing\"' is not assignable to type 'FireflyMode'.",
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_LITERAL_UNION_EXPAND_SOURCE_TOOL,
+            base_files={
+                "src/models/types.ts": (
+                    "export enum FireflyMode {\n"
+                    "  Resting = 'resting',\n"
+                    "  Glowing = 'glowing',\n"
+                    "  Flashing = 'flashing',\n"
+                    "}\n"
+                ),
+                "src/models/Firefly.ts": (
+                    "import type { FireflyMode } from './types.js';\n"
+                    "let mode: FireflyMode = 'resting';\n"
+                    "mode = 'flashing';\n"
+                ),
+            },
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    patch = planning["composition_summary"]["patches"][0]
+    assert patch["path"] == "src/models/types.ts"
+    assert (
+        'export type FireflyMode = "resting" | "glowing" | "flashing";'
+        in patch["content_after"]
+    )
+
+
+def test_public_typescript_literal_union_expand_preserves_runtime_enum_authority() -> None:
+    """Runtime ``Enum.Member`` consumers make enum-to-union normalization unsafe."""
+
+    diagnostic = (
+        "src/models/Firefly.ts(2,5): error TS2322: "
+        "Type '\"resting\"' is not assignable to type 'FireflyMode'."
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_LITERAL_UNION_EXPAND_SOURCE_TOOL,
+            base_files={
+                "src/models/types.ts": (
+                    "export enum FireflyMode { Resting = 'resting', Flashing = 'flashing' }\n"
+                ),
+                "src/models/Firefly.ts": (
+                    "import { FireflyMode } from './types.js';\n"
+                    "let mode: FireflyMode = 'resting';\n"
+                    "export const initial = FireflyMode.Resting;\n"
+                ),
+            },
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is False
+    assert planning["planned"] is False
+    assert planning["composition_summary"]["patches"] == []
+
+
 def test_public_typescript_init_property_alias_renames_garden_init_keys() -> None:
     """L1-01 r160: createGarden({ fireflies, flowers, humidity }) → *Count / initialHumidity."""
 

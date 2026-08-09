@@ -1267,6 +1267,14 @@ _TS_STRING_NOT_ASSIGNABLE_RE = re.compile(
     r"'(?P<type3>[A-Za-z_$][\w$]+)'|\"(?P<type4>[A-Za-z_$][\w$]+)\")",
     re.IGNORECASE,
 )
+_TS_STRING_ENUM_DECL_RE_TEMPLATE = (
+    r"(?ms)^(?P<indent>[ \t]*)(?P<export>export\s+)?enum\s+{type_name}\s*\{{"
+    r"(?P<body>.*?)^\s*\}}\s*;?"
+)
+_TS_STRING_ENUM_MEMBER_RE = re.compile(
+    r"(?m)^\s*(?P<member>[A-Za-z_$][\w$]*)\s*=\s*"
+    r"(?P<quote>['\"])(?P<literal>[^'\"]+)(?P=quote)\s*,?\s*(?://.*)?$"
+)
 _TS_EXCESS_OBJECT_PROPERTY_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2353:\s*"
     r"Object\s+literal\s+may\s+only\s+specify\s+known\s+properties,?\s+and\s+"
@@ -1289,11 +1297,17 @@ def build_typescript_literal_union_expand_plan(
     diagnostics: Sequence[RepairDiagnostic],
     mode: str = "commit",
 ) -> RepairPlan | None:
-    """Expand string-literal union aliases when usage emits a missing literal (R160 TS2322).
+    """Repair string-literal assignments rejected by aliases or type-only enums.
 
     Live L1-01 r160: ``return "waxing"`` / ``"waning"`` against
     ``MoonPhaseName = "new" | "waxing-crescent" | ...``. Prefer adding the
     emitted literal to the union over rewriting every call site.
+
+    A string enum used only as a type is semantically equivalent to its literal
+    union, but TypeScript rejects assigning the serialized literals directly.
+    Normalize that enum only when every member is a string literal and no
+    ``Enum.Member`` runtime consumer exists anywhere in the project. Runtime
+    enum authority remains fail-closed.
     """
 
     normalized_base = {
@@ -1359,35 +1373,97 @@ def build_typescript_literal_union_expand_plan(
                 rf"(?P<body>[^;]+);",
                 content,
             )
-            if type_match is None:
+            if type_match is not None:
+                body = str(type_match.group("body") or "")
+                if "|" not in body and not re.search(r"['\"]", body):
+                    continue
+                missing = [
+                    literal
+                    for literal in sorted(literals)
+                    if f'"{literal}"' not in body and f"'{literal}'" not in body
+                ]
+                if not missing:
+                    continue
+                addition = " | ".join(f'"{literal}"' for literal in missing)
+                new_body = f"{body.strip()} | {addition}"
+                expected = str(type_match.group(0) or "")
+                replacement = f"{type_match.group('prefix')}{new_body};"
+                operations.append(
+                    RepairOperation(
+                        kind="text_replace",
+                        path=path,
+                        span_start=type_match.start(),
+                        span_end=type_match.end(),
+                        expected=expected,
+                        replacement=replacement,
+                        before_hash=sha256_text(content),
+                        metadata={
+                            "repair_kind": "typescript_literal_union_expand",
+                            "type": type_name,
+                            "literals": tuple(missing),
+                        },
+                    )
+                )
+                expanded.append({"file": path, "type": type_name, "literals": list(missing)})
+                break
+
+            enum_match = re.search(
+                _TS_STRING_ENUM_DECL_RE_TEMPLATE.format(type_name=re.escape(type_name)),
+                content,
+            )
+            if enum_match is None:
                 continue
-            body = str(type_match.group("body") or "")
-            if "|" not in body and not re.search(r"['\"]", body):
+            if _typescript_enum_has_runtime_member_access(
+                base_files=normalized_base,
+                type_name=type_name,
+                declaration_path=path,
+                declaration_span=(enum_match.start(), enum_match.end()),
+            ):
                 continue
-            missing = [lit for lit in sorted(literals) if f'"{lit}"' not in body and f"'{lit}'" not in body]
-            if not missing:
+            enum_body = str(enum_match.group("body") or "")
+            members = tuple(_TS_STRING_ENUM_MEMBER_RE.finditer(enum_body))
+            if not members:
                 continue
-            addition = " | ".join(f'"{lit}"' for lit in missing)
-            new_body = f"{body.strip()} | {addition}"
-            expected = str(type_match.group(0) or "")
-            replacement = f"{type_match.group('prefix')}{new_body};"
+            residue = enum_body
+            for member_match in reversed(members):
+                residue = residue[: member_match.start()] + residue[member_match.end() :]
+            residue = re.sub(r"/\*.*?\*/|//[^\n]*", "", residue, flags=re.DOTALL)
+            if residue.replace(",", "").strip():
+                continue
+            enum_literals = tuple(str(member.group("literal") or "") for member in members)
+            if not literals.issubset(set(enum_literals)):
+                continue
+            export_prefix = str(enum_match.group("export") or "")
+            indent = str(enum_match.group("indent") or "")
+            replacement = (
+                f"{indent}{export_prefix}type {type_name} = "
+                + " | ".join(f'"{literal}"' for literal in enum_literals)
+                + ";"
+            )
             operations.append(
                 RepairOperation(
                     kind="text_replace",
                     path=path,
-                    span_start=type_match.start(),
-                    span_end=type_match.end(),
-                    expected=expected,
+                    span_start=enum_match.start(),
+                    span_end=enum_match.end(),
+                    expected=str(enum_match.group(0) or ""),
                     replacement=replacement,
                     before_hash=sha256_text(content),
                     metadata={
-                        "repair_kind": "typescript_literal_union_expand",
+                        "repair_kind": "typescript_string_enum_to_literal_union",
                         "type": type_name,
-                        "literals": tuple(missing),
+                        "literals": enum_literals,
                     },
                 )
             )
-            expanded.append({"file": path, "type": type_name, "literals": list(missing)})
+            expanded.append(
+                {
+                    "file": path,
+                    "type": type_name,
+                    "literals": list(enum_literals),
+                    "normalized_from": "string_enum",
+                }
+            )
             break
     return _repair_plan_or_none(
         rule_id="typescript.literal_union_expand",
@@ -1397,6 +1473,23 @@ def build_typescript_literal_union_expand_plan(
         mode=mode,
         metadata={"expanded_unions": expanded},
     )
+
+
+def _typescript_enum_has_runtime_member_access(
+    *,
+    base_files: Mapping[str, str],
+    type_name: str,
+    declaration_path: str,
+    declaration_span: tuple[int, int],
+) -> bool:
+    member_access = re.compile(rf"\b{re.escape(type_name)}\s*\.")
+    for path, content in base_files.items():
+        candidate = str(content or "")
+        if path == declaration_path:
+            candidate = candidate[: declaration_span[0]] + candidate[declaration_span[1] :]
+        if member_access.search(candidate):
+            return True
+    return False
 
 
 def build_typescript_init_property_alias_plan(
