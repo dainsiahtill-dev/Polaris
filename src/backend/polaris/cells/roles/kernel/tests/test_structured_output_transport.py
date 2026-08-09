@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from polaris.cells.factory.pipeline.internal.factory_stage_executor import OrchestrationStageExecutor
 from polaris.cells.roles.kernel.internal.structured_output_transport import (
     STRUCTURED_OUTPUT_TOOL_NAME,
     StructuredOutputStreamNormalizer,
@@ -33,6 +34,59 @@ def _contract() -> RoleStructuredOutputContractV1:
             "additionalProperties": False,
         },
     )
+
+
+def _real_ce_contract_and_payload() -> tuple[RoleStructuredOutputContractV1, dict[str, object]]:
+    """Use Factory's real dynamic CE schema, including completion obligations."""
+
+    task_ids = ("TASK-1", "TASK-2", "TASK-3")
+    contract = OrchestrationStageExecutor._chief_engineer_structured_output_contract(task_ids)
+    payload: dict[str, object] = {
+        "construction_plan": {
+            "task_plans": {task_id: {"summary": f"Blueprint for {task_id}"} for task_id in task_ids},
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+        },
+        "project_completion_contract": {
+            "obligations": {
+                "artifacts": [
+                    {
+                        "obligation_id": "artifact-main",
+                        "path": "src/main.ts",
+                        "semantic_role": "entrypoint",
+                        "applicability": "required",
+                        "owner_task_id": "TASK-1",
+                    }
+                ],
+                "entrypoints": [
+                    {
+                        "obligation_id": "entrypoint-main",
+                        "kind": "cli",
+                        "applicability": "required",
+                        "owner_task_id": "TASK-1",
+                        "source_path": "src/main.ts",
+                        "runtime_path": None,
+                        "command": "node dist/main.js",
+                    }
+                ],
+                "verification": [
+                    {
+                        "obligation_id": "verify-build",
+                        "modality": "build",
+                        "command_authority_hash": None,
+                        "applicability": "required",
+                        "owner_task_id": "TASK-3",
+                        "covers_obligation_ids": ["artifact-main"],
+                    }
+                ],
+            }
+        },
+        "scope_for_apply": [],
+        "risk_flags": [],
+    }
+    return contract, payload
 
 
 def test_public_contract_round_trips_one_canonical_context_projection() -> None:
@@ -199,6 +253,265 @@ def test_null_required_array_is_coerced_to_empty_list() -> None:
     payload = json.loads(normalized["content"])
     assert payload["scope_for_apply"] == []
     assert payload["risk_flags"] == []
+
+
+def test_schema_proven_json_string_container_is_decoded_without_provider_retry() -> None:
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _contract().to_context_projection()}
+    )
+    assert plan is not None
+
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "args": {
+                        "construction_plan": '{"task_plans": {}}',
+                        "scope_for_apply": [],
+                        "risk_flags": [],
+                    },
+                    "call_id": "call-stringified-container",
+                }
+            ],
+        },
+        plan,
+    )
+
+    payload = json.loads(normalized["content"])
+    assert payload["construction_plan"] == {"task_plans": {}}
+    evidence = normalized["structured_output_transport"]
+    assert evidence["schema_normalization_applied"] is True
+    assert evidence["schema_normalization_policy"] == "schema_proven_json_container_v1"
+
+
+def test_schema_proven_root_fragment_recovers_overescaped_provider_envelope() -> None:
+    """L1-01 r17: DeepSeek serialized all root siblings into construction_plan."""
+
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _contract().to_context_projection()}
+    )
+    assert plan is not None
+    root_fragment = r'''{"task_plans":{"TASK-1":{"signature":"describe(\'garden\')","html":"<canvas id=\\"garden\\"></canvas>"}}}, "scope_for_apply": [], "risk_flags": []}'''
+
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "args": {"construction_plan": root_fragment},
+                    "call_id": "call-root-fragment",
+                }
+            ],
+        },
+        plan,
+    )
+
+    payload = json.loads(normalized["content"])
+    assert payload["construction_plan"]["task_plans"]["TASK-1"] == {
+        "signature": "describe('garden')",
+        "html": '<canvas id="garden"></canvas>',
+    }
+    assert payload["scope_for_apply"] == []
+    assert payload["risk_flags"] == []
+    evidence = normalized["structured_output_transport"]
+    assert evidence["schema_normalization_applied"] is True
+    assert evidence["schema_normalization_policy"] == "schema_proven_root_fragment_v1"
+
+
+def test_root_fragment_recovery_remains_fail_closed_for_unknown_root_property() -> None:
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _contract().to_context_projection()}
+    )
+    assert plan is not None
+
+    with pytest.raises(ValueError, match="structured_output_payload_schema_mismatch"):
+        normalize_structured_output_response(
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                        "args": {
+                            "construction_plan": (
+                                '{"task_plans": {}}, "scope_for_apply": [], '
+                                '"risk_flags": [], "untrusted_extra": true}'
+                            )
+                        },
+                        "call_id": "call-unknown-root-property",
+                    }
+                ],
+            },
+            plan,
+        )
+
+
+@pytest.mark.parametrize(
+    ("existing_value", "fragment_value"),
+    [
+        ([1], [True]),
+        ([1], [1.0]),
+        ([{"nested": [1]}], [{"nested": [True]}]),
+    ],
+)
+def test_root_fragment_recovery_rejects_type_distinct_sibling_overwrite(
+    existing_value: list[object],
+    fragment_value: list[object],
+) -> None:
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _contract().to_context_projection()}
+    )
+    assert plan is not None
+    fragment = (
+        '{"task_plans": {}}, "scope_for_apply": [], "risk_flags": '
+        + json.dumps(fragment_value, separators=(",", ":"))
+        + "}"
+    )
+
+    with pytest.raises(ValueError, match="structured_output_payload_schema_mismatch"):
+        normalize_structured_output_response(
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                        "args": {
+                            "construction_plan": fragment,
+                            "risk_flags": existing_value,
+                        },
+                        "call_id": "call-conflicting-sibling",
+                    }
+                ],
+            },
+            plan,
+        )
+
+
+def test_root_fragment_recovery_rejects_duplicate_json_members() -> None:
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _contract().to_context_projection()}
+    )
+    assert plan is not None
+
+    with pytest.raises(ValueError, match="structured_output_payload_schema_mismatch"):
+        normalize_structured_output_response(
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                        "args": {
+                            "construction_plan": (
+                                '{"task_plans": {}}, "scope_for_apply": [], '
+                                '"risk_flags": [], "risk_flags": ["ambiguous"]}'
+                            )
+                        },
+                        "call_id": "call-duplicate-root-member",
+                    }
+                ],
+            },
+            plan,
+        )
+
+
+def test_r17_root_fragment_recovers_under_factory_ce_schema() -> None:
+    contract, expected_payload = _real_ce_contract_and_payload()
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    serialized = json.dumps(expected_payload, ensure_ascii=False, separators=(",", ":"))
+    fragment = serialized.removeprefix('{"construction_plan":')
+
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "args": {"construction_plan": fragment},
+                    "call_id": "call-r17-real-ce-schema",
+                }
+            ],
+        },
+        plan,
+    )
+
+    assert json.loads(normalized["content"]) == expected_payload
+    assert normalized["structured_output_transport"]["schema_normalization_policy"] == (
+        "schema_proven_root_fragment_v1"
+    )
+
+
+@pytest.mark.parametrize("missing_path", ["project_completion_contract", "TASK-3"])
+def test_r17_root_fragment_remains_fail_closed_when_real_ce_obligations_are_missing(
+    missing_path: str,
+) -> None:
+    contract, payload = _real_ce_contract_and_payload()
+    if missing_path == "project_completion_contract":
+        payload.pop(missing_path)
+    else:
+        construction_plan = payload["construction_plan"]
+        assert isinstance(construction_plan, dict)
+        task_plans = construction_plan["task_plans"]
+        assert isinstance(task_plans, dict)
+        task_plans.pop(missing_path)
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    fragment = serialized.removeprefix('{"construction_plan":')
+
+    with pytest.raises(ValueError, match="structured_output_payload_schema_mismatch"):
+        normalize_structured_output_response(
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                        "args": {"construction_plan": fragment},
+                        "call_id": f"call-r17-missing-{missing_path}",
+                    }
+                ],
+            },
+            plan,
+        )
+
+
+def test_stream_root_fragment_recovery_projects_trusted_normalization_evidence() -> None:
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _contract().to_context_projection()}
+    )
+    assert plan is not None
+    normalizer = StructuredOutputStreamNormalizer(plan)
+
+    assert normalizer.project(
+        {
+            "type": "tool_call",
+            "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+            "args": {
+                "construction_plan": (
+                    '{"task_plans": {}}, "scope_for_apply": [], "risk_flags": []}'
+                )
+            },
+            "call_id": "call-stream-root-fragment",
+        }
+    ) == ()
+    projected = normalizer.project({"type": "complete", "content": ""})
+
+    assert len(projected) == 2
+    payload = json.loads(projected[0]["content"])
+    assert payload == {
+        "construction_plan": {"task_plans": {}},
+        "risk_flags": [],
+        "scope_for_apply": [],
+    }
+    evidence = projected[0]["metadata"]["structured_output_transport"]
+    assert evidence["schema_normalization_applied"] is True
+    assert evidence["schema_normalization_policy"] == "schema_proven_root_fragment_v1"
 
 
 def test_stream_result_tool_is_buffered_and_normalized_before_transaction_decoder() -> None:

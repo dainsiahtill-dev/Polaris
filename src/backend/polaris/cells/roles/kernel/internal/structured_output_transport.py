@@ -25,6 +25,7 @@ _STRUCTURED_OUTPUT_METADATA_KEY = "structured_output_transport"
 _STRUCTURED_OUTPUT_DESCRIPTION_SUFFIX = (
     "Call this result-submission tool exactly once. It records no side effect and is not an executable workspace tool."
 )
+_MAX_SCHEMA_CONTAINER_STRING_CHARS = 262_144
 
 
 class _ValidatedStructuredOutputStreamEvent(dict[str, Any]):
@@ -43,10 +44,10 @@ def _without_untrusted_transport_metadata(event: Mapping[str, Any]) -> dict[str,
     return sanitized
 
 
-def _canonical_json(value: Mapping[str, Any]) -> str:
+def _canonical_json_value(value: Any) -> str:
     try:
         return json.dumps(
-            dict(value),
+            value,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -54,6 +55,21 @@ def _canonical_json(value: Mapping[str, Any]) -> str:
         )
     except (TypeError, ValueError) as exc:
         raise ValueError("structured_output_payload_must_be_json_object") from exc
+
+
+def _canonical_json(value: Mapping[str, Any]) -> str:
+    return _canonical_json_value(dict(value))
+
+
+def _reject_duplicate_json_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject ambiguous Provider JSON instead of accepting last-key-wins."""
+
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"structured_output_duplicate_json_member:{key}")
+        result[key] = value
+    return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,11 +212,14 @@ def _transport_evidence(
     *,
     payload_json: str,
     call_id: str,
+    schema_normalization_policy: str = "none",
 ) -> dict[str, Any]:
     return {
         **plan.audit,
         "call_id": call_id,
         "payload_sha256": hashlib.sha256(payload_json.encode("utf-8")).hexdigest(),
+        "schema_normalization_applied": schema_normalization_policy != "none",
+        "schema_normalization_policy": schema_normalization_policy,
     }
 
 
@@ -305,25 +324,152 @@ def _coerce_structured_output_payload_defaults(
     return result
 
 
+def _schema_container_type(schema: Mapping[str, Any]) -> type[dict[str, Any]] | type[list[Any]] | None:
+    schema_type = schema.get("type")
+    if schema_type == "object":
+        return dict
+    if schema_type == "array":
+        return list
+    return None
+
+
+def _bounded_json_container_candidates(raw_value: str) -> tuple[str, ...]:
+    """Return strict, bounded JSON candidates for one wrongly stringified container.
+
+    Some Provider tool implementations add one extra string-escaping layer to
+    nested JSON.  Two invalid escapes recur in that envelope: ``\\'`` (JSON
+    does not escape apostrophes) and ``\\\\\"`` (a quote escaped twice).  The
+    second candidate removes exactly that one accidental layer.  No general
+    JSON5/regex recovery is attempted.
+    """
+
+    stripped = raw_value.strip()
+    if not stripped or len(stripped) > _MAX_SCHEMA_CONTAINER_STRING_CHARS:
+        return ()
+    repaired = stripped.replace("\\'", "'").replace('\\\\"', '\\"')
+    if repaired == stripped:
+        return (stripped,)
+    return (stripped, repaired)
+
+
+def _normalize_schema_proven_json_containers(
+    payload: Mapping[str, Any],
+    json_schema: Mapping[str, Any],
+) -> tuple[dict[str, Any], str]:
+    """Decode only JSON-string containers that the caller schema proves.
+
+    Besides ordinary ``{"field": "{...}"}``, recover one common Provider
+    envelope defect where all remaining root members are serialized into the
+    first object field, for example ``construction_plan='{"task_plans": ...},
+    "risk_flags": []}'``.  Root-fragment recovery is accepted only when the
+    reconstructed object uses declared schema properties, preserves every
+    already-structured sibling exactly, and later passes the full caller JSON
+    schema.  This is protocol normalization, not semantic repair.
+    """
+
+    properties = json_schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return dict(payload), "none"
+    result = dict(payload)
+    policies: list[str] = []
+
+    for key, property_schema_raw in properties.items():
+        if not isinstance(key, str) or not isinstance(property_schema_raw, Mapping):
+            continue
+        expected_type = _schema_container_type(property_schema_raw)
+        raw_value = result.get(key)
+        if expected_type is None or not isinstance(raw_value, str):
+            continue
+        candidates = _bounded_json_container_candidates(raw_value)
+        if not candidates:
+            continue
+
+        # First recover a Provider envelope that serialized the remaining root
+        # members into this first object field.  Prefixing the declared key is
+        # sufficient to reconstruct the original root object; full validation
+        # below remains fail-closed.
+        root_recovered = False
+        if expected_type is dict:
+            for candidate in candidates:
+                if not (candidate.startswith("{") and candidate.endswith("}")):
+                    continue
+                try:
+                    decoded_root = json.loads(
+                        "{" + json.dumps(key) + ":" + candidate,
+                        object_pairs_hook=_reject_duplicate_json_object_pairs,
+                    )
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if not isinstance(decoded_root, Mapping) or not isinstance(decoded_root.get(key), dict):
+                    continue
+                if any(str(candidate_key) not in properties for candidate_key in decoded_root):
+                    continue
+                if any(
+                    sibling_key != key
+                    and (
+                        sibling_key not in decoded_root
+                        or _canonical_json_value(decoded_root[sibling_key])
+                        != _canonical_json_value(sibling_value)
+                    )
+                    for sibling_key, sibling_value in result.items()
+                ):
+                    continue
+                result = dict(decoded_root)
+                policies.append("schema_proven_root_fragment_v1")
+                root_recovered = True
+                break
+            if root_recovered:
+                break
+
+        for candidate in candidates:
+            try:
+                decoded_value = json.loads(
+                    candidate,
+                    object_pairs_hook=_reject_duplicate_json_object_pairs,
+                )
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if type(decoded_value) is expected_type:
+                result[key] = decoded_value
+                policies.append("schema_proven_json_container_v1")
+                break
+
+    return result, "+".join(policies) if policies else "none"
+
+
+def _validate_payload_with_normalization(
+    payload: Mapping[str, Any],
+    plan: StructuredOutputTransportPlan,
+) -> tuple[dict[str, Any], str]:
+    schema = plan.contract.json_schema
+    if not isinstance(schema, Mapping):
+        raise ValueError("structured_output_json_schema_must_be_object")
+    normalized, normalization_policy = _normalize_schema_proven_json_containers(payload, schema)
+    coerced = _coerce_structured_output_payload_defaults(normalized, schema)
+    if coerced != normalized:
+        normalization_policy = (
+            f"{normalization_policy}+required_empty_container_defaults_v1"
+            if normalization_policy != "none"
+            else "required_empty_container_defaults_v1"
+        )
+    errors = sorted(
+        Draft202012Validator(dict(schema)).iter_errors(coerced),
+        key=lambda item: tuple(str(part) for part in item.absolute_path),
+    )
+    if not errors:
+        return coerced, normalization_policy
+    first = errors[0]
+    path = ".".join(str(part) for part in first.absolute_path) or "$"
+    raise ValueError(f"structured_output_payload_schema_mismatch:{path}:{first.message}")
+
+
 def _validate_payload(
     payload: Mapping[str, Any],
     plan: StructuredOutputTransportPlan,
 ) -> dict[str, Any]:
     """Coerce empty-container defaults, then fail-closed on residual schema errors."""
 
-    schema = plan.contract.json_schema
-    if not isinstance(schema, Mapping):
-        raise ValueError("structured_output_json_schema_must_be_object")
-    coerced = _coerce_structured_output_payload_defaults(payload, schema)
-    errors = sorted(
-        Draft202012Validator(dict(schema)).iter_errors(coerced),
-        key=lambda item: tuple(str(part) for part in item.absolute_path),
-    )
-    if not errors:
-        return coerced
-    first = errors[0]
-    path = ".".join(str(part) for part in first.absolute_path) or "$"
-    raise ValueError(f"structured_output_payload_schema_mismatch:{path}:{first.message}")
+    return _validate_payload_with_normalization(payload, plan)[0]
 
 
 def validate_structured_output_stream_tool_call(
@@ -368,12 +514,13 @@ def normalize_structured_output_response(
         raise ValueError("structured_output_tool_must_be_called_exactly_once")
     result_call = result_calls[0]
     payload = _tool_call_arguments(result_call)
-    payload = _validate_payload(payload, plan)
+    payload, normalization_policy = _validate_payload_with_normalization(payload, plan)
     payload_json = _canonical_json(payload)
     evidence = _transport_evidence(
         plan,
         payload_json=payload_json,
         call_id=_tool_call_id(result_call),
+        schema_normalization_policy=normalization_policy,
     )
     normalized = dict(response)
     normalized["content"] = payload_json
@@ -389,13 +536,20 @@ def normalize_structured_output_response(
 class StructuredOutputStreamNormalizer:
     """Stateful stream projector that hides the reserved protocol tool call."""
 
-    __slots__ = ("_buffered_chunks", "_call_id", "_payload_json", "_plan")
+    __slots__ = (
+        "_buffered_chunks",
+        "_call_id",
+        "_payload_json",
+        "_plan",
+        "_schema_normalization_policy",
+    )
 
     def __init__(self, plan: StructuredOutputTransportPlan) -> None:
         self._plan = plan
         self._buffered_chunks: list[dict[str, Any]] = []
         self._payload_json: str | None = None
         self._call_id = ""
+        self._schema_normalization_policy = "none"
 
     def project(self, event: dict[str, Any]) -> tuple[dict[str, Any], ...]:
         sanitized_event = _without_untrusted_transport_metadata(event)
@@ -409,7 +563,7 @@ class StructuredOutputStreamNormalizer:
             args = sanitized_event.get("args")
             if not isinstance(args, Mapping):
                 raise ValueError("structured_output_tool_arguments_must_be_object")
-            coerced = _validate_payload(args, self._plan)
+            coerced, self._schema_normalization_policy = _validate_payload_with_normalization(args, self._plan)
             self._payload_json = _canonical_json(coerced)
             self._call_id = str(sanitized_event.get("call_id") or "").strip()
             return ()
@@ -423,6 +577,7 @@ class StructuredOutputStreamNormalizer:
             self._plan,
             payload_json=self._payload_json,
             call_id=self._call_id,
+            schema_normalization_policy=self._schema_normalization_policy,
         )
         metadata = dict(sanitized_event.get("metadata") or {})
         metadata[_STRUCTURED_OUTPUT_METADATA_KEY] = evidence

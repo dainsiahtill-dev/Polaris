@@ -4019,11 +4019,15 @@ class TestStreamEngineRunStream:
     async def test_invalid_structured_result_emits_terminal_call_error_before_consumer_projection(self) -> None:
         """Provider result-schema drift must close the physical LLM attempt.
 
-        R107 returned the forced result tool without ``scope_for_apply``.
+        R107 returned a forced result tool that violated the caller schema.
         Validation occurred only in the downstream TransactionKernel projector,
         which raised after the LLM stream had yielded the tool call. The
         physical attempt therefore retained only ``llm_call_start`` and the
         bounded CE schema-repair path could not classify the invalid payload.
+
+        Empty required arrays are now safely defaulted by the transport, so use
+        a non-JSON scalar for an object field to preserve the original
+        fail-closed lifecycle assertion.
         """
 
         contract = RoleStructuredOutputContractV1(
@@ -4062,7 +4066,7 @@ class TestStreamEngineRunStream:
                     "tool_call": {
                         "id": "call-invalid-structured-result",
                         "name": STRUCTURED_OUTPUT_TOOL_NAME,
-                        "arguments": {"construction_plan": {}, "risk_flags": []},
+                        "arguments": {"construction_plan": "not-an-object", "risk_flags": []},
                     },
                 }
                 yield {"type": "complete", "content": ""}
@@ -4107,8 +4111,8 @@ class TestStreamEngineRunStream:
             ]
 
         assert [event["type"] for event in events] == ["error"]
-        assert events[0]["error"].startswith("structured_output_payload_schema_mismatch:$:")
-        assert "'scope_for_apply' is a required property" in events[0]["error"]
+        assert events[0]["error"].startswith("structured_output_payload_schema_mismatch:construction_plan:")
+        assert "is not of type 'object'" in events[0]["error"]
         emit_error.assert_called_once()
         assert emit_error.call_args.kwargs["error_message"] == events[0]["error"]
 
