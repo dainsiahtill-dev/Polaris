@@ -46,12 +46,14 @@ vi.mock('@/services', () => ({
 }));
 
 vi.mock('@/runtime/transport', () => ({
-  useRuntimeTransport: () => ({
+  useTransportActions: () => ({
     subscribeChannels: (...args: unknown[]) => {
       const unsub = transportSubscribeMock(...args);
       lastChannelUnsubscribe = unsub;
       return unsub;
     },
+  }),
+  useMessageHandler: () => ({
     registerMessageHandler: (...args: unknown[]) => {
       const handler = args[0] as (message: unknown) => void;
       lastMessageHandler = handler;
@@ -60,7 +62,7 @@ vi.mock('@/runtime/transport', () => ({
   }),
 }));
 
-import { useFactory } from './useFactory';
+import { useFactory } from './useFactory.ts';
 
 const baseRun = {
   run_id: 'run-1',
@@ -213,7 +215,7 @@ describe('useFactory', () => {
     });
   });
 
-  it('uses the factory envelope run id when runtime payload carries a Director run id', async () => {
+  it('keeps the Factory stream running when a child Director task completes', async () => {
     const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
     await act(async () => {
       await result.current.startRun({ workspace: 'ws' });
@@ -235,11 +237,54 @@ describe('useFactory', () => {
       );
     });
 
-    await waitFor(() => {
-      expect(getFactoryRunArtifactsMock).toHaveBeenCalledWith('run-1');
-    });
+    expect(getFactoryRunArtifactsMock).not.toHaveBeenCalled();
     expect(getFactoryRunArtifactsMock).not.toHaveBeenCalledWith('director-123456789abc');
     expect(result.current.currentRun?.run_id).toBe('run-1');
+    expect(result.current.currentRun?.status).toBe('running');
+    expect(result.current.isStreaming).toBe(true);
+  });
+
+  it('serializes repeated terminal artifact refreshes instead of issuing concurrent reads', async () => {
+    let resolveFirstRequest: ((value: unknown) => void) | null = null;
+    getFactoryRunArtifactsMock.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveFirstRequest = resolve;
+      }),
+    );
+
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+    await act(async () => {
+      await result.current.startRun({ workspace: 'ws' });
+    });
+    await waitFor(() => {
+      expect(getFactoryRunArtifactsMock).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      lastMessageHandler?.(
+        envelope(
+          { ...baseRun, status: 'completed', phase: 'completed', progress: 100 },
+          'complete',
+        ),
+      );
+      lastMessageHandler?.(
+        envelope(
+          { ...baseRun, status: 'completed', phase: 'completed', progress: 100 },
+          'complete',
+        ),
+      );
+    });
+    expect(getFactoryRunArtifactsMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFirstRequest?.({
+        ok: true,
+        data: { run_id: 'run-1', artifacts: [], summary_md: null, summary_json: null },
+      });
+    });
+    await waitFor(() => {
+      expect(getFactoryRunArtifactsMock).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('uses stop response as the terminal snapshot', async () => {

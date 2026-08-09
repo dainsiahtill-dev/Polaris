@@ -1108,6 +1108,87 @@ def test_refresh_instance_states_does_not_publish_without_state_change(
     assert published == []
 
 
+def test_refresh_instance_states_cannot_drop_a_concurrent_start_reservation(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    registry.save(
+        InstanceRecord(
+            instance_id="existing",
+            name="Existing",
+            kind="project",
+            polaris_root=str(root),
+            workspace=str((tmp_path / "existing").resolve()),
+            runtime_root=str((tmp_path / "existing" / "runtime").resolve()),
+            backend_port=59951,
+            frontend_port=59952,
+            backend_url="http://127.0.0.1:59951",
+            frontend_url="http://127.0.0.1:59952",
+            token="existing-token",
+            start_frontend=False,
+            status="stopped",
+            metadata={"backend_health": "stopped", "frontend_health": "disabled"},
+        )
+    )
+    reservation = InstanceRecord(
+        instance_id="concurrent-reservation",
+        name="Concurrent Reservation",
+        kind="bench_project",
+        polaris_root=str(root),
+        workspace=str((tmp_path / "reserved").resolve()),
+        runtime_root=str((tmp_path / "reserved" / "runtime").resolve()),
+        backend_port=59961,
+        frontend_port=59962,
+        backend_url="http://127.0.0.1:59961",
+        frontend_url="http://127.0.0.1:59962",
+        token="reservation-token",
+        start_frontend=False,
+        status="starting",
+        metadata={
+            "reservation_lease": {
+                "lease_id": "launch:1",
+                "launch_request_id": "launch",
+                "state": "active",
+            }
+        },
+    )
+    refresh_entered = threading.Event()
+    release_refresh = threading.Event()
+    supervisor = InstanceSupervisor(registry)
+
+    def _blocking_health(record: InstanceRecord, *, probe_http: bool) -> InstanceRecord:
+        del probe_http
+        refresh_entered.set()
+        assert release_refresh.wait(timeout=5)
+        projected = InstanceRecord.from_dict(record.to_dict())
+        projected.metadata = {**projected.metadata, "backend_health": "checked"}
+        return projected
+
+    monkeypatch.setattr(supervisor, "_with_health", _blocking_health)
+    refresh_thread = threading.Thread(target=supervisor.refresh_instance_states)
+    save_thread = threading.Thread(target=lambda: registry.save(reservation))
+    refresh_thread.start()
+    assert refresh_entered.wait(timeout=5)
+    save_thread.start()
+    time.sleep(0.05)
+    assert save_thread.is_alive(), "concurrent save must wait for the health refresh transaction"
+    release_refresh.set()
+    refresh_thread.join(timeout=5)
+    save_thread.join(timeout=5)
+
+    assert not refresh_thread.is_alive()
+    assert not save_thread.is_alive()
+    assert {record.instance_id for record in registry.list_records()} == {
+        "existing",
+        "concurrent-reservation",
+    }
+    stored_reservation = registry.get("concurrent-reservation")
+    assert stored_reservation is not None
+    assert stored_reservation.metadata["reservation_lease"]["lease_id"] == "launch:1"
+
+
 def test_start_instance_builds_backend_and_frontend_processes(
     tmp_path: Path,
     monkeypatch: Any,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from polaris.cells.events.fact_stream.public import (
@@ -115,6 +117,95 @@ def _lease(
         lease_id="lease-1",
         start_receipt=receipt,
     )
+
+
+def test_lifecycle_ledger_validation_is_cached_by_physical_runtime_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    runtime_root = tmp_path / "runtime"
+    workspace.mkdir()
+    runtime_root.mkdir()
+    ensure_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_lifecycle.resolve_storage_roots",
+        lambda _workspace: SimpleNamespace(
+            workspace_abs=str(workspace),
+            runtime_root=str(runtime_root),
+        ),
+    )
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_lifecycle.ensure_segmented_fact_ledger",
+        lambda command: ensure_calls.append(command.logical_stream),
+    )
+
+    StrictProviderAttemptLifecycleStore.for_factory_run(
+        workspace=str(workspace),
+        factory_run_id="factory-run-1",
+    )
+    StrictProviderAttemptLifecycleStore.for_factory_run(
+        workspace=str(workspace),
+        factory_run_id="factory-run-1",
+    )
+    assert len(ensure_calls) == 1
+
+    StrictProviderAttemptLifecycleStore.for_factory_run(
+        workspace=str(workspace),
+        factory_run_id="factory-run-2",
+    )
+    assert len(ensure_calls) == 2
+
+    shutil.rmtree(runtime_root)
+    (tmp_path / "consume-released-inode").mkdir()
+    runtime_root.mkdir()
+    StrictProviderAttemptLifecycleStore.for_factory_run(
+        workspace=str(workspace),
+        factory_run_id="factory-run-1",
+    )
+    assert len(ensure_calls) == 3
+
+
+def test_lifecycle_ledger_validation_failure_is_not_cached(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    runtime_root = tmp_path / "runtime"
+    workspace.mkdir()
+    runtime_root.mkdir()
+    ensure_calls = 0
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_lifecycle.resolve_storage_roots",
+        lambda _workspace: SimpleNamespace(
+            workspace_abs=str(workspace),
+            runtime_root=str(runtime_root),
+        ),
+    )
+
+    def _ensure(_command: object) -> None:
+        nonlocal ensure_calls
+        ensure_calls += 1
+        if ensure_calls == 1:
+            raise RuntimeError("integrity check failed")
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_lifecycle.ensure_segmented_fact_ledger",
+        _ensure,
+    )
+
+    with pytest.raises(RuntimeError, match="integrity check failed"):
+        StrictProviderAttemptLifecycleStore.for_factory_run(
+            workspace=str(workspace),
+            factory_run_id="factory-run-failure",
+        )
+    StrictProviderAttemptLifecycleStore.for_factory_run(
+        workspace=str(workspace),
+        factory_run_id="factory-run-failure",
+    )
+    assert ensure_calls == 2
 
 
 def test_factory_lifecycle_returns_exact_durable_receipts(tmp_path: Path) -> None:

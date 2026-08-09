@@ -1209,3 +1209,176 @@ export function summarizeRoleContextState(ctx) {
         detail: `提示约 ${formatTokens(ctx.promptTokens)} / 输出约 ${formatTokens(ctx.completionTokens)}${assembly}${receipt}`,
     };
 }
+// ---------------------------------------------------------------------------
+// 事件观测：去噪 + 语义化 + 实体线程
+//
+// 痛点：RoleInternalEventRow 原样渲染 event.kind（如 event.factory:factory_a1e8…）
+// 与 English lifecycle 动词，且 task4/task5 事件交错平铺——非工程师无法判断
+// 「每个任务经历了什么、现在是什么态」。下面三个纯函数把同一份 ContextOSEvent[]
+// 翻译成中文语义徽章 + 按实体聚合的生命周期线程，供面板分区渲染。
+// 全部只读派生，不臆造：原始 channel 保留在 rawChannel，未识别事件回退平铺。
+// ---------------------------------------------------------------------------
+/** 已知的 factory / 任务生命周期动词（英文 → 中文 + 状态 + 色调）。顺序：长词优先避免子串误匹配。 */
+const LIFECYCLE_VERBS = [
+    { re: /\bdependencies_unblocked\b|\bdeps_unblocked\b/i, zh: '依赖已就绪', state: 'unblocked', tone: 'active' },
+    { re: /\bmaterialized\b/i, zh: '已物化', state: 'materialized', tone: 'active' },
+    { re: /\bcompleted\b/i, zh: '已完成', state: 'completed', tone: 'active' },
+    { re: /\bclaimed\b/i, zh: '已领取', state: 'claimed', tone: 'active' },
+    { re: /\bsuspended\b/i, zh: '已挂起', state: 'suspended', tone: 'idle' },
+    { re: /\bdispatched\b/i, zh: '已派发', state: 'dispatched', tone: 'active' },
+    { re: /\bcreated\b/i, zh: '已创建', state: 'created', tone: 'active' },
+    { re: /\bfailed\b/i, zh: '已失败', state: 'failed', tone: 'blocked' },
+];
+/** 实体引用识别：task N / 任务 N / task #N。 */
+const ENTITY_RE = /\btask\s*#?\s*(\d+)|任务\s*#?\s*(\d+)/i;
+/** 把一条事件的人话徽章 / 色调 / 翻译摘要派生出来（L1 去噪 + 语义化）。 */
+export function classifyEventSemantics(event) {
+    const rawChannel = event.kind || '';
+    const summary = event.summary || '';
+    // 错误优先（即便含生命周期动词，错误就是错误）。
+    if (event.category === 'error') {
+        return { badge: '错误', tone: 'blocked', displaySummary: translateEventSummary(summary), rawChannel };
+    }
+    // LLM 调用 / 投影 / 工具优先于生命周期动词，避免把 "llm response completed" 误判为生命周期。
+    if (event.isCall) {
+        return { badge: '调用', tone: 'active', displaySummary: translateEventSummary(summary), rawChannel };
+    }
+    if (event.isProjection) {
+        return { badge: '投影', tone: 'active', displaySummary: translateEventSummary(summary), rawChannel };
+    }
+    if (event.category === 'tool') {
+        return { badge: '工具', tone: 'active', displaySummary: translateEventSummary(summary), rawChannel };
+    }
+    const verb = parseLifecycleVerb(summary);
+    if (verb) {
+        return { badge: '生命周期', tone: verb.tone, displaySummary: translateEventSummary(summary), rawChannel };
+    }
+    return { badge: '事件', tone: 'idle', displaySummary: summary, rawChannel };
+}
+/** 解析事件摘要中的生命周期动词，未命中返回 null。 */
+function parseLifecycleVerb(summary) {
+    for (const verb of LIFECYCLE_VERBS) {
+        if (verb.re.test(summary)) {
+            return { zh: verb.zh, state: verb.state, tone: verb.tone };
+        }
+    }
+    return null;
+}
+/** 把事件摘要里的 task N / English 动词翻译成中文（不动其它部分）。 */
+function translateEventSummary(summary) {
+    if (!summary)
+        return '';
+    let s = summary;
+    // 实体优先：task 5 / 任务 5 / task #5 → 任务5
+    s = s.replace(/\btask\s*#?\s*(\d+)/gi, '任务$1');
+    s = s.replace(/任务\s*#?\s*(\d+)/g, '任务$1');
+    // 动词：长词优先（dependencies_unblocked 先于其它）。
+    s = s.replace(/\bdependencies_unblocked\b|\bdeps_unblocked\b/gi, '依赖已就绪');
+    s = s.replace(/\bmaterialized\b/gi, '已物化');
+    s = s.replace(/\bcompleted\b/gi, '已完成');
+    s = s.replace(/\bclaimed\b/gi, '已领取');
+    s = s.replace(/\bsuspended\b/gi, '已挂起');
+    s = s.replace(/\bdispatched\b/gi, '已派发');
+    s = s.replace(/\bcreated\b/gi, '已创建');
+    s = s.replace(/\bfailed\b/gi, '已失败');
+    return s;
+}
+/** 从事件摘要中解析实体引用（task N），未检测到返回 null。 */
+function parseEventEntity(event) {
+    const match = ENTITY_RE.exec(event.summary || '');
+    if (!match)
+        return null;
+    const id = match[1] || match[2];
+    if (!id)
+        return null;
+    return { kind: 'task', id, displayId: `任务${id}` };
+}
+/** 把事件流按实体聚合成生命周期线程；无实体的事件回退 loose（L2 实体线程）。 */
+export function groupEventsByEntity(events) {
+    const threadMap = new Map();
+    const loose = [];
+    for (const event of events) {
+        const entity = parseEventEntity(event);
+        if (entity) {
+            const key = `${entity.kind}:${entity.id}`;
+            const bucket = threadMap.get(key);
+            if (bucket)
+                bucket.push(event);
+            else
+                threadMap.set(key, [event]);
+        }
+        else {
+            loose.push(event);
+        }
+    }
+    const threads = [];
+    for (const [key, bucket] of threadMap) {
+        // 按时间正序（epoch，等时回退 seq）排生命周期。
+        const ordered = [...bucket].sort((a, b) => a.epoch - b.epoch || a.seq - b.seq);
+        const steps = ordered.map((event) => {
+            const verb = parseLifecycleVerb(event.summary || '');
+            return {
+                ts: event.ts,
+                epoch: event.epoch,
+                verbState: verb?.state ?? 'event',
+                verbZh: verb?.zh ?? (event.summary || '事件'),
+                tone: verb?.tone ?? 'idle',
+            };
+        });
+        const first = ordered[0];
+        const last = ordered[ordered.length - 1];
+        const firstEpoch = first?.epoch ?? 0;
+        const lastEpoch = last?.epoch ?? 0;
+        const lastStep = steps[steps.length - 1];
+        const entityId = key.includes(':') ? key.slice(key.indexOf(':') + 1) : key;
+        threads.push({
+            id: key,
+            entityKind: 'task',
+            entityId,
+            displayId: `任务${entityId}`,
+            events: ordered,
+            steps,
+            currentState: lastStep?.verbState ?? 'event',
+            currentStateZh: lastStep?.verbZh ?? '',
+            currentTone: lastStep?.tone ?? 'idle',
+            firstEpoch,
+            lastEpoch,
+            elapsedMs: firstEpoch > 0 && lastEpoch > 0 && lastEpoch >= firstEpoch ? lastEpoch - firstEpoch : null,
+        });
+    }
+    threads.sort((a, b) => b.lastEpoch - a.lastEpoch);
+    loose.sort((a, b) => b.epoch - a.epoch);
+    return { threads, loose };
+}
+/** 把一条实体线程的当前态翻译成人话摘要（L3 实体级当前态）。 */
+export function summarizeEntityThread(thread) {
+    const elapsedLabel = thread.elapsedMs !== null && thread.elapsedMs > 0 ? ` · 耗时 ${formatDurationMs(thread.elapsedMs)}` : '';
+    switch (thread.currentState) {
+        case 'completed':
+            return { stateLabel: `已完成${elapsedLabel}`, tone: 'active' };
+        case 'failed':
+            return { stateLabel: '已失败', tone: 'blocked' };
+        case 'suspended':
+            return { stateLabel: '已挂起（等待依赖）', tone: 'idle' };
+        case 'unblocked':
+            return { stateLabel: '依赖已就绪，可继续', tone: 'active' };
+        default:
+            return { stateLabel: `进行中（${thread.currentStateZh}）${elapsedLabel}`, tone: thread.currentTone };
+    }
+}
+/** 毫秒 → 紧凑时长（27s / 1m 3s / 2m / 1h 5m）。<1s 显示毫秒。 */
+function formatDurationMs(ms) {
+    if (!Number.isFinite(ms) || ms < 0)
+        return '--';
+    if (ms < 1000)
+        return `${Math.round(ms)}ms`;
+    const seconds = Math.floor(ms / 1000);
+    if (seconds < 60)
+        return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remSeconds = seconds % 60;
+    if (minutes < 60)
+        return remSeconds ? `${minutes}m ${remSeconds}s` : `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    return `${hours}h ${minutes % 60}m`;
+}

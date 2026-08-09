@@ -6,9 +6,12 @@ import {
   contextOSFormat,
   safeText,
   summarizeRoleContextState,
+  classifyEventSemantics,
+  groupEventsByEntity,
+  summarizeEntityThread,
   type RoleInternalContext,
 } from './contextOSData';
-import { buildTelemetryFromStream } from './contextOSTelemetry';
+import { buildTelemetryFromStream, type ContextOSEvent } from './contextOSTelemetry';
 import type { UsageStats } from '@/app/components/UsageHUD';
 import type { DialogueEvent } from '@/app/components/DialoguePanel';
 import type { LogEntry } from '@/types/log';
@@ -1762,5 +1765,233 @@ describe('summarizeRoleContextState', () => {
     expect(summary.tone).toBe('blocked');
     expect(summary.headline).toContain('错误');
     expect(summary.detail).toContain('事件流');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 事件观测：去噪 + 语义化 + 实体线程（替代 event.factory:… 噪声与平铺日志）
+// ---------------------------------------------------------------------------
+
+function makeEvent(overrides: Partial<ContextOSEvent> = {}): ContextOSEvent {
+  return {
+    id: 'e1',
+    seq: 0,
+    ts: '2026-08-10T02:17:49Z',
+    epoch: 5000,
+    actor: 'Director',
+    roleHints: ['director'],
+    name: 'factory',
+    kind: 'event.factory:factory_run',
+    mode: 'system',
+    iteration: null,
+    summary: '',
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    cachedTokens: 0,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    toolTokens: 0,
+    reasoningTokens: 0,
+    audioTokens: 0,
+    serverToolUseCount: 0,
+    usageSource: 'none',
+    hasUsage: false,
+    estimatedTokens: false,
+    durationMs: null,
+    error: null,
+    hasReceipt: false,
+    contextHash: null,
+    contextItems: null,
+    contextTokens: null,
+    finalRequestContextAudit: null,
+    finalRequestTokenEstimate: null,
+    contextSnapshotRef: null,
+    contextSnapshotDegraded: null,
+    promptHash: null,
+    turnId: null,
+    callId: null,
+    providerId: null,
+    providerName: null,
+    model: null,
+    bindingId: null,
+    taskId: null,
+    pmTaskId: null,
+    chiefBlueprintId: null,
+    errorCode: null,
+    errorCategory: null,
+    providerStatus: null,
+    retryAfterSeconds: null,
+    circuitOpenRemainingSeconds: null,
+    exceptionType: null,
+    isProjection: false,
+    projectionKey: null,
+    isCall: false,
+    workerId: null,
+    category: 'event',
+    ...overrides,
+  };
+}
+
+describe('classifyEventSemantics', () => {
+  it('把 factory 生命周期事件翻译成中文并打「生命周期」徽章，保留原始 channel', () => {
+    const s = classifyEventSemantics(
+      makeEvent({ summary: 'Director task 5 completed', kind: 'event.factory:factory_a1e8ab2a8235' }),
+    );
+    expect(s.badge).toBe('生命周期');
+    expect(s.tone).toBe('active');
+    expect(s.displaySummary).toContain('任务5');
+    expect(s.displaySummary).toContain('已完成');
+    // 原始 channel 噪声不再进徽章，但保留在 rawChannel 供 tooltip。
+    expect(s.rawChannel).toBe('event.factory:factory_a1e8ab2a8235');
+    expect(s.badge).not.toContain('event.factory');
+  });
+
+  it('错误事件归为「错误」并标红', () => {
+    const s = classifyEventSemantics(makeEvent({ summary: 'task 2 failed', category: 'error' }));
+    expect(s.badge).toBe('错误');
+    expect(s.tone).toBe('blocked');
+  });
+
+  it('LLM 调用归为「调用」，即便 summary 含 completed 也不误判为生命周期', () => {
+    const s = classifyEventSemantics(
+      makeEvent({ summary: 'llm response completed', isCall: true, category: 'call' }),
+    );
+    expect(s.badge).toBe('调用');
+    expect(s.tone).toBe('active');
+  });
+
+  it('suspended 生命周期事件标为 idle（等待态）并翻译为已挂起', () => {
+    const s = classifyEventSemantics(makeEvent({ summary: 'Director task 4 suspended' }));
+    expect(s.badge).toBe('生命周期');
+    expect(s.tone).toBe('idle');
+    expect(s.displaySummary).toContain('已挂起');
+  });
+
+  it('dependencies_unblocked 翻译为依赖已就绪', () => {
+    const s = classifyEventSemantics(makeEvent({ summary: 'Director task 4 dependencies_unblocked' }));
+    expect(s.displaySummary).toContain('依赖已就绪');
+    expect(s.tone).toBe('active');
+  });
+
+  it('未知事件回退为「事件」徽章且保留原 summary', () => {
+    const s = classifyEventSemantics(makeEvent({ summary: 'some unknown telemetry' }));
+    expect(s.badge).toBe('事件');
+    expect(s.displaySummary).toBe('some unknown telemetry');
+    expect(s.tone).toBe('idle');
+  });
+});
+
+describe('groupEventsByEntity', () => {
+  // 截图场景：8 条 factory 事件，task4 / task5 交错。
+  function screenshotEvents(): ContextOSEvent[] {
+    return [
+      makeEvent({ id: 'a', seq: 7, epoch: 32000, summary: 'Director task 5 completed' }),
+      makeEvent({ id: 'b', seq: 6, epoch: 5000, summary: 'Director task 5 claimed' }),
+      makeEvent({ id: 'c', seq: 5, epoch: 5000, summary: 'Director task 4 dependencies_unblocked' }),
+      makeEvent({ id: 'd', seq: 4, epoch: 5000, summary: 'Director task 5 materialized' }),
+      makeEvent({ id: 'e', seq: 3, epoch: 5000, summary: 'Director task 5 created' }),
+      makeEvent({ id: 'f', seq: 2, epoch: 5000, summary: 'Director task 4 suspended' }),
+      makeEvent({ id: 'g', seq: 1, epoch: 1000, summary: 'Director task 4 claimed' }),
+      makeEvent({ id: 'h', seq: 0, epoch: 1000, summary: 'Director task 4 materialized' }),
+    ];
+  }
+
+  it('把截图 8 条事件聚成 task4/task5 两条线程，无 loose', () => {
+    const grouped = groupEventsByEntity(screenshotEvents());
+    expect(grouped.loose).toHaveLength(0);
+    expect(grouped.threads).toHaveLength(2);
+  });
+
+  it('正确派生每个线程的当前态（task5=completed, task4=unblocked）', () => {
+    const grouped = groupEventsByEntity(screenshotEvents());
+    const t5 = grouped.threads.find((t) => t.entityId === '5');
+    const t4 = grouped.threads.find((t) => t.entityId === '4');
+    expect(t5?.currentState).toBe('completed');
+    expect(t4?.currentState).toBe('unblocked');
+  });
+
+  it('线程按最近活动倒序（task5 在 task4 之前）', () => {
+    const grouped = groupEventsByEntity(screenshotEvents());
+    expect(grouped.threads[0].entityId).toBe('5');
+    expect(grouped.threads[1].entityId).toBe('4');
+  });
+
+  it('生命周期步骤按时间正序排列', () => {
+    const grouped = groupEventsByEntity(screenshotEvents());
+    const t5 = grouped.threads.find((t) => t.entityId === '5');
+    expect(t5?.steps.map((s) => s.verbState)).toEqual([
+      'created',
+      'materialized',
+      'claimed',
+      'completed',
+    ]);
+  });
+
+  it('计算线程耗时（task5 = 32s - 1s... 实为 32000-5000=27s）', () => {
+    const grouped = groupEventsByEntity(screenshotEvents());
+    const t5 = grouped.threads.find((t) => t.entityId === '5');
+    expect(t5?.firstEpoch).toBe(5000);
+    expect(t5?.lastEpoch).toBe(32000);
+    expect(t5?.elapsedMs).toBe(27000);
+  });
+
+  it('无实体的事件归入 loose 并按时间倒序', () => {
+    const events: ContextOSEvent[] = [
+      makeEvent({ id: 'x', seq: 2, epoch: 9000, summary: 'system warmed up' }),
+      makeEvent({ id: 't', seq: 1, epoch: 8000, summary: 'task 1 created' }),
+      makeEvent({ id: 'y', seq: 0, epoch: 7000, summary: 'cache primed' }),
+    ];
+    const grouped = groupEventsByEntity(events);
+    expect(grouped.threads).toHaveLength(1);
+    expect(grouped.threads[0].entityId).toBe('1');
+    expect(grouped.loose.map((e) => e.id)).toEqual(['x', 'y']);
+  });
+});
+
+describe('summarizeEntityThread', () => {
+  it('completed 线程给出「已完成」+ 耗时，色调 active', () => {
+    const events: ContextOSEvent[] = [
+      makeEvent({ id: 'e1', seq: 0, epoch: 1000, summary: 'task 9 created' }),
+      makeEvent({ id: 'e2', seq: 1, epoch: 3000, summary: 'task 9 completed' }),
+    ];
+    const [thread] = groupEventsByEntity(events).threads;
+    const s = summarizeEntityThread(thread);
+    expect(s.tone).toBe('active');
+    expect(s.stateLabel).toContain('已完成');
+    expect(s.stateLabel).toContain('2s');
+  });
+
+  it('suspended 线程摘要含「挂起」，色调 idle', () => {
+    const events: ContextOSEvent[] = [
+      makeEvent({ id: 'e1', seq: 0, epoch: 1000, summary: 'task 7 created' }),
+      makeEvent({ id: 'e2', seq: 1, epoch: 2000, summary: 'task 7 suspended' }),
+    ];
+    const [thread] = groupEventsByEntity(events).threads;
+    const s = summarizeEntityThread(thread);
+    expect(s.tone).toBe('idle');
+    expect(s.stateLabel).toContain('挂起');
+  });
+
+  it('unblocked 线程摘要提示「可继续」，色调 active', () => {
+    const events: ContextOSEvent[] = [
+      makeEvent({ id: 'e1', seq: 0, epoch: 1000, summary: 'task 3 suspended' }),
+      makeEvent({ id: 'e2', seq: 1, epoch: 2000, summary: 'task 3 dependencies_unblocked' }),
+    ];
+    const [thread] = groupEventsByEntity(events).threads;
+    const s = summarizeEntityThread(thread);
+    expect(s.tone).toBe('active');
+    expect(s.stateLabel).toContain('可继续');
+  });
+
+  it('进行中的线程（claimed）摘要含当前动作，色调 active', () => {
+    const events: ContextOSEvent[] = [
+      makeEvent({ id: 'e1', seq: 0, epoch: 1000, summary: 'task 8 created' }),
+      makeEvent({ id: 'e2', seq: 1, epoch: 2000, summary: 'task 8 claimed' }),
+    ];
+    const [thread] = groupEventsByEntity(events).threads;
+    const s = summarizeEntityThread(thread);
+    expect(s.tone).toBe('active');
+    expect(s.stateLabel).toContain('已领取');
   });
 });

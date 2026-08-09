@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import re
+import threading
+from collections import OrderedDict
+from pathlib import Path
 from typing import Any, cast
 
 from polaris.cells.events.fact_stream.public import (
@@ -27,6 +30,7 @@ from polaris.cells.roles.kernel.public.physical_attempt_control import (
 )
 from polaris.kernelone.llm.engine.contracts import FrozenFinalProviderAttemptV1
 from polaris.kernelone.llm.engine.internal.context_hash import validate_context_hash
+from polaris.kernelone.storage import resolve_storage_roots
 
 _PIN_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
@@ -35,6 +39,10 @@ _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 class StrictProviderAttemptLifecycleStore:
     """Exactly-paired start/terminal facts keyed by physical request id."""
 
+    _validation_cache_lock = threading.Lock()
+    _validated_ledgers: OrderedDict[tuple[str, str, int, int, str], None] = OrderedDict()
+    _validation_cache_max_size = 512
+
     def __init__(self, *, workspace: str, logical_stream: str, verification_scope: str, scope_id: str) -> None:
         self.workspace = str(workspace)
         self.logical_stream = str(logical_stream)
@@ -42,12 +50,65 @@ class StrictProviderAttemptLifecycleStore:
         self.scope_id = str(scope_id)
         if self.verification_scope not in {"factory", "role_session"} or not self.scope_id:
             raise ValueError("provider attempt lifecycle requires an explicit Factory run or role session scope")
-        ensure_segmented_fact_ledger(
-            EnsureSegmentedFactLedgerCommandV1(
-                workspace=self.workspace,
-                logical_stream=self.logical_stream,
-                maintenance_reason="provider_attempt_lifecycle_open",
+        self._ensure_ledger_once_per_runtime_identity()
+
+    def _ensure_ledger_once_per_runtime_identity(self) -> None:
+        """Validate once per physical runtime identity and logical stream.
+
+        Factory startup already enrolls lifecycle ledgers. Re-running the
+        full segmented-ledger scan for every provider request needlessly holds
+        the shared filesystem authority lock and can starve later Director
+        tasks. The cache is process-local and includes the runtime root's
+        device/inode identity: restart, workspace recreation, or stream change
+        therefore performs a fresh fail-closed validation.
+        """
+
+        roots = resolve_storage_roots(self.workspace)
+        workspace_abs = str(Path(roots.workspace_abs).resolve())
+        runtime_root = Path(roots.runtime_root)
+        with self._validation_cache_lock:
+            cache_key = self._physical_cache_key(
+                workspace_abs=workspace_abs,
+                runtime_root=runtime_root,
             )
+            if cache_key is not None and cache_key in self._validated_ledgers:
+                self._validated_ledgers.move_to_end(cache_key)
+                return
+
+            ensure_segmented_fact_ledger(
+                EnsureSegmentedFactLedgerCommandV1(
+                    workspace=self.workspace,
+                    logical_stream=self.logical_stream,
+                    maintenance_reason="provider_attempt_lifecycle_open",
+                )
+            )
+            cache_key = self._physical_cache_key(
+                workspace_abs=workspace_abs,
+                runtime_root=runtime_root,
+            )
+            if cache_key is None:
+                raise RuntimeError("provider attempt lifecycle runtime identity is unavailable after ledger ensure")
+            self._validated_ledgers[cache_key] = None
+            self._validated_ledgers.move_to_end(cache_key)
+            while len(self._validated_ledgers) > self._validation_cache_max_size:
+                self._validated_ledgers.popitem(last=False)
+
+    def _physical_cache_key(
+        self,
+        *,
+        workspace_abs: str,
+        runtime_root: Path,
+    ) -> tuple[str, str, int, int, str] | None:
+        try:
+            stat = runtime_root.stat()
+        except FileNotFoundError:
+            return None
+        return (
+            workspace_abs,
+            str(runtime_root.resolve()),
+            int(stat.st_dev),
+            int(stat.st_ino),
+            self.logical_stream,
         )
 
     @classmethod

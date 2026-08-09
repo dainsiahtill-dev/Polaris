@@ -47,6 +47,18 @@ const TERMINAL_FACTORY_RUN_STATUSES = new Set([
   ...CANCELLED_FACTORY_RUN_STATUSES,
   ...FAILED_FACTORY_RUN_STATUSES,
 ]);
+const FACTORY_RUN_SNAPSHOT_EVENT_TYPES = new Set([
+  'started',
+  'paused',
+  'resumed',
+  'complete',
+  'completed',
+  'failed',
+  'cancelled',
+  'canceled',
+  'run_status',
+  'status_updated',
+]);
 
 type FactoryControlMutationInput = {
   runId: string;
@@ -84,25 +96,25 @@ function isTerminalRun(run: FactoryRunStatus | null): boolean {
 function runStatusFromFactoryEvent(
   runId: string,
   payload: Record<string, unknown>,
-  previous: FactoryRunStatus | null
+  previous: FactoryRunStatus | null,
+  envelopeKind = '',
 ): FactoryRunStatus | null {
-  const eventType = runToken(String(payload.type || payload.kind || ''));
+  const eventType = runToken(String(envelopeKind || payload.type || payload.kind || ''));
   if (!eventType) return null;
   const timestamp = String(payload.timestamp || new Date().toISOString());
   const stage = String(payload.stage || previous?.current_stage || previous?.phase || '').trim();
   const result = (payload.result && typeof payload.result === 'object'
     ? (payload.result as Record<string, unknown>)
     : {}) as Record<string, unknown>;
-  const resultStatus = runToken(String(result.status || ''));
 
   let status = previous?.status || 'running';
   if (eventType === 'paused') {
     status = 'paused';
-  } else if (eventType === 'cancelled' || eventType === 'canceled' || resultStatus === 'cancelled' || resultStatus === 'canceled') {
+  } else if (eventType === 'cancelled' || eventType === 'canceled') {
     status = 'cancelled';
-  } else if (eventType === 'completed') {
+  } else if (eventType === 'completed' || eventType === 'complete') {
     status = 'completed';
-  } else if (eventType === 'failed' || resultStatus === 'failed') {
+  } else if (eventType === 'failed') {
     status = 'failed';
   } else if (
     eventType === 'started' ||
@@ -118,7 +130,9 @@ function runStatusFromFactoryEvent(
   const isTerminal = TERMINAL_FACTORY_RUN_STATUSES.has(runToken(status));
   const progress = status === 'completed'
     ? 100
-    : typeof previous?.progress === 'number'
+    : typeof payload.progress === 'number'
+      ? payload.progress
+      : typeof previous?.progress === 'number'
       ? previous.progress
       : 0;
   const failureDetail = String(payload.reason || payload.message || result.output || '').trim();
@@ -202,6 +216,11 @@ export function useFactory(options: UseFactoryOptions = {}) {
   const activeWorkspaceRef = useRef<string>('');
   const abortControllerRef = useRef<AbortController | null>(null);
   const artifactsRequestSeqRef = useRef(0);
+  const artifactsInFlightRef = useRef<{
+    runId: string;
+    promise: Promise<FactoryRunArtifactsResponse | null>;
+  } | null>(null);
+  const artifactsRefreshQueuedRef = useRef<string | null>(null);
 
   // Query keys
   const factoryRunsKey = QueryKeys.factoryRuns();
@@ -316,10 +335,18 @@ export function useFactory(options: UseFactoryOptions = {}) {
     setIsStreaming(false);
   }, []);
 
-  const fetchRunArtifacts = useCallback(async (runId: string) => {
+  const fetchRunArtifacts = useCallback(function fetchRunArtifactsInternal(
+    runId: string,
+  ): Promise<FactoryRunArtifactsResponse | null> {
     const normalizedRunId = String(runId || '').trim();
     if (!normalizedRunId) {
-      return null;
+      return Promise.resolve(null);
+    }
+
+    const activeRequest = artifactsInFlightRef.current;
+    if (activeRequest) {
+      artifactsRefreshQueuedRef.current = normalizedRunId;
+      return activeRequest.promise;
     }
 
     const requestSeq = artifactsRequestSeqRef.current + 1;
@@ -327,65 +354,80 @@ export function useFactory(options: UseFactoryOptions = {}) {
     setIsArtifactsLoading(true);
     setArtifactsError(null);
 
-    try {
-      const result = await getFactoryRunArtifacts(normalizedRunId);
-      if (artifactsRequestSeqRef.current !== requestSeq) {
-        return null;
-      }
+    const request = (async (): Promise<FactoryRunArtifactsResponse | null> => {
+      try {
+        const result = await getFactoryRunArtifacts(normalizedRunId);
+        if (artifactsRequestSeqRef.current !== requestSeq) {
+          return null;
+        }
 
-      if (result.ok && result.data) {
-        const snapshot: FactoryRunArtifactsResponse = {
-          ...result.data,
-          artifacts: result.data.artifacts || [],
-        };
-        setArtifactsSnapshot(snapshot);
-        queryClient.setQueryData<FactoryRunArtifactsResponse>(
-          factoryRunArtifactsKey(normalizedRunId),
-          snapshot
-        );
+        if (result.ok && result.data) {
+          const snapshot: FactoryRunArtifactsResponse = {
+            ...result.data,
+            artifacts: result.data.artifacts || [],
+          };
+          setArtifactsSnapshot(snapshot);
+          queryClient.setQueryData<FactoryRunArtifactsResponse>(
+            factoryRunArtifactsKey(normalizedRunId),
+            snapshot
+          );
+          setCurrentRun((previous) => {
+            if (!previous || previous.run_id !== snapshot.run_id) {
+              return previous;
+            }
+            return {
+              ...previous,
+              artifacts: snapshot.artifacts,
+              summary_md: snapshot.summary_md ?? undefined,
+              summary_json: snapshot.summary_json ?? null,
+              artifacts_error: null,
+            };
+          });
+          return snapshot;
+        }
+
+        const message = result.error || '获取Factory产物失败';
+        setArtifactsError(message);
         setCurrentRun((previous) => {
-          if (!previous || previous.run_id !== snapshot.run_id) {
+          if (!previous || previous.run_id !== normalizedRunId) {
             return previous;
           }
-          return {
-            ...previous,
-            artifacts: snapshot.artifacts,
-            summary_md: snapshot.summary_md ?? undefined,
-            summary_json: snapshot.summary_json ?? null,
-            artifacts_error: null,
-          };
+          return { ...previous, artifacts_error: message };
         });
-        return snapshot;
-      }
-
-      const message = result.error || '获取Factory产物失败';
-      setArtifactsError(message);
-      setCurrentRun((previous) => {
-        if (!previous || previous.run_id !== normalizedRunId) {
-          return previous;
-        }
-        return { ...previous, artifacts_error: message };
-      });
-      return null;
-    } catch (error) {
-      if (artifactsRequestSeqRef.current !== requestSeq) {
         return null;
-      }
-
-      const message = error instanceof Error ? error.message : '获取Factory产物失败';
-      setArtifactsError(message);
-      setCurrentRun((previous) => {
-        if (!previous || previous.run_id !== normalizedRunId) {
-          return previous;
+      } catch (error) {
+        if (artifactsRequestSeqRef.current !== requestSeq) {
+          return null;
         }
-        return { ...previous, artifacts_error: message };
-      });
-      return null;
-    } finally {
-      if (artifactsRequestSeqRef.current === requestSeq) {
-        setIsArtifactsLoading(false);
+
+        const message = error instanceof Error ? error.message : '获取Factory产物失败';
+        setArtifactsError(message);
+        setCurrentRun((previous) => {
+          if (!previous || previous.run_id !== normalizedRunId) {
+            return previous;
+          }
+          return { ...previous, artifacts_error: message };
+        });
+        return null;
+      } finally {
+        if (artifactsRequestSeqRef.current === requestSeq) {
+          setIsArtifactsLoading(false);
+        }
       }
-    }
+    })();
+    artifactsInFlightRef.current = { runId: normalizedRunId, promise: request };
+    void request.finally(() => {
+      if (artifactsInFlightRef.current?.promise !== request) {
+        return;
+      }
+      artifactsInFlightRef.current = null;
+      const queuedRunId = artifactsRefreshQueuedRef.current;
+      artifactsRefreshQueuedRef.current = null;
+      if (queuedRunId) {
+        void fetchRunArtifactsInternal(queuedRunId);
+      }
+    });
+    return request;
   }, [queryClient]);
 
   const loadRunSnapshot = useCallback(async (runId: string) => {
@@ -446,6 +488,7 @@ export function useFactory(options: UseFactoryOptions = {}) {
       const eventRunId = String(envelope.run_id || payload.run_id || runId).trim();
       if (eventRunId !== runId) return;
       const kind = String(envelope.kind || payload.type || '');
+      const eventType = runToken(kind);
       const factoryEvent: FactoryAuditEvent = {
         type: String(payload.type || kind || 'unknown'),
         timestamp: String(payload.timestamp || envelope.ts || new Date().toISOString()),
@@ -454,7 +497,11 @@ export function useFactory(options: UseFactoryOptions = {}) {
       } as FactoryAuditEvent;
       setEvents((previous) => [...previous, factoryEvent].slice(-200));
 
-      if (payload.run_id && (payload.status || typeof payload.progress === 'number')) {
+      if (
+        FACTORY_RUN_SNAPSHOT_EVENT_TYPES.has(eventType) &&
+        payload.run_id &&
+        (payload.status || typeof payload.progress === 'number')
+      ) {
         const run = {
           ...payload,
           run_id: eventRunId,
@@ -471,7 +518,7 @@ export function useFactory(options: UseFactoryOptions = {}) {
       }
 
       const cached = queryClient.getQueryData<FactoryRunStatus>(factoryRunKey(eventRunId)) || currentRun;
-      const runPatch = runStatusFromFactoryEvent(eventRunId, payload, cached);
+      const runPatch = runStatusFromFactoryEvent(eventRunId, payload, cached, kind);
       if (!runPatch) return;
 
       latestRunIdRef.current = eventRunId;
@@ -640,6 +687,7 @@ export function useFactory(options: UseFactoryOptions = {}) {
     disconnectStream();
     latestRunIdRef.current = null;
     artifactsRequestSeqRef.current += 1;
+    artifactsRefreshQueuedRef.current = null;
     setCurrentRun(null);
     setEvents([]);
     setArtifactsSnapshot(null);

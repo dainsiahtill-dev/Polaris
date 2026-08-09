@@ -13,10 +13,11 @@
  * 实时送达；仅当实时流无 token 时才退回用量统计通道并标注「非实时」，绝不伪造精度。
  */
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import {
   Network,
   ChevronLeft,
+  ChevronRight,
   RefreshCw,
   Cpu,
   Database,
@@ -53,8 +54,12 @@ import {
   decisionMatchesRole,
   safeText,
   summarizeRoleContextState,
+  classifyEventSemantics,
+  groupEventsByEntity,
+  summarizeEntityThread,
   type ContextOSModel,
   type DecisionRow,
+  type EntityThread,
   type EventTypeSlice,
   type PipelineStage,
   type PipelineState,
@@ -1056,13 +1061,15 @@ function RoleInternalStat({ label, value, unit, sub, highlight = false }: { labe
 }
 
 function RoleInternalEventRow({ event }: { event: ContextOSEvent }) {
-  const tone: PipelineState = event.category === 'error' ? 'blocked' : event.isProjection || event.hasReceipt ? 'active' : 'idle';
+  // L1 去噪 + 语义化：原始 event.kind（如 event.factory:factory_…）替换为中文语义徽章。
+  const semantics = classifyEventSemantics(event);
+  const tone: PipelineState = semantics.tone;
   const summaryText = safeText(event.summary) || safeText(event.kind) || '事件';
   const auditTitle = formatFinalRequestAuditTitle(event.finalRequestContextAudit);
   return (
     <div
       className="grid grid-cols-[68px_1fr] items-start gap-2 rounded-md px-2 py-1.5 text-[11px] hover:bg-white/[0.03]"
-      aria-label={`${event.category === 'error' ? '错误事件' : '事件'} ${safeText(event.kind)} ${summaryText}`}
+      aria-label={`${semantics.badge} ${semantics.displaySummary}`}
     >
       <div className="flex items-center gap-1.5">
         <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', STATE_STYLES[tone].dot)} />
@@ -1070,7 +1077,12 @@ function RoleInternalEventRow({ event }: { event: ContextOSEvent }) {
       </div>
       <div className="min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="rounded bg-white/5 px-1 font-mono text-[9px] text-text-dim">{safeText(event.kind)}</span>
+          <span
+            className={cn('shrink-0 rounded px-1 font-mono text-[9px]', STATE_STYLES[tone].ring, STATE_STYLES[tone].text)}
+            title={semantics.rawChannel || undefined}
+          >
+            {semantics.badge}
+          </span>
           {(event.hasUsage || event.durationMs !== null || event.contextTokens !== null || event.hasReceipt || event.contextSnapshotDegraded || auditTitle) && (
             <div className="flex flex-wrap items-center gap-1">
               {event.hasUsage && event.totalTokens > 0 && (
@@ -1106,8 +1118,54 @@ function RoleInternalEventRow({ event }: { event: ContextOSEvent }) {
             </div>
           )}
         </div>
-        <div className="truncate text-text-muted" title={summaryText}>{summaryText}</div>
+        <div className="truncate text-text-muted" title={summaryText}>{semantics.displaySummary || summaryText}</div>
       </div>
+    </div>
+  );
+}
+
+// L2 实体线程：把同一 task/实体的多个生命周期事件聚合成可展开的状态流。
+function EntityThreadRow({ thread }: { thread: EntityThread }) {
+  const [expanded, setExpanded] = useState(false);
+  const summary = summarizeEntityThread(thread);
+  const style = STATE_STYLES[summary.tone];
+  const lastEvent = thread.events[thread.events.length - 1];
+  return (
+    <div
+      className={cn('rounded-md border px-2 py-1.5', style.ring)}
+      data-testid={`contextos-entity-thread-${thread.id}`}
+    >
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-1.5 text-left"
+        aria-expanded={expanded}
+        aria-label={`${thread.displayId} ${summary.stateLabel}`}
+      >
+        <ChevronRight className={cn('h-3 w-3 shrink-0 text-text-dim transition-transform', expanded && 'rotate-90')} />
+        <span className="shrink-0 text-[11px] font-semibold text-text-main">{thread.displayId}</span>
+        <span className={cn('shrink-0 truncate rounded px-1.5 py-0.5 text-[9px] font-medium', style.ring, style.text)}>
+          {summary.stateLabel}
+        </span>
+        <span className="ml-auto shrink-0 font-mono text-[9px] text-text-dim">
+          {contextOSFormat.clock(lastEvent?.ts)}
+        </span>
+      </button>
+      {expanded && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1 pl-4">
+          {thread.steps.map((step, idx) => (
+            <Fragment key={`${thread.id}-step-${idx}`}>
+              {idx > 0 && <ArrowRight className="h-2.5 w-2.5 shrink-0 text-text-dim/40" />}
+              <span
+                className={cn('rounded px-1.5 py-0.5 font-mono text-[9px]', STATE_STYLES[step.tone].ring, STATE_STYLES[step.tone].text)}
+                title={contextOSFormat.clock(step.ts)}
+              >
+                {step.verbZh}
+              </span>
+            </Fragment>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1282,6 +1340,8 @@ function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewCont
   const style = STATE_STYLES[ctx.state];
   // 人话摘要：把 TruthLog/WorkingMem/... 术语翻译成「在执行 / 待机 / 受阻」的明确结论。
   const summary = summarizeRoleContextState(ctx);
+  // 事件观测：按实体聚合成生命周期线程（task N），无实体事件回退平铺叙事。
+  const grouped = useMemo(() => groupEventsByEntity(ctx.events), [ctx.events]);
 
   const pipeline: PipelineStage[] = [
     { id: 'truthlog', label: 'TruthLog', component: '事件真值流', hint: '角色专属事件流', state: ctx.eventCount > 0 ? 'active' : 'idle', metric: `${ctx.eventCount} 事件` },
@@ -1475,10 +1535,25 @@ function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewCont
           )}
         </div>
         {ctx.events.length > 0 ? (
-          <div className="space-y-1" aria-live="polite" aria-atomic="false">
-            {ctx.events.map((event) => (
-              <RoleInternalEventRow key={event.id} event={event} />
-            ))}
+          <div className="space-y-2" aria-live="polite" aria-atomic="false">
+            {grouped.threads.length > 0 && (
+              <div className="space-y-1">
+                <div className="text-[9px] tracking-wider text-text-dim">任务 / 实体线程</div>
+                {grouped.threads.map((thread) => (
+                  <EntityThreadRow key={thread.id} thread={thread} />
+                ))}
+              </div>
+            )}
+            {grouped.loose.length > 0 && (
+              <div className="space-y-1">
+                {grouped.threads.length > 0 && (
+                  <div className="text-[9px] tracking-wider text-text-dim">其它事件</div>
+                )}
+                {grouped.loose.map((event) => (
+                  <RoleInternalEventRow key={event.id} event={event} />
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           <div

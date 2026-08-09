@@ -685,20 +685,26 @@ class InstanceSupervisor:
 
     def refresh_instance_states(self) -> list[dict[str, Any]]:
         """Persist process-state changes and publish one runtime update when needed."""
-        records = self.registry.list_records()
-        changed: list[InstanceRecord] = []
-        next_records: list[InstanceRecord] = []
-        for record in records:
-            before = _instance_state_signature(record)
-            projected = self._with_health(record, probe_http=False)
-            after = _instance_state_signature(projected)
-            if after != before:
-                projected.updated_at = utc_timestamp()
-                changed.append(projected)
-            next_records.append(projected)
-        if changed:
-            self.registry.replace_records(next_records, action="health_changed", record=changed[0])
-        return [item.to_dict() for item in changed]
+        # Health refresh is a read-modify-write transaction. Reading outside
+        # the registry mutation lock allowed the watchdog to overwrite an
+        # instance reservation created after its stale snapshot, deleting the
+        # active lease while start_instance was booting the backend. The
+        # launcher then failed closed with ``reservation ownership lost``.
+        with self.registry.mutation_lock():
+            records = self.registry.list_records()
+            changed: list[InstanceRecord] = []
+            next_records: list[InstanceRecord] = []
+            for record in records:
+                before = _instance_state_signature(record)
+                projected = self._with_health(record, probe_http=False)
+                after = _instance_state_signature(projected)
+                if after != before:
+                    projected.updated_at = utc_timestamp()
+                    changed.append(projected)
+                next_records.append(projected)
+            if changed:
+                self.registry.replace_records(next_records, action="health_changed", record=changed[0])
+            return [item.to_dict() for item in changed]
 
     def start_instance(self, request: dict[str, Any]) -> dict[str, Any]:
         kind = str(request.get("kind") or "project")
