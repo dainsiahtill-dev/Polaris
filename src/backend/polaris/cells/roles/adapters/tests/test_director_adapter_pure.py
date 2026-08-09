@@ -10771,6 +10771,85 @@ def test_javascript_runtime_smoke_traceback_targets_workspace_entrypoint(tmp_pat
     assert targets == ["src/index.js"]
 
 
+def test_javascript_runtime_smoke_traceback_maps_compiled_output_to_typescript_source(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _javascript_runtime_smoke_repair_target_files,
+        _python_runtime_smoke_repair_target_files,
+    )
+
+    src = tmp_path / "src"
+    dist = tmp_path / "dist"
+    src.mkdir()
+    dist.mkdir()
+    (src / "verify.ts").write_text("export function verify(): void {}\n", encoding="utf-8")
+    (dist / "verify.js").write_text('"use strict";\n', encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps(
+            {
+                "compilerOptions": {
+                    "rootDir": "src",
+                    "outDir": "dist",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    error = (
+        "Artifact quality scan failed: workspace validation command failed (npm test): "
+        "> npm run build && node dist/verify.js\n"
+        "Error: ENOENT: no such file or directory, open 'engine/renderer.ts'\n"
+        f"    at checkContentAny ({tmp_path / 'dist' / 'verify.js'}:87:52)\n"
+        "Node.js v22.23.2"
+    )
+
+    targets = _javascript_runtime_smoke_repair_target_files(
+        artifact_quality_errors=[error],
+        changed_files=["src/verify.ts", "dist/verify.js"],
+        workspace_full=str(tmp_path),
+    )
+    python_targets = _python_runtime_smoke_repair_target_files(
+        artifact_quality_errors=[error],
+        changed_files=["src/verify.ts", "dist/verify.js"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert targets == ["src/verify.ts"]
+    assert python_targets == []
+
+
+def test_javascript_runtime_smoke_traceback_keeps_compiled_output_when_source_mapping_is_ambiguous(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _javascript_runtime_smoke_repair_target_files,
+    )
+
+    src = tmp_path / "src"
+    dist = tmp_path / "dist"
+    src.mkdir()
+    dist.mkdir()
+    (src / "verify.ts").write_text("export const verify = true;\n", encoding="utf-8")
+    (src / "verify.tsx").write_text("export const Verify = () => null;\n", encoding="utf-8")
+    (dist / "verify.js").write_text('"use strict";\n', encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps({"compilerOptions": {"rootDir": "src", "outDir": "dist"}}),
+        encoding="utf-8",
+    )
+    error = (
+        "Artifact quality scan failed: workspace validation command failed (npm test): "
+        "> npm run build && node dist/verify.js\n"
+        "TypeError: verification failed\n"
+        f"    at verify ({tmp_path / 'dist' / 'verify.js'}:1:1)\n"
+        "Node.js v22.23.2"
+    )
+
+    assert _javascript_runtime_smoke_repair_target_files(
+        artifact_quality_errors=[error],
+        changed_files=["dist/verify.js"],
+        workspace_full=str(tmp_path),
+    ) == ["dist/verify.js"]
+
+
 def test_python_module_entrypoint_traceback_prefers_executing_file(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.quality_gate import (
         _explicit_artifact_quality_repair_target_files,
@@ -11910,6 +11989,83 @@ class TestQualityRepairMissingTargetContract:
         assert adapter._execution.allowed_tool_names is None
         assert adapter._execution.allow_patch_fallback is None
         assert not (tmp_path / "requirements.txt").exists()
+
+    @pytest.mark.asyncio
+    async def test_quality_repair_routes_compiled_typescript_runtime_failure_to_owning_source(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self.repair_message = ""
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del context, timeout_seconds, stage_label
+                self.repair_message = message
+                return {"content": ""}
+
+        src = tmp_path / "src"
+        dist = tmp_path / "dist"
+        src.mkdir()
+        dist.mkdir()
+        (src / "verify.ts").write_text("export function verify(): void {}\n", encoding="utf-8")
+        (dist / "verify.js").write_text('"use strict";\n', encoding="utf-8")
+        (tmp_path / "tsconfig.json").write_text(
+            json.dumps({"compilerOptions": {"rootDir": "src", "outDir": "dist"}}),
+            encoding="utf-8",
+        )
+        error = (
+            "Artifact quality scan failed: workspace validation command failed (npm test): "
+            "> npm run build && node dist/verify.js\n"
+            "Error: ENOENT: no such file or directory, open 'engine/renderer.ts'\n"
+            f"    at checkContentAny ({dist / 'verify.js'}:87:52)\n"
+            "Node.js v22.23.2"
+        )
+        adapter = _Adapter()
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["src/verify.ts", "tests/verify.test.ts", "README.md"]},
+            target_task_id="TASK-3",
+            run_id="director-task-3",
+            context={},
+            original_message="Repair the verification asset.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[error],
+            changed_files=["src/verify.ts", "dist/verify.js"],
+        )
+
+        assert summary["stage"] != "task_boundary_repair_targets_deferred"
+        assert summary["runtime_smoke_target_files"] == ["src/verify.ts"]
+        assert "src/verify.ts" in adapter.repair_message
+        assert "dist/verify.js" not in summary["repair_target_files"]
 
     @pytest.mark.asyncio
     async def test_quality_repair_defers_single_missing_requirements_out_of_scope(self, tmp_path) -> None:

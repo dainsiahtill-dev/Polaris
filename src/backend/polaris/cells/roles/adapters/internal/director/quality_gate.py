@@ -4086,7 +4086,61 @@ def _javascript_runtime_smoke_repair_target_files(
             )
             if rel:
                 targets.append(rel)
-    return _dedupe_preserve_order(targets)
+    authored_targets = [
+        _typescript_source_repair_target_for_javascript_output(
+            target,
+            workspace_root=workspace_root,
+        )
+        or target
+        for target in targets
+    ]
+    return _dedupe_preserve_order(authored_targets)
+
+
+def _typescript_source_repair_target_for_javascript_output(
+    javascript_target: str,
+    *,
+    workspace_root: Path | None,
+) -> str:
+    """Map a compiled JavaScript traceback target back to authored TypeScript.
+
+    Runtime verifiers naturally report ``outDir/*.js`` stack frames.  Those
+    generated files are not Director-owned source targets, so applying task
+    scope before reversing ``tsconfig`` output topology incorrectly defers an
+    otherwise local repair.  Resolve only an explicit ``outDir``/``rootDir``
+    pair and only return an existing authored source file; ambiguous or invalid
+    configs remain fail-closed on the original JavaScript target.
+    """
+
+    if workspace_root is None or not workspace_root.is_dir():
+        return ""
+    tsconfig_path = workspace_root / "tsconfig.json"
+    if not tsconfig_path.is_file():
+        return ""
+    try:
+        payload = json.loads(tsconfig_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return ""
+    compiler_options = payload.get("compilerOptions") if isinstance(payload, Mapping) else None
+    if not isinstance(compiler_options, Mapping):
+        return ""
+    out_dir = _normalize_declared_task_path(str(compiler_options.get("outDir") or ""))
+    root_dir = _normalize_declared_task_path(str(compiler_options.get("rootDir") or ""))
+    target = _normalize_declared_task_path(javascript_target)
+    if not out_dir or not root_dir or not target.endswith(".js"):
+        return ""
+    output_prefix = f"{out_dir.rstrip('/')}/"
+    if not target.startswith(output_prefix):
+        return ""
+    relative_stem = target[len(output_prefix) : -len(".js")]
+    if not relative_stem or relative_stem.startswith("../") or "/../" in relative_stem:
+        return ""
+    source_targets: list[str] = []
+    for suffix in (".ts", ".tsx", ".mts", ".cts"):
+        source_target = _normalize_declared_task_path(f"{root_dir.rstrip('/')}/{relative_stem}{suffix}")
+        if source_target and _workspace_path_exists_case_insensitive(workspace_root, source_target):
+            source_targets.append(source_target)
+    return source_targets[0] if len(source_targets) == 1 else ""
 
 
 def _looks_like_javascript_runtime_smoke_quality_error(text: str) -> bool:
@@ -4147,6 +4201,15 @@ def _looks_like_python_runtime_smoke_quality_error(text: str) -> bool:
     token = str(text or "").lower()
     if "python runtime smoke" in token:
         return True
+    python_runtime_anchor = bool(
+        re.search(r"(?:^|[\s(>])(?:\S*/)?pytest(?:\s|$)", token)
+        or re.search(r"(?:^|[\s(>])unittest(?:\s|$)", token)
+        or "modulenotfounderror" in token
+        or re.search(r"(?:^|[\s(>])(?:\S*/)?python(?:3(?:\.\d+)?)?\s", token)
+        or ("traceback (most recent call last)" in token and _PYTHON_TRACEBACK_FILE_RE.search(str(text or "")))
+    )
+    if not python_runtime_anchor:
+        return False
     return (
         "workspace validation command failed" in token
         or "python unittest failed" in token
