@@ -214,6 +214,43 @@ def test_multiple_receipts_for_same_path_use_last_successful_write(tmp_path: Pat
     assert module["body"] == '{"name":"final"}\n'
 
 
+def test_partial_receipt_coverage_keeps_authoritative_siblings_and_marks_gap(tmp_path: Path) -> None:
+    """One unreceipted modified file must not erase other committed sibling bodies."""
+
+    trusted_path = "src/engine/simulation.ts"
+    uncovered_path = "src/web.ts"
+    trusted_body = "export const simulate = () => 1;\n"
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / trusted_path).write_text(trusted_body, encoding="utf-8")
+    (tmp_path / uncovered_path).write_text("export const web = true;\n", encoding="utf-8")
+    parent = _parent_row(paths=(trusted_path, uncovered_path))
+    parent["metadata"]["adapter_result"]["primary_llm"]["metadata"]["batch_receipt"]["raw_results"] = [
+        _effect_receipt(trusted_path)
+    ]
+
+    snapshot = build_director_dependency_artifact_snapshot(
+        workspace=str(tmp_path),
+        child_task=_child_task([1]),
+        get_task=_resolver({"1": parent}),
+    )
+
+    assert type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2
+    payload = snapshot.payload()
+    assert payload["receipt_coverage_complete"] is False
+    assert [module["path"] for module in payload["modules"]] == [trusted_path]
+    assert payload["uncovered_artifacts"] == [
+        {
+            "parent_task_id": "1",
+            "path": uncovered_path,
+            "reason": "committed_effect_receipt_missing",
+        }
+    ]
+    rendered = "\n".join(snapshot.message_lines())
+    assert trusted_body in rendered
+    assert f"1:{uncovered_path}" in rendered
+    assert "export const web = true" not in rendered
+
+
 def test_snapshot_reads_only_receipt_listed_parent_files(tmp_path: Path) -> None:
     parent = tmp_path / "src" / "parent.py"
     parent.parent.mkdir()

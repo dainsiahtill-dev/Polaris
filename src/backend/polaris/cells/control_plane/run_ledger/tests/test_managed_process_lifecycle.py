@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
 import pytest
-from polaris.cells.audit.evidence.public import (
-    PersistManagedProcessReceiptCommandV1,
-    persist_managed_process_receipt,
-)
 from polaris.cells.control_plane.run_ledger.public import (
     MANAGED_PROCESS_LIFECYCLE_EVENT_TYPE,
     AppendRunLedgerEventCommandV1,
@@ -21,12 +19,38 @@ from polaris.cells.control_plane.run_ledger.public import (
     derive_managed_process_evidence_presence,
     project_managed_process_lifecycle,
 )
+from polaris.cells.control_plane.run_ledger.public.managed_process_lifecycle import (
+    MANAGED_PROCESS_RECEIPT_LOGICAL_PATH_V1,
+    ManagedProcessReceiptOwnerRecordV1,
+)
+from polaris.cells.control_plane.run_ledger.public.managed_process_lifecycle_bootstrap import (
+    bind_managed_process_receipt_owner_port,
+    clear_managed_process_receipt_owner_port,
+)
 from polaris.cells.events.fact_stream.public.contracts import BootstrapFactStreamWorkspaceCommandV1
 from polaris.cells.events.fact_stream.public.workspace_bootstrap import bootstrap_fact_stream_workspace
 
 
+class _ReceiptOwner:
+    def __init__(self) -> None:
+        self.records: dict[tuple[str, str], ManagedProcessReceiptOwnerRecordV1] = {}
+
+    def read_managed_process_receipt(
+        self,
+        *,
+        workspace: str,
+        receipt_hash: str,
+    ) -> ManagedProcessReceiptOwnerRecordV1 | None:
+        return self.records.get((workspace, receipt_hash))
+
+
+_OWNER = _ReceiptOwner()
+
+
 @pytest.fixture(autouse=True)
-def _bootstrap_streams(tmp_path: Path) -> None:
+def _bootstrap_streams(tmp_path: Path) -> Any:
+    _OWNER.records.clear()
+    bind_managed_process_receipt_owner_port(_OWNER)
     bootstrap_fact_stream_workspace(
         BootstrapFactStreamWorkspaceCommandV1(
             workspace=str(tmp_path),
@@ -34,13 +58,20 @@ def _bootstrap_streams(tmp_path: Path) -> None:
             maintenance_reason="gr3b_b3_managed_process_lifecycle_tests",
         )
     )
+    yield
+    clear_managed_process_receipt_owner_port(_OWNER)
 
 
 def _persist_receipt(workspace: Path, receipt: dict[str, Any]) -> str:
-    result = persist_managed_process_receipt(
-        PersistManagedProcessReceiptCommandV1(workspace=str(workspace), receipt=receipt)
+    encoded = json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    receipt_hash = hashlib.sha256(encoded).hexdigest()
+    receipt_ref = f"{MANAGED_PROCESS_RECEIPT_LOGICAL_PATH_V1}#{receipt_hash}"
+    _OWNER.records[(str(workspace.resolve()), receipt_hash)] = ManagedProcessReceiptOwnerRecordV1(
+        receipt_ref=receipt_ref,
+        receipt_hash=receipt_hash,
+        receipt=receipt,
     )
-    return result.receipt_hash
+    return receipt_hash
 
 
 def test_project_managed_process_lifecycle_happy_path_nonzero_exit_is_present_failed(

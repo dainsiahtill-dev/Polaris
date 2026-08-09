@@ -204,10 +204,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         resident_autotick_task = maybe_start_resident_autotick(workspace)
         instance_watchdog_task = maybe_start_instance_watchdog()
         if workspace:
+            from polaris.bootstrap.managed_process_receipt_owner import (
+                configure_managed_process_receipt_owner,
+            )
             from polaris.bootstrap.project_completion_convergence_runtime import (
                 configure_project_completion_convergence_runtime,
             )
+            from polaris.bootstrap.project_verification_clients import (
+                configure_project_verification_clients,
+            )
 
+            configure_managed_process_receipt_owner()
+            configure_project_verification_clients()
             project_completion_runtime = configure_project_completion_convergence_runtime(workspace)
             await project_completion_runtime.start()
             await start_factory_settlement_runtime(

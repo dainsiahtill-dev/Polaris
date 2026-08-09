@@ -164,7 +164,6 @@ class ProjectCompletionCursorPortV1(Protocol):
         identity: ProjectCompletionCursorIdentityV1,
         limits: ProjectCompletionCursorLimitsV1,
     ) -> None: ...
-
     async def load_cursor(
         self,
         workflow_id: str,
@@ -194,6 +193,16 @@ class ProjectCompletionCursorPortV1(Protocol):
     ) -> None: ...
 
 
+def compose_project_completion_cursor(store: object) -> ProjectCompletionCursorPortV1:
+    """Compose owner implementation while keeping its class Cell-private."""
+
+    from polaris.cells.orchestration.workflow_runtime.internal.project_completion_cursor import (
+        SqliteProjectCompletionCursorV1,
+    )
+
+    return SqliteProjectCompletionCursorV1(store)  # type: ignore[arg-type]
+
+
 __all__ = [
     "ProjectCompletionCursorConflictError",
     "ProjectCompletionCursorEventV1",
@@ -202,4 +211,5 @@ __all__ = [
     "ProjectCompletionCursorPortV1",
     "ProjectCompletionCursorRegistrationV1",
     "ProjectCompletionCursorTransitionV1",
+    "compose_project_completion_cursor",
 ]

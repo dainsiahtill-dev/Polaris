@@ -27,7 +27,6 @@ depends_on:
   - control_plane.run_ledger
   - roles.adapters
   - runtime.task_market
-  - runtime.execution_broker
 subgraphs: []
 state_owners: []
 effects_allowed:

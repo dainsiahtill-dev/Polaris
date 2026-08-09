@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+import polaris.bootstrap.project_completion_convergence_runtime as convergence_runtime_module
 import pytest
 from polaris.bootstrap.project_completion_convergence_runtime import (
     configure_project_completion_convergence_runtime,
@@ -14,7 +15,12 @@ from polaris.bootstrap.project_completion_convergence_runtime import (
 from polaris.bootstrap.project_completion_task_market_action_owner import (
     TaskMarketProjectCompletionActionOwnerV1,
 )
+from polaris.cells.factory.pipeline.public.project_completion_notification import (
+    FactoryProjectCompletionIdentityV1,
+    notify_factory_project_completion,
+)
 from polaris.cells.orchestration.workflow_orchestration.public.project_completion import (
+    AdvanceProjectCompletionCommandV1,
     ProjectCompletionActionCommandV1,
     ProjectCompletionDispatchClaimV1,
     ProjectCompletionIdentityV1,
@@ -179,6 +185,7 @@ async def test_production_convergence_runtime_replays_outbox_and_stops_cleanly(
     workspace = str((tmp_path / "runtime-workspace").resolve())
     Path(workspace).mkdir(parents=True)
     relay_calls: list[str] = []
+    completion_notifications: list[AdvanceProjectCompletionCommandV1] = []
     original_relay = TaskMarketService.relay_outbox_messages
 
     def record_relay(
@@ -192,12 +199,36 @@ async def test_production_convergence_runtime_replays_outbox_and_stops_cleanly(
 
     monkeypatch.setattr(TaskMarketService, "relay_outbox_messages", record_relay)
 
+    async def record_completion_notification(command: AdvanceProjectCompletionCommandV1) -> None:
+        completion_notifications.append(command)
+
+    monkeypatch.setattr(
+        convergence_runtime_module,
+        "notify_project_completion",
+        record_completion_notification,
+    )
+
     runtime = configure_project_completion_convergence_runtime(workspace)
     await runtime.start()
     try:
         assert relay_calls == [workspace]
         assert len(runtime.wake_tasks) == 3
         assert all(not task.done() for task in runtime.wake_tasks)
+        await notify_factory_project_completion(
+            FactoryProjectCompletionIdentityV1(
+                workspace=workspace,
+                project_id="project-1",
+                run_id="run-1",
+                completion_contract_hash=_hash("contract"),
+            )
+        )
+        assert len(completion_notifications) == 1
+        assert completion_notifications[0].identity == ProjectCompletionIdentityV1(
+            workspace=workspace,
+            project_id="project-1",
+            run_id="run-1",
+            completion_contract_hash=_hash("contract"),
+        )
     finally:
         await runtime.stop()
 

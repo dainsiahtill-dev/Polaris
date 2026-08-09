@@ -40,6 +40,17 @@ def bind_model_ceiling_owner_observation_port(port: ModelCeilingOwnerObservation
             raise RuntimeError("model_ceiling_owner_observation_port_conflicting_rebind")
 
 
+def clear_model_ceiling_owner_observation_port(
+    port: ModelCeilingOwnerObservationPortV1,
+) -> None:
+    """Release the exact composition binding during lifespan shutdown/tests."""
+
+    global _model_ceiling_owner_observation_port
+    with _model_ceiling_owner_observation_port_lock:
+        if _model_ceiling_owner_observation_port is port:
+            _model_ceiling_owner_observation_port = None
+
+
 def _result(
     candidate: ModelCeilingCandidateV1,
     *,
@@ -403,6 +414,7 @@ def revalidate_model_ceiling_result_authoritatively(
 
 __all__ = [
     "bind_model_ceiling_owner_observation_port",
+    "clear_model_ceiling_owner_observation_port",
     "qualify_model_ceiling_authoritatively",
     "revalidate_model_ceiling_result_authoritatively",
 ]

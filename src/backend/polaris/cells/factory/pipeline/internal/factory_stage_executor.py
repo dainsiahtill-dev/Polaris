@@ -8782,7 +8782,7 @@ class OrchestrationStageExecutor:
         execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None
         committed_receipts: list[dict[str, Any]] = []
         try:
-            from polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge import (
+            from polaris.cells.roles.adapters.public import (
                 commit_materialization_deferred_repairs,
             )
             from polaris.cells.runtime.task_runtime.public import (

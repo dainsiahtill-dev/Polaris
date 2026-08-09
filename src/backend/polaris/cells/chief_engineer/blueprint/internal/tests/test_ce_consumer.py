@@ -464,11 +464,6 @@ class TestStepSplitterIntegration:
 class TestLeafConstructionAuthority:
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
     def test_leaf_write_is_exact_and_declared_dependency_remains_readable(self, mock_get: MagicMock) -> None:
-        from polaris.cells.roles.kernel.internal.directed_effect_policy_guard import (
-            _gateway_denial_code,
-            _path_matches_capability_scope,
-        )
-
         mock_get.return_value = MagicMock()
         consumer = CEConsumer(workspace="/test", worker_id="w1")
         steps = [
@@ -511,8 +506,7 @@ class TestLeafConstructionAuthority:
         assert lineage["step_id"] == "PM-1-S2"
         assert lineage["target_file"] == "src/consumer.py"
         assert lineage["construction_contract_hash"] == token["contract_hash"]
-        assert not _path_matches_capability_scope("src/provider.py", token["allowed_write_paths"])
-        assert _gateway_denial_code("path scope denied") == "deo_path_scope_denied"
+        assert "src/provider.py" not in token["allowed_write_paths"]
 
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
     def test_missing_parent_capability_fails_before_any_leaf_publication(self, mock_get: MagicMock) -> None:

@@ -30,10 +30,6 @@ from polaris.cells.orchestration.workflow_orchestration.public.project_completio
     ProjectCompletionIdentityV1,
     project_completion_action_receipt_hash,
 )
-from polaris.cells.orchestration.workflow_runtime.internal import model_ceiling_authority
-from polaris.cells.orchestration.workflow_runtime.internal.project_completion_cursor import (
-    SqliteProjectCompletionCursorV1,
-)
 from polaris.cells.orchestration.workflow_runtime.public.model_ceiling import (
     ModelCeilingAttemptObservationV1,
     ModelCeilingCandidateV1,
@@ -42,6 +38,13 @@ from polaris.cells.orchestration.workflow_runtime.public.model_ceiling import (
     ModelCeilingTerminalResultV1,
     model_ceiling_attempt_request_binding_hash,
     qualify_model_ceiling,
+)
+from polaris.cells.orchestration.workflow_runtime.public.model_ceiling_bootstrap import (
+    bind_model_ceiling_owner_observation_port,
+    clear_model_ceiling_owner_observation_port,
+)
+from polaris.cells.orchestration.workflow_runtime.public.project_completion_cursor import (
+    compose_project_completion_cursor,
 )
 from polaris.cells.runtime.projection.public.contracts import (
     _PROJECT_OUTCOME_AUTHORITY_BINDING_TOKEN,
@@ -284,7 +287,7 @@ class MutableModelCeilingOwnerObservationPort:
 
 def _sealed_model_ceiling(
     identity: ProjectCompletionIdentityV1,
-    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> tuple[ModelCeilingTerminalResultV1, MutableModelCeilingOwnerObservationPort]:
     call_id = "call-model-ceiling"
     snapshot_ref = "a" * 24
@@ -378,7 +381,8 @@ def _sealed_model_ceiling(
         attempts=(attempt,),
     )
     owner = MutableModelCeilingOwnerObservationPort(observation)
-    monkeypatch.setattr(model_ceiling_authority, "_model_ceiling_owner_observation_port", owner)
+    bind_model_ceiling_owner_observation_port(owner)
+    request.addfinalizer(lambda: clear_model_ceiling_owner_observation_port(owner))
     candidate = ModelCeilingCandidateV1(
         workspace=identity.workspace,
         project_id=identity.project_id,
@@ -500,7 +504,7 @@ def _engine(
     model_ceiling_port: Any | None = None,
 ) -> ProjectCompletionConvergenceEngineV1:
     return ProjectCompletionConvergenceEngineV1(
-        cursor=SqliteProjectCompletionCursorV1(store),
+        cursor=compose_project_completion_cursor(store),
         outcome_port=outcome_port,
         diagnostics_port=diagnostics_port,
         action_port=action_port or IdempotentTaskMarketStyleActionPort(),
@@ -1158,10 +1162,10 @@ async def test_model_ceiling_port_object_tamper_stays_non_terminal(tmp_path: Pat
 @pytest.mark.asyncio
 async def test_true_sealed_model_ceiling_appends_replays_and_owner_drift_invalidates(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     identity = _identity(tmp_path)
-    sealed, owner = _sealed_model_ceiling(identity, monkeypatch)
+    sealed, owner = _sealed_model_ceiling(identity, request)
     decision_port = MutableModelCeilingPort(sealed)
     store = SqliteRuntimeStore(str(tmp_path / "runtime.db"), workspace=str(tmp_path))
     engine = _engine(

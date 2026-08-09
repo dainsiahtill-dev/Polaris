@@ -297,6 +297,62 @@ def _should_process_cell_dir(cell_dir: Path) -> bool:
     return not any(part in ignored_parts for part in cell_dir.parts)
 
 
+def _declared_descriptor_surface(
+    *,
+    cell_data: dict[str, Any],
+    cell_dir: Path,
+    repo_root: Path,
+) -> tuple[set[Path], set[str], dict[str, frozenset[str]]] | None:
+    """Resolve an optional fail-closed Agent-facing descriptor surface.
+
+    ``owned_paths`` describes ownership, not public capability.  Treating the
+    two as equivalent leaks private storage helpers and retired compatibility
+    methods into generated Agent context.  Cells may therefore declare a
+    compact ``descriptor_surface``: public contract names remain sourced from
+    ``public_contracts`` while explicitly named service classes expose only
+    their audited operation methods.
+    """
+
+    raw_surface = cell_data.get("descriptor_surface")
+    if not isinstance(raw_surface, dict):
+        return None
+
+    allowed_symbols: set[str] = set()
+    public_contracts = cell_data.get("public_contracts")
+    if bool(raw_surface.get("include_public_contracts", True)) and isinstance(public_contracts, dict):
+        for key, values in public_contracts.items():
+            if key == "modules" or not isinstance(values, list):
+                continue
+            allowed_symbols.update(str(value).strip() for value in values if str(value).strip())
+
+    py_files = {
+        path
+        for path in (cell_dir / "public").rglob("*.py")
+        if _should_analyze_source_file(path)
+    }
+    class_methods: dict[str, frozenset[str]] = {}
+    raw_classes = raw_surface.get("classes")
+    if isinstance(raw_classes, dict):
+        for raw_name, raw_policy in raw_classes.items():
+            class_name = str(raw_name).strip()
+            if not class_name or not isinstance(raw_policy, dict):
+                continue
+            module = str(raw_policy.get("module") or "").strip()
+            methods = raw_policy.get("methods")
+            if not module or not isinstance(methods, list):
+                continue
+            module_path = repo_root / (module.replace(".", "/") + ".py")
+            if not module_path.exists() or not module_path.is_file():
+                continue
+            allowed_symbols.add(class_name)
+            class_methods[class_name] = frozenset(
+                str(method).strip() for method in methods if str(method).strip()
+            )
+            py_files.add(module_path)
+
+    return py_files, allowed_symbols, class_methods
+
+
 def analyze_file(path: Path) -> dict[str, Any]:
     """Analyze a single Python file."""
     try:
@@ -365,22 +421,31 @@ async def generate_pack(
 
     capabilities: list[dict[str, Any]] = []
     py_files: set[Path] = set()
-
-    for pattern in owned_paths:
-        pattern = str(pattern).strip()
-        if "**" in pattern:
-            # Handle glob patterns like polaris/cells/audit/**
-            base_part = pattern.split("**")[0].rstrip("/")
-            search_dir = repo_root / base_part
-            if search_dir.exists() and search_dir.is_dir():
-                py_files.update(search_dir.rglob("*.py"))
-        else:
-            # Direct path or simple glob
-            for match in repo_root.glob(pattern):
-                if match.is_file() and match.suffix == ".py":
-                    py_files.add(match)
-                elif match.is_dir():
-                    py_files.update(match.rglob("*.py"))
+    allowed_symbols: set[str] | None = None
+    class_methods: dict[str, frozenset[str]] = {}
+    declared_surface = _declared_descriptor_surface(
+        cell_data=cell_data,
+        cell_dir=cell_dir,
+        repo_root=repo_root,
+    )
+    if declared_surface is not None:
+        py_files, allowed_symbols, class_methods = declared_surface
+    else:
+        for pattern in owned_paths:
+            pattern = str(pattern).strip()
+            if "**" in pattern:
+                # Handle glob patterns like polaris/cells/audit/**
+                base_part = pattern.split("**")[0].rstrip("/")
+                search_dir = repo_root / base_part
+                if search_dir.exists() and search_dir.is_dir():
+                    py_files.update(search_dir.rglob("*.py"))
+            else:
+                # Direct path or simple glob
+                for match in repo_root.glob(pattern):
+                    if match.is_file() and match.suffix == ".py":
+                        py_files.add(match)
+                    elif match.is_dir():
+                        py_files.update(match.rglob("*.py"))
 
     source_files_for_hash: list[Path] = []
 
@@ -395,16 +460,27 @@ async def generate_pack(
             continue
 
         for cls in analysis["classes"]:
+            if allowed_symbols is not None and cls["name"] not in allowed_symbols:
+                continue
+            methods = cls["methods"]
+            if allowed_symbols is not None:
+                explicit_methods = class_methods.get(cls["name"])
+                if explicit_methods is not None:
+                    methods = [method for method in methods if method["name"] in explicit_methods]
+                else:
+                    methods = [method for method in methods if not method["name"].startswith("_")]
             capabilities.append(
                 {
                     "type": "class",
                     "name": cls["name"],
                     "description": cls["doc"],
                     "defined_in": rel_path,
-                    "methods": cls["methods"],
+                    "methods": methods,
                 }
             )
         for func in analysis["functions"]:
+            if allowed_symbols is not None and func["name"] not in allowed_symbols:
+                continue
             capabilities.append(
                 {"type": "function", "name": func["name"], "description": func["doc"], "defined_in": rel_path}
             )

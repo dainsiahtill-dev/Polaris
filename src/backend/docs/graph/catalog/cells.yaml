@@ -737,7 +737,9 @@ cells:
       errors:
         - ExecutionBrokerErrorV1
     depends_on:
+      - control_plane.run_ledger
       - control_plane.verifier_policy
+      - events.fact_stream
       - runtime.state_owner
       - policy.workspace_guard
       - audit.evidence

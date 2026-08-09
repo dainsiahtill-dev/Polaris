@@ -671,6 +671,8 @@ class DirectedEffectLifecycleService:
             if seal_reason:
                 detail = f"{detail}:seal_reason:{seal_reason}"
             return _denied("inventory_seal", "deo_inventory_seal_failed", detail)
+        if sealed is None:  # Defensive narrowing; projection_missing returned above.
+            return _denied("inventory_seal", "deo_inventory_seal_failed", "projection_missing")
 
         policy_bindings = []
         for candidate, member in zip(candidates, sealed.members, strict=True):
@@ -779,6 +781,8 @@ class DirectedEffectLifecycleService:
                 or (is_admit_replay and result.snapshot is None)
             ):
                 return _denied("member_admission", "deo_member_admission_failed", result.code)
+            if result.snapshot is None:  # Defensive narrowing; missing snapshots return above.
+                return _denied("member_admission", "deo_member_admission_failed", "snapshot_missing")
             operation_head = result.snapshot.source_head_seq
             prepared_members.append(
                 DirectedEffectPreparedMemberV1(
@@ -850,6 +854,8 @@ class DirectedEffectLifecycleService:
             or ready.operation_source_head_seq != operation_head
         ):
             return _denied("inventory_ready", "deo_inventory_ready_failed", ready_result.code)
+        if ready is None:  # Defensive narrowing; projection_missing returned above.
+            return _denied("inventory_ready", "deo_inventory_ready_failed", "projection_missing")
 
         authorization_by_call = tuple(
             (
@@ -999,20 +1005,14 @@ class DirectedEffectLifecycleService:
                 policy_verdict_hash=member.policy_verdict_hash,
                 expected_receipt_binding_hash=member.expected_receipt_binding_hash,
             )
-            claim_result = _canonical_port_result(
-                self._ports.claim_operation(claim_command),
-                DirectedEffectOperationResultV1,
-            )
+            claim_result = self._claim_operation(claim_command)
             # Durable EFFECT_STARTED without a grant-bearing result (ambiguous
             # append confirmation) can be rehydrated by one exact-replay claim.
             if (
                 not claim_result.ok or claim_result.code != "effect_claimed" or claim_result.claim_grant is None
             ) and claim_result.state == "EFFECT_STARTED":
                 operation_claim_status = "claimed"
-                claim_result = _canonical_port_result(
-                    self._ports.claim_operation(claim_command),
-                    DirectedEffectOperationResultV1,
-                )
+                claim_result = self._claim_operation(claim_command)
         except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
             return _claim_denied(
                 "deo_claim_failed",
@@ -1124,6 +1124,17 @@ class DirectedEffectLifecycleService:
             context=context,
             error_code=None,
             operation_claim_status="claimed",
+        )
+
+    def _claim_operation(
+        self,
+        command: ClaimDirectedEffectCommandV1,
+    ) -> DirectedEffectOperationResultV1:
+        """Use one canonical TaskRuntime call site for initial claim and exact replay."""
+
+        return _canonical_port_result(
+            self._ports.claim_operation(command),
+            DirectedEffectOperationResultV1,
         )
 
     def _seal_claimed_recovery_pending(

@@ -11,10 +11,10 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Coroutine, cast
+from typing import Any, Callable, Coroutine
 
 from polaris.cells.chief_engineer.blueprint.public import validate_director_handoff_from_payload
-from polaris.cells.runtime.execution_broker.public import (
+from polaris.cells.director.task_consumer.public.project_verification import (
     ProjectVerificationReceiptV1,
     QueryProjectVerificationReceiptV1,
     ResolveProjectVerificationAuthorityQueryV1,
@@ -1179,7 +1179,7 @@ def _resolve_qa_local_repair_authority(
     if actual_authority != projected_authority:
         raise ValueError("execution broker authority differs from current task projection")
     prior_receipt = query_project_verification_receipt(_verification_receipt_query_from_command(command))
-    if type(prior_receipt) is not ProjectVerificationReceiptV1:
+    if not isinstance(prior_receipt, ProjectVerificationReceiptV1):
         raise ValueError("QA failed verifier receipt is not current in execution_broker")
     if prior_receipt.receipt_hash != prior_receipt_hash or prior_receipt.receipt_ref != prior_receipt_ref:
         raise ValueError("QA failed verifier receipt locator does not match owner receipt")
@@ -1232,9 +1232,8 @@ def _revalidate_qa_exact_verifier(
     if resolved is None or resolved.kind == "diagnostic_effect":
         return None
     prior_receipt = resolved.prior_receipt
-    if type(prior_receipt) is not ProjectVerificationReceiptV1:
+    if not isinstance(prior_receipt, ProjectVerificationReceiptV1):
         raise ValueError("QA exact verifier authority lacks owner receipt")
-    prior_receipt = cast(ProjectVerificationReceiptV1, prior_receipt)
     projection = payload.get("task_completion_projection")
     if not isinstance(projection, Mapping) or str(projection.get("projection_hash") or "") != resolved.projection_hash:
         raise ValueError("QA exact verifier projection changed during repair")
@@ -1271,9 +1270,8 @@ def _revalidate_qa_exact_verifier(
         raise ValueError("exact verifier authority changed during same-task repair")
     result = run_project_verification(command)
     receipt = result.receipt
-    if type(receipt) is not ProjectVerificationReceiptV1:
+    if not isinstance(receipt, ProjectVerificationReceiptV1):
         raise RuntimeError(f"exact verifier revalidation produced no receipt: {result.code}")
-    receipt = cast(ProjectVerificationReceiptV1, receipt)
     return {
         "schema_version": "director.qa-exact-verifier-revalidation.v1",
         "task_id": task_id,

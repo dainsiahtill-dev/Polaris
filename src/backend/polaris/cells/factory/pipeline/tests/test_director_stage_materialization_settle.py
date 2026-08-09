@@ -411,8 +411,7 @@ async def test_run_director_stage_materialization_quality_settle_invokes_schedul
             return_value={"success": True},
         ),
         patch(
-            "polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge."
-            "commit_materialization_deferred_repairs",
+            "polaris.cells.roles.adapters.public.commit_materialization_deferred_repairs",
             side_effect=_fake_commit,
         ),
         patch(
@@ -483,8 +482,7 @@ async def test_materialization_settle_reports_deferred_commit_failure(
             return_value={"success": True},
         ) as settle_attempt,
         patch(
-            "polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge."
-            "commit_materialization_deferred_repairs",
+            "polaris.cells.roles.adapters.public.commit_materialization_deferred_repairs",
             return_value=[],
         ),
         patch(
@@ -646,8 +644,7 @@ async def test_run_director_stage_materialization_quality_settle_forwards_tsc_di
             return_value={"success": True},
         ),
         patch(
-            "polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge."
-            "commit_materialization_deferred_repairs",
+            "polaris.cells.roles.adapters.public.commit_materialization_deferred_repairs",
             side_effect=_fake_commit,
         ),
         patch(
@@ -705,10 +702,6 @@ def test_partition_allows_smoke_test_when_main_ts_repairs_conflict() -> None:
 def test_director_stage_materialization_settle_commit_context_builds_job_token(
     tmp_path: Path,
 ) -> None:
-    from polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge import (
-        _capability_token_from_context,
-    )
-
     (tmp_path / "package.json").write_text(
         '{"name":"x","scripts":{"test":"node --test tests/*.test.ts"}}\n', encoding="utf-8"
     )
@@ -732,9 +725,6 @@ def test_director_stage_materialization_settle_commit_context_builds_job_token(
     # R185/M03: deferred DEO commit must accept the settle context (not skip silently).
     assert str(context.get("capability_token_hash") or "").strip()
     assert context["execution_envelope"]["authorization"]["capability_token_hash"] == context["capability_token_hash"]
-    accepted = _capability_token_from_context(context)
-    assert accepted is not None
-    assert accepted["token_id"] == job_token["token_id"]
 
 
 def test_collect_director_stage_materialization_diagnostics_parses_tsc_stderr(

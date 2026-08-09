@@ -158,7 +158,7 @@ def _validated_receipt_by_path(
     *,
     parent_task_id: str,
     adapter_result: Mapping[str, Any],
-) -> dict[str, dict[str, str]]:
+) -> tuple[dict[str, dict[str, str]], tuple[str, ...]]:
     if adapter_result.get("write_tool_evidence") is not True:
         raise _fail(
             "dependency_artifact_write_evidence_missing",
@@ -243,15 +243,15 @@ def _validated_receipt_by_path(
         # rebind even when the parent completed with durable files (r131 L1-01).
         receipts[path] = receipt
 
-    missing_paths = [path for path in normalized_paths if path not in receipts]
-    if missing_paths:
+    missing_paths = tuple(path for path in normalized_paths if path not in receipts)
+    if missing_paths and not receipts:
         raise _fail(
             "dependency_artifact_receipt_missing",
-            "parent artifacts are not all bound to committed physical effect receipts",
+            "parent task has no artifact bound to a committed physical effect receipt",
             parent_task_id=parent_task_id,
             missing_paths=missing_paths,
         )
-    return receipts
+    return receipts, missing_paths
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,6 +290,7 @@ def build_director_dependency_artifact_snapshot(
         return None
 
     modules: list[dict[str, Any]] = []
+    uncovered_artifacts: list[dict[str, str]] = []
     covered_parent_ids: list[str] = []
     total_bytes = 0
     for dependency_id in dependency_ids:
@@ -311,9 +312,17 @@ def build_director_dependency_artifact_snapshot(
             )
         metadata = _mapping(parent.get("metadata"))
         adapter_result = _mapping(metadata.get("adapter_result"))
-        receipts = _validated_receipt_by_path(
+        receipts, missing_paths = _validated_receipt_by_path(
             parent_task_id=dependency_id,
             adapter_result=adapter_result,
+        )
+        uncovered_artifacts.extend(
+            {
+                "parent_task_id": dependency_id,
+                "path": path,
+                "reason": "committed_effect_receipt_missing",
+            }
+            for path in missing_paths
         )
         for path in sorted(receipts):
             if len(modules) >= _MAX_MODULES:
@@ -398,6 +407,8 @@ def build_director_dependency_artifact_snapshot(
         "modules": modules,
         "module_count": len(modules),
         "total_byte_count": total_bytes,
+        "receipt_coverage_complete": not uncovered_artifacts,
+        "uncovered_artifacts": uncovered_artifacts,
     }
     payload["snapshot_sha256"] = _canonical_hash(payload)
     message_lines = [
@@ -417,6 +428,18 @@ def build_director_dependency_artifact_snapshot(
                     f"path={module['path']} sha256={module['sha256']} ---"
                 ),
                 str(module["body"]),
+            ]
+        )
+    if uncovered_artifacts:
+        message_lines.extend(
+            [
+                "Receipt coverage is partial: only the exact bodies above are authoritative.",
+                (
+                    "Do not guess or import uncovered parent artifacts: "
+                    + ", ".join(
+                        f"{item['parent_task_id']}:{item['path']}" for item in uncovered_artifacts
+                    )
+                ),
             ]
         )
     return TrustedDirectorDependencyArtifactSnapshotV2(

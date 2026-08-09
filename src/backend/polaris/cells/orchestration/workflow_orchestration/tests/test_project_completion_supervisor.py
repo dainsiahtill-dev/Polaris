@@ -16,13 +16,11 @@ from polaris.cells.orchestration.workflow_orchestration.public.project_completio
     ProjectCompletionAdvanceResultV1,
     ProjectCompletionIdentityV1,
 )
-from polaris.cells.orchestration.workflow_runtime.internal.project_completion_cursor import (
-    SqliteProjectCompletionCursorV1,
-)
 from polaris.cells.orchestration.workflow_runtime.public.project_completion_cursor import (
     ProjectCompletionCursorIdentityV1,
     ProjectCompletionCursorLimitsV1,
     ProjectCompletionCursorRegistrationV1,
+    compose_project_completion_cursor,
 )
 from polaris.infrastructure.db.repositories.workflow_runtime_store import SqliteRuntimeStore
 
@@ -126,7 +124,7 @@ async def test_restart_recovers_active_identity_from_sqlite_cursor(tmp_path: Pat
         max_no_progress_observations=3,
         dispatch_lease_seconds=120,
     )
-    first_cursor = SqliteProjectCompletionCursorV1(
+    first_cursor = compose_project_completion_cursor(
         SqliteRuntimeStore(database_path, workspace=workspace)
     )
     await first_cursor.ensure_cursor(_hash("restart-workflow"), cursor_identity, limits)
@@ -149,7 +147,7 @@ async def test_restart_recovers_active_identity_from_sqlite_cursor(tmp_path: Pat
         )
 
     async def recover() -> tuple[AdvanceProjectCompletionCommandV1, ...]:
-        restarted_cursor = SqliteProjectCompletionCursorV1(
+        restarted_cursor = compose_project_completion_cursor(
             SqliteRuntimeStore(database_path, workspace=workspace)
         )
         return tuple(
@@ -197,6 +195,6 @@ async def test_restart_recovery_rejects_coerced_cursor_limits(tmp_path: Path) ->
         },
     )
 
-    cursor = SqliteProjectCompletionCursorV1(store)
+    cursor = compose_project_completion_cursor(store)
     with pytest.raises(ValueError, match="max_actions must be an exact positive int"):
         await cursor.list_resumable_cursors()

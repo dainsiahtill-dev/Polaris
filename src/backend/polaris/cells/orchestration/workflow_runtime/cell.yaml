@@ -45,9 +45,7 @@ public_contracts:
   - ProjectCompletionCursorConflictError
 depends_on:
 - archive.run_archive
-- context.engine
 - control_plane.run_ledger
-- director.runtime
 - events.fact_stream
 - factory.cognitive_runtime
 - orchestration.workflow_activity
@@ -57,7 +55,6 @@ depends_on:
 - policy.permission
 - policy.workspace_guard
 - resident.autonomy
-- roles.kernel
 - roles.profile
 - runtime.artifact_store
 - runtime.execution_broker

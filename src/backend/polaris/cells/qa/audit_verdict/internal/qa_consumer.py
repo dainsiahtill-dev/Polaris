@@ -18,7 +18,7 @@ from polaris.cells.qa.audit_verdict.internal.qa_service import QAService
 from polaris.cells.qa.audit_verdict.internal.verdict_engine import (
     classify_qa_audit_failure,
 )
-from polaris.cells.runtime.execution_broker.public import (
+from polaris.cells.qa.audit_verdict.public.project_verification import (
     ProjectVerificationReceiptV1,
     QueryProjectVerificationReceiptV1,
     ResolveProjectVerificationAuthorityQueryV1,
@@ -1042,7 +1042,7 @@ class QAConsumer:
             }
             return f"step verify command lacks exact execution authority: {exc}"
         receipt = result.receipt
-        if type(receipt) is not ProjectVerificationReceiptV1:
+        if not isinstance(receipt, ProjectVerificationReceiptV1):
             payload["qa_failed_verifier"] = {
                 "schema_version": "qa.failed_verifier.v2",
                 "command": verify[:_QA_FEEDBACK_MAX_CHARS],

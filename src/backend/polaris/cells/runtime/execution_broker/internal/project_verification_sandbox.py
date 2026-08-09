@@ -183,7 +183,7 @@ class PreparedProjectVerificationSandbox:
                 "HOME",
                 "/tmp/polaris-verifier-home",
                 "--setenv",
-                "POLARIS_VERIFIER_SANDBOX",
+                "KERNELONE_VERIFIER_SANDBOX",
                 "1",
                 "--chdir",
                 str(self.execution_cwd),

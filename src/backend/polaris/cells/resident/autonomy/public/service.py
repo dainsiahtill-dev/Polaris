@@ -48,7 +48,7 @@ from polaris.cells.director.runtime.public import (
     query_director_repair_coverage,
     query_director_repair_strategy_catalog,
 )
-from polaris.cells.director.tasking.internal.execution_profile import resolve_director_execution_profile
+from polaris.cells.director.tasking.public import resolve_task_execution_profile
 from polaris.cells.resident.autonomy.internal.agi_audit_pack import (
     build_resident_agi_audit_pack,
     resident_agi_context_snapshot_refs,
@@ -1047,13 +1047,16 @@ def _resident_agi_output_contract_gate(
         add_check("decision.output_schema", False, "Resident AGI must return a non-empty JSON decision object.")
     else:
         try:
+            downstream_allowed = decision.get("downstream_allowed")
+            if type(downstream_allowed) is not bool:
+                raise ValueError("downstream_allowed must be an exact bool")
             output = ResidentAgiDecisionOutputV1(
                 verdict=str(decision.get("verdict") or ""),
                 rationale=str(decision.get("rationale") or ""),
                 evidence_refs=_resident_agi_decision_sequence(decision, "evidence_refs"),
                 risks=_resident_agi_decision_sequence(decision, "risks"),
                 next_action=str(decision.get("next_action") or ""),
-                downstream_allowed=decision.get("downstream_allowed"),
+                downstream_allowed=downstream_allowed,
                 decision_capability_id=str(decision.get("decision_capability_id") or ""),
             )
             normalized_decision = output.to_dict()
@@ -1800,7 +1803,7 @@ def _resident_agi_task_execution_profile_interface(
     else:
         refs = _merge_non_empty_strings(list(context_refs), list(evidence_refs))
         try:
-            profile = resolve_director_execution_profile(
+            profile = resolve_task_execution_profile(
                 subject=task_id or decision_type or "Resident AGI evidence query",
                 description=" ".join(refs),
                 metadata={
@@ -1817,14 +1820,14 @@ def _resident_agi_task_execution_profile_interface(
                 {
                     "callable": True,
                     "status": "unavailable",
-                    "source": "director.tasking.resolve_director_execution_profile",
+                    "source": "director.tasking.resolve_task_execution_profile",
                     "gaps": [str(exc)],
                     "recommended_next_action": "request_director_task_execution_profile_evidence",
                 }
             )
             return base
         profile_payload = profile.to_dict()
-        source = "director.tasking.resolve_director_execution_profile"
+        source = "director.tasking.resolve_task_execution_profile"
         computed_from_current_query = True
 
     base.update(

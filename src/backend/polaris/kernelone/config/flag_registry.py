@@ -322,6 +322,14 @@ KERNELONE_FLAG_REGISTRY: dict[str, FlagSpec] = {
         registered_at="2026-07-03",
         expiry=None,
     ),
+    "KERNELONE_VERIFIER_TRUSTED_EXECUTABLE_ROOTS": FlagSpec(
+        name="KERNELONE_VERIFIER_TRUSTED_EXECUTABLE_ROOTS",
+        default=None,
+        owner="control_plane.verifier_policy",
+        purpose="Adds operator-approved executable roots to project-verifier policy resolution.",
+        registered_at="2026-08-09",
+        expiry=None,
+    ),
 }
 
 # Production env-read sites whose variable name is composed dynamically
@@ -387,6 +395,12 @@ DYNAMIC_ENV_READ_ALLOWLIST: tuple[tuple[str, str], ...] = (
     ("polaris/cells/orchestration/pm_planning/pipeline.py", "_resolve_pm_task_quality_retries"),
     ("polaris/cells/orchestration/pm_planning/service.py", "PMService._apply_planning_timeout_floor"),
     ("polaris/cells/orchestration/pm_planning/service.py", "PMService._resolve_planning_timeout_seconds"),
+    # runtime.execution_broker: pass only the fixed environment-name allowlist
+    # into the isolated project-verifier process; this is not flag-name synthesis.
+    (
+        "polaris/cells/runtime/execution_broker/internal/project_verification_sandbox.py",
+        "_sanitized_environment",
+    ),
     ("polaris/cells/policy/workspace_guard/service.py", "self_upgrade_mode_enabled"),
     ("polaris/cells/qa/audit_verdict/internal/qa_consumer.py", "_qa_findings_max_bounces"),
     ("polaris/cells/qa/audit_verdict/internal/qa_consumer.py", "_qa_findings_requeue_enabled"),

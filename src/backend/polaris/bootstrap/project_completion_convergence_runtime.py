@@ -7,6 +7,13 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
+from polaris.cells.factory.pipeline.public.project_completion_bootstrap import (
+    bind_factory_project_completion_notification_port,
+    clear_factory_project_completion_notification_port,
+)
+from polaris.cells.factory.pipeline.public.project_completion_notification import (
+    FactoryProjectCompletionIdentityV1,
+)
 from polaris.cells.factory.verification_guard.public.contracts import (
     ProjectCompletionDiagnosticsV1,
     QueryProjectCompletionDiagnosticsV1,
@@ -14,28 +21,26 @@ from polaris.cells.factory.verification_guard.public.contracts import (
 from polaris.cells.factory.verification_guard.public.service import (
     query_project_completion_diagnostics,
 )
-from polaris.cells.orchestration.workflow_orchestration.internal.project_completion_supervisor import (
-    EventDrivenProjectCompletionSupervisorV1,
-)
 from polaris.cells.orchestration.workflow_orchestration.public.project_completion import (
     AdvanceProjectCompletionCommandV1,
     ProjectCompletionIdentityV1,
     advance_project_completion,
+    notify_project_completion,
 )
 from polaris.cells.orchestration.workflow_orchestration.public.project_completion_bootstrap import (
+    EventDrivenProjectCompletionSupervisorV1,
     bind_project_completion_convergence_runtime,
     bind_project_completion_supervisor,
     clear_project_completion_convergence_runtime,
     clear_project_completion_supervisor,
-)
-from polaris.cells.orchestration.workflow_runtime.internal.project_completion_cursor import (
-    SqliteProjectCompletionCursorV1,
+    create_event_driven_project_completion_supervisor,
 )
 from polaris.cells.orchestration.workflow_runtime.public.model_ceiling import (
     ModelCeilingTerminalResultV1,
 )
 from polaris.cells.orchestration.workflow_runtime.public.project_completion_cursor import (
     ProjectCompletionCursorPortV1,
+    compose_project_completion_cursor,
 )
 from polaris.cells.runtime.projection.public.contracts import (
     ProjectOutcomeAuthorityBindingV1,
@@ -66,6 +71,23 @@ class _ProjectOutcomePort:
                 project_id=identity.project_id,
                 run_id=identity.run_id,
                 completion_contract_hash=identity.completion_contract_hash,
+            )
+        )
+
+
+class _FactoryProjectCompletionNotificationPort:
+    async def notify_project_completion(
+        self,
+        identity: FactoryProjectCompletionIdentityV1,
+    ) -> None:
+        await notify_project_completion(
+            AdvanceProjectCompletionCommandV1(
+                identity=ProjectCompletionIdentityV1(
+                    workspace=identity.workspace,
+                    project_id=identity.project_id,
+                    run_id=identity.run_id,
+                    completion_contract_hash=identity.completion_contract_hash,
+                )
             )
         )
 
@@ -131,6 +153,7 @@ class ProjectCompletionConvergenceRuntimeV1:
     workspace: str
     supervisor: EventDrivenProjectCompletionSupervisorV1
     task_market: TaskMarketService
+    factory_notification_port: _FactoryProjectCompletionNotificationPort
     wake_tasks: tuple[asyncio.Task[None], ...] = ()
 
     async def start(self) -> None:
@@ -159,6 +182,7 @@ class ProjectCompletionConvergenceRuntimeV1:
         await self.supervisor.stop()
         clear_project_completion_supervisor(self.supervisor)
         clear_project_completion_convergence_runtime()
+        clear_factory_project_completion_notification_port(self.factory_notification_port)
 
     async def _watch_task_market(self, role: str) -> None:
         event = get_task_market_work_event(self.workspace, role)
@@ -183,10 +207,12 @@ def configure_project_completion_convergence_runtime(
         canonical_workspace,
         "runtime/state/project_completion/convergence.sqlite3",
     )
-    cursor = SqliteProjectCompletionCursorV1(
+    cursor = compose_project_completion_cursor(
         SqliteRuntimeStore(database_path, workspace=canonical_workspace)
     )
     task_market = get_task_market_service()
+    factory_notification_port = _FactoryProjectCompletionNotificationPort()
+    bind_factory_project_completion_notification_port(factory_notification_port)
     bind_project_completion_convergence_runtime(
         cursor=cursor,
         outcome_port=_ProjectOutcomePort(),
@@ -195,7 +221,7 @@ def configure_project_completion_convergence_runtime(
         model_ceiling_port=_ProjectModelCeilingPort(),
     )
 
-    supervisor = EventDrivenProjectCompletionSupervisorV1(
+    supervisor = create_event_driven_project_completion_supervisor(
         advance=advance_project_completion,
         recover=lambda: _recover_project_completion_commands(cursor),
     )
@@ -204,6 +230,7 @@ def configure_project_completion_convergence_runtime(
         workspace=canonical_workspace,
         supervisor=supervisor,
         task_market=task_market,
+        factory_notification_port=factory_notification_port,
     )
 
 

@@ -1826,13 +1826,12 @@ class FactoryRunService:
             QueryProjectCompletionContractV1,
             query_project_completion_contract,
         )
-        from polaris.cells.orchestration.workflow_orchestration.public.project_completion import (
-            AdvanceProjectCompletionCommandV1,
-            ProjectCompletionIdentityV1,
-            notify_project_completion,
+        from polaris.cells.factory.pipeline.public.project_completion_notification import (
+            FactoryProjectCompletionIdentityV1,
+            notify_factory_project_completion,
         )
 
-        identities: list[ProjectCompletionIdentityV1] = []
+        identities: list[FactoryProjectCompletionIdentityV1] = []
         for logical_ref in result.artifacts:
             if not str(logical_ref).startswith("runtime/blueprints/ce_portfolio_"):
                 continue
@@ -1856,7 +1855,7 @@ class FactoryRunService:
                 )
             )
             identities.append(
-                ProjectCompletionIdentityV1(
+                FactoryProjectCompletionIdentityV1(
                     workspace=str(self.workspace),
                     project_id=contract.project_id,
                     run_id=contract.run_id,
@@ -1865,7 +1864,7 @@ class FactoryRunService:
             )
         if len(identities) != 1:
             raise RuntimeError("chief_engineer_project_completion_identity_not_unique")
-        await notify_project_completion(AdvanceProjectCompletionCommandV1(identity=identities[0]))
+        await notify_factory_project_completion(identities[0])
 
     async def _run_stage_heartbeat(
         self,

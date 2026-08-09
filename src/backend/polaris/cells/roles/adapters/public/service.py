@@ -33,6 +33,9 @@ from polaris.cells.roles.adapters.public.contracts import (
 from ..internal.architect_adapter import ArchitectAdapter
 from ..internal.base import BaseRoleAdapter
 from ..internal.chief_engineer_adapter import ChiefEngineerAdapter
+from ..internal.director.deferred_repair_commit_bridge import (
+    commit_materialization_deferred_repairs,
+)
 from ..internal.pm_adapter import PMAdapter
 from ..internal.qa_adapter import (
     QAAdapter,
@@ -71,12 +74,15 @@ def _build_registry() -> dict[str, Callable[[str], BaseRoleAdapter]]:
         "chief_engineer": ChiefEngineerAdapter,
         "resident_agi": ResidentAgiAdapter,
     }
+    director_adapter_factory: Callable[[str], BaseRoleAdapter] | None = None
     try:
         from ..internal.director_adapter import DirectorAdapter
+
+        director_adapter_factory = cast("Callable[[str], BaseRoleAdapter]", DirectorAdapter)
     except (RuntimeError, ValueError):
-        DirectorAdapter = None  # noqa: N806
-    if DirectorAdapter is not None:
-        registry["director"] = cast("Callable[[str], BaseRoleAdapter]", DirectorAdapter)
+        pass
+    if director_adapter_factory is not None:
+        registry["director"] = director_adapter_factory
     return registry
 
 
@@ -531,6 +537,7 @@ __all__ = [
     "WorkflowRoleAdapter",
     "WorkflowRoleResult",
     "build_director_materialization_quality_repair_message",
+    "commit_materialization_deferred_repairs",
     "create_role_adapter",
     "execute_workflow_role",
     "extract_workspace_quality_summary",

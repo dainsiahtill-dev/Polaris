@@ -40,6 +40,8 @@ from polaris.cells.runtime.execution_broker.public.contracts import (
     ExecutionProcessStatusV1,
     LaunchExecutionProcessCommandV1,
 )
+from polaris.kernelone.fs import KernelFileSystem
+from polaris.kernelone.fs.registry import get_default_adapter
 
 _JOURNAL_LOGICAL = "runtime/evidence/managed_process_effect_journal.json"
 _FORBIDDEN_COMMAND_KEYS = frozenset(
@@ -267,9 +269,11 @@ def _load_journal(workspace: str) -> dict[str, Any]:
 
 
 def _save_journal(workspace: str, payload: dict[str, Any]) -> None:
-    path = _journal_path(workspace)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    KernelFileSystem(workspace, get_default_adapter()).workspace_write_text_atomic(
+        _JOURNAL_LOGICAL,
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _validate_authority(authority: ManagedProcessAuthorityV1, *, now: float) -> str | None:

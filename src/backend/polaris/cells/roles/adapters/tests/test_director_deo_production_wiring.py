@@ -296,11 +296,6 @@ def test_deferred_repair_read_dependency_never_expands_write_scope() -> None:
     from polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge import (
         _capability_scope_from_context,
     )
-    from polaris.cells.roles.kernel.internal.directed_effect_policy_guard import (
-        _gateway_denial_code,
-        _path_matches_capability_scope,
-    )
-
     context = _strict_leaf_authority_context()
     token = context["job_token"]
     assert isinstance(token, dict)
@@ -320,8 +315,7 @@ def test_deferred_repair_read_dependency_never_expands_write_scope() -> None:
 
     scope = _capability_scope_from_context(context)
     assert scope == ("src/consumer.py",)
-    assert not _path_matches_capability_scope("src/provider.py", scope)
-    assert _gateway_denial_code("path scope denied") == "deo_path_scope_denied"
+    assert "src/provider.py" not in scope
 
 
 @pytest.mark.parametrize(

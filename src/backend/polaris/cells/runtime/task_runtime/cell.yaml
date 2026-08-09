@@ -83,6 +83,20 @@ public_contracts:
   - ObservableTaskRowsProjectionV1
   errors:
   - RuntimeTaskRuntimeError
+descriptor_surface:
+  include_public_contracts: true
+  classes:
+    TaskRuntimeService:
+      module: polaris.cells.runtime.task_runtime.internal.service
+      methods:
+      - create_task_row
+      - update_task_row
+      - reopen_task_row
+      - get_task
+      - list_ready_task_rows
+      - list_observable_task_rows
+      - get_task_row_stats
+      - claim_next_execution
 depends_on:
 - events.fact_stream
 subgraphs:

@@ -17,13 +17,9 @@ import contextvars
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from threading import Lock
+from typing import Any, Protocol, runtime_checkable
 
-from polaris.cells.audit.evidence.public.contracts import (
-    MANAGED_PROCESS_RECEIPT_LOGICAL_PATH_V1,
-    ReadManagedProcessReceiptQueryV1,
-)
-from polaris.cells.audit.evidence.public.service import read_managed_process_receipt
 from polaris.cells.control_plane.run_ledger.public.contracts import (
     AppendRunLedgerEventCommandV1,
     ControlPlaneRunLedgerV1Error,
@@ -32,6 +28,57 @@ from polaris.cells.control_plane.run_ledger.public.contracts import (
 
 MANAGED_PROCESS_LIFECYCLE_EVENT_TYPE = "managed_process_lifecycle"
 MANAGED_PROCESS_LIFECYCLE_SCHEMA_V1 = "managed_process_lifecycle.v1"
+MANAGED_PROCESS_RECEIPT_LOGICAL_PATH_V1 = "runtime/evidence/managed_process_receipts.jsonl"
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedProcessReceiptOwnerRecordV1:
+    """Cell-neutral receipt projection supplied by bootstrap composition."""
+
+    receipt_ref: str
+    receipt_hash: str
+    receipt: Mapping[str, Any]
+
+
+@runtime_checkable
+class ManagedProcessReceiptOwnerPortV1(Protocol):
+    def read_managed_process_receipt(
+        self,
+        *,
+        workspace: str,
+        receipt_hash: str,
+    ) -> ManagedProcessReceiptOwnerRecordV1 | None: ...
+
+
+_managed_process_receipt_owner_port: ManagedProcessReceiptOwnerPortV1 | None = None
+_managed_process_receipt_owner_port_lock = Lock()
+
+
+def _bind_managed_process_receipt_owner_port(port: ManagedProcessReceiptOwnerPortV1) -> None:
+    if not isinstance(port, ManagedProcessReceiptOwnerPortV1):
+        raise TypeError("port must implement ManagedProcessReceiptOwnerPortV1")
+    global _managed_process_receipt_owner_port
+    with _managed_process_receipt_owner_port_lock:
+        bound = _managed_process_receipt_owner_port
+        if bound is None:
+            _managed_process_receipt_owner_port = port
+        elif bound is not port:
+            raise RuntimeError("managed_process_receipt_owner_port_conflicting_rebind")
+
+
+def _clear_managed_process_receipt_owner_port(port: ManagedProcessReceiptOwnerPortV1) -> None:
+    global _managed_process_receipt_owner_port
+    with _managed_process_receipt_owner_port_lock:
+        if _managed_process_receipt_owner_port is port:
+            _managed_process_receipt_owner_port = None
+
+
+def _managed_process_receipt_owner() -> ManagedProcessReceiptOwnerPortV1:
+    with _managed_process_receipt_owner_port_lock:
+        port = _managed_process_receipt_owner_port
+    if port is None:
+        raise ControlPlaneRunLedgerV1Error("managed_process_receipt_owner_port_unbound")
+    return port
 
 # Call-stack authorization for managed-process append.  Only
 # ``project_managed_process_lifecycle`` sets this; public append never takes a
@@ -227,11 +274,9 @@ def project_managed_process_lifecycle(
     if type(command) is not ProjectManagedProcessLifecycleCommandV1:
         raise TypeError("command must be ProjectManagedProcessLifecycleCommandV1")
 
-    record = read_managed_process_receipt(
-        ReadManagedProcessReceiptQueryV1(
-            workspace=command.workspace,
-            receipt_hash=command.receipt_hash,
-        )
+    record = _managed_process_receipt_owner().read_managed_process_receipt(
+        workspace=command.workspace,
+        receipt_hash=command.receipt_hash,
     )
     if record is None:
         raise ControlPlaneRunLedgerV1Error(
@@ -277,6 +322,8 @@ def project_managed_process_lifecycle(
 __all__ = [
     "MANAGED_PROCESS_LIFECYCLE_EVENT_TYPE",
     "MANAGED_PROCESS_LIFECYCLE_SCHEMA_V1",
+    "ManagedProcessReceiptOwnerPortV1",
+    "ManagedProcessReceiptOwnerRecordV1",
     "ProjectManagedProcessLifecycleCommandV1",
     "build_managed_process_lifecycle_event",
     "derive_managed_process_evidence_presence",

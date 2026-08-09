@@ -587,6 +587,66 @@ class TestGeneratePack:
         capability_names = {item["name"] for item in payload["capabilities"]}
         assert capability_names == {"hello"}
 
+    @pytest.mark.asyncio
+    async def test_declared_descriptor_surface_excludes_owned_internals(self, tmp_path: Path) -> None:
+        from polaris.cells.context.catalog.internal.descriptor_pack_generator import (
+            generate_pack,
+        )
+
+        cell_dir = tmp_path / "polaris" / "cells" / "runtime" / "sample"
+        public_dir = cell_dir / "public"
+        internal_dir = cell_dir / "internal"
+        public_dir.mkdir(parents=True)
+        internal_dir.mkdir()
+        (cell_dir / "cell.yaml").write_text(
+            """id: runtime.sample
+owned_paths:
+  - polaris/cells/runtime/sample/**
+public_contracts:
+  modules:
+    - polaris.cells.runtime.sample.public.contracts
+  commands:
+    - PublicCommandV1
+descriptor_surface:
+  include_public_contracts: true
+  classes:
+    SampleService:
+      module: polaris.cells.runtime.sample.internal.service
+      methods:
+        - execute
+""",
+            encoding="utf-8",
+        )
+        (public_dir / "contracts.py").write_text(
+            "class PublicCommandV1:\n    pass\n\nclass UndeclaredContract:\n    pass\n",
+            encoding="utf-8",
+        )
+        (internal_dir / "service.py").write_text(
+            """class SampleService:
+    def execute(self):
+        pass
+    def reset_records(self):
+        pass
+    def _private(self):
+        pass
+
+class PrivateOwnerHelper:
+    pass
+""",
+            encoding="utf-8",
+        )
+
+        with patch("polaris.cells.context.catalog.internal.descriptor_pack_generator._build_kernel_fs") as mock_kfs:
+            mock_fs = MagicMock()
+            mock_kfs.return_value = mock_fs
+            result = await generate_pack(cell_dir, tmp_path, skip_schema_validation=True)
+
+        assert result is not None
+        payload = json.loads(mock_fs.workspace_write_text.call_args.args[1])
+        capabilities = {item["name"]: item for item in payload["capabilities"]}
+        assert set(capabilities) == {"PublicCommandV1", "SampleService"}
+        assert [method["name"] for method in capabilities["SampleService"]["methods"]] == ["execute"]
+
 
 # ---------------------------------------------------------------------------
 # run_all (async)

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from polaris.bootstrap.managed_process_receipt_owner import configure_managed_process_receipt_owner
 from polaris.cells.events.fact_stream.public.contracts import BootstrapFactStreamWorkspaceCommandV1
 from polaris.cells.events.fact_stream.public.workspace_bootstrap import bootstrap_fact_stream_workspace
 from polaris.cells.runtime.execution_broker.public import (
@@ -86,6 +87,7 @@ def _command(workspace: Path, **kwargs: Any) -> RunManagedProcessCommandV1:
 
 @pytest.fixture
 def workspace(tmp_path: Path) -> Path:
+    configure_managed_process_receipt_owner()
     bootstrap_fact_stream_workspace(
         BootstrapFactStreamWorkspaceCommandV1(
             workspace=str(tmp_path),

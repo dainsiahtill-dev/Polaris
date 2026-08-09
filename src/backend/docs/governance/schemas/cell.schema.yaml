@@ -86,6 +86,26 @@ $defs:
         $ref: "#/$defs/string_list"
       errors:
         $ref: "#/$defs/string_list"
+  descriptor_surface:
+    type: object
+    additionalProperties: false
+    properties:
+      include_public_contracts:
+        type: boolean
+      classes:
+        type: object
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          required:
+            - module
+            - methods
+          properties:
+            module:
+              type: string
+              minLength: 1
+            methods:
+              $ref: "#/$defs/string_list"
   verify_block:
     oneOf:
       - type: array
@@ -204,6 +224,8 @@ properties:
       minLength: 1
   public_contracts:
     $ref: "#/$defs/public_contracts"
+  descriptor_surface:
+    $ref: "#/$defs/descriptor_surface"
   depends_on:
     type: array
     items:

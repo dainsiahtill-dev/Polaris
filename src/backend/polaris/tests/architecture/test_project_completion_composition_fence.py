@@ -33,12 +33,15 @@ def test_cursor_capability_builder_is_composition_private() -> None:
         if forbidden not in _imports(path):
             continue
         relative = path.relative_to(BACKEND_ROOT).as_posix()
-        if relative == "polaris/bootstrap/project_completion_convergence_runtime.py":
-            continue
-        if "/tests/" in relative:
+        if relative == "polaris/cells/orchestration/workflow_runtime/public/project_completion_cursor.py":
             continue
         importers.append(relative)
     assert importers == []
+
+    bootstrap = POLARIS_ROOT / "bootstrap/project_completion_convergence_runtime.py"
+    bootstrap_imports = _imports(bootstrap)
+    assert forbidden not in bootstrap_imports
+    assert "polaris.cells.orchestration.workflow_runtime.public.project_completion_cursor" in bootstrap_imports
 
 
 def test_runtime_projection_no_longer_imports_or_declares_workflow_runtime_or_task_market() -> None:

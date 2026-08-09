@@ -469,7 +469,7 @@ def _bubblewrap_command(
             "PATH",
             "/tool-bin:/usr/local/bin:/usr/bin:/bin",
             "--setenv",
-            "POLARIS_VALIDATION_SANDBOX",
+            "KERNELONE_VALIDATION_SANDBOX",
             "1",
         ]
     )
