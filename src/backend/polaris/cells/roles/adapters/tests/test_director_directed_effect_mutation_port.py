@@ -734,10 +734,98 @@ async def test_repair_binding_stale_before_state_denies_with_zero_physical_execu
         arguments,
         binding,
     )
+    replay = await port.execute_mutation(
+        context,
+        tool_name,
+        arguments,
+        binding,
+    )
 
     assert result.status == "denied"
     assert result.error_code == "deo_target_state_drift"
-    assert events == ["revalidate"]
+    assert replay.status == "denied"
+    assert replay.error_code == "deo_context_replayed"
+    assert events == ["revalidate", "consume", "revalidate", "consume"]
+    assert physical.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_pre_effect_policy_denial_terminalization_failure_stays_nonterminal_for_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context, fence, workspace = _context()
+    events: list[str] = []
+
+    def reject_recovery(
+        _context: DirectedEffectExecutionContextV1,
+        **_kwargs: object,
+    ) -> DirectedEffectOperationResultV1:
+        return DirectedEffectOperationResultV1(
+            ok=False,
+            code="stale_write_conflict",
+            operation=context.claim_grant.operation,
+            state="EFFECT_STARTED",
+            version=context.claim_grant.operation_version,
+            evidence={},
+        )
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.adapters.internal.director.directed_effect_mutation_port._mark_physical_effect_recovery",
+        reject_recovery,
+    )
+    port, physical = _port(
+        monkeypatch,
+        events=events,
+        context=context,
+        fence=fence,
+        workspace=workspace,
+        denied=True,
+    )
+
+    result = await port.execute_mutation(context, "write_file", _ARGUMENTS)  # type: ignore[union-attr]
+
+    assert result.status == "failed"
+    assert result.error_code == "deo_physical_execution_failed"
+    assert events == ["revalidate", "consume"]
+    assert physical.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_pre_effect_policy_denial_dead_letter_failure_preserves_recovery_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context, fence, workspace = _context()
+    events: list[str] = []
+
+    def reject_dead_letter(_command: object) -> DirectedEffectOperationResultV1:
+        return DirectedEffectOperationResultV1(
+            ok=False,
+            code="stale_write_conflict",
+            operation=context.claim_grant.operation,
+            state="RECOVERY_PENDING",
+            version=context.claim_grant.operation_version + 1,
+            evidence={},
+        )
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.adapters.internal.director.directed_effect_mutation_port."
+        "dead_letter_directed_effect_operation",
+        reject_dead_letter,
+    )
+    port, physical = _port(
+        monkeypatch,
+        events=events,
+        context=context,
+        fence=fence,
+        workspace=workspace,
+        denied=True,
+    )
+
+    result = await port.execute_mutation(context, "write_file", _ARGUMENTS)  # type: ignore[union-attr]
+
+    assert result.status == "failed"
+    assert result.error_code == "deo_physical_execution_failed"
+    assert events == ["revalidate", "consume"]
     assert physical.calls == 0
 
 
@@ -1231,7 +1319,7 @@ async def test_malformed_policy_result_is_denied_before_fence_or_physical(
     result = await port.execute_mutation(context, "write_file", _ARGUMENTS)  # type: ignore[union-attr]
 
     assert result.status == "denied"
-    assert events == ["revalidate"]
+    assert events == ["revalidate", "consume"]
     assert physical.calls == 0
 
 

@@ -48,6 +48,10 @@ from polaris.cells.roles.kernel.tests.test_directed_effect_lifecycle import (
     _RecordingPolicyPort,
     _setup_attempt,
 )
+from polaris.cells.runtime.task_runtime.public import (
+    GetDirectedEffectOperationQueryV1,
+    get_directed_effect_operation,
+)
 
 
 async def _reject_non_mutation_execution(tool_name: str, arguments: dict[str, Any]) -> Any:
@@ -126,6 +130,7 @@ async def _execute_followup(
     followup: DeferredRepairFollowupV1,
     attempt: Any,
     policy_port: Any,
+    prepared_out: list[Any] | None = None,
 ) -> list[Any]:
     """Prepare the exact synthesized inventory and execute only its forward partition."""
 
@@ -181,6 +186,8 @@ async def _execute_followup(
     assert lifecycle_result.status == "ready"
     prepared = lifecycle_result.prepared_batch
     assert prepared is not None
+    if prepared_out is not None:
+        prepared_out.append(prepared)
     fence_ports = create_directed_effect_fence_ports()
     mutation_port = create_director_directed_effect_mutation_port(
         workspace=attempt.workspace,
@@ -419,6 +426,72 @@ async def test_adapter_repair_request_reaches_production_mutation_receipt(tmp_pa
     assert raw_result["effect_receipt"]["tool_call_id"] == followup.forward_call_ids[0]
     assert raw_result["effect_receipt"]["physical_result_hash"]
     assert "from models.weather import *" in (workspace_path / "src" / "weather.py").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_stale_deferred_repair_terminalizes_claim_without_physical_effect(tmp_path: Path) -> None:
+    """A second stale repair wave must not leave ``EFFECT_STARTED`` forever."""
+
+    workspace_path = tmp_path / "workspace-stale-repair"
+    workspace_path.mkdir()
+    attempt = _setup_attempt(str(workspace_path))
+    source = workspace_path / "src" / "models" / "weather.py"
+    source.parent.mkdir(parents=True)
+    source_content = "class Weather:\n    pass\n"
+    source.write_text(source_content, encoding="utf-8")
+    adapter_results = run_runtime_repair_with_director_tools(
+        None,
+        workspace_path=workspace_path,
+        task_id=attempt.external_task_id,
+        execution_attempt=attempt,
+        source_tool="deterministic_python_missing_module_alias_repair",
+        base_files={"src/models/weather.py": source_content},
+        artifact_quality_errors=("ModuleNotFoundError: No module named 'weather'",),
+        allowed_paths=("src/weather.py",),
+    )
+    repair_synthesizer, command_synthesizer = _followup_synthesizers()
+    followup = build_deferred_repair_followup(
+        _adapter_receipt(adapter_results[0]),
+        primary_batch_id="primary-stale-adapter-repair",
+        turn_id="turn-stale-adapter-followup",
+        expected_workspace=attempt.workspace,
+        expected_task_id=attempt.external_task_id,
+        expected_execution_attempt=attempt,
+        synthesizer=repair_synthesizer,
+        command_synthesizer=command_synthesizer,
+    )
+    assert followup is not None
+    # Earlier wave landed target after this repair plan was composed.
+    target = workspace_path / "src" / "weather.py"
+    target.write_text("already repaired\n", encoding="utf-8")
+    prepared_out: list[Any] = []
+
+    receipts = await _execute_followup(
+        followup=followup,
+        attempt=attempt,
+        policy_port=_WorkspaceObservingPolicyPort(workspace_path),
+        prepared_out=prepared_out,
+    )
+
+    assert receipts[0].failure_count == 1
+    raw_result = receipts[0].raw_results[0]
+    assert raw_result["status"] == "error"
+    assert raw_result["error"] == "deo_target_state_drift"
+    assert target.read_text(encoding="utf-8") == "already repaired\n"
+    prepared = prepared_out[0]
+    primary = prepared.prepared_members[0].member
+    operation = get_directed_effect_operation(
+        GetDirectedEffectOperationQueryV1(
+            workspace=attempt.workspace,
+            task_id=attempt.task_id,
+            execution_attempt=attempt,
+            parent_binding=prepared.parent_binding,
+            tool_call_id=primary.tool_call_id,
+            effect_id=primary.effect_id,
+        )
+    )
+    assert operation.ok is True
+    assert operation.state == "DEAD_LETTER"
 
 
 @pytest.mark.asyncio

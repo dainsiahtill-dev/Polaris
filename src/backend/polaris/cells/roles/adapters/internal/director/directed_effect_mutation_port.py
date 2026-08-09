@@ -377,14 +377,16 @@ def _attempt_physical_effect_recovery(
     reason: str,
     evidence: DirectedEffectImmutableItemsV1,
     terminalize_declared_failure: bool = False,
+    terminal_reason: str = "physical executor returned a declared non-success result",
 ) -> DirectedEffectOperationResultV1 | None:
-    """Persist recovery; terminalize only an executor-declared failure.
+    """Persist recovery; terminalize only a proven no-effect failure.
 
     Exceptions and post-state ambiguity remain ``RECOVERY_PENDING`` because the
-    physical side effect may have happened.  A returned ``ok=False`` is a
-    completed, typed physical outcome: after fencing it into recovery, close it
-    as ``DEAD_LETTER`` so the failed Director attempt can settle and a fresh
-    attempt can inspect current disk state before planning another edit.
+    physical side effect may have happened.  An executor-declared ``ok=False``
+    or a pre-effect policy denial after one-use fence consumption proves no
+    physical effect can still occur.  After recording recovery, close that
+    member as ``DEAD_LETTER`` so the failed Director attempt can settle and a
+    fresh attempt can inspect current disk state before planning another edit.
     """
 
     try:
@@ -413,7 +415,7 @@ def _attempt_physical_effect_recovery(
             or source_head_seq < 1
         ):
             logger.error(
-                "TaskRuntime declared physical failure recovery lacked terminalization evidence: "
+                "TaskRuntime proven no-effect recovery lacked terminalization evidence: "
                 "context_id=%s state=%s version=%s source_head_seq=%s",
                 context.context_id,
                 result.state,
@@ -438,20 +440,20 @@ def _attempt_physical_effect_recovery(
                     intended_effect_fingerprint=grant.member.intended_effect_fingerprint,
                     policy_verdict_hash=grant.member.policy_verdict_hash,
                     expected_receipt_binding_hash=grant.member.expected_receipt_binding_hash,
-                    reason="physical executor returned a declared non-success result",
+                    reason=str(terminal_reason or "declared no-effect failure")[:200],
                     resolution_evidence_ref=f"dead-letter://director/{context.context_id}",
                     resolution_evidence_hash=hash_directed_effect_arguments(resolution_evidence),
                 )
             )
         except (OSError, RuntimeError, TypeError, ValueError):
             logger.exception(
-                "TaskRuntime dead-letter append raised after declared physical failure: context_id=%s",
+                "TaskRuntime dead-letter append raised after proven no-effect failure: context_id=%s",
                 context.context_id,
             )
             return result
         if not terminal.ok or terminal.state != "DEAD_LETTER":
             logger.error(
-                "TaskRuntime dead-letter append failed after declared physical failure: context_id=%s code=%s state=%s",
+                "TaskRuntime dead-letter append failed after proven no-effect failure: context_id=%s code=%s state=%s",
                 context.context_id,
                 terminal.code,
                 terminal.state,
@@ -632,6 +634,49 @@ class _DirectorDirectedEffectMutationPort:
             return consumption.error_code or "deo_context_identity_mismatch"
         return None
 
+    def _settle_pre_effect_policy_denial(
+        self,
+        prepared: _PreparedMutationV1,
+        *,
+        error_code: DirectedEffectErrorCodeV1,
+    ) -> DirectedEffectMutationPortResultV1:
+        """Burn the one-use fence and terminalize a claimed no-effect denial.
+
+        TaskRuntime has already moved the operation to ``EFFECT_STARTED`` before
+        this port revalidates policy.  A target/policy drift denial occurs before
+        the physical executor, so leaving that claim open makes the parent
+        settlement wait forever.  Consume the fence first to exclude a competing
+        physical effect, then append recovery + DEAD_LETTER evidence.  If either
+        step is ambiguous, preserve a failed/nonterminal result for reconciliation.
+        """
+
+        consume_error = self._consume_once(prepared)
+        if consume_error is not None:
+            return _failed(
+                failure_kind="pre_effect_policy_denial_fence_not_consumed",
+                physical_error=str(consume_error),
+            )
+        recovery = _attempt_physical_effect_recovery(
+            prepared.context,
+            reason="policy revalidation denied before physical execution after fence consumption",
+            evidence=(
+                ("context_id", prepared.context.context_id),
+                ("failure_kind", "pre_effect_policy_denial"),
+                ("policy_error_code", error_code),
+                ("physical_executor_invoked", False),
+                ("fence_consumed", True),
+            ),
+            terminalize_declared_failure=True,
+            terminal_reason="policy revalidation denied before physical execution",
+        )
+        if recovery is not None and recovery.ok and recovery.state == "DEAD_LETTER":
+            return _denied(error_code)
+        return _failed(
+            recovery,
+            failure_kind="pre_effect_policy_denial_terminalization_failed",
+            physical_error=str(error_code),
+        )
+
     def _execute_physical(
         self,
         prepared: _PreparedMutationV1,
@@ -807,7 +852,10 @@ class _DirectorDirectedEffectMutationPort:
             return _denied(prepare_error or "deo_context_identity_mismatch")
         revalidation_request, revalidation, policy_error = await self._revalidate_policy(prepared)
         if revalidation_request is None or revalidation is None:
-            return _denied(policy_error or "deo_director_policy_denied")
+            return self._settle_pre_effect_policy_denial(
+                prepared,
+                error_code=policy_error or "deo_director_policy_denied",
+            )
         consume_error = self._consume_once(prepared)
         if consume_error is not None:
             return _denied(consume_error)

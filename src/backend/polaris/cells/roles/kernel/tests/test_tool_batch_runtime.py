@@ -281,6 +281,7 @@ async def test_prepared_mutations_use_only_jit_claim_and_mutation_port(
         )
 
     claimed: list[str] = []
+    aborted: list[tuple[tuple[str, ...], str]] = []
 
     class _Lifecycle:
         def __init__(self, *, policy_snapshot_port: object) -> None:
@@ -302,6 +303,13 @@ async def test_prepared_mutations_use_only_jit_claim_and_mutation_port(
                 error_code=None,
                 operation_claim_status="claimed",
             )
+
+        def abort_unclaimed_members(self, **kwargs: object) -> tuple[object, ...]:
+            raw_tool_call_ids = kwargs["tool_call_ids"]
+            assert isinstance(raw_tool_call_ids, tuple)
+            tool_call_ids = tuple(str(item) for item in raw_tool_call_ids)
+            aborted.append((tool_call_ids, str(kwargs["reason"])))
+            return tuple(object() for _ in tool_call_ids)
 
     monkeypatch.setattr(
         tool_batch_runtime_module,
@@ -426,9 +434,12 @@ async def test_prepared_mutations_use_only_jit_claim_and_mutation_port(
     assert raw_calls == ["read_file"]
     assert claimed == expected_claimed
     assert registered == mutated == expected_effects
-    assert len(receipts) == 1 + len(expected_claimed)
-    assert sum(receipt["failure_count"] for receipt in receipts) == (0 if denied_call_id is None else 1)
+    aborted_call_ids = () if denied_call_id is None else tuple(expected_calls[len(expected_claimed) - 1 :])
+    assert len(receipts) == 1 + len(expected_claimed) + len(aborted_call_ids)
+    expected_failures = 0 if denied_call_id is None else 1 + len(aborted_call_ids)
+    assert sum(receipt["failure_count"] for receipt in receipts) == expected_failures
     if denied_call_id is None:
+        assert aborted == []
         assert released == [
             (
                 prepared.parent_binding.correlation.batch_id,
@@ -438,6 +449,12 @@ async def test_prepared_mutations_use_only_jit_claim_and_mutation_port(
     else:
         # A denied claim leaves durable inventory work unresolved.  Keep the
         # fence for DEO-3 reconciliation instead of erasing local evidence.
+        assert aborted == [
+            (
+                aborted_call_ids,
+                "serial_mutation_sibling_aborted_after_failure",
+            )
+        ]
         assert released == []
 
 
@@ -702,13 +719,24 @@ async def test_deferred_repair_failure_preserves_only_activated_rollbacks(
             ((rollback_ids[0],), "deferred_repair_forward_failed"),
             ((rollback_ids[1],), "deferred_repair_forward_failed"),
         ]
-        assert receipts[-1].raw_results[0]["directed_effect_activated_rollback_call_ids"] == []
-        assert receipts[-1].raw_results[0]["directed_effect_aborted_call_ids"] == [
+        summary_receipt = next(
+            receipt
+            for receipt in receipts
+            if "directed_effect_activated_rollback_call_ids" in receipt.raw_results[0]
+        )
+        assert summary_receipt.raw_results[0]["directed_effect_activated_rollback_call_ids"] == []
+        assert summary_receipt.raw_results[0]["directed_effect_aborted_call_ids"] == [
             forward_ids[1],
             rollback_ids[0],
             rollback_ids[1],
         ]
-        assert receipts[-1].raw_results[0]["directed_effect_preserved_call_ids"] == [forward_ids[0]]
+        assert summary_receipt.raw_results[0]["directed_effect_preserved_call_ids"] == [forward_ids[0]]
+        aborted_receipts = [receipt for receipt in receipts if receipt.results[0].status == "aborted"]
+        assert [receipt.results[0].call_id for receipt in aborted_receipts] == [
+            forward_ids[1],
+            rollback_ids[0],
+            rollback_ids[1],
+        ]
 
 
 @pytest.mark.asyncio
@@ -1004,7 +1032,9 @@ async def test_deferred_failure_terminalizes_real_task_runtime_and_executes_clai
     )
 
     assert mutation_calls == [forward_ids[0], forward_ids[1], rollback_ids[0]]
-    assert len(receipts) == 3
+    assert len(receipts) == 4
+    aborted_receipts = [receipt for receipt in receipts if receipt.results[0].status == "aborted"]
+    assert [receipt.results[0].call_id for receipt in aborted_receipts] == [rollback_ids[1]]
     expected_states = {
         forward_ids[0]: "EFFECT_STARTED",
         forward_ids[1]: "EFFECT_STARTED",
@@ -1119,11 +1149,14 @@ async def test_preclaim_denial_aborts_real_task_runtime_inventory_without_sequen
         TurnId("turn-preclaim-denial"),
     )
 
-    assert len(receipts) == 1
+    assert len(receipts) == 1 + len(inventory_ids)
     raw_result = receipts[0].raw_results[0]
     assert raw_result["directed_effect_claim_status"] == "not_claimed"
     assert raw_result["directed_effect_aborted_call_ids"] == list(inventory_ids)
     assert raw_result["directed_effect_preserved_call_ids"] == []
+    aborted_receipts = receipts[1:]
+    assert [receipt.results[0].call_id for receipt in aborted_receipts] == list(inventory_ids)
+    assert all(receipt.results[0].status == "aborted" for receipt in aborted_receipts)
     authority_snapshot = execution_authority.snapshot()
     assert authority_snapshot.success is True
     assert authority_snapshot.identity is not None
