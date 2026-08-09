@@ -109,6 +109,8 @@ def test_r181_recover_director_stage_authority_after_delivery_settle(
             "source": "task_runtime.execution_fact",
             "authoritative": True,
             "degraded": False,
+            "owner_scope": "pm_contract_tasks",
+            "owned_task_ids": ["TASK-1", "TASK-3"],
             "row_count": 2,
             "rows": [
                 {
@@ -210,7 +212,7 @@ def test_r181_recover_director_stage_authority_after_delivery_settle(
 
     prior = evaluate_canonical_factory_authority(incomplete_projection)
     assert prior.director_stage_authorized is False
-    assert "3" in prior.incomplete_task_ids or "3" in prior.incomplete_runtime_task_ids
+    assert "TASK-3" in prior.incomplete_runtime_task_ids
 
     recovered = executor._recover_director_stage_authority_after_delivery_settle(
         run=run,
@@ -255,6 +257,9 @@ def test_recover_director_stage_authority_orphan_blocked_uses_sibling_director_r
             "source": "task_runtime.execution_fact",
             "authoritative": True,
             "degraded": False,
+            "owner_scope": "pm_contract_tasks",
+            "owned_task_ids": ["TASK-1", "TASK-3"],
+            "row_count": 2,
             "readiness": {"ready": True},
             "rows": [
                 {
@@ -323,7 +328,7 @@ def test_recover_director_stage_authority_orphan_blocked_uses_sibling_director_r
 
     prior = evaluate_canonical_factory_authority(incomplete_projection)
     assert prior.director_stage_authorized is False
-    assert "3" in prior.incomplete_task_ids or "3" in prior.incomplete_runtime_task_ids
+    assert "TASK-3" in prior.incomplete_runtime_task_ids
 
     recovered = executor._recover_director_stage_authority_after_delivery_settle(
         run=run,

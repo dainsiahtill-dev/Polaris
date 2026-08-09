@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -39,6 +40,9 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunStatus,
     StageResult,
 )
+from polaris.cells.factory.pipeline.internal.factory_stage_artifact_bindings import (
+    PM_STAGE_ARTIFACT_BINDING_CONTEXT_KEY,
+)
 from polaris.cells.factory.pipeline.internal.factory_stage_executor import (
     OrchestrationStageExecutor,
 )
@@ -54,6 +58,7 @@ from polaris.cells.roles.kernel.public.physical_attempt_control import (
     FactoryPhysicalAttemptGrantViewV1,
     ReserveFactoryPhysicalAttemptV1,
 )
+from polaris.cells.runtime.task_market.public.contracts import TaskRequeueReceiptV1
 from polaris.cells.runtime.task_runtime.public.contracts import (
     BindRuntimeTaskToFactoryRunCommandV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
@@ -1639,6 +1644,196 @@ async def test_failed_settled_stage_complete_run_is_idempotent_after_auto_releas
     assert durable.released_at is not None
     assert durable.stage_execution_claim is None
     assert durable.release_evidence is not None
+
+
+@pytest.mark.asyncio
+async def test_forged_local_rework_receipt_cannot_retain_terminal_lease(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    service = FactoryRunService(
+        workspace,
+        cache_root=tmp_path / "runtime",
+        executor=_FailedSettledStageExecutor(),
+    )
+
+    receipt = await service._validated_local_rework_receipt(
+        run_id="factory-current",
+        failed_stage="director_dispatch",
+        failure_fingerprint="c" * 64,
+        schedule={
+            "status": "committed",
+            "factory_run_id": "factory-current",
+            "owner_task_id": "TASK-1",
+            "target_stage": "pending_exec",
+            "requeue_idempotency_key": "a" * 64,
+            "requeue_receipt_ref": "b" * 64,
+        },
+    )
+
+    assert receipt is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failed_stage", "target_stage", "pm_task_ids", "receipt_run_id", "expected"),
+    [
+        ("director_dispatch", "pending_exec", ("TASK-1",), "factory-current", True),
+        ("quality_gate", "pending_design", ("TASK-1",), "factory-current", False),
+        ("director_dispatch", "pending_exec", ("TASK-2",), "factory-current", False),
+        ("director_dispatch", "pending_exec", ("TASK-1",), "factory-old", False),
+    ],
+)
+async def test_local_rework_receipt_requires_pm_owner_and_stage_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_stage: str,
+    target_stage: str,
+    pm_task_ids: tuple[str, ...],
+    receipt_run_id: str,
+    expected: bool,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    service = FactoryRunService(
+        workspace,
+        cache_root=tmp_path / "runtime",
+        executor=_FailedSettledStageExecutor(),
+    )
+    failure_fingerprint = "d" * 64
+    expected_command = service._factory_local_rework_command(
+        run_id=receipt_run_id,
+        failed_stage=failed_stage,
+        owner_task_id="TASK-1",
+        target_stage=target_stage,
+        failure_fingerprint=failure_fingerprint,
+    )
+    receipt = TaskRequeueReceiptV1(
+        workspace=str(workspace),
+        task_id="TASK-1",
+        idempotency_key=expected_command.idempotency_key,
+        idempotency_fingerprint=expected_command.idempotency_fingerprint,
+        effect_hash=expected_command.effect_hash,
+        target_stage=target_stage,
+        reason=expected_command.reason,
+        transition_version=2,
+        accepted_at="2026-08-09T00:00:00+00:00",
+    )
+
+    async def _proof(_run_id: str) -> SimpleNamespace:
+        return SimpleNamespace(task_ids=pm_task_ids)
+
+    class _TaskMarket:
+        @staticmethod
+        def query_task_requeue_receipt(_command: object) -> TaskRequeueReceiptV1:
+            return receipt
+
+    class _Rows:
+        @staticmethod
+        def rows_for_factory_run(_run_id: str) -> tuple[dict[str, str], ...]:
+            return ({"task_id": "TASK-1"},)
+
+    class _TaskRuntime:
+        def __init__(self, _workspace: str) -> None:
+            pass
+
+        @staticmethod
+        def query_observable_task_rows_projection() -> _Rows:
+            return _Rows()
+
+    monkeypatch.setattr(service, "_revalidated_pm_stage_artifact_binding", _proof)
+    monkeypatch.setattr(factory_run_service_module, "get_task_market_service", lambda _workspace: _TaskMarket())
+    monkeypatch.setattr(factory_run_service_module, "TaskRuntimeService", _TaskRuntime)
+
+    resolved = await service._validated_local_rework_receipt(
+        run_id="factory-current",
+        failed_stage=failed_stage,
+        failure_fingerprint=failure_fingerprint,
+        schedule={
+            "status": "committed",
+            "factory_run_id": "factory-current",
+            "owner_task_id": "TASK-1",
+            "target_stage": target_stage,
+            "requeue_idempotency_key": receipt.idempotency_key,
+            "requeue_receipt_ref": receipt.receipt_hash,
+        },
+    )
+
+    assert (resolved is not None) is expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("proof_available", [True, False])
+async def test_stage_context_uses_only_factory_revalidated_pm_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    proof_available: bool,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    captured: dict[str, Any] = {}
+
+    class _CaptureExecutor:
+        async def execute(
+            self,
+            stage: str,
+            _run: FactoryRun,
+            context: dict[str, Any],
+        ) -> StageResult:
+            captured.update(context)
+            return StageResult(stage=stage, status="failed", output="capture")
+
+    service = FactoryRunService(
+        workspace,
+        cache_root=tmp_path / "runtime",
+        executor=_CaptureExecutor(),
+    )
+    trusted = SimpleNamespace(task_ids=("TASK-1",))
+
+    async def _proof(_run_id: str) -> SimpleNamespace | None:
+        return trusted if proof_available else None
+
+    monkeypatch.setattr(service, "_revalidated_pm_stage_artifact_binding", _proof)
+    forged = SimpleNamespace(task_ids=("TASK-FORGED",))
+    await service._execute_stage_logic(
+        FactoryRun(
+            id="factory-current",
+            config=FactoryConfig(name="binding-test"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-09T00:00:00+00:00",
+        ),
+        "director_dispatch",
+        {PM_STAGE_ARTIFACT_BINDING_CONTEXT_KEY: forged},
+    )
+
+    if proof_available:
+        assert captured[PM_STAGE_ARTIFACT_BINDING_CONTEXT_KEY] is trusted
+    else:
+        assert PM_STAGE_ARTIFACT_BINDING_CONTEXT_KEY not in captured
+
+
+def test_local_rework_action_is_idempotent_per_failure_but_allows_next_failure(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    service = FactoryRunService(
+        workspace,
+        cache_root=tmp_path / "runtime",
+        executor=_FailedSettledStageExecutor(),
+    )
+    common = {
+        "run_id": "factory-current",
+        "failed_stage": "quality_gate",
+        "owner_task_id": "TASK-1",
+        "target_stage": "pending_exec",
+    }
+
+    first = service._factory_local_rework_command(**common, failure_fingerprint="a" * 64)
+    duplicate = service._factory_local_rework_command(**common, failure_fingerprint="a" * 64)
+    next_failure = service._factory_local_rework_command(**common, failure_fingerprint="b" * 64)
+
+    assert duplicate.idempotency_key == first.idempotency_key
+    assert duplicate.idempotency_fingerprint == first.idempotency_fingerprint
+    assert next_failure.idempotency_key != first.idempotency_key
+    assert next_failure.idempotency_fingerprint != first.idempotency_fingerprint
 
 
 @pytest.mark.asyncio

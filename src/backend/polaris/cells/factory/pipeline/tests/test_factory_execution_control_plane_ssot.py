@@ -7,6 +7,7 @@ import contextlib
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -29,6 +30,10 @@ from polaris.cells.factory.pipeline.internal.factory_run_models import (
     FactoryRunStatus,
 )
 from polaris.cells.factory.pipeline.internal.factory_run_service import FactoryRunService
+from polaris.cells.factory.pipeline.internal.factory_stage_artifact_bindings import (
+    PM_STAGE_ARTIFACT_BINDING_CONTEXT_KEY,
+    RevalidatedPMStageArtifactBindingV1,
+)
 from polaris.cells.factory.pipeline.internal.factory_stage_executor import OrchestrationStageExecutor
 from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
     evaluate_canonical_factory_authority,
@@ -70,6 +75,8 @@ def _canonical_projection(
             "source": "task_runtime.execution_fact",
             "authoritative": True,
             "degraded": False,
+            "owner_scope": "pm_contract_tasks",
+            "owned_task_ids": ["TASK-1"],
             "row_count": 1,
             "rows": [
                 {
@@ -146,6 +153,22 @@ def _factory_run(run_id: str = "factory-ssot") -> FactoryRun:
     )
 
 
+def _revalidated_pm_task_scope(
+    run_id: str,
+    *task_ids: str,
+) -> RevalidatedPMStageArtifactBindingV1:
+    proof = object.__new__(RevalidatedPMStageArtifactBindingV1)
+    object.__setattr__(
+        proof,
+        "binding",
+        SimpleNamespace(factory_run_id=run_id, stage="pm_planning"),
+    )
+    object.__setattr__(proof, "item", None)
+    object.__setattr__(proof, "document", {})
+    object.__setattr__(proof, "task_ids", tuple(task_ids))
+    return proof
+
+
 def test_canonical_authority_rejects_report_or_session_substitutes() -> None:
     missing_projection = evaluate_canonical_factory_authority(
         {},
@@ -185,6 +208,7 @@ def test_canonical_authority_rejects_partial_task_runtime_convergence() -> None:
     projection = _canonical_projection()
     task_runtime = projection["task_runtime_projection"]
     task_runtime["row_count"] = 2
+    task_runtime["owned_task_ids"] = ["TASK-1", "TASK-2"]
     task_runtime["rows"].append(
         {
             "task_id": "TASK-2",
@@ -214,6 +238,7 @@ def test_completed_verified_boundary_does_not_override_failed_runtime() -> None:
     projection = _canonical_projection()
     task_runtime = projection["task_runtime_projection"]
     task_runtime["row_count"] = 2
+    task_runtime["owned_task_ids"] = ["TASK-1", "TASK-3"]
     task_runtime["rows"] = [
         {
             "task_id": "1",
@@ -260,7 +285,7 @@ def test_completed_verified_boundary_does_not_override_failed_runtime() -> None:
     )
 
     assert authority.task_runtime_converged is False
-    assert authority.incomplete_runtime_task_ids == ("3",)
+    assert authority.incomplete_runtime_task_ids == ("TASK-3",)
     assert authority.director_stage_authorized is False
     assert authority.reason_code == "task_runtime_not_converged"
 
@@ -341,6 +366,7 @@ def test_r181_failed_runtime_without_boundary_still_incomplete() -> None:
         }
     ]
     task_runtime["row_count"] = 1
+    task_runtime["owned_task_ids"] = ["TASK-3"]
     projection["task_boundary"] = {"ok": False, "verdict_count": 0, "latest_by_task": {}, "failed": []}
 
     authority = evaluate_canonical_factory_authority(
@@ -349,7 +375,7 @@ def test_r181_failed_runtime_without_boundary_still_incomplete() -> None:
     )
 
     assert authority.director_stage_authorized is False
-    assert "3" in authority.incomplete_runtime_task_ids or "3" in authority.incomplete_task_ids
+    assert "TASK-3" in authority.incomplete_runtime_task_ids
 
 
 def test_completed_verified_boundary_does_not_override_active_runtime() -> None:
@@ -358,6 +384,7 @@ def test_completed_verified_boundary_does_not_override_active_runtime() -> None:
     projection = _canonical_projection()
     task_runtime = projection["task_runtime_projection"]
     task_runtime["row_count"] = 2
+    task_runtime["owned_task_ids"] = ["TASK-1", "TASK-2"]
     task_runtime["rows"] = [
         {
             "task_id": "1",
@@ -387,9 +414,52 @@ def test_completed_verified_boundary_does_not_override_active_runtime() -> None:
     }
     authority = evaluate_canonical_factory_authority(projection, sequence_barrier_satisfied=True)
     assert authority.task_runtime_converged is False
-    assert authority.incomplete_runtime_task_ids == ("2",)
+    assert authority.incomplete_runtime_task_ids == ("TASK-2",)
     assert authority.director_stage_authorized is False
     assert authority.reason_code == "task_runtime_not_converged"
+
+
+def test_canonical_authority_rejects_missing_pm_contract_task_runtime_row() -> None:
+    """A contract obligation cannot disappear merely because no row exists."""
+
+    projection = _canonical_projection()
+    projection["task_runtime_projection"]["owned_task_ids"] = ["TASK-1", "TASK-2"]
+
+    authority = evaluate_canonical_factory_authority(projection)
+
+    assert authority.director_stage_authorized is False
+    assert authority.contract_task_scope_valid is False
+    assert authority.missing_runtime_task_ids == ("TASK-2",)
+    assert authority.reason_code == "task_runtime_contract_scope_mismatch"
+
+
+def test_canonical_authority_rejects_pm_contract_alias_collision() -> None:
+    projection = _canonical_projection()
+    projection["task_runtime_projection"]["owned_task_ids"] = ["1", "TASK-1"]
+
+    authority = evaluate_canonical_factory_authority(projection)
+
+    assert authority.director_stage_authorized is False
+    assert authority.contract_task_scope_valid is False
+    assert authority.reason_code == "task_runtime_contract_scope_mismatch"
+
+
+def test_auxiliary_task_boundary_failure_does_not_poison_contract_scope() -> None:
+    projection = _canonical_projection()
+    task_boundary = projection["task_boundary"]
+    task_boundary["ok"] = False
+    task_boundary["latest_by_task"]["settlement-internal"] = {
+        "task_id": "settlement-internal",
+        "status": "failed",
+        "ok": False,
+        "failure_class": "INTERNAL_SETTLEMENT_FAILURE",
+    }
+    task_boundary["failed"] = [{"task_id": "settlement-internal", "status": "failed"}]
+
+    authority = evaluate_canonical_factory_authority(projection)
+
+    assert authority.contract_task_scope_valid is True
+    assert authority.director_stage_authorized is True
 
 
 def test_canonical_projection_filters_task_rows_to_current_run(
@@ -466,16 +536,23 @@ def test_canonical_projection_filters_task_rows_to_current_run(
         lambda *_args, **_kwargs: {"source": "run_ledger"},
     )
     executor = OrchestrationStageExecutor(tmp_path)
+    # Mutable mirror is deliberately tampered. Completion scope must remain the
+    # revalidated immutable PM binding, not this workspace file projection.
     monkeypatch.setattr(
         executor,
         "_load_pm_plan_tasks",
-        lambda: [{"id": "TASK-CURRENT"}],
+        lambda: [{"id": "TASK-TAMPERED"}],
     )
 
     observable_rows = executor._read_observable_task_rows(factory_run_id="factory-current")
     projection = executor._canonical_factory_projection(
         _factory_run("factory-current"),
-        {},
+        {
+            PM_STAGE_ARTIFACT_BINDING_CONTEXT_KEY: _revalidated_pm_task_scope(
+                "factory-current",
+                "TASK-CURRENT",
+            )
+        },
     )
 
     assert [row["task_id"] for row in observable_rows] == ["TASK-CURRENT", "TASK-INTERNAL"]

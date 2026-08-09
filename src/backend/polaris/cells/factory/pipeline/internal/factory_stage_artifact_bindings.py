@@ -40,6 +40,12 @@ _MAX_IDENTITY_UTF8_BYTES = 256
 _MAX_LOGICAL_PATH_UTF8_BYTES = 1024
 _LOWER_HEX = frozenset("0123456789abcdef")
 
+# Private in-process evidence carrier key.  FactoryRunService overwrites this
+# key only after strict PM stage-event + immutable snapshot revalidation.  The
+# stage executor must never reconstruct delivery ownership from the mutable
+# workspace ``tasks/plan.json`` mirror.
+PM_STAGE_ARTIFACT_BINDING_CONTEXT_KEY = "_factory_revalidated_pm_stage_artifact_binding"
+
 
 class FactoryStageArtifactBindingError(RuntimeError):
     """Typed strict-validation failure for Factory stage artifact bindings."""

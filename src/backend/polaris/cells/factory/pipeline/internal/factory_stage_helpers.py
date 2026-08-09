@@ -72,6 +72,7 @@ class CanonicalFactoryAuthority:
 
     source_valid: bool
     task_runtime_projection_authoritative: bool
+    contract_task_scope_valid: bool
     task_runtime_converged: bool
     terminal_runtime_delivery_recovered: bool
     task_boundary_present: bool
@@ -86,6 +87,9 @@ class CanonicalFactoryAuthority:
     failure_class: str
     responsible_layer: str
     task_count: int
+    expected_task_ids: tuple[str, ...]
+    missing_runtime_task_ids: tuple[str, ...]
+    unexpected_runtime_task_ids: tuple[str, ...]
     incomplete_task_ids: tuple[str, ...]
     incomplete_runtime_task_ids: tuple[str, ...]
     missing_task_boundary_ids: tuple[str, ...]
@@ -99,6 +103,7 @@ class CanonicalFactoryAuthority:
         return (
             self.source_valid
             and self.task_runtime_projection_authoritative
+            and self.contract_task_scope_valid
             and runtime_delivery_authorized
             and self.task_boundary_present
             and self.task_boundary_completed_verified
@@ -130,6 +135,20 @@ def _alternate_task_id_token(task_id: str) -> str:
     if token.isdigit():
         return f"TASK-{token}"
     return ""
+
+
+def _canonical_task_id_token(task_id: Any) -> str:
+    """Normalize numeric ``N``/``TASK-N`` aliases to one contract identity."""
+
+    token = str(task_id or "").strip()
+    if not token:
+        return ""
+    upper = token.upper()
+    if upper.startswith("TASK-") and upper[5:].isdigit():
+        return f"TASK-{int(upper[5:])}"
+    if token.isdigit():
+        return f"TASK-{int(token)}"
+    return token
 
 
 def _runtime_row_execution_completed(row: Mapping[str, Any]) -> bool:
@@ -168,15 +187,42 @@ def evaluate_canonical_factory_authority(
     task_runtime_map = task_runtime if isinstance(task_runtime, Mapping) else {}
     runtime_readiness = task_runtime_map.get("readiness")
     runtime_readiness_map = runtime_readiness if isinstance(runtime_readiness, Mapping) else {}
+    owned_task_ids = task_runtime_map.get("owned_task_ids")
+    owned_task_id_items = owned_task_ids if isinstance(owned_task_ids, list) else []
+    canonical_owned_items = [_canonical_task_id_token(item) for item in owned_task_id_items]
+    expected_task_ids = tuple(sorted({item for item in canonical_owned_items if item}))
+    contract_id_collision = len(expected_task_ids) != len(owned_task_id_items)
+    contract_task_scope_declared = (
+        task_runtime_map.get("owner_scope") == "pm_contract_tasks"
+        and bool(expected_task_ids)
+        and not contract_id_collision
+        and all(canonical_owned_items)
+    )
+
     runtime_rows = task_runtime_map.get("rows")
     runtime_row_items = (
         [row for row in runtime_rows if isinstance(row, Mapping)] if isinstance(runtime_rows, list) else []
     )
-    normalized_runtime_rows: dict[str, Mapping[str, Any]] = {
-        str(row.get("task_id") or row.get("id") or "").strip(): row
-        for row in runtime_row_items
-        if str(row.get("task_id") or row.get("id") or "").strip()
-    }
+    normalized_runtime_rows: dict[str, Mapping[str, Any]] = {}
+    runtime_id_collision = False
+    for row in runtime_row_items:
+        task_id = _canonical_task_id_token(row.get("task_id") or row.get("id"))
+        if not task_id:
+            continue
+        if task_id in normalized_runtime_rows:
+            runtime_id_collision = True
+            continue
+        normalized_runtime_rows[task_id] = row
+    observed_runtime_task_ids = set(normalized_runtime_rows)
+    expected_runtime_task_ids = set(expected_task_ids)
+    missing_runtime_task_ids = tuple(sorted(expected_runtime_task_ids - observed_runtime_task_ids))
+    unexpected_runtime_task_ids = tuple(sorted(observed_runtime_task_ids - expected_runtime_task_ids))
+    contract_task_scope_valid = (
+        contract_task_scope_declared
+        and not runtime_id_collision
+        and not missing_runtime_task_ids
+        and not unexpected_runtime_task_ids
+    )
     runtime_rows_authoritative = all(
         row.get("source") == "task_runtime.execution_fact"
         and row.get("status_source") == "task_runtime.execution_fact"
@@ -197,31 +243,35 @@ def evaluate_canonical_factory_authority(
     task_boundary_map = task_boundary if isinstance(task_boundary, Mapping) else {}
     latest_by_task = task_boundary_map.get("latest_by_task")
     latest_by_task_map = latest_by_task if isinstance(latest_by_task, Mapping) else {}
-    normalized_verdicts: dict[str, Mapping[str, Any]] = {
-        str(task_id).strip(): verdict
-        for task_id, verdict in latest_by_task_map.items()
-        if str(task_id).strip() and isinstance(verdict, Mapping)
-    }
-    # Normalize TASK-N ↔ N keys so boundary/runtime ids match (r181 multi-task).
-    verdict_by_runtime_id: dict[str, Mapping[str, Any]] = {}
-    for task_id, verdict in normalized_verdicts.items():
-        verdict_by_runtime_id[task_id] = verdict
-        alt = _alternate_task_id_token(task_id)
-        if alt and alt not in verdict_by_runtime_id:
-            verdict_by_runtime_id[alt] = verdict
+    # Scope TaskBoundary to the same PM contract identities as TaskRuntime.
+    # Auxiliary settlement/verifier boundaries remain observable but cannot
+    # add obligations or poison Director delivery authority.
+    normalized_verdicts: dict[str, Mapping[str, Any]] = {}
+    boundary_id_collision = False
+    for raw_task_id, verdict in latest_by_task_map.items():
+        task_id = _canonical_task_id_token(raw_task_id)
+        if task_id not in expected_runtime_task_ids or not isinstance(verdict, Mapping):
+            continue
+        if task_id in normalized_verdicts:
+            boundary_id_collision = True
+            continue
+        normalized_verdicts[task_id] = verdict
+    contract_task_scope_valid = contract_task_scope_valid and not boundary_id_collision
 
     incomplete_runtime_task_ids = tuple(
         sorted(task_id for task_id, row in normalized_runtime_rows.items() if not _runtime_row_execution_completed(row))
     )
     task_runtime_converged = (
-        task_runtime_projection_authoritative and bool(normalized_runtime_rows) and not incomplete_runtime_task_ids
+        task_runtime_projection_authoritative
+        and contract_task_scope_valid
+        and bool(normalized_runtime_rows)
+        and not incomplete_runtime_task_ids
     )
     missing_task_boundary_ids = tuple(
         sorted(
             task_id
-            for task_id in normalized_runtime_rows
-            if task_id not in verdict_by_runtime_id
-            and (_alternate_task_id_token(task_id) or "") not in verdict_by_runtime_id
+            for task_id in expected_task_ids
+            if task_id not in normalized_verdicts
         )
     )
     failed_task_boundary_ids = tuple(
@@ -235,7 +285,13 @@ def evaluate_canonical_factory_authority(
     )
     task_boundary_present = bool(normalized_verdicts)
     incomplete_task_ids = tuple(
-        sorted(set(incomplete_runtime_task_ids) | set(missing_task_boundary_ids) | set(failed_task_boundary_ids))
+        sorted(
+            set(missing_runtime_task_ids)
+            | set(unexpected_runtime_task_ids)
+            | set(incomplete_runtime_task_ids)
+            | set(missing_task_boundary_ids)
+            | set(failed_task_boundary_ids)
+        )
     )
     # Both independent axes must converge: every runtime row is completed and
     # every matching TaskBoundary verdict is completed_verified.  TASK-N/N
@@ -291,6 +347,11 @@ def evaluate_canonical_factory_authority(
         detail = "TaskRuntime fact-only authority projection is missing or degraded"
         failure_class = "TASK_RUNTIME_PROJECTION_NOT_AUTHORITATIVE"
         responsible_layer = "execution_control_plane"
+    elif not contract_task_scope_valid:
+        reason_code = "task_runtime_contract_scope_mismatch"
+        detail = "PM contract task identities do not exactly match canonical TaskRuntime and TaskBoundary scope"
+        failure_class = "EXECUTION_AUTHORITY_SCOPE_MISMATCH"
+        responsible_layer = "execution_control_plane"
     elif not normalized_runtime_rows:
         reason_code = "task_runtime_tasks_missing"
         detail = "TaskRuntime authority projection contains no owned task rows"
@@ -329,6 +390,7 @@ def evaluate_canonical_factory_authority(
     authority = CanonicalFactoryAuthority(
         source_valid=source_valid,
         task_runtime_projection_authoritative=task_runtime_projection_authoritative,
+        contract_task_scope_valid=contract_task_scope_valid,
         task_runtime_converged=task_runtime_converged,
         terminal_runtime_delivery_recovered=False,
         task_boundary_present=task_boundary_present,
@@ -342,7 +404,10 @@ def evaluate_canonical_factory_authority(
         detail=detail,
         failure_class=failure_class,
         responsible_layer=responsible_layer,
-        task_count=len(normalized_runtime_rows),
+        task_count=len(expected_task_ids),
+        expected_task_ids=expected_task_ids,
+        missing_runtime_task_ids=missing_runtime_task_ids,
+        unexpected_runtime_task_ids=unexpected_runtime_task_ids,
         incomplete_task_ids=incomplete_task_ids,
         incomplete_runtime_task_ids=incomplete_runtime_task_ids,
         missing_task_boundary_ids=missing_task_boundary_ids,
@@ -385,7 +450,11 @@ def recover_terminal_runtime_delivery_authority(
 
     if authority.director_stage_authorized:
         return authority
-    if not authority.source_valid or not authority.task_runtime_projection_authoritative:
+    if (
+        not authority.source_valid
+        or not authority.task_runtime_projection_authoritative
+        or not authority.contract_task_scope_valid
+    ):
         return None
 
     payload = dict(projection or {})
@@ -395,37 +464,43 @@ def recover_terminal_runtime_delivery_authority(
     runtime_row_items = (
         [row for row in runtime_rows if isinstance(row, Mapping)] if isinstance(runtime_rows, list) else []
     )
-    if not runtime_row_items:
+    if not runtime_row_items or not authority.expected_task_ids:
+        return None
+
+    runtime_rows_by_task: dict[str, Mapping[str, Any]] = {}
+    for row in runtime_row_items:
+        task_id = _canonical_task_id_token(row.get("task_id") or row.get("id"))
+        if not task_id or task_id in runtime_rows_by_task:
+            return None
+        runtime_rows_by_task[task_id] = row
+    if set(runtime_rows_by_task) != set(authority.expected_task_ids):
         return None
 
     task_boundary = payload.get("task_boundary")
     task_boundary_map = task_boundary if isinstance(task_boundary, Mapping) else {}
-    if task_boundary_map.get("ok") is not True or task_boundary_map.get("failed"):
-        return None
     latest_by_task = task_boundary_map.get("latest_by_task")
     latest_by_task_map = latest_by_task if isinstance(latest_by_task, Mapping) else {}
     verdict_by_task: dict[str, Mapping[str, Any]] = {}
-    for task_id, verdict in latest_by_task_map.items():
-        token = str(task_id or "").strip()
-        if not token or not isinstance(verdict, Mapping):
+    for raw_task_id, verdict in latest_by_task_map.items():
+        task_id = _canonical_task_id_token(raw_task_id)
+        if task_id not in authority.expected_task_ids or not isinstance(verdict, Mapping):
             continue
-        verdict_by_task[token] = verdict
-        alternate = _alternate_task_id_token(token)
-        if alternate and alternate not in verdict_by_task:
-            verdict_by_task[alternate] = verdict
+        if task_id in verdict_by_task:
+            return None
+        verdict_by_task[task_id] = verdict
+    if set(verdict_by_task) != set(authority.expected_task_ids):
+        return None
 
     recovered_task_ids: list[str] = []
-    for row in runtime_row_items:
-        task_id = str(row.get("task_id") or row.get("id") or "").strip()
-        if not task_id:
-            return None
+    for task_id in authority.expected_task_ids:
+        row = runtime_rows_by_task[task_id]
         state = str(row.get("execution_state") or row.get("status") or "").strip().lower()
         if state != "completed":
             if state not in _TERMINAL_DELIVERY_RECOVERY_STATES:
                 return None
             recovered_task_ids.append(task_id)
 
-        verdict = verdict_by_task.get(task_id) or verdict_by_task.get(_alternate_task_id_token(task_id))
+        verdict = verdict_by_task.get(task_id)
         if not isinstance(verdict, Mapping):
             return None
         if not bool(verdict.get("ok")) or str(verdict.get("status") or "").strip().lower() != "completed_verified":

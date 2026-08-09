@@ -3244,18 +3244,14 @@ class TestOrchestrationStageExecutor:
         result = await service.execute_stage(run.id, "quality_gate")
 
         assert result.status == "failed"
-        assert result.metadata["factory_terminal_drain_deferred"] == {
-            "schema_version": "factory.terminal-drain-deferred.v1",
-            "reason": "quality_rework_decision_pending",
-            "decision_owner": "factory_orchestration",
-        }
+        assert "factory_terminal_drain_deferred" not in result.metadata
         updated_run = await service.get_run(run.id)
         assert updated_run.status == FactoryRunStatus.FAILED
         assert updated_run.metadata["last_failed_stage"] == "quality_gate"
         assert updated_run.metadata["failure"]["code"] == "FACTORY_STAGE_FAILED"
-        pending_decision_lease = service._admission.current()
-        assert pending_decision_lease is not None
-        assert pending_decision_lease.state.value == "active"
+        terminal_lease = service._admission.current()
+        assert terminal_lease is not None
+        assert terminal_lease.state.value == "released"
 
         await service.complete_run(run.id, success=False)
 

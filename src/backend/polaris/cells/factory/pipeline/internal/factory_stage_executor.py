@@ -135,7 +135,9 @@ from .factory_run_models import (
     StageResult,
 )
 from .factory_stage_artifact_bindings import (
+    PM_STAGE_ARTIFACT_BINDING_CONTEXT_KEY,
     FactoryStageArtifactBindingError,
+    RevalidatedPMStageArtifactBindingV1,
     parse_factory_stage_artifact_json,
     revalidate_pm_stage_artifact_binding,
 )
@@ -7731,36 +7733,40 @@ class OrchestrationStageExecutor:
         task_runtime_authority = task_runtime_projection.to_authority_dict(factory_run_id=run.id)
         # Factory portfolios also create internal settlement / verification
         # TaskRuntime rows under the same factory_run_id. Director completion
-        # authority owns only PM contract tasks; auxiliary lifecycle rows must
-        # remain observable without becoming extra delivery obligations.
-        plan_task_ids: set[str] = set()
-        for task in self._load_pm_plan_tasks():
-            task_id = str(task.get("id") or task.get("task_id") or "").strip()
-            if not task_id:
-                continue
-            plan_task_ids.add(task_id)
-            alternate = helpers._alternate_task_id_token(task_id)
-            if alternate:
-                plan_task_ids.add(alternate)
-        if plan_task_ids:
-            authority_rows = task_runtime_authority.get("rows")
-            scoped_rows = (
-                [
-                    row
-                    for row in authority_rows
-                    if isinstance(row, dict)
-                    and (
-                        str(row.get("task_id") or "").strip() in plan_task_ids
-                        or helpers._alternate_task_id_token(str(row.get("task_id") or "").strip()) in plan_task_ids
-                    )
-                ]
-                if isinstance(authority_rows, list)
-                else []
-            )
-            task_runtime_authority["rows"] = scoped_rows
-            task_runtime_authority["row_count"] = len(scoped_rows)
-            task_runtime_authority["owner_scope"] = "pm_contract_tasks"
-            task_runtime_authority["owned_task_ids"] = sorted(plan_task_ids)
+        # authority owns only the immutable, committed PM contract tasks.
+        # Mutable workspace mirrors are never completion authority.
+        proof = context.get(PM_STAGE_ARTIFACT_BINDING_CONTEXT_KEY)
+        contract_task_ids: list[str] = []
+        if (
+            isinstance(proof, RevalidatedPMStageArtifactBindingV1)
+            and proof.binding.factory_run_id == run.id
+            and proof.binding.stage == "pm_planning"
+        ):
+            contract_task_ids = [
+                helpers._canonical_task_id_token(task_id)
+                for task_id in proof.task_ids
+                if helpers._canonical_task_id_token(task_id)
+            ]
+        expected_task_ids = set(contract_task_ids)
+        authority_rows = task_runtime_authority.get("rows")
+        scoped_rows = (
+            [
+                row
+                for row in authority_rows
+                if isinstance(row, dict)
+                and helpers._canonical_task_id_token(row.get("task_id")) in expected_task_ids
+            ]
+            if isinstance(authority_rows, list)
+            else []
+        )
+        task_runtime_authority["rows"] = scoped_rows
+        task_runtime_authority["row_count"] = len(scoped_rows)
+        task_runtime_authority["owner_scope"] = (
+            "pm_contract_tasks" if contract_task_ids else "pm_contract_binding_invalid"
+        )
+        # Keep duplicates so the pure evaluator can reject PM aliases such as
+        # ``1`` plus ``TASK-1`` instead of silently collapsing obligations.
+        task_runtime_authority["owned_task_ids"] = sorted(contract_task_ids)
         projection["task_runtime_projection"] = task_runtime_authority
         return projection
 
