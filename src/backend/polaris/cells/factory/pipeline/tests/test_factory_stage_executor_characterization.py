@@ -7377,6 +7377,19 @@ class TestRunWorkspaceQualityChecks:
                 ],
             },
         )
+        from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
+
+        TaskRuntimeService(str(tmp_path)).ensure_task_row(
+            external_task_id="TASK-1",
+            subject="Create source and entrypoint",
+            description="Own the JavaScript source repaired by workspace verification",
+            metadata={
+                "external_task_id": "TASK-1",
+                "factory_run_id": "factory-context",
+                "target_files": ["package.json", "src/engine/rules.js", "src/index.js"],
+                "role": "director",
+            },
+        )
         captured: dict[str, Any] = {}
 
         async def fake_run_director_materialization_quality_repair(
@@ -7392,6 +7405,20 @@ class TestRunWorkspaceQualityChecks:
             changed_files: list[str],
             repair_attempt: int,
         ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+            from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+            command = ExecuteRoleSessionCommandV1(
+                role="director",
+                session_id=str(context["session_id"]),
+                workspace=workspace,
+                user_message="repair current verifier failure",
+                run_id=run_id,
+                task_id=target_task_id,
+                context=context,
+                metadata=dict(context.get("metadata") or {}),
+            )
+            attempt_validation = RoleRuntimeService()._validate_directed_effect_session_attempt(command)
             captured.update(
                 {
                     "workspace": workspace,
@@ -7404,9 +7431,29 @@ class TestRunWorkspaceQualityChecks:
                     "artifact_quality_errors": artifact_quality_errors,
                     "changed_files": changed_files,
                     "repair_attempt": repair_attempt,
+                    "attempt_validation": attempt_validation,
                 }
             )
-            return [], {"attempted": True, "success": False, "source_tools": [], "tool_results": 0}
+            return (
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {
+                            "file": "src/engine/rules.js",
+                            "operation": "modify",
+                            "source_tool": "director_materialization_quality_repair",
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "source_tools": ["director_materialization_quality_repair"],
+                    "tool_results": 1,
+                    "write_tool_evidence": True,
+                },
+            )
 
         monkeypatch.setattr(
             "polaris.cells.roles.adapters.public.service.run_director_materialization_quality_repair",
@@ -7428,6 +7475,27 @@ class TestRunWorkspaceQualityChecks:
         assert repair_context["ce_blueprint"]["artifact"] == "runtime/state/blueprints/factory-context.review.json"
         assert "Chief Engineer blueprint" in repair_context["chief_engineer_blueprint_evidence"]
         assert captured["task"]["metadata"]["ce_blueprint"] == repair_context["ce_blueprint"]
+        assert captured["target_task_id"] == "TASK-1"
+        execution_attempt = repair_context["task_runtime_execution_attempt"]
+        authority = repair_context["task_runtime_execution_attempt_authority"]
+        assert execution_attempt.external_task_id == captured["target_task_id"]
+        assert execution_attempt.run_id == "factory-context"
+        assert execution_attempt.role_id == "director"
+        assert repair_context["session_id"] == execution_attempt.session_id
+        assert captured["attempt_validation"].status == "valid"
+        assert captured["attempt_validation"].execution_attempt == execution_attempt
+        authority_snapshot = authority.snapshot(lock_timeout_seconds=5.0)
+        assert authority_snapshot.success is True
+        assert authority_snapshot.identity == execution_attempt
+        assert summary["task_runtime_repair_attempt"] == {
+            "task_id": captured["target_task_id"],
+            "session_id": execution_attempt.session_id,
+            "settled": True,
+            "outcome": "completed",
+        }
+        task_rows = TaskRuntimeService(str(tmp_path)).list_task_rows(include_terminal=True)
+        owner_row = next(row for row in task_rows if row["metadata"].get("external_task_id") == "TASK-1")
+        assert owner_row["status"] == "completed"
 
     @pytest.mark.asyncio
     async def test_workspace_quality_ignores_deterministic_results_without_write_evidence(

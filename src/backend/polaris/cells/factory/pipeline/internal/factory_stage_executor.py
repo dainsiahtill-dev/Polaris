@@ -7648,6 +7648,151 @@ class OrchestrationStageExecutor:
         execution_attempt = TaskRuntimeExecutionAttemptIdentityV1.from_record(attempt_record)
         return external_task_id, task_row_id, execution_attempt
 
+    def _claim_workspace_quality_repair_attempt(
+        self,
+        *,
+        run_id: str,
+        repair_attempt: int,
+        target_files: list[str],
+    ) -> tuple[str, int, TaskRuntimeExecutionAttemptIdentityV1]:
+        """Claim the Director attempt that owns one post-verifier repair round.
+
+        Workspace verification used to invoke the guarded Director role without
+        a TaskRuntime execution attempt.  Directed-effect validation therefore
+        rejected the turn before the model could edit the failed artifacts.  A
+        repair round is real Director work: give it a fresh, run-bound task row,
+        propagate its exact session identity to roles.runtime, and terminally
+        settle it after the repair result is known.  PM and CE are intentionally
+        not restarted for this local verifier failure.
+        """
+
+        task_runtime = TaskRuntimeService(str(self.workspace))
+        normalized_targets = {
+            str(path or "").strip().replace("\\", "/")
+            for path in target_files
+            if str(path or "").strip()
+        }
+
+        def row_owner_score(candidate: Mapping[str, Any]) -> tuple[int, int]:
+            metadata = candidate.get("metadata")
+            metadata = metadata if isinstance(metadata, Mapping) else {}
+            candidate_factory_run_id = str(metadata.get("factory_run_id") or "").strip()
+            external_id = str(metadata.get("external_task_id") or candidate.get("external_task_id") or "").strip()
+            if candidate_factory_run_id != run_id or not external_id or external_id.startswith("factory-"):
+                return (-1, -1)
+            raw_paths: list[Any] = []
+            for key in ("target_files", "scope_paths", "project_declared_target_files"):
+                value = metadata.get(key)
+                if isinstance(value, str):
+                    raw_paths.append(value)
+                elif isinstance(value, list | tuple | set):
+                    raw_paths.extend(value)
+            candidate_paths = {
+                str(path or "").strip().replace("\\", "/")
+                for path in raw_paths
+                if str(path or "").strip()
+            }
+            overlap = len(normalized_targets.intersection(candidate_paths))
+            status = str(candidate.get("status") or candidate.get("raw_status") or "").strip().lower()
+            rework_priority = 1 if status in {"pending", "ready", "blocked", "failed"} else 0
+            return (overlap, rework_priority)
+
+        owner_rows = [
+            candidate
+            for candidate in task_runtime.list_task_rows(include_terminal=True)
+            if row_owner_score(candidate)[0] > 0
+        ]
+        owner_row = max(owner_rows, key=row_owner_score) if owner_rows else None
+        if owner_row is not None:
+            owner_metadata = owner_row.get("metadata")
+            owner_metadata = owner_metadata if isinstance(owner_metadata, Mapping) else {}
+            external_task_id = str(
+                owner_metadata.get("external_task_id") or owner_row.get("external_task_id") or ""
+            ).strip()
+            task_row_id = task_runtime.normalize_task_id(owner_row.get("id"))
+            if task_row_id is None:
+                raise RuntimeError("workspace_quality_repair_owner_task_id_invalid")
+            owner_status = str(owner_row.get("status") or owner_row.get("raw_status") or "").strip().lower()
+            if owner_status in {"completed", "failed", "cancelled"}:
+                reopened = task_runtime.reopen_task_row(
+                    task_row_id,
+                    reason="workspace_quality_gate_failed",
+                    metadata={
+                        "factory_run_id": run_id,
+                        "workspace_quality_repair": True,
+                        "repair_attempt": repair_attempt,
+                    },
+                )
+                if not isinstance(reopened, Mapping) or str(reopened.get("status") or "").lower() not in {
+                    "pending",
+                    "ready",
+                    "blocked",
+                }:
+                    raise RuntimeError("workspace_quality_repair_owner_reopen_failed")
+            row = owner_row
+        else:
+            external_task_id = (
+                f"factory-quality-gate:{run_id}:llm-repair:{repair_attempt}:"
+                f"{uuid.uuid4().hex[:12]}"
+            )
+            row = task_runtime.ensure_task_row(
+                external_task_id=external_task_id,
+                subject="Director workspace quality repair",
+                description=(
+                    "Repair the current workspace verifier failure in the Director "
+                    "stage without restarting PM or Chief Engineer"
+                ),
+                metadata={
+                    "factory_run_id": run_id,
+                    "factory_stage": "quality_gate",
+                    "role": "director",
+                    "execution_identity_required": True,
+                    "workspace_quality_repair": True,
+                    "repair_attempt": repair_attempt,
+                    "target_files": sorted(normalized_targets),
+                },
+            )
+            task_row_id = task_runtime.normalize_task_id(row.get("id"))
+            if task_row_id is None:
+                raise RuntimeError("workspace_quality_repair_task_id_invalid")
+        binding = bind_runtime_task_to_factory_run(
+            BindRuntimeTaskToFactoryRunCommandV1(
+                workspace=str(self.workspace),
+                task_id=external_task_id,
+                factory_run_id=run_id,
+            )
+        )
+        if not binding.ok:
+            raise RuntimeError(f"workspace_quality_repair_binding_failed:{binding.code}")
+        claim = task_runtime.claim_execution(
+            task_row_id,
+            worker_id="director",
+            role_id="director",
+            run_id=run_id,
+            lease_ttl_seconds=300,
+            selection_source="factory_stage_executor.workspace_quality_repair",
+            external_task_id=external_task_id,
+            context_summary="director_workspace_quality_repair",
+            metadata={
+                "factory_run_id": run_id,
+                "factory_stage": "quality_gate",
+                "workspace_quality_repair": True,
+                "repair_attempt": repair_attempt,
+                "execution_identity_required": True,
+            },
+        )
+        session = claim.get("session") if isinstance(claim, dict) else None
+        attempt_record = claim.get("execution_attempt") if isinstance(claim, dict) else None
+        if (
+            not isinstance(session, Mapping)
+            or not isinstance(attempt_record, Mapping)
+            or not bool(claim.get("success"))
+        ):
+            reason = str(claim.get("reason") or "unknown") if isinstance(claim, dict) else "invalid_claim_result"
+            raise RuntimeError(f"workspace_quality_repair_claim_failed:{reason}")
+        execution_attempt = TaskRuntimeExecutionAttemptIdentityV1.from_record(attempt_record)
+        return external_task_id, task_row_id, execution_attempt
+
     @staticmethod
     def _materialization_settle_attempt_outcome(stage_status: str) -> TaskRuntimeExecutionAttemptSettlementOutcomeV1:
         """Map settle procedure stage_status to a terminal TaskRuntime outcome.
@@ -8431,7 +8576,9 @@ class OrchestrationStageExecutor:
                 "source_tools": [],
                 "tool_results": 0,
             }
-        target_files = self._workspace_quality_repair_target_files()
+        declared_target_files = self._workspace_quality_repair_target_files()
+        diagnostic_target_files = self._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors)
+        target_files = diagnostic_target_files or declared_target_files
         repair_context: dict[str, Any] = {
             "delivery_mode": "materialize_changes",
             "target_files": (target_files or changed_files)[:80],
@@ -8493,12 +8640,44 @@ class OrchestrationStageExecutor:
         task_metadata = dict(repair_context)
         task_metadata["target_files"] = target_files or changed_files
         try:
+            repair_task_id, repair_task_row_id, execution_attempt = self._claim_workspace_quality_repair_attempt(
+                run_id=run_id,
+                repair_attempt=repair_attempt,
+                target_files=target_files or changed_files,
+            )
+            from polaris.cells.runtime.task_runtime.public import (
+                create_task_runtime_execution_attempt_authority,
+            )
+
+            execution_attempt_authority = create_task_runtime_execution_attempt_authority(execution_attempt)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            return [], {
+                "attempted": True,
+                "repair_mode": "director_llm",
+                "success": False,
+                "error": f"workspace_quality_repair_attempt_claim_failed:{exc}",
+                "source_tools": ["director_materialization_quality_repair_error"],
+                "tool_results": 0,
+            }
+
+        repair_context["task_id"] = repair_task_id
+        repair_context["session_id"] = execution_attempt.session_id
+        repair_context["task_runtime_execution_attempt"] = execution_attempt
+        repair_context["task_runtime_execution_attempt_authority"] = execution_attempt_authority
+        repair_metadata = repair_context.get("metadata")
+        if not isinstance(repair_metadata, dict):
+            repair_metadata = {}
+            repair_context["metadata"] = repair_metadata
+        repair_metadata["task_id"] = repair_task_id
+        repair_metadata["task_runtime_session_id"] = execution_attempt.session_id
+        repair_metadata["workspace_quality_repair"] = True
+        try:
             from polaris.cells.roles.adapters.public.service import run_director_materialization_quality_repair
 
             results, summary = await run_director_materialization_quality_repair(
                 str(self.workspace),
                 task={"target_files": target_files or changed_files, "metadata": task_metadata},
-                target_task_id=f"factory-quality-gate:{run_id}:llm-repair",
+                target_task_id=repair_task_id,
                 run_id=run_id,
                 context=repair_context,
                 original_message=self._workspace_quality_repair_original_message(
@@ -8511,7 +8690,8 @@ class OrchestrationStageExecutor:
                 repair_attempt=repair_attempt,
             )
         except Exception as exc:  # noqa: BLE001 - fail closed around external LLM repair boundary.
-            return [], {
+            results = []
+            summary = {
                 "attempted": True,
                 "repair_mode": "director_llm",
                 "success": False,
@@ -8529,6 +8709,27 @@ class OrchestrationStageExecutor:
         normalized_summary["source_tools"] = source_tools
         normalized_summary.setdefault("tool_results", len(results))
         normalized_summary.setdefault("attempted", True)
+        mutation_committed = any(
+            self._workspace_quality_repair_result_has_mutation(dict(item))
+            for item in results
+            if isinstance(item, Mapping)
+        )
+        settle_result = self._settle_director_stage_materialization_attempt(
+            task_row_id=repair_task_row_id,
+            execution_attempt=execution_attempt,
+            stage_status="success" if mutation_committed else "failed",
+            summary=(
+                "workspace_quality_repair_mutation_committed"
+                if mutation_committed
+                else str(normalized_summary.get("error") or "workspace_quality_repair_no_mutation")
+            ),
+        )
+        normalized_summary["task_runtime_repair_attempt"] = {
+            "task_id": repair_task_id,
+            "session_id": execution_attempt.session_id,
+            "settled": bool(settle_result.get("success")),
+            "outcome": "completed" if mutation_committed else "failed",
+        }
         return [dict(item) for item in results], normalized_summary
 
     @staticmethod
