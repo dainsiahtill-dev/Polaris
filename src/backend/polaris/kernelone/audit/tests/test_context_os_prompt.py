@@ -277,6 +277,73 @@ def test_context_os_prompt_audit_still_rejects_metadata_as_message_metadata_key(
     assert audit["control_plane"]["metadata_key_hits"] == ["metadata"]
 
 
+def test_context_os_prompt_audit_accepts_qa_workspace_quality_data_plane() -> None:
+    """QA receipts may name workspace paths and implementation metrics."""
+    current_user_instruction = "Verify the workspace against the PM contract and CE blueprint."
+    audit = audit_context_os_prompt_messages(
+        messages=[
+            {"role": "system", "content": "You are Polaris QA."},
+            {
+                "role": "user",
+                "content": (
+                    "[UNTRUSTED_USER_MESSAGE]\n"
+                    '{"workspace":"/home/user/project","command":"npm test"}\n'
+                    "implementation depth metrics: files=12 assertions=14"
+                ),
+            },
+            {"role": "user", "content": current_user_instruction},
+        ],
+        context_sources=("state_first_context_os.project",),
+        metadata={"state_first_mode_active": True},
+        current_user_instruction=current_user_instruction,
+        expected=True,
+    )
+
+    assert audit["ok"] is True
+    assert audit["control_plane"]["content_hits"] == []
+    assert audit["control_plane"]["isolated"] is True
+
+
+@pytest.mark.parametrize("authority_key", ("workspace_root", "factory_run_id", "job_token"))
+def test_context_os_prompt_audit_still_rejects_strong_authority_content_key(authority_key: str) -> None:
+    current_user_instruction = "Verify the workspace."
+    audit = audit_context_os_prompt_messages(
+        messages=[
+            {"role": "system", "content": f'authority: {{"{authority_key}":"secret"}}'},
+            {"role": "user", "content": current_user_instruction},
+        ],
+        context_sources=("state_first_context_os.project",),
+        metadata={"state_first_mode_active": True},
+        current_user_instruction=current_user_instruction,
+        expected=True,
+    )
+
+    assert audit["ok"] is False
+    assert authority_key in audit["control_plane"]["content_hits"]
+
+
+@pytest.mark.parametrize("metadata_key", ("workspace", "metrics"))
+def test_context_os_prompt_audit_still_rejects_generic_terms_as_message_metadata(metadata_key: str) -> None:
+    current_user_instruction = "Verify the workspace."
+    audit = audit_context_os_prompt_messages(
+        messages=[
+            {
+                "role": "system",
+                "content": "Projected QA evidence.",
+                "metadata": {metadata_key: "not-prompt-data"},
+            },
+            {"role": "user", "content": current_user_instruction},
+        ],
+        context_sources=("state_first_context_os.project",),
+        metadata={"state_first_mode_active": True},
+        current_user_instruction=current_user_instruction,
+        expected=True,
+    )
+
+    assert audit["ok"] is False
+    assert audit["control_plane"]["metadata_key_hits"] == [metadata_key]
+
+
 def test_context_os_prompt_audit_still_rejects_task_id_metadata() -> None:
     audit = audit_context_os_prompt_messages(
         messages=[

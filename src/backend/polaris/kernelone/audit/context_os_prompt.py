@@ -147,6 +147,15 @@ _PROMPT_SAFE_OPERATIONAL_CONTENT_KEYS = frozenset(
         "chief_engineer_blueprint_id",
         "delivery_mode",
         "director_quality_repair",
+        # Generic QA data-plane nouns. Workspace validation receipts commonly
+        # serialize a project path under ``workspace`` and verifier output may
+        # contain headings such as ``implementation depth metrics``. Neither is
+        # proof that runtime authority leaked into the prompt. They remain
+        # forbidden as message metadata / structured projection keys; only this
+        # weaker natural-language content scan excludes them. Strong authority
+        # keys such as workspace_root, factory_run_id, and job_token still fail.
+        "metrics",
+        "workspace",
     }
 )
 
