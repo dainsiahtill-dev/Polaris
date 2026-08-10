@@ -5,12 +5,11 @@ import io
 import json
 import sys
 import unittest
-
-import pytest
 from email.message import Message
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from websockets.exceptions import WebSocketException
 
 sys.path.insert(0, "/home/dains/Documents/polaris/src/backend/scripts/factory_bench")
@@ -744,9 +743,7 @@ class TestEventWaitUntilTerminal(unittest.TestCase):
         """R163: first GET timed out under Director load; retry recovers status."""
 
         ok_resp = FakeHTTPResponse(
-            json.dumps({"run_id": "run-42", "status": "running", "phase": "director_dispatch"}).encode(
-                "utf-8"
-            )
+            json.dumps({"run_id": "run-42", "status": "running", "phase": "director_dispatch"}).encode("utf-8")
         )
         with (
             patch(

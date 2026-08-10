@@ -222,9 +222,7 @@ def plan_transaction_tool_surface(
         tool_definitions = [structured_output_transport.tool_definition]
         tool_choice_override = structured_output_transport.tool_choice
         runtime_tool_policy_audit = dict(runtime_tool_policy_audit)
-        runtime_tool_policy_audit["structured_output_transport"] = dict(
-            structured_output_transport.audit
-        )
+        runtime_tool_policy_audit["structured_output_transport"] = dict(structured_output_transport.audit)
 
     return TransactionToolSurfacePlan(
         tool_definitions=tool_definitions,

@@ -206,9 +206,7 @@ async def check_permission(
         raise StructuredHTTPException(status_code=500, code="INTERNAL_ERROR", message="internal error") from e
 
 
-@router.get(
-    "/effective", response_model=EffectivePermissionsResponse, dependencies=[Depends(require_auth)]
-)
+@router.get("/effective", response_model=EffectivePermissionsResponse, dependencies=[Depends(require_auth)])
 async def get_effective_permissions(
     subject_type: str = "role",
     subject_id: str = "pm",

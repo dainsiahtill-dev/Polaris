@@ -50,9 +50,7 @@ def test_structured_output_contract_replaces_executable_tool_surface(monkeypatch
     monkeypatch.setattr(
         tool_surface,
         "build_native_tool_schemas",
-        lambda _profile: [
-            {"type": "function", "function": {"name": "write_file", "parameters": {"type": "object"}}}
-        ],
+        lambda _profile: [{"type": "function", "function": {"name": "write_file", "parameters": {"type": "object"}}}],
     )
     monkeypatch.setattr(
         tool_surface,
@@ -80,9 +78,7 @@ def test_structured_output_contract_replaces_executable_tool_surface(monkeypatch
         mode="stream",
     )
 
-    assert [item["function"]["name"] for item in plan.tool_definitions] == [
-        "submit_structured_role_output"
-    ]
+    assert [item["function"]["name"] for item in plan.tool_definitions] == ["submit_structured_role_output"]
     assert plan.tool_choice_override == {
         "type": "function",
         "function": {"name": "submit_structured_role_output"},

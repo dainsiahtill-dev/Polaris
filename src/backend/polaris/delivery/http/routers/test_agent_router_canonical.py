@@ -155,23 +155,26 @@ class TestAgentRouterCanonicalSessions:
             )
 
             async def run() -> None:
-                with patch.object(
-                    agent_router._ROLE_RUNTIME,
-                    "execute_role_session",
-                    AsyncMock(
-                        return_value=SimpleNamespace(
-                            ok=True,
-                            output="done",
-                            thinking="thinking",
-                            tool_calls=("read_file",),
-                            status="ok",
-                            error_message=None,
-                        )
+                with (
+                    patch.object(
+                        agent_router._ROLE_RUNTIME,
+                        "execute_role_session",
+                        AsyncMock(
+                            return_value=SimpleNamespace(
+                                ok=True,
+                                output="done",
+                                thinking="thinking",
+                                tool_calls=("read_file",),
+                                status="ok",
+                                error_message=None,
+                            )
+                        ),
                     ),
-                ), patch.object(
-                    agent_router._AGENT_CONTINUITY_ENGINE,
-                    "project",
-                    new=lambda *_args, **_kwargs: projection,
+                    patch.object(
+                        agent_router._AGENT_CONTINUITY_ENGINE,
+                        "project",
+                        new=lambda *_args, **_kwargs: projection,
+                    ),
                 ):
                     result = await agent_router._execute_agent_message(
                         session_id=created["session_id"],

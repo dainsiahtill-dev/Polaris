@@ -38,7 +38,9 @@ async def test_desktop_context_defaults_to_auto_bootstrap(monkeypatch: pytest.Mo
     monkeypatch.setattr(
         "polaris.tests.agent_stress.backend_bootstrap.resolve_backend_context", lambda **_kwargs: desktop_context
     )
-    monkeypatch.setattr("polaris.tests.agent_stress.backend_bootstrap._auto_bootstrap_backend", _fake_auto_bootstrap_backend)
+    monkeypatch.setattr(
+        "polaris.tests.agent_stress.backend_bootstrap._auto_bootstrap_backend", _fake_auto_bootstrap_backend
+    )
 
     session = await ensure_backend_session(auto_bootstrap=True)
 
@@ -77,7 +79,9 @@ async def test_explicit_startup_workspace_is_forwarded_to_auto_bootstrap(
     monkeypatch.setattr(
         "polaris.tests.agent_stress.backend_bootstrap.resolve_backend_context", lambda **_kwargs: desktop_context
     )
-    monkeypatch.setattr("polaris.tests.agent_stress.backend_bootstrap._auto_bootstrap_backend", _fake_auto_bootstrap_backend)
+    monkeypatch.setattr(
+        "polaris.tests.agent_stress.backend_bootstrap._auto_bootstrap_backend", _fake_auto_bootstrap_backend
+    )
 
     session = await ensure_backend_session(auto_bootstrap=True, startup_workspace=expected_workspace)
 
@@ -103,7 +107,9 @@ async def test_allow_desktop_context_env_preserves_healthy_desktop(
     monkeypatch.setattr(
         "polaris.tests.agent_stress.backend_bootstrap.resolve_backend_context", lambda **_kwargs: desktop_context
     )
-    monkeypatch.setattr("polaris.tests.agent_stress.backend_bootstrap._probe_preflight_status", _fake_probe_preflight_status)
+    monkeypatch.setattr(
+        "polaris.tests.agent_stress.backend_bootstrap._probe_preflight_status", _fake_probe_preflight_status
+    )
 
     session = await ensure_backend_session(auto_bootstrap=True)
 

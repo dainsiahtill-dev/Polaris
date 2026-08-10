@@ -86,9 +86,7 @@ def normalize_batch_receipt(receipt: Any) -> dict[str, Any]:
     canonical = dict(normalized)
     canonical["results"] = _normalize_result_items(canonical.get("results"))
     canonical["raw_results"] = _normalize_result_items(canonical.get("raw_results"))
-    canonical["effect_receipts"] = _normalize_effect_receipts(
-        canonical.get("effect_receipts")
-    )
+    canonical["effect_receipts"] = _normalize_effect_receipts(canonical.get("effect_receipts"))
     canonical["batch_id"] = str(canonical.get("batch_id", "") or "")
     canonical["turn_id"] = str(canonical.get("turn_id", "") or "")
     canonical["success_count"] = int(canonical.get("success_count", 0) or 0)
@@ -132,9 +130,7 @@ def merge_batch_receipts(receipts: Iterable[Any]) -> dict[str, Any] | None:
 
         merged_results.extend(_normalize_result_items(receipt.get("results")))
         merged_raw_results.extend(_normalize_result_items(receipt.get("raw_results")))
-        merged_effect_receipts.extend(
-            _normalize_effect_receipts(receipt.get("effect_receipts"))
-        )
+        merged_effect_receipts.extend(_normalize_effect_receipts(receipt.get("effect_receipts")))
         success_count += int(receipt.get("success_count", 0) or 0)
         failure_count += int(receipt.get("failure_count", 0) or 0)
         pending_async_count += int(receipt.get("pending_async_count", 0) or 0)

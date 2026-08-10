@@ -117,7 +117,9 @@ def _suppressed_tool_batch_tool_refs(decision: Mapping[str, Any]) -> list[dict[s
     """Return audit-safe references for decoded tool calls suppressed by policy."""
 
     tool_batch = decision.get("tool_batch")
-    invocations = tool_batch.get("invocations") if isinstance(tool_batch, Mapping) else getattr(tool_batch, "invocations", None)
+    invocations = (
+        tool_batch.get("invocations") if isinstance(tool_batch, Mapping) else getattr(tool_batch, "invocations", None)
+    )
     if not isinstance(invocations, list):
         return []
 
@@ -232,9 +234,8 @@ def ensure_native_write_tool_batch_or_fail(
         merged_metadata,
         native_tool_calls_from_response(llm_response),
     )
-    has_native = (
-        int(native_tool_call_facts.get("native_tool_calls_count") or 0) > 0
-        or bool(native_tool_call_names_from_facts(native_tool_call_facts))
+    has_native = int(native_tool_call_facts.get("native_tool_calls_count") or 0) > 0 or bool(
+        native_tool_call_names_from_facts(native_tool_call_facts)
     )
     has_write = _native_facts_include_write_tools(native_tool_call_facts, metadata=merged_metadata)
     # R134: undischarged native write tools must never reach process terminal.

@@ -75,9 +75,7 @@ _VERIFICATION_TOOLS: frozenset[str] = frozenset(
 )
 
 _EFFECT_RECEIPT_TOOL_NAME = "effect_receipt"
-_EFFECT_RECEIPT_SUCCESS_STATUSES: frozenset[str] = frozenset(
-    {"success", "succeeded", "ok", "completed", "complete"}
-)
+_EFFECT_RECEIPT_SUCCESS_STATUSES: frozenset[str] = frozenset({"success", "succeeded", "ok", "completed", "complete"})
 _EFFECT_RECEIPT_FAILURE_VALUES: frozenset[str] = frozenset(
     {"false", "0", "no", "failed", "failure", "error", "errored"}
 )

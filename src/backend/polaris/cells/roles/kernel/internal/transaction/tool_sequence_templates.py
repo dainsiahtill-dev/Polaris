@@ -38,6 +38,7 @@ _READ_TOOLS: frozenset[str] = frozenset(
     }
 )
 
+
 def _group_has_any(group: list[str], candidates: frozenset[str]) -> bool:
     """Check if any tool in group is in candidates."""
     return any(t in candidates for t in group)

@@ -8,6 +8,7 @@ from polaris.kernelone.runtime.defaults import DEFAULT_WORKSPACE
 
 router = APIRouter()
 
+
 @router.get("/v2/memos/list", dependencies=[Depends(require_auth)], response_model=MemosListResponse)
 def v2_get_memos(request: Request, limit: int = 200) -> dict[str, Any]:
     """List workspace memos."""

@@ -820,7 +820,9 @@ class RetryOrchestrator:
                     )
                     candidate_bootstrap_decision = retry_decision
                     break
-                if escalated_definitions is not None and not any(name in ACTIVE_WRITE_TOOLS for name in retry_tool_names):
+                if escalated_definitions is not None and not any(
+                    name in ACTIVE_WRITE_TOOLS for name in retry_tool_names
+                ):
                     logger.warning(
                         "mutation-contract retry attempt=%s emitted no write tools under escalation; "
                         "trying deterministic write fallback (decision_tools=%s)",

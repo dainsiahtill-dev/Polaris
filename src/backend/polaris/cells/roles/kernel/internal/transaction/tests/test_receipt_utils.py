@@ -94,9 +94,5 @@ def test_normalize_batch_receipt_filters_invalid_effect_receipt_shapes() -> None
         }
     )
 
-    assert normalized["effect_receipts"] == [
-        {"effect_id": "effect-1", "status": "success"}
-    ]
-    assert normalize_batch_receipt({"effect_receipts": {"bad": "shape"}})[
-        "effect_receipts"
-    ] == []
+    assert normalized["effect_receipts"] == [{"effect_id": "effect-1", "status": "success"}]
+    assert normalize_batch_receipt({"effect_receipts": {"bad": "shape"}})["effect_receipts"] == []
