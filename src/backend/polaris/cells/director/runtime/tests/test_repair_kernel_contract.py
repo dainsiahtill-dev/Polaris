@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -6310,8 +6312,8 @@ def test_public_javascript_missing_test_target_covers_npm_module_not_found() -> 
     assert "assert.ok(packageJson.name" in smoke_content
 
 
-def test_public_javascript_frontend_smoke_target_respects_esm_package() -> None:
-    """Regression: a ``type=module`` package cannot execute a generated require()-based test."""
+def test_public_javascript_frontend_smoke_target_respects_esm_package(tmp_path: Path) -> None:
+    """Generated smoke accepts mixed CLI/Web entrypoints and rejects broken HTML references."""
 
     source_tool = js_syntax.JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL
     diagnostic = "artifact_quality_error: npm test failed (exit=1): Could not find 'dist/tests/verify.test.js'"
@@ -6346,6 +6348,49 @@ def test_public_javascript_frontend_smoke_target_respects_esm_package() -> None:
     assert "import assert from 'node:assert';" in smoke_content
     assert "fileURLToPath(import.meta.url)" in smoke_content
     assert "require('assert')" not in smoke_content
+    assert "is not referenced by declared HTML" not in smoke_content
+    assert "HTML references undeclared script" in smoke_content
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is required to execute the generated JavaScript smoke test")
+    fixture_files = {
+        "package.json": '{"name":"web-ts-app","type":"module"}\n',
+        "index.html": '<script type="module" src="./dist/web.js"></script>\n',
+        "dist/main.js": "console.log('cli');\n",
+        "dist/web.js": "console.log('web');\n",
+        "tests/verify.test.js": smoke_content,
+    }
+    for relative_path, content in fixture_files.items():
+        destination = tmp_path / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(content, encoding="utf-8")
+    passed = subprocess.run(
+        [node, "--test", "tests/verify.test.js"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=20,
+        check=False,
+    )
+    assert passed.returncode == 0, passed.stdout + passed.stderr
+
+    (tmp_path / "index.html").write_text(
+        '<script type="module" src="./dist/missing.js"></script>\n',
+        encoding="utf-8",
+    )
+    rejected = subprocess.run(
+        [node, "--test", "tests/verify.test.js"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=20,
+        check=False,
+    )
+    assert rejected.returncode != 0
+    assert "HTML references undeclared script dist/missing.js" in rejected.stdout + rejected.stderr
 
 
 def test_public_javascript_typescript_annotation_repair_updates_placeholder_contracts() -> None:

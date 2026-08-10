@@ -938,13 +938,37 @@ for (const file of declaredFiles) {{
 }}
 
 const htmlText = htmlFiles.map(read).join('\\n');
+const declaredScriptPaths = new Set(scriptFiles.map((file) => path.posix.normalize(file).replace(/^\\.\\//, '')));
+const htmlScriptPaths = new Set();
+for (const htmlFile of htmlFiles) {{
+  const htmlContent = read(htmlFile);
+  for (const match of htmlContent.matchAll(/<script\\b[^>]*\\bsrc\\s*=\\s*["']([^"']+)["'][^>]*>/gi)) {{
+    const source = match[1];
+    if (/^(?:[a-z][a-z0-9+.-]*:|\\/\\/)/i.test(source)) continue;
+    const cleanSource = source.split(/[?#]/, 1)[0];
+    const projectPath = cleanSource.startsWith('/')
+      ? cleanSource.slice(1)
+      : path.posix.join(path.posix.dirname(htmlFile), cleanSource);
+    htmlScriptPaths.add(path.posix.normalize(projectPath).replace(/^\\.\\//, ''));
+  }}
+}}
 const htmlIds = new Set([...htmlText.matchAll(/\\bid\\s*=\\s*["']([^"']+)["']/g)].map((match) => match[1]));
+
+if (htmlFiles.length > 0) {{
+  assert.ok(htmlScriptPaths.size > 0, 'declared HTML has no local script entrypoint');
+  for (const scriptPath of htmlScriptPaths) {{
+    assert.ok(
+      declaredScriptPaths.has(scriptPath),
+      'HTML references undeclared script ' + scriptPath,
+    );
+  }}
+}}
 
 for (const scriptFile of scriptFiles) {{
   const scriptText = read(scriptFile);
-  const scriptName = path.posix.basename(scriptFile);
-  if (htmlFiles.length > 0) {{
-    assert.ok(htmlText.includes(scriptName), `${{scriptFile}} is not referenced by declared HTML`);
+  const scriptPath = path.posix.normalize(scriptFile).replace(/^\\.\\//, '');
+  if (htmlFiles.length > 0 && !htmlScriptPaths.has(scriptPath)) {{
+    continue;
   }}
   const referencedIds = [
     ...scriptText.matchAll(/getElementById\\s*\\(\\s*["']([^"']+)["']\\s*\\)/g),
