@@ -59,7 +59,6 @@ from polaris.cells.control_plane.verifier_policy.public import (
     CompileEvidencePolicyCommandV1,
     compile_evidence_policy,
 )
-from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FactoryRoleEvidenceAuthorityBindingV1,
@@ -111,8 +110,10 @@ from . import (
     factory_deadline_calculations as deadline_calc,
     factory_director_route_audit as route_audit,
     factory_pm_contract_normalization as pm_contract_norm,
+    factory_prompt_compaction as prompt_compaction,
     factory_stage_helpers as helpers,
     factory_target_file_summaries as target_summaries,
+    factory_workspace_quality_evidence as wq_evidence,
 )
 from .factory_artifact_store import ArtifactStore
 from .factory_deadline_calculations import (  # noqa: F401 — re-exported for characterization-test surface
@@ -1690,97 +1691,11 @@ class OrchestrationStageExecutor:
     def _compact_workspace_quality_evidence_for_qa(text: str) -> str:
         """Build a short, parseable workspace-quality JSON payload for QA."""
 
-        try:
-            payload = json.loads(str(text or ""))
-        except (json.JSONDecodeError, TypeError, ValueError):
-            return helpers.compact_text_for_prompt(str(text or ""), max_chars=6000)
-        if not isinstance(payload, dict):
-            return helpers.compact_text_for_prompt(str(text or ""), max_chars=6000)
-
-        commands: list[dict[str, Any]] = []
-        for item in list(payload.get("commands") or []):
-            if not isinstance(item, dict):
-                continue
-            command = item.get("command")
-            if isinstance(command, list):
-                command_value: list[str] | str = [str(part) for part in command]
-            else:
-                command_value = str(command or "")
-            row: dict[str, Any] = {
-                "command": command_value,
-                "phase": str(item.get("phase") or ""),
-                "passed": bool(item.get("passed")),
-                "exit_code": item.get("exit_code"),
-            }
-            stdout_tail = str(item.get("stdout_tail") or "").strip()
-            stderr_tail = str(item.get("stderr_tail") or "").strip()
-            if stdout_tail:
-                row["stdout_tail"] = helpers.compact_text_for_prompt(stdout_tail, max_chars=700)
-            if stderr_tail:
-                row["stderr_tail"] = helpers.compact_text_for_prompt(stderr_tail, max_chars=700)
-            commands.append(row)
-
-        repair = payload.get("repair") if isinstance(payload.get("repair"), dict) else {}
-        compact_payload: dict[str, Any] = {
-            "schema_version": payload.get("schema_version"),
-            "source": payload.get("source"),
-            "factory_run_id": payload.get("factory_run_id"),
-            "workspace": payload.get("workspace"),
-            "passed": bool(payload.get("passed")),
-            "commands": commands,
-        }
-        if isinstance(repair, dict) and repair:
-            compact_payload["repair"] = {
-                "attempted": bool(repair.get("attempted")),
-                "success": bool(repair.get("success")),
-                "source_tools": [str(item) for item in list(repair.get("source_tools") or [])[:6]],
-                "evidence": [
-                    helpers.compact_text_for_prompt(str(item or ""), max_chars=220)
-                    for item in list(repair.get("evidence") or [])[:6]
-                    if str(item or "").strip()
-                ],
-            }
-        return json.dumps(compact_payload, ensure_ascii=False, indent=2)
+        return prompt_compaction.compact_workspace_quality_evidence_for_qa(text)
 
     @staticmethod
     def _compact_blueprint_evidence_for_repair(text: str) -> str:
-        try:
-            payload = json.loads(str(text or ""))
-        except (json.JSONDecodeError, TypeError, ValueError):
-            return helpers.compact_text_for_prompt(str(text or ""), max_chars=6000)
-        if not isinstance(payload, dict):
-            return helpers.compact_text_for_prompt(str(text or ""), max_chars=6000)
-
-        blueprints: list[dict[str, Any]] = []
-        for item in list(payload.get("blueprints") or [])[:12]:
-            if not isinstance(item, dict):
-                continue
-            compact_item: dict[str, Any] = {}
-            for key in ("task_id", "status", "blueprint_id", "blueprint_path", "summary", "recommendations", "risks"):
-                value = item.get(key)
-                if value not in (None, "", [], {}):
-                    compact_item[key] = value
-            if compact_item:
-                blueprints.append(compact_item)
-
-        compact_payload: dict[str, Any] = {
-            "schema_version": "factory.chief_engineer_review.evidence.v1",
-            "generated_blueprints": int(payload.get("generated_blueprints") or len(blueprints)),
-            "total_tasks": int(payload.get("total_tasks") or len(blueprints)),
-            "blueprints": blueprints,
-        }
-        signals = [
-            {
-                key: item.get(key)
-                for key in ("code", "severity", "detail", "task_id")
-                if isinstance(item, dict) and item.get(key) not in (None, "", [], {})
-            }
-            for item in list(payload.get("signals") or [])[:8]
-            if isinstance(item, dict)
-        ]
-        if signals:
-            compact_payload["signals"] = signals
-        return json.dumps(compact_payload, ensure_ascii=False, indent=2)
+        return prompt_compaction.compact_blueprint_evidence_for_repair(text)
 
     @staticmethod
     def _strip_prompt_meta_lines(text: str) -> str:
@@ -8474,292 +8389,39 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _workspace_quality_repair_result_has_mutation(item: dict[str, Any]) -> bool:
-        if not isinstance(item, dict) or not bool(item.get("success")):
-            return False
-        raw_result = item.get("result")
-        result: dict[str, Any] = raw_result if isinstance(raw_result, dict) else {}
-        tool_name = str(
-            item.get("tool")
-            or item.get("tool_name")
-            or result.get("tool")
-            or result.get("tool_name")
-            or result.get("operation")
-            or ""
-        ).strip()
-        operation = str(result.get("operation") or "").strip()
-        if tool_name in _WORKSPACE_QUALITY_MUTATION_TOKENS or operation in _WORKSPACE_QUALITY_MUTATION_TOKENS:
-            return True
-        before_hash = str(result.get("before_sha256") or "").strip()
-        after_hash = str(result.get("after_sha256") or "").strip()
-        return bool(before_hash and after_hash and before_hash != after_hash)
+        return wq_evidence.workspace_quality_repair_result_has_mutation(item)
 
     @staticmethod
     def _workspace_quality_repair_evidence(repair_results: list[dict[str, Any]]) -> list[str]:
-        evidence: list[str] = []
-        for item in repair_results:
-            if not isinstance(item, dict) or not bool(item.get("success")):
-                continue
-            raw_result = item.get("result")
-            result: dict[str, Any] = raw_result if isinstance(raw_result, dict) else {}
-            source_tool = str(result.get("source_tool") or item.get("source_tool") or "").strip()
-            file_name = str(result.get("file") or result.get("path") or "").strip()
-            operation = str(result.get("operation") or "").strip()
-            if source_tool or file_name:
-                evidence.append(
-                    "repair_write:"
-                    f"tool={source_tool or str(item.get('tool') or item.get('tool_name') or 'unknown')};"
-                    f"file={file_name or 'unknown'};"
-                    f"operation={operation or 'unknown'}"
-                )
-            before_hash = str(result.get("before_sha256") or "").strip()
-            after_hash = str(result.get("after_sha256") or "").strip()
-            if before_hash or after_hash:
-                evidence.append(
-                    f"repair_hash:file={file_name or 'unknown'};before={before_hash[:16]};after={after_hash[:16]}"
-                )
-            diff_excerpt = str(result.get("diff_excerpt") or "").strip()
-            if diff_excerpt:
-                compact_diff = " ".join(diff_excerpt.split())
-                evidence.append(f"repair_diff:file={file_name or 'unknown'};excerpt={compact_diff[:360]}")
-            if len(evidence) >= 12:
-                break
-        return evidence
+        return wq_evidence.workspace_quality_repair_evidence(repair_results)
 
     @staticmethod
     def _workspace_quality_summary_requires_task_boundary_triage(summary: dict[str, Any]) -> bool:
-        if bool(summary.get("task_boundary_interface_discrepancy_retry_authorized")):
-            return False
-        stage = str(summary.get("stage") or "").strip()
-        if stage == "runtime_plan_probe_unplannable":
-            return True
-        evidence = summary.get("interface_discrepancy_evidence")
-        if (
-            isinstance(evidence, dict)
-            and str(evidence.get("reason") or "") == "coverage_matched_but_unplannable"
-            and not bool(evidence.get("director_retry_allowed"))
-        ):
-            return True
-        plan_probe = summary.get("plan_probe_preaudit")
-        if not isinstance(plan_probe, dict):
-            return False
-        return str(plan_probe.get("status") or "").strip() == "coverage_matched_but_unplannable" and not bool(
-            plan_probe.get("plannable_source_tools")
-        )
+        return wq_evidence.workspace_quality_summary_requires_task_boundary_triage(summary)
 
     @staticmethod
     def _workspace_quality_deferred_owner_targets(summary: dict[str, Any]) -> list[str]:
         """Return precise targets deferred because the first repair task did not own them."""
 
-        if str(summary.get("stage") or "").strip() != "task_boundary_repair_targets_deferred":
-            return []
-        scope_filter = summary.get("task_boundary_scope_filter")
-        if not isinstance(scope_filter, Mapping):
-            return []
-        raw_targets = scope_filter.get("out_of_scope_repair_target_files")
-        if not isinstance(raw_targets, list | tuple | set):
-            return []
-        return _dedupe_workspace_repair_paths([str(item or "") for item in raw_targets if str(item or "").strip()])
+        return wq_evidence.workspace_quality_deferred_owner_targets(summary)
 
     @staticmethod
     def _workspace_quality_interface_discrepancy_evidence(
         summary: dict[str, Any],
         artifact_quality_errors: list[str] | None = None,
     ) -> dict[str, Any]:
-        raw_evidence = summary.get("interface_discrepancy_evidence")
-        evidence: dict[str, Any] = dict(raw_evidence) if isinstance(raw_evidence, dict) else {}
-        plan_probe = summary.get("plan_probe_preaudit")
-        plan_probe_payload = plan_probe if isinstance(plan_probe, dict) else {}
-        covered_unplannable_source_tools = [
-            str(item)
-            for item in plan_probe_payload.get(
-                "covered_unplannable_source_tools",
-                evidence.get("covered_unplannable_source_tools", []),
-            )
-            if str(item or "").strip()
-        ]
-        if not evidence:
-            evidence = {
-                "schema_version": "director.interface_discrepancy_receipt.v1",
-                "route": "task_boundary_quality_loop",
-                "plan_probe_status": str(plan_probe_payload.get("status") or ""),
-                "covered_unplannable_source_tools": covered_unplannable_source_tools,
-                "covered_unplannable_diagnostic_count": int(
-                    plan_probe_payload.get("covered_unplannable_diagnostic_count") or 0
-                ),
-                "coverage_gap_count": int(plan_probe_payload.get("coverage_gap_count") or 0),
-                "reason": "coverage_matched_but_unplannable",
-            }
-        diagnostic_blob = "\n".join(
-            [
-                json.dumps(plan_probe_payload, ensure_ascii=False, sort_keys=True),
-                json.dumps(evidence, ensure_ascii=False, sort_keys=True),
-                *[str(item or "") for item in artifact_quality_errors or []],
-            ]
-        ).lower()
-        cross_artifact_markers = (
-            "unresolved import",
-            "unresolved relative import",
-            "cannot find module",
-            "has no exported member",
-            "module has no exported member",
-            "does not provide an export",
-            "sibling module does not define",
-            "is not exported",
-            "undefined:",
-            "undefined symbol",
-            "unresolved external symbol",
-            "undefined reference",
-            "cannot find symbol",
-            "cannot find type",
-            "could not find",
-            "no such file or directory",
-            "file not found for module",
-            "unresolved import `",
-            "no `",
-            "not found in",
-            "was not declared in this scope",
-            "no member named",
-            "has no member named",
-            "ts2305",
-            "ts2306",
-            "ts2307",
-            "ts2459",
-            "e0432",
-            "e0583",
-            "e0761",
-        )
-        local_implementation_markers = (
-            "ts2322",
-            "ts2339",
-            "ts2345",
-            "ts2552",
-            "property ",
-            "does not exist on type",
-            "cannot find name",
-            "type ",
-            "is not assignable to type",
-        )
-        cross_artifact = any(marker in diagnostic_blob for marker in cross_artifact_markers)
-        local_implementation = any(marker in diagnostic_blob for marker in local_implementation_markers)
-        if cross_artifact:
-            recommended_owner = "chief_engineer"
-            recommended_route = "pending_design_interface_contract"
-            cross_artifact_route = "contract_amendment_request"
-        elif local_implementation:
-            recommended_owner = "director"
-            recommended_route = "director_retry_with_interface_discrepancy_context"
-            cross_artifact_route = "director_repair_within_contract"
-        else:
-            recommended_owner = str(evidence.get("recommended_owner") or "chief_engineer")
-            recommended_route = str(evidence.get("recommended_route") or "pending_design_interface_contract")
-            cross_artifact_route = (
-                "director_repair_within_contract" if recommended_owner == "director" else "contract_amendment_request"
-            )
-        director_retry_allowed = (
-            recommended_owner == "director" and recommended_route == "director_retry_with_interface_discrepancy_context"
-        )
-        plan_probe_status = str(evidence.get("plan_probe_status") or plan_probe_payload.get("status") or "")
-        covered_unplannable_diagnostic_count = int(
-            plan_probe_payload.get(
-                "covered_unplannable_diagnostic_count",
-                evidence.get("covered_unplannable_diagnostic_count") or 0,
-            )
-            or 0
-        )
-        coverage_gap_count = int(
-            plan_probe_payload.get("coverage_gap_count", evidence.get("coverage_gap_count") or 0) or 0
-        )
-        metadata_raw = evidence.get("metadata")
-        metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
-        metadata.update(
-            {
-                "route": "task_boundary_quality_loop",
-                "cross_artifact_route": cross_artifact_route,
-                "coverage_gap_count": coverage_gap_count,
-            }
-        )
-        canonical = DirectorInterfaceDiscrepancyReceiptV1.from_mapping(
-            {
-                **evidence,
-                "task_id": str(
-                    summary.get("task_id")
-                    or summary.get("target_task_id")
-                    or summary.get("run_id")
-                    or "workspace-quality"
-                ),
-                "source": evidence.get("source") or "factory.pipeline.workspace_quality",
-                "plan_probe_status": plan_probe_status,
-                "covered_unplannable_source_tools": covered_unplannable_source_tools,
-                "recommended_owner": recommended_owner,
-                "recommended_route": recommended_route,
-                "director_retry_allowed": director_retry_allowed,
-                "llm_fallback_blocked": not director_retry_allowed,
-                "reason": "coverage_matched_but_unplannable",
-                "metadata": metadata,
-            },
-        ).to_dict()
-        canonical.update(
-            {
-                "route": "task_boundary_quality_loop",
-                "cross_artifact_route": cross_artifact_route,
-                "coverage_gap_count": coverage_gap_count,
-                "covered_unplannable_diagnostic_count": covered_unplannable_diagnostic_count,
-            }
-        )
-        return canonical
+        return wq_evidence.workspace_quality_interface_discrepancy_evidence(summary, artifact_quality_errors)
 
     @staticmethod
     def _workspace_quality_interface_discrepancy_allows_director_retry(evidence: dict[str, Any]) -> bool:
-        return bool(evidence.get("director_retry_allowed")) and (
-            str(evidence.get("recommended_owner") or "") == "director"
-            and str(evidence.get("recommended_route") or "") == "director_retry_with_interface_discrepancy_context"
-        )
+        return wq_evidence.workspace_quality_interface_discrepancy_allows_director_retry(evidence)
 
     @staticmethod
     def _workspace_quality_repair_summary_projection(
         summary: dict[str, Any],
         artifact_quality_errors: list[str] | None = None,
     ) -> dict[str, Any]:
-        projected: dict[str, Any] = {}
-        for key in (
-            "stage",
-            "attempt",
-            "success",
-            "success_reason",
-            "reason",
-            "error_code",
-            "error",
-            "repair_mode",
-            "missing_target_files",
-            "runtime_smoke_target_files",
-            "semantic_quality_target_files",
-            "explicit_quality_target_files",
-            "repair_target_files",
-            "rotated_repair_targets",
-            "task_boundary_scope_filter",
-            "deferred_owner_rebind",
-            "plan_probe_preaudit",
-            "interface_discrepancy_evidence",
-            "deterministic_no_materialized_evidence",
-            "repair_kernel",
-            "deadline_decision",
-        ):
-            if key in summary:
-                projected[key] = summary[key]
-        if projected:
-            task_boundary_triage_required = (
-                OrchestrationStageExecutor._workspace_quality_summary_requires_task_boundary_triage(summary)
-            )
-            projected["task_boundary_triage_required"] = task_boundary_triage_required
-            if task_boundary_triage_required:
-                projected["triage_stage"] = "runtime_plan_probe_unplannable"
-                projected["interface_discrepancy_evidence"] = (
-                    OrchestrationStageExecutor._workspace_quality_interface_discrepancy_evidence(
-                        summary,
-                        artifact_quality_errors,
-                    )
-                )
-        return projected
+        return wq_evidence.workspace_quality_repair_summary_projection(summary, artifact_quality_errors)
 
     async def _run_workspace_quality_checks(self, run: FactoryRun, context: dict[str, Any]) -> tuple[bool, str]:
         commands = self._workspace_quality_commands(context)

@@ -1098,3 +1098,27 @@ rules:
     desired_automation:
       - python docs/governance/ci/scripts/check_no_pytest_benchmark.py --root polaris
       - fail if any test_*.py executes run_*_suite(...) or UnifiedBenchmarkRunner().run_suite(...)
+
+  # ---------------------------------------------------------------------------
+  # File-Size Budget Rule (2026-08-10) — Phase 0 regrowth guard
+  # ---------------------------------------------------------------------------
+
+  - id: file_size_budget
+    severity: high
+    description: >
+      Non-test Python source under src/backend must stay at or below 2000 lines.
+      Existing offenders are grandfathered through a frozen baseline
+      (docs/governance/ci/file_size_baseline.json) recording each file's exact
+      line count; any growth beyond the frozen count fails (regrowth guard), and
+      any NEW file over budget fails (no backsliding). The 2026-06-20
+      large-file refactor campaign split 19/20 files over 2000 lines but several
+      regrew; this gate makes the budget durable. Tests, generated code, and
+      governance meta-scripts under docs/ are out of scope.
+    evidence:
+      - docs/governance/ci/scripts/check_file_size_budget.py
+      - docs/governance/ci/scripts/tests/test_check_file_size_budget.py
+      - docs/governance/ci/file_size_baseline.json
+    current_status: enforced_non_regressive
+    desired_automation:
+      - python docs/governance/ci/scripts/check_file_size_budget.py
+      - fail if any non-test *.py exceeds its frozen baseline count or is a new file over 2000 lines
