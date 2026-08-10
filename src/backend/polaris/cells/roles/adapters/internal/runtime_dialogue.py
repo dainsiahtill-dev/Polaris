@@ -11,6 +11,8 @@ import hashlib
 from collections.abc import Mapping
 from typing import Any
 
+from polaris.kernelone.llm.budget_policy import TIMEOUT_OVERRIDE_CONTEXT_KEYS
+
 _RUNTIME_ENTRYPOINT = "roles.runtime.execute_role_session"
 
 
@@ -165,6 +167,13 @@ async def invoke_role_runtime_first(
 
     context_payload = _to_dict(context)
     metadata = _context_metadata(context_payload)
+    # Per-role orchestration metadata is trusted execution context.  Mirror
+    # only the canonical timeout keys into the RoleTurnRequest context so the
+    # LLM request preparer consumes the same deadline-derived budget instead
+    # of silently falling back to the generic 60-second provider timeout.
+    for key in TIMEOUT_OVERRIDE_CONTEXT_KEYS:
+        if key not in context_payload and key in metadata:
+            context_payload[key] = metadata[key]
     metadata.update(
         {
             "source": "roles.adapters.runtime_dialogue",

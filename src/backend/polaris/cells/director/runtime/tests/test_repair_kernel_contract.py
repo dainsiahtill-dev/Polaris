@@ -6674,6 +6674,49 @@ def test_public_typescript_local_js_import_repair_fails_closed_for_node_next_mod
     assert planning["planned"] is False
 
 
+def test_public_typescript_local_js_import_repair_plans_direct_node_typescript_test_runtime_miss() -> None:
+    diagnostic = (
+        "npm test failed (exit=1): Error [ERR_MODULE_NOT_FOUND]: Cannot find module "
+        "/workspace/src/verify.js imported from /workspace/tests/verify.test.ts"
+    )
+    base_files = {
+        "package.json": '{"type":"module","scripts":{"test":"node --test tests/verify.test.ts"}}\n',
+        "tsconfig.json": (
+            '{"compilerOptions":{"module":"NodeNext","moduleResolution":"NodeNext"},'
+            '"include":["src/**/*.ts"],"exclude":["tests"]}\n'
+        ),
+        "src/verify.ts": "export function verify(): boolean { return true; }\n",
+        "tests/verify.test.ts": (
+            'import { verify } from "../src/verify.js";\n'
+            'import test from "node:test";\n'
+            'test("verify", () => { if (!verify()) throw new Error("failed"); });\n'
+        ),
+    }
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,)))
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=js_syntax.TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    coverage_payload = coverage.to_dict()
+    assert coverage_payload["covered_diagnostic_count"] == 1
+    assert coverage_payload["executable_runtime_plan_diagnostic_count"] == 1
+    assert js_syntax.TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL in coverage_payload["items"][0]["matched_source_tools"]
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.local_js_import_extension"
+    assert planning["composition_summary"]["patch_count"] == 1
+    patch = planning["composition_summary"]["patches"][0]
+    assert patch["path"] == "tests/verify.test.ts"
+    assert 'from "../src/verify.ts"' in patch["content_after"]
+    assert 'from "../src/verify.js"' not in patch["content_after"]
+
+
 def test_public_npm_script_contract_covers_bench_missing_local_entrypoint_shape() -> None:
     source_tool = js_syntax.NPM_SCRIPT_CONTRACT_SOURCE_TOOL
     diagnostic = "script 'test' references missing local entrypoint: ./tests/register-ts.js"

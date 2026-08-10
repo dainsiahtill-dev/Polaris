@@ -14,6 +14,8 @@ Tests cover:
 
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -466,6 +468,53 @@ class TestOrchestrationCommandServiceRunOptions:
         opts = FactoryRunOptions()
         assert opts.config == {}
         assert opts.auto_start is True
+
+    @pytest.mark.asyncio
+    async def test_qa_run_preserves_structured_final_request_metadata(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from polaris.cells.orchestration.pm_dispatch.internal import orchestration_command_service as command_module
+
+        captured: list[object] = []
+
+        class _Service:
+            async def submit_run(self, request: object) -> object:
+                captured.append(request)
+                return SimpleNamespace(status=SimpleNamespace(value="running"))
+
+        async def _get_service() -> _Service:
+            return _Service()
+
+        monkeypatch.setattr(command_module, "get_orchestration_service", _get_service)
+        service = command_module.OrchestrationCommandService(settings=object())
+        evidence = {
+            "pm_task_contract": {"schema_version": "pm.task_contract.v1", "task_id": "TASK-1"},
+            "chief_engineer_blueprint": {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": "ce-1",
+            },
+            "target_files": ["src/main.py"],
+            "verifier_receipts": [{"command": ["pytest"], "exit_code": 0}],
+            "workspace_quality_evidence": {
+                "schema_version": "factory.workspace_quality_checks.v1",
+                "passed": True,
+            },
+        }
+
+        result = await service.execute_qa_run(
+            workspace=str(tmp_path),
+            target="Quality gate",
+            options={"input": "Review delivery", "metadata": evidence},
+        )
+
+        assert result.status == "running"
+        assert len(captured) == 1
+        request = captured[0]
+        assert request.role_entries[0].metadata == evidence
+        for key, value in evidence.items():
+            assert request.metadata[key] == value
 
 
 class TestOrchestrationCommandServiceActiveRunTracking:

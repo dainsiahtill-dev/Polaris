@@ -1006,6 +1006,46 @@ class TestQaExecute:
         assert parented["turn_request_id"].startswith("qa-judgement-")
         assert parented["turn_request_id"] != "attempt-parent-9"
 
+        evidence_parent = {
+            "run_id": "qa-run-1",
+            "metadata": {
+                "pm_task_contract": {"schema_version": "pm.task_contract.v1", "task_id": "TASK-1"},
+                "chief_engineer_blueprint": {
+                    "schema_version": "chief_engineer.blueprint.v1",
+                    "blueprint_id": "ce-1",
+                },
+                "target_files": ["src/main.py"],
+                "verifier_receipts": [{"command": ["pytest"], "exit_code": 0}],
+                "workspace_quality_evidence": {
+                    "schema_version": "factory.workspace_quality_checks.v1",
+                    "passed": True,
+                },
+                "request_timeout_seconds": 595,
+                "timeout_seconds": 595,
+            },
+        }
+        evidence_bound = _bind_qa_transaction_execution_identity(
+            task_id="task-0-qa",
+            run_id="qa-run-1",
+            review_type="quality_gate",
+            parent_context=evidence_parent,
+            stage_label="json_repair",
+        )
+        for key in (
+            "pm_task_contract",
+            "chief_engineer_blueprint",
+            "target_files",
+            "verifier_receipts",
+            "workspace_quality_evidence",
+        ):
+            assert evidence_bound[key] == evidence_parent["metadata"][key]
+            assert evidence_bound["metadata"][key] == evidence_parent["metadata"][key]
+            assert evidence_bound[key] is not evidence_parent["metadata"][key]
+        assert evidence_bound["request_timeout_seconds"] == 595
+        assert evidence_bound["timeout_seconds"] == 595
+        assert evidence_bound["metadata"]["request_timeout_seconds"] == 595
+        assert evidence_bound["metadata"]["timeout_seconds"] == 595
+
     def test_cognitive_runtime_blocked_is_nonfatal_when_static_gate_passes(
         self, tmp_path: Any, monkeypatch: Any
     ) -> None:
@@ -1037,7 +1077,27 @@ class TestQaExecute:
             adapter.execute(
                 "qa-task",
                 {"review_type": "quality_gate", "review_target": "Project quality gate"},
-                {"run_id": "run-1"},
+                {
+                    "run_id": "run-1",
+                    "metadata": {
+                        "pm_task_contract": {
+                            "schema_version": "pm.task_contract.v1",
+                            "task_id": "TASK-1",
+                            "target_files": ["src/main.py"],
+                        },
+                        "chief_engineer_blueprint": {
+                            "schema_version": "chief_engineer.blueprint.v1",
+                            "blueprint_id": "ce-1",
+                            "target_files": ["src/main.py"],
+                        },
+                        "target_files": ["src/main.py"],
+                        "verifier_receipts": [{"command": ["pytest"], "exit_code": 0}],
+                        "workspace_quality_evidence": {
+                            "schema_version": "factory.workspace_quality_checks.v1",
+                            "passed": True,
+                        },
+                    },
+                },
             )
         )
 
@@ -1098,7 +1158,27 @@ class TestQaExecute:
             adapter.execute(
                 "qa-task",
                 {"review_type": "quality_gate", "review_target": "Project quality gate"},
-                {"run_id": "run-1"},
+                {
+                    "run_id": "run-1",
+                    "metadata": {
+                        "pm_task_contract": {
+                            "schema_version": "pm.task_contract.v1",
+                            "task_id": "TASK-1",
+                            "target_files": ["src/main.py"],
+                        },
+                        "chief_engineer_blueprint": {
+                            "schema_version": "chief_engineer.blueprint.v1",
+                            "blueprint_id": "ce-1",
+                            "target_files": ["src/main.py"],
+                        },
+                        "target_files": ["src/main.py"],
+                        "verifier_receipts": [{"command": ["pytest"], "exit_code": 0}],
+                        "workspace_quality_evidence": {
+                            "schema_version": "factory.workspace_quality_checks.v1",
+                            "passed": True,
+                        },
+                    },
+                },
             )
         )
 
@@ -1109,6 +1189,12 @@ class TestQaExecute:
         assert all(item.get("native_tool_mode") == "disabled" for item in metadata_calls)
         assert all(item.get("response_format_mode") == "json" for item in metadata_calls)
         assert all(item.get("qa_output_contract") == "json_only_verdict" for item in metadata_calls)
+        for metadata in metadata_calls:
+            assert metadata["pm_task_contract"]["task_id"] == "TASK-1"
+            assert metadata["chief_engineer_blueprint"]["blueprint_id"] == "ce-1"
+            assert metadata["target_files"] == ["src/main.py"]
+            assert metadata["verifier_receipts"][0]["exit_code"] == 0
+            assert metadata["workspace_quality_evidence"]["passed"] is True
         assert result["success"] is True
         assert "qa_llm_judgement_unavailable" not in result["warnings"]
 

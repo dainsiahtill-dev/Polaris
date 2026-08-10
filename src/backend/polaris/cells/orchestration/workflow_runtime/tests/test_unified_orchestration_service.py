@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts import (
+    PipelineTask,
+    RoleEntrySpec,
+)
 from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
+    _adapter_context_for_task,
     _adapter_input_for_role,
     _adapter_task_id_for_role,
 )
@@ -55,3 +60,33 @@ def test_director_adapter_input_makes_taskboard_id_explicit() -> None:
     assert payload["source_task_id"] == "TASK-2"
     assert payload["metadata"] == metadata
 
+
+def test_adapter_context_preserves_role_metadata_and_task_budget() -> None:
+    metadata = {
+        "request_timeout_seconds": 595,
+        "pm_task_contract": {"id": "TASK-1"},
+    }
+    task = PipelineTask(
+        task_id="task-0-qa",
+        role_entry=RoleEntrySpec(
+            role_id="qa",
+            input="Review delivery",
+            scope_paths=["/workspace"],
+            metadata=metadata,
+        ),
+        timeout_seconds=595,
+    )
+
+    context = _adapter_context_for_task(
+        run_id="qa-run-1",
+        workspace="/workspace",
+        task=task,
+        role_metadata=metadata,
+    )
+
+    assert context == {
+        "run_id": "qa-run-1",
+        "workspace": "/workspace",
+        "timeout_seconds": 595,
+        "metadata": metadata,
+    }

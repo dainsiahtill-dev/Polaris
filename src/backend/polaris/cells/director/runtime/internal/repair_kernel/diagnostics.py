@@ -72,6 +72,11 @@ _JAVASCRIPT_MODULE_ERROR_RE = re.compile(
     r"[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\s+is not a function)",
     re.IGNORECASE,
 )
+_NODE_ESM_TYPESCRIPT_MODULE_NOT_FOUND_RE = re.compile(
+    r"Cannot find module\s+['\"]?(?P<missing>(?:file://)?/[^\s'\"]+\.js)['\"]?\s+"
+    r"imported from\s+['\"]?(?P<importer>(?:file://)?/[^\s'\"]+\.tsx?)['\"]?",
+    re.IGNORECASE,
+)
 _JAVASCRIPT_DOM_GLOBAL_RUNTIME_RE = re.compile(
     r"(?P<file>(?:file://)?/[^\s:]+\.js):(?P<line>\d+).*?"
     r"ReferenceError:\s+(?P<global>document|window)\s+is not defined",
@@ -551,6 +556,24 @@ def _normalize_one_error(text: str) -> RepairDiagnostic:
             message="HTML verification found a canvas page but no recognized container id.",
             raw=text,
             metadata={"language": "html", "contract": "html_container"},
+        )
+
+    node_esm_typescript_module_error = _NODE_ESM_TYPESCRIPT_MODULE_NOT_FOUND_RE.search(text)
+    if node_esm_typescript_module_error:
+        missing_path = str(node_esm_typescript_module_error.group("missing") or "").removeprefix("file://")
+        importer_path = str(node_esm_typescript_module_error.group("importer") or "").removeprefix("file://")
+        return RepairDiagnostic(
+            source="runtime_smoke",
+            code="javascript_module_error",
+            message=str(node_esm_typescript_module_error.group(0) or text).strip(),
+            path=importer_path,
+            raw=text,
+            metadata={
+                "language": "javascript",
+                "module_error_kind": "node_esm_typescript_source_import",
+                "missing_module_path": missing_path,
+                "importer_path": importer_path,
+            },
         )
 
     javascript_module_error = _JAVASCRIPT_MODULE_ERROR_RE.search(text)

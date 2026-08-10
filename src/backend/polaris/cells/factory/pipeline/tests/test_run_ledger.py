@@ -157,6 +157,41 @@ def test_job_token_accepts_blueprint_artifacts_as_ce_source() -> None:
     assert token.blueprint_hash
 
 
+def test_job_token_accepts_structured_pm_and_ce_authority() -> None:
+    record = {
+        "id": "L1-structured",
+        "target_files": ["src/index.ts"],
+        "scope_paths": ["src/index.ts"],
+        "pm_task_contracts": [
+            {
+                "id": "TASK-1",
+                "goal": "Build the product",
+                "target_files": ["src/index.ts"],
+            }
+        ],
+        "chief_engineer_blueprint": {
+            "factory_run_id": "factory-structured",
+            "blueprints": [{"task_id": "TASK-1", "target_files": ["src/index.ts"]}],
+        },
+    }
+
+    token = build_job_token_from_record(
+        record,
+        run_id="factory-structured",
+        project_id="L1-structured",
+        stage="workspace_validation",
+    )
+
+    assert token.capability_audit["ok"] is True
+    assert token.capability_audit["contract_sources"] == [
+        "pm_task_contracts",
+        "target_files",
+    ]
+    assert token.capability_audit["blueprint_sources"] == [
+        "chief_engineer_blueprint"
+    ]
+
+
 def test_run_ledger_appends_gate_evidence(tmp_path: Path) -> None:
     token = build_job_token_from_record(
         {

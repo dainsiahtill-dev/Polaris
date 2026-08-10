@@ -3046,6 +3046,19 @@ class TestOrchestrationStageExecutor:
                 ],
             },
         )
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "schema_version": "pm.task_contract.v1",
+                        "goal": "Create the runtime entrypoint and tests.",
+                        "target_files": ["src/main.ts", "tests/main.test.ts"],
+                    }
+                ]
+            },
+        )
 
         result = await executor._execute_quality_gate(
             run,
@@ -3058,18 +3071,17 @@ class TestOrchestrationStageExecutor:
         assert len(command_service.qa_calls) == 1
         qa_input = str(command_service.qa_calls[0]["options"]["input"])
         assert "original qa context" in qa_input
-        assert "Workspace quality evidence collected before QA judgement" in qa_input
-        assert "runtime/qa/workspace-validation.json" in qa_input
-        assert '"command": [' in qa_input
-        assert '"npm"' in qa_input
-        assert '"run"' in qa_input
-        assert '"build"' in qa_input
-        assert '"exit_code": 0' in qa_input
-        assert "Chief Engineer blueprint evidence collected before QA judgement" in qa_input
-        assert f"runtime/state/blueprints/{run.id}.review.json" in qa_input
-        assert '"generated_blueprints": 1' in qa_input
+        assert "structured PM contract" in qa_input
+        assert "runtime/qa/workspace-validation.json" not in qa_input
+        assert run.id not in qa_input
+        metadata = command_service.qa_calls[0]["options"]["metadata"]
+        assert metadata["pm_task_contract"]["id"] == "TASK-1"
+        assert metadata["target_files"] == ["src/main.ts", "tests/main.test.ts"]
+        assert metadata["chief_engineer_blueprint"]["generated_blueprints"] == 1
+        assert metadata["workspace_quality_evidence"]["passed"] is True
+        assert metadata["verifier_receipts"][0]["exit_code"] == 0
 
-    def test_qa_input_injects_chief_engineer_latest_review_fallback(self, temp_workspace):
+    def test_qa_metadata_uses_chief_engineer_latest_review_fallback_without_prompt_duplication(self, temp_workspace):
         executor = _TestStageExecutor(temp_workspace, _CompletedCommandService())
         executor._write_json_artifact(
             "workspace/.polaris/blueprints/latest.review.json",
@@ -3085,11 +3097,28 @@ class TestOrchestrationStageExecutor:
             "",
             run_id="factory_missing_state_review",
         )
+        metadata = executor._build_qa_final_request_metadata(
+            run_id="factory_missing_state_review",
+            workspace_checks_artifact="",
+        )
 
         assert "original qa context" in qa_input
-        assert "Chief Engineer blueprint evidence collected before QA judgement" in qa_input
-        assert "workspace/.polaris/blueprints/latest.review.json" in qa_input
-        assert '"generated_blueprints": 2' in qa_input
+        assert "structured PM contract" in qa_input
+        assert "workspace/.polaris/blueprints/latest.review.json" not in qa_input
+        assert metadata["chief_engineer_blueprint"]["generated_blueprints"] == 2
+
+    def test_qa_execution_metadata_uses_one_deadline_derived_budget(self, temp_workspace):
+        executor = _TestStageExecutor(temp_workspace, _CompletedCommandService())
+
+        metadata, wait_timeout = executor._build_qa_execution_metadata(
+            run_id="factory-qa-budget",
+            workspace_checks_artifact="",
+            context={"timeout": 600},
+        )
+
+        assert wait_timeout == 600
+        assert metadata["request_timeout_seconds"] == 595
+        assert metadata["timeout_seconds"] == 595
 
     def test_workspace_quality_repairs_pass_declared_target_files_to_director_repairs(
         self,

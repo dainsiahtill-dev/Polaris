@@ -10,12 +10,14 @@ import hashlib
 import json
 import os
 import re
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
 from polaris.cells.runtime.task_runtime.public.evidence import task_row_execution_event_failure
 from polaris.kernelone.fs.text_ops import write_text_atomic
+from polaris.kernelone.llm.budget_policy import TIMEOUT_OVERRIDE_CONTEXT_KEYS
 from polaris.kernelone.storage import resolve_runtime_path
 
 from .base import BaseRoleAdapter
@@ -28,6 +30,20 @@ _AUTHORITATIVE_EXECUTION_SCOPE_KEYS = (
     "task_runtime_session_id",
 )
 _QA_ROLE_INVOCATION_SCHEMA = "qa.role_invocation.v1"
+_QA_STRUCTURED_EVIDENCE_KEYS = (
+    "pm_contract",
+    "pm_task_contract",
+    "pm_task_contracts",
+    "ce_blueprint",
+    "chief_engineer_blueprint",
+    "target_files",
+    "scope_paths",
+    "verifier_receipts",
+    "failure_feedback",
+    "failed_gate_evidence",
+    "workspace_quality",
+    "workspace_quality_evidence",
+)
 
 _CODE_EXTENSIONS = {
     ".py",
@@ -321,6 +337,33 @@ def _bind_qa_transaction_execution_identity(
         if token:
             metadata[key] = token
 
+    # Keep role evidence structured across both the judgement and JSON-repair
+    # turns.  R18 lost these fields while rebinding only execution identity;
+    # the retry then failed final-request qualification despite a complete PM
+    # contract, CE blueprint, target set, verifier receipts, and workspace
+    # quality report already existing in the parent orchestration context.
+    # Copy values instead of stringifying them into prompt text: this preserves
+    # the final-request evidence slots and avoids control-plane/prompt leakage.
+    for key in _QA_STRUCTURED_EVIDENCE_KEYS:
+        if key in parent:
+            value = parent[key]
+        elif key in parent_meta:
+            value = parent_meta[key]
+        else:
+            continue
+        if value is None or value == "" or value == [] or value == {}:
+            continue
+        metadata[key] = deepcopy(value)
+
+    # Preserve the deadline-derived Provider budget while rebinding QA's
+    # judgement / JSON-repair child turns. Without this projection the child
+    # context discards Factory's budget and Role Runtime falls back to 60s.
+    for key in TIMEOUT_OVERRIDE_CONTEXT_KEYS:
+        value = parent.get(key) if key in parent else parent_meta.get(key)
+        if value is None or value == "":
+            continue
+        metadata[key] = value
+
     payload: dict[str, Any] = {
         "task_id": normalized_task,
         "run_id": normalized_run,
@@ -337,6 +380,12 @@ def _bind_qa_transaction_execution_identity(
         token = str(parent.get(key) or parent_meta.get(key) or "").strip()
         if token:
             payload[key] = token
+    for key in _QA_STRUCTURED_EVIDENCE_KEYS:
+        if key in metadata:
+            payload[key] = deepcopy(metadata[key])
+    for key in TIMEOUT_OVERRIDE_CONTEXT_KEYS:
+        if key in metadata:
+            payload[key] = metadata[key]
     return payload
 
 

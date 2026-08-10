@@ -732,6 +732,10 @@ def build_job_token_from_record(
         contract_sources.append("contract_goal")
     if record.get("brief") or record.get("project_brief"):
         contract_sources.append("project_brief")
+    if record.get("pm_task_contract"):
+        contract_sources.append("pm_task_contract")
+    if record.get("pm_task_contracts"):
+        contract_sources.append("pm_task_contracts")
     if target_files:
         contract_sources.append("target_files")
     blueprint_sources: list[str] = []
@@ -742,6 +746,8 @@ def build_job_token_from_record(
         blueprint_sources.append("blueprints")
     if record.get("chief_engineer") or audit_bundle.get("chief_engineer"):
         blueprint_sources.append("chief_engineer")
+    if record.get("chief_engineer_blueprint"):
+        blueprint_sources.append("chief_engineer_blueprint")
     if blueprint_artifacts:
         blueprint_sources.append("artifacts.blueprint")
     capability_audit = _build_capability_audit(
@@ -756,6 +762,8 @@ def build_job_token_from_record(
     contract_facts = {
         "contract_goal": chain_results.get("contract_goal") or record.get("contract_goal") or "",
         "project_brief": record.get("brief") or record.get("project_brief") or "",
+        "pm_task_contract": record.get("pm_task_contract") or {},
+        "pm_task_contracts": record.get("pm_task_contracts") or [],
         "target_files": target_files,
         "allowed_paths": allowed_paths,
         "qa_expectations": qa_expectations,
@@ -765,6 +773,7 @@ def build_job_token_from_record(
         "blueprints": record.get("blueprints") or audit_bundle.get("blueprints") or [],
         "blueprint_artifacts": blueprint_artifacts,
         "chief_engineer": record.get("chief_engineer") or audit_bundle.get("chief_engineer") or {},
+        "chief_engineer_blueprint": record.get("chief_engineer_blueprint") or {},
     }
     token_run_id = _clean_string(run_id or record.get("run_id"))
     token_factory_run_id = _clean_string(chain.get("run_id") or record.get("factory_run_id"))

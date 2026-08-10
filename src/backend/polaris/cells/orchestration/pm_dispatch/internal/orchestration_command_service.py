@@ -880,15 +880,18 @@ class OrchestrationCommandService:
 
         opts = options or {}
         input_text = opts.get("input") or target or "Run quality gate checks on completed tasks"
+        metadata_overrides = _coerce_metadata_overrides(opts.get("metadata"))
 
         try:
             service = await get_orchestration_service()
+            register_all_adapters(service)
 
             role_entries = [
                 RoleEntrySpec(
                     role_id="qa",
                     input=input_text,
                     scope_paths=[workspace],
+                    metadata=metadata_overrides,
                 )
             ]
 
@@ -900,6 +903,7 @@ class OrchestrationCommandService:
                 metadata={
                     "command_source": "orchestration_command_service",
                     "qa_target": target or "",
+                    **metadata_overrides,
                 },
             )
 
@@ -985,14 +989,14 @@ class OrchestrationCommandService:
                 ["docs_generation", *_CANONICAL_FACTORY_TASK_CHAIN],
             )
             stages = _canonical_factory_stage_sequence(requested_stages)
-            config = FactoryConfig(
+            factory_config = FactoryConfig(
                 name=f"orch_factory_{run_id}",
                 description="Factory run from orchestration command",
                 stages=stages,
                 auto_dispatch=factory_options.auto_start,
             )
 
-            run = await factory_service.create_run(config)
+            run = await factory_service.create_run(factory_config)
 
             if factory_options.auto_start:
                 await factory_service.start_run(run.id)

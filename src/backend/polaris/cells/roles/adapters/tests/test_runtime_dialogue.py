@@ -103,6 +103,43 @@ class TestRuntimeDialogueHelper:
         assert command.metadata["pm_task_id"] == "pm-contract-1"
 
     @pytest.mark.asyncio
+    async def test_projects_trusted_metadata_timeout_into_role_context(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Any,
+    ) -> None:
+        captured: dict[str, Any] = {}
+
+        class FakeRoleRuntimeService:
+            async def execute_role_session(self, command: Any) -> RoleExecutionResultV1:
+                captured["command"] = command
+                return RoleExecutionResultV1(
+                    ok=True,
+                    status="ok",
+                    role=command.role,
+                    workspace=command.workspace,
+                    task_id=command.task_id,
+                    session_id=command.session_id,
+                    output="runtime output",
+                )
+
+        monkeypatch.setattr(runtime_dialogue, "_create_role_runtime_service", lambda: FakeRoleRuntimeService())
+
+        await invoke_role_runtime_first(
+            workspace=str(tmp_path),
+            role="qa",
+            message="review verified delivery",
+            context={
+                "task_id": "qa-1",
+                "metadata": {"request_timeout_seconds": 595},
+            },
+        )
+
+        command = captured["command"]
+        assert command.context["request_timeout_seconds"] == 595
+        assert command.metadata["request_timeout_seconds"] == 595
+
+    @pytest.mark.asyncio
     async def test_projects_first_class_turn_request_identity_into_runtime_metadata(
         self,
         monkeypatch: pytest.MonkeyPatch,

@@ -198,6 +198,23 @@ def _adapter_input_for_role(
     return payload
 
 
+def _adapter_context_for_task(
+    *,
+    run_id: str,
+    workspace: str,
+    task: PipelineTask,
+    role_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Project one role task's authoritative orchestration context."""
+
+    return {
+        "run_id": run_id,
+        "workspace": workspace,
+        "timeout_seconds": task.timeout_seconds,
+        "metadata": role_metadata,
+    }
+
+
 class InMemoryOrchestrationRepository(OrchestrationRepository):
     """内存存储实现（用于开发和测试）"""
 
@@ -678,15 +695,19 @@ class UnifiedOrchestrationService(OrchestrationService):
         file_tracker: Any = TaskFileChangeTracker(workspace, task.task_id)
         file_tracker.start()
 
-        # 构建上下文
-        context = {
-            "run_id": run_id,
-            "workspace": workspace,
-            "timeout_seconds": task.timeout_seconds,
-        }
-
         try:
             role_metadata = dict(task.role_entry.metadata) if isinstance(task.role_entry.metadata, dict) else {}
+            # RoleEntry metadata is authoritative per-role execution context,
+            # not merely adapter input decoration.  Keep it attached to the
+            # adapter context so downstream Role Runtime can consume trusted
+            # budgets and structured final-request evidence without rebuilding
+            # either from prompt text.
+            context = _adapter_context_for_task(
+                run_id=run_id,
+                workspace=workspace,
+                task=task,
+                role_metadata=role_metadata,
+            )
             binding_override = role_metadata.get("binding_override")
             if not isinstance(binding_override, dict):
                 binding_override = None

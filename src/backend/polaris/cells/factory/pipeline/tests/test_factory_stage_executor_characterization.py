@@ -31,14 +31,21 @@ from typing import Any
 import pytest
 from polaris.cells.chief_engineer.blueprint.public import (
     BlueprintPersistence,
+    BuildChiefEngineerBlueprintPortfolioCommandV1,
+    ChiefEngineerPortfolioTaskV1,
     GenerateTaskBlueprintCommandV1,
     VerificationCommandAuthorityV1,
+    build_chief_engineer_blueprint_portfolio,
     derive_project_kind_authority_from_catalog_snapshot,
     generate_task_blueprint,
+    project_chief_engineer_task_blueprint,
     project_completion_catalog_snapshot_hash,
     project_completion_verifier_policy_snapshot_hash,
 )
-from polaris.cells.chief_engineer.blueprint.public.contracts import TaskBlueprintResultV1
+from polaris.cells.chief_engineer.blueprint.public.contracts import (
+    TaskBlueprintResultV1,
+    _issue_chief_engineer_portfolio_authority_carrier,
+)
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
@@ -557,11 +564,15 @@ def _with_task_runtime_authority(
     incomplete = set(incomplete_task_ids)
     return {
         **projection,
+        "pm_task_contracts": projection.get("pm_task_contracts")
+        or [{"id": task_id, "task_id": task_id} for task_id in task_ids],
         "task_runtime_projection": {
             "schema_version": "task_runtime.observable_task_rows_authority.v1",
             "source": "task_runtime.execution_fact",
             "authoritative": True,
             "degraded": False,
+            "owner_scope": "pm_contract_tasks",
+            "owned_task_ids": list(task_ids),
             "row_count": len(task_ids),
             "rows": [
                 {
@@ -1554,6 +1565,32 @@ def test_workspace_validation_artifact_writes_run_ledger_command_evidence(tmp_pa
         status=FactoryRunStatus.RUNNING,
         created_at="2026-06-30T00:00:00Z",
     )
+    executor._write_json_artifact(
+        "tasks/plan.json",
+        {
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "goal": "Build the product",
+                    "target_files": ["src/index.js"],
+                    "acceptance": ["npm test passes"],
+                }
+            ]
+        },
+    )
+    executor._write_json_artifact(
+        f"runtime/state/blueprints/{run.id}.review.json",
+        {
+            "factory_run_id": run.id,
+            "blueprints": [
+                {
+                    "task_id": "TASK-1",
+                    "target_files": ["src/index.js"],
+                    "verification_commands": ["npm test"],
+                }
+            ],
+        },
+    )
 
     artifact = executor._write_workspace_validation_artifact(
         run,
@@ -1579,6 +1616,10 @@ def test_workspace_validation_artifact_writes_run_ledger_command_evidence(tmp_pa
     assert projection["evidence_policy"]["missing_required_modalities"] == []
     assert projection["evidence_policy"]["failed_required_modalities"] == []
     assert projection["evidence_modalities"]["command"]["ok"] == 1
+    assert projection["integrity_ok"] is True
+    gate = projection["gates"][0]
+    assert gate["capability_ok"] is True
+    assert gate["capability_issues"] == []
 
 
 def test_pm_plan_validation_contract_hygiene_defers_test_acceptance_to_validation_task() -> None:
@@ -1699,14 +1740,137 @@ def _generate_domain_blueprint(
     acceptance_criteria: list[str],
     execution_checklist: list[str],
 ) -> TaskBlueprintResultV1:
+    run_id = f"characterization-{task_id.lower()}"
+    project_id = f"project-{task_id.lower()}"
+    portfolio_task = ChiefEngineerPortfolioTaskV1(
+        task_id=task_id,
+        objective=objective,
+        target_files=tuple(target_files),
+        scope_paths=tuple(target_files),
+    )
+    catalog_snapshot = {"project_kind": "library"}
+    catalog_path = workspace / ".polaris" / "catalog_contract.json"
+    catalog_path.parent.mkdir(parents=True, exist_ok=True)
+    catalog_path.write_text(json.dumps(catalog_snapshot), encoding="utf-8")
+    verifier_policy_hash = "b" * 64
+    verifier_policy_snapshot = {
+        "schema_version": "evidence_policy.v1",
+        "source": "control_plane.verifier_policy.evidence_policy_compiler",
+        "policy_hash": verifier_policy_hash,
+        "required_evidence_modalities": ["command"],
+    }
+    build_authority = VerificationCommandAuthorityV1(
+        task_id=task_id,
+        modality="build",
+        argv=("python", "-m", "compileall", "."),
+    )
+    artifact_obligations = [
+        {
+            "obligation_id": f"artifact-{index}",
+            "path": path,
+            "semantic_role": "source",
+            "applicability": "required",
+            "owner_task_id": task_id,
+        }
+        for index, path in enumerate(target_files, start=1)
+    ]
+    portfolio = build_chief_engineer_blueprint_portfolio(
+        BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(workspace),
+            run_id=run_id,
+            tasks=(portfolio_task,),
+            authority_carrier=_issue_chief_engineer_portfolio_authority_carrier(
+                workspace=str(workspace),
+                run_id=run_id,
+                project_id=project_id,
+                pm_stage_event_id=f"pm-stage-{run_id}",
+                pm_contract_hash="a" * 64,
+                tasks=(portfolio_task,),
+                catalog_snapshot=catalog_snapshot,
+                catalog_snapshot_hash=project_completion_catalog_snapshot_hash(catalog_snapshot),
+                verifier_policy_hash=verifier_policy_hash,
+                verifier_policy_snapshot=verifier_policy_snapshot,
+                verifier_policy_snapshot_hash=project_completion_verifier_policy_snapshot_hash(
+                    verifier_policy_snapshot
+                ),
+                verification_command_authority=(build_authority,),
+            ),
+            llm_blueprint={
+                "construction_plan": {
+                    "implementation": list(execution_checklist),
+                    "project_interface_contract": {
+                        "provider_declarations": [],
+                        "consumer_declarations": [],
+                    },
+                },
+                "scope_for_apply": list(target_files),
+                "risk_flags": [],
+                "project_completion_contract": {
+                    "obligations": {
+                        "artifacts": [
+                            *artifact_obligations,
+                            {
+                                "obligation_id": "artifact-test-na",
+                                "path": "tests",
+                                "semantic_role": "test",
+                                "applicability": "not_applicable",
+                                "owner_task_id": None,
+                            },
+                        ],
+                        "entrypoints": [
+                            {
+                                "obligation_id": "entrypoint-library-na",
+                                "kind": "library",
+                                "applicability": "not_applicable",
+                                "owner_task_id": None,
+                                "source_path": None,
+                                "runtime_path": None,
+                                "command": None,
+                            }
+                        ],
+                        "verification": [
+                            {
+                                "obligation_id": "verify-build",
+                                "modality": "build",
+                                "command_authority_hash": build_authority.authority_hash,
+                                "applicability": "required",
+                                "covers_obligation_ids": [
+                                    item["obligation_id"] for item in artifact_obligations
+                                ],
+                                "owner_task_id": task_id,
+                            },
+                            {
+                                "obligation_id": "verify-test-na",
+                                "modality": "test",
+                                "command_authority_hash": None,
+                                "applicability": "not_applicable",
+                                "covers_obligation_ids": [],
+                                "owner_task_id": None,
+                            },
+                            {
+                                "obligation_id": "verify-environment-na",
+                                "modality": "environment_prep",
+                                "command_authority_hash": None,
+                                "applicability": "not_applicable",
+                                "covers_obligation_ids": [],
+                                "owner_task_id": None,
+                            },
+                        ],
+                    }
+                },
+            },
+        )
+    )
     return generate_task_blueprint(
         GenerateTaskBlueprintCommandV1(
             task_id=task_id,
             workspace=str(workspace),
             objective=objective,
+            run_id=run_id,
             context={
                 "task_title": objective,
                 "target_files": target_files,
+                "scope_paths": target_files,
                 "acceptance_criteria": acceptance_criteria,
                 "execution_checklist": execution_checklist,
                 "delivery_plan_document": {
@@ -1723,7 +1887,17 @@ def _generate_domain_blueprint(
                         "primary_entities": ["treasure", "budget", "port", "reef"],
                     },
                 },
+                "pm_task_contract": {
+                    "id": task_id,
+                    "goal": objective,
+                    "target_files": target_files,
+                    "scope_paths": target_files,
+                    "acceptance_criteria": acceptance_criteria,
+                    "execution_checklist": execution_checklist,
+                },
+                **portfolio.to_task_blueprint_context(),
             },
+            llm_blueprint=project_chief_engineer_task_blueprint(portfolio, task_id),
         )
     )
 
@@ -2599,8 +2773,10 @@ class TestChiefEngineerHandoffGuards:
                 encoding="utf-8"
             )
         )
-        assert primary_session["status"] == "suspended"
+        assert primary_session["status"] == "completed"
         assert repair_session["status"] == "completed"
+        assert primary_task["status"] == "completed"
+        assert repair_task["status"] == "completed"
 
         review = json.loads(
             Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
@@ -4011,8 +4187,15 @@ class TestTextShapingHelpers:
         )
         captured: dict[str, Any] = {}
 
-        def fake_run_schedule(adapter: Any, *, task: dict[str, Any], task_id: str, artifact_quality_errors: list[str]):
-            del adapter, task_id, artifact_quality_errors
+        def fake_run_schedule(
+            adapter: Any,
+            *,
+            task: dict[str, Any],
+            task_id: str,
+            artifact_quality_errors: list[str],
+            execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
+        ):
+            del adapter, task_id, artifact_quality_errors, execution_attempt
             captured["task"] = task
             return [], {"attempted": False}
 
@@ -6050,7 +6233,7 @@ class TestQualityGateDeadlineHandling:
         )
 
         assert result.status == "failed"
-        assert "canonical_reason=task_runtime_tasks_missing" in result.output
+        assert "canonical_reason=task_runtime_contract_scope_mismatch" in result.output
         assert "report_ready=False" in result.output
         report_path = Path(resolve_logical_path(tmp_path, "runtime/qa/report.json"))
         assert report_path.exists() is False
@@ -6129,9 +6312,15 @@ class TestQualityGateDeadlineHandling:
         assert "canonical_authorized=False" in result.output
         assert qa_calls
         qa_input = str(qa_calls[0]["options"]["input"])
-        assert "Workspace quality evidence collected before QA judgement" in qa_input
-        assert "runtime/qa/workspace-validation.json" in qa_input
-        assert "ReferenceError: exports is not defined in ES module scope" in qa_input
+        assert "workspace-quality evidence attached to this QA request" in qa_input
+        assert "runtime/qa/workspace-validation.json" not in qa_input
+        assert "ReferenceError: exports is not defined in ES module scope" not in qa_input
+        qa_metadata = qa_calls[0]["options"]["metadata"]
+        assert qa_metadata["workspace_quality_evidence"]["passed"] is False
+        assert (
+            qa_metadata["workspace_quality_evidence"]["commands"][0]["stderr_tail"]
+            == "ReferenceError: exports is not defined in ES module scope"
+        )
         report_path = Path(resolve_logical_path(tmp_path, "runtime/qa/report.json"))
         report = json.loads(report_path.read_text(encoding="utf-8"))
         assert report["passed"] is False
@@ -6871,6 +7060,118 @@ class TestRunWorkspaceQualityCommand:
         assert "timeout after" in result["error"]
 
 
+class TestWorkspaceQualityDeterministicRepairExecution:
+    def test_synthetic_repair_task_id_is_event_store_safe(self) -> None:
+        task_id = stage_executor_module._workspace_quality_repair_external_task_id(
+            "factory:run/with spaces",
+            2,
+        )
+
+        assert ":" not in task_id
+        assert "/" not in task_id
+        assert " " not in task_id
+        assert task_id.startswith("factory-quality-gate-factory-run-with-spaces-repair-2-")
+
+    @pytest.mark.asyncio
+    async def test_claims_commits_and_settles_deferred_repair_on_director_task(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-deferred",
+            config=FactoryConfig(name="quality-deferred"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-10T00:00:00+00:00",
+        )
+        identity = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=str(tmp_path),
+            task_id=7,
+            external_task_id="TASK-3",
+            session_id="quality-repair-session",
+            attempt=2,
+            role_id="director",
+            worker_id="director",
+            run_id=run.id,
+            lease_expires_at="2026-08-10T00:05:00+00:00",
+        )
+        deferred_result = {
+            "success": True,
+            "result": {
+                "status": "deferred_repair_effects_pending",
+                "deferred_request": {"request_id": "repair-request-1"},
+            },
+        }
+        commit_calls: list[dict[str, Any]] = []
+
+        monkeypatch.setattr(
+            executor,
+            "_director_stage_materialization_settle_target_files",
+            lambda *, diagnostics: ["package.json", "tests/verify.test.js"],
+        )
+        monkeypatch.setattr(
+            executor,
+            "_claim_workspace_quality_repair_attempt",
+            lambda **_kwargs: ("TASK-3", 7, identity, {"id": "TASK-3"}),
+        )
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_repairs",
+            lambda **_kwargs: (
+                [deferred_result],
+                {
+                    "source_tools": ["deterministic_javascript_test_missing_target_repair"],
+                    "tool_results": 1,
+                },
+            ),
+        )
+        monkeypatch.setattr(
+            executor,
+            "_director_stage_materialization_settle_commit_context",
+            lambda **_kwargs: {"factory_stage": "quality_gate"},
+        )
+        monkeypatch.setattr(
+            executor,
+            "_settle_director_stage_materialization_attempt",
+            lambda **_kwargs: {"success": True},
+        )
+
+        async def fake_commit_materialization_deferred_repairs(**kwargs: Any) -> list[dict[str, Any]]:
+            commit_calls.append(kwargs)
+            return [
+                {
+                    "success_count": 1,
+                    "failure_count": 0,
+                    "results": [{"status": "success"}],
+                }
+            ]
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.commit_materialization_deferred_repairs",
+            fake_commit_materialization_deferred_repairs,
+        )
+
+        results, summary = await executor._apply_workspace_quality_deterministic_repairs(
+            run=run,
+            artifact_quality_errors=["Could not find 'tests/verify.test.js'"],
+            repair_attempt=2,
+        )
+
+        assert results == [deferred_result]
+        assert len(commit_calls) == 1
+        assert commit_calls[0]["execution_attempt"] == identity
+        assert summary["success"] is True
+        assert summary["write_tool_evidence"] is True
+        assert summary["committed_receipt_count"] == 1
+        assert summary["task_runtime_repair_attempt"] == {
+            "task_id": "TASK-3",
+            "session_id": "quality-repair-session",
+            "settled": True,
+            "outcome": "completed",
+        }
+
+
 class TestRunWorkspaceQualityChecks:
     @pytest.fixture(autouse=True)
     def canonical_task_boundary(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -7022,12 +7323,14 @@ class TestRunWorkspaceQualityChecks:
                 "error": "",
             }
 
-        def fake_apply_workspace_quality_repairs(
+        async def fake_apply_workspace_quality_deterministic_repairs(
             *,
-            run_id: str,
+            run: FactoryRun,
             artifact_quality_errors: list[str],
+            repair_attempt: int,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
-            assert run_id == "factory-quality-repair-still-failing"
+            assert run.id == "factory-quality-repair-still-failing"
+            assert repair_attempt == 1
             assert artifact_quality_errors
             return (
                 [
@@ -7054,7 +7357,11 @@ class TestRunWorkspaceQualityChecks:
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
-        monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fake_apply_workspace_quality_repairs)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_deterministic_repairs",
+            fake_apply_workspace_quality_deterministic_repairs,
+        )
 
         passed, artifact = await executor._run_workspace_quality_checks(
             run,
@@ -7126,12 +7433,14 @@ class TestRunWorkspaceQualityChecks:
                 "error": "",
             }
 
-        def fake_apply_workspace_quality_repairs(
+        async def fake_apply_workspace_quality_deterministic_repairs(
             *,
-            run_id: str,
+            run: FactoryRun,
             artifact_quality_errors: list[str],
+            repair_attempt: int,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
-            assert run_id == "factory-quality-depth-contract"
+            assert run.id == "factory-quality-depth-contract"
+            assert repair_attempt == 1
             assert any("delivery_depth_contract_failed" in item for item in artifact_quality_errors)
             return (
                 [],
@@ -7191,7 +7500,11 @@ class TestRunWorkspaceQualityChecks:
         monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "test"]])
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
-        monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fake_apply_workspace_quality_repairs)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_deterministic_repairs",
+            fake_apply_workspace_quality_deterministic_repairs,
+        )
         monkeypatch.setattr(
             executor,
             "_apply_workspace_quality_llm_repairs",
@@ -7254,12 +7567,14 @@ class TestRunWorkspaceQualityChecks:
                 "error": "",
             }
 
-        def fake_apply_workspace_quality_repairs(
+        async def fake_apply_workspace_quality_deterministic_repairs(
             *,
-            run_id: str,
+            run: FactoryRun,
             artifact_quality_errors: list[str],
+            repair_attempt: int,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
-            assert run_id == "factory-quality-llm-repair"
+            assert run.id == "factory-quality-llm-repair"
+            assert repair_attempt == 1
             assert artifact_quality_errors
             return (
                 [],
@@ -7310,7 +7625,11 @@ class TestRunWorkspaceQualityChecks:
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
-        monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fake_apply_workspace_quality_repairs)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_deterministic_repairs",
+            fake_apply_workspace_quality_deterministic_repairs,
+        )
         monkeypatch.setattr(
             executor,
             "_apply_workspace_quality_llm_repairs",
@@ -7361,12 +7680,14 @@ class TestRunWorkspaceQualityChecks:
                 "error": "",
             }
 
-        def fake_apply_workspace_quality_repairs(
+        async def fake_apply_workspace_quality_deterministic_repairs(
             *,
-            run_id: str,
+            run: FactoryRun,
             artifact_quality_errors: list[str],
+            repair_attempt: int,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
-            assert run_id == "factory-quality-owner-rebind"
+            assert run.id == "factory-quality-owner-rebind"
+            assert repair_attempt == 1
             assert artifact_quality_errors
             return [], {"attempted": False, "success": False, "source_tools": [], "tool_results": 0}
 
@@ -7415,7 +7736,11 @@ class TestRunWorkspaceQualityChecks:
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
-        monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fake_apply_workspace_quality_repairs)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_deterministic_repairs",
+            fake_apply_workspace_quality_deterministic_repairs,
+        )
         monkeypatch.setattr(
             executor,
             "_apply_workspace_quality_llm_repairs",
@@ -7655,12 +7980,14 @@ class TestRunWorkspaceQualityChecks:
                 "error": "",
             }
 
-        def fake_apply_workspace_quality_repairs(
+        async def fake_apply_workspace_quality_deterministic_repairs(
             *,
-            run_id: str,
+            run: FactoryRun,
             artifact_quality_errors: list[str],
+            repair_attempt: int,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
-            assert run_id == "factory-quality-deterministic-no-write"
+            assert run.id == "factory-quality-deterministic-no-write"
+            assert repair_attempt == 1
             assert artifact_quality_errors
             return (
                 [
@@ -7722,7 +8049,11 @@ class TestRunWorkspaceQualityChecks:
         monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "test"]])
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
-        monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fake_apply_workspace_quality_repairs)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_deterministic_repairs",
+            fake_apply_workspace_quality_deterministic_repairs,
+        )
         monkeypatch.setattr(
             executor,
             "_apply_workspace_quality_llm_repairs",
@@ -7770,12 +8101,14 @@ class TestRunWorkspaceQualityChecks:
                 "error": "",
             }
 
-        def fake_apply_workspace_quality_repairs(
+        async def fake_apply_workspace_quality_deterministic_repairs(
             *,
-            run_id: str,
+            run: FactoryRun,
             artifact_quality_errors: list[str],
+            repair_attempt: int,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
-            assert run_id == "factory-quality-task-boundary-triage"
+            assert run.id == "factory-quality-task-boundary-triage"
+            assert repair_attempt == 1
             assert artifact_quality_errors
             return (
                 [],
@@ -7822,7 +8155,11 @@ class TestRunWorkspaceQualityChecks:
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
-        monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fake_apply_workspace_quality_repairs)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_deterministic_repairs",
+            fake_apply_workspace_quality_deterministic_repairs,
+        )
         monkeypatch.setattr(
             executor,
             "_apply_workspace_quality_llm_repairs",
@@ -7889,12 +8226,14 @@ class TestRunWorkspaceQualityChecks:
                 "error": "",
             }
 
-        def fake_apply_workspace_quality_repairs(
+        async def fake_apply_workspace_quality_deterministic_repairs(
             *,
-            run_id: str,
+            run: FactoryRun,
             artifact_quality_errors: list[str],
+            repair_attempt: int,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
-            assert run_id == "factory-quality-local-task-boundary-triage"
+            assert run.id == "factory-quality-local-task-boundary-triage"
+            assert repair_attempt == 1
             assert artifact_quality_errors
             return (
                 [],
@@ -7944,7 +8283,11 @@ class TestRunWorkspaceQualityChecks:
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
-        monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fake_apply_workspace_quality_repairs)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_deterministic_repairs",
+            fake_apply_workspace_quality_deterministic_repairs,
+        )
         monkeypatch.setattr(
             executor,
             "_apply_workspace_quality_llm_repairs",
@@ -8011,12 +8354,14 @@ class TestRunWorkspaceQualityChecks:
                 "error": "" if state["prepared_after_repair"] else "missing dependency",
             }
 
-        def fake_apply_workspace_quality_repairs(
+        async def fake_apply_workspace_quality_deterministic_repairs(
             *,
-            run_id: str,
+            run: FactoryRun,
             artifact_quality_errors: list[str],
+            repair_attempt: int,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
-            assert run_id == "factory-quality-prepare-after-repair"
+            assert run.id == "factory-quality-prepare-after-repair"
+            assert repair_attempt == 1
             assert artifact_quality_errors
             state["repaired"] = True
             return (
@@ -8050,7 +8395,11 @@ class TestRunWorkspaceQualityChecks:
             lambda commands, context: [["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"]],
         )
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
-        monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fake_apply_workspace_quality_repairs)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_deterministic_repairs",
+            fake_apply_workspace_quality_deterministic_repairs,
+        )
 
         passed, artifact = await executor._run_workspace_quality_checks(
             run,
@@ -8134,6 +8483,24 @@ class TestRunWorkspaceQualityChecks:
         monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+
+        async def fake_apply_workspace_quality_deterministic_repairs(
+            *,
+            run: FactoryRun,
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            del repair_attempt
+            return executor._apply_workspace_quality_repairs(
+                run_id=run.id,
+                artifact_quality_errors=artifact_quality_errors,
+            )
+
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_deterministic_repairs",
+            fake_apply_workspace_quality_deterministic_repairs,
+        )
 
         passed, artifact = await executor._run_workspace_quality_checks(run, {})
 
@@ -9999,7 +10366,7 @@ class TestDirectorDispatchLoop:
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 2}
+                {"director_max_rounds": 1, "timeout": 120, "execution_mode": "parallel", "max_workers": 2}
             ),
         )
 
@@ -10025,7 +10392,7 @@ class TestDirectorDispatchLoop:
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 3, "timeout": 1, "execution_mode": "parallel", "max_workers": 2}
+                {"director_max_rounds": 3, "timeout": 120, "execution_mode": "parallel", "max_workers": 2}
             ),
         )
 
@@ -10134,7 +10501,7 @@ class TestDirectorDispatchLoop:
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 2}
+                {"director_max_rounds": 1, "timeout": 120, "execution_mode": "parallel", "max_workers": 2}
             ),
         )
 
@@ -10266,7 +10633,7 @@ class TestDirectorDispatchLoop:
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 1}
+                {"director_max_rounds": 1, "timeout": 120, "execution_mode": "parallel", "max_workers": 1}
             ),
         )
 
@@ -10415,7 +10782,7 @@ class TestDirectorDispatchLoop:
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 3, "timeout": 1, "execution_mode": "serial", "max_workers": 1}
+                {"director_max_rounds": 3, "timeout": 120, "execution_mode": "serial", "max_workers": 1}
             ),
         )
 
@@ -10574,7 +10941,7 @@ class TestDirectorDispatchLoop:
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 1, "timeout": 1, "execution_mode": "serial", "max_workers": 1}
+                {"director_max_rounds": 1, "timeout": 120, "execution_mode": "serial", "max_workers": 1}
             ),
         )
 
@@ -10699,7 +11066,7 @@ class TestDirectorDispatchLoop:
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 3, "timeout": 1, "execution_mode": "serial", "max_workers": 1}
+                {"director_max_rounds": 3, "timeout": 120, "execution_mode": "serial", "max_workers": 1}
             ),
         )
 
@@ -11054,7 +11421,7 @@ class TestDirectorDispatchLoop:
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 2}
+                {"director_max_rounds": 1, "timeout": 120, "execution_mode": "parallel", "max_workers": 2}
             ),
         )
 
@@ -11257,7 +11624,7 @@ class TestDirectorDispatchLoop:
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 2}
+                {"director_max_rounds": 1, "timeout": 120, "execution_mode": "parallel", "max_workers": 2}
             ),
         )
 
@@ -11354,7 +11721,7 @@ class TestDirectorDispatchLoop:
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 2, "timeout": 1, "execution_mode": "parallel", "max_workers": 2}
+                {"director_max_rounds": 2, "timeout": 120, "execution_mode": "parallel", "max_workers": 2}
             ),
         )
 
@@ -11451,7 +11818,7 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            _factory_stage_context({"timeout": 1, "execution_mode": "parallel", "max_workers": 1}),
+            _factory_stage_context({"timeout": 120, "execution_mode": "parallel", "max_workers": 1}),
         )
 
         assert result.status == "success"
@@ -11515,7 +11882,7 @@ class TestDirectorDispatchLoop:
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 1}
+                {"director_max_rounds": 1, "timeout": 120, "execution_mode": "parallel", "max_workers": 1}
             ),
         )
 
@@ -11588,7 +11955,7 @@ class TestDirectorDispatchLoop:
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 1}
+                {"director_max_rounds": 1, "timeout": 120, "execution_mode": "parallel", "max_workers": 1}
             ),
         )
 
@@ -11748,7 +12115,7 @@ class TestDirectorDispatchLoop:
             _factory_stage_context(
                 {
                     "director_max_rounds": 2,
-                    "timeout": 2,
+                    "timeout": 120,
                     "execution_mode": "parallel",
                     "max_workers": 1,
                     "director_dispatch_timeout_settle_grace_seconds": 1,
@@ -12222,3 +12589,140 @@ def test_chief_engineer_portfolio_context_includes_local_rework_failure_feedback
     assert context["chief_engineer_local_rework"] is True
     assert context["failure_feedback"] == failure_feedback
     assert context["failure_feedback"] is not failure_feedback
+
+
+def _verified_delivery_recovery_authority(
+    *,
+    quality_authorized: bool = True,
+) -> stage_executor_module.helpers.CanonicalFactoryAuthority:
+    return stage_executor_module.helpers.CanonicalFactoryAuthority(
+        source_valid=True,
+        task_runtime_projection_authoritative=True,
+        contract_task_scope_valid=True,
+        task_runtime_converged=False,
+        terminal_runtime_delivery_recovered=True,
+        task_boundary_present=True,
+        task_boundary_completed_verified=True,
+        qa_verdict_present=True,
+        qa_verdict_passed=quality_authorized,
+        sequence_barrier_satisfied=True,
+        evidence_policy_passed=True,
+        projection_passed=True,
+        reason_code="canonical_projection_authorized",
+        detail="verified delivery recovery test",
+        failure_class="",
+        responsible_layer="",
+        task_count=1,
+        expected_task_ids=("TASK-3",),
+        missing_runtime_task_ids=(),
+        unexpected_runtime_task_ids=(),
+        incomplete_task_ids=("TASK-3",),
+        incomplete_runtime_task_ids=("TASK-3",),
+        missing_task_boundary_ids=(),
+        recovered_runtime_task_ids=("TASK-3",),
+    )
+
+
+def test_reconcile_verified_runtime_delivery_settles_exact_failed_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run = FactoryRun(
+        id="factory-runtime-reconcile",
+        config=FactoryConfig(name="bench-run"),
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-08-10T00:00:00+00:00",
+    )
+    identity = TaskRuntimeExecutionAttemptIdentityV1(
+        workspace=str(tmp_path),
+        task_id=3,
+        external_task_id="TASK-3",
+        session_id="verified-delivery-reconcile-session",
+        attempt=2,
+        role_id="qa",
+        worker_id=f"factory-quality-gate:{run.id}",
+        run_id=run.id,
+        lease_expires_at="2026-08-10T00:02:00+00:00",
+    )
+
+    class _Runtime:
+        def __init__(self) -> None:
+            self.reopened: list[tuple[int, str, dict[str, Any]]] = []
+            self.claimed: list[tuple[int, dict[str, Any]]] = []
+            self.settled: list[SettleTaskRuntimeExecutionAttemptCommandV1] = []
+
+        def list_observable_task_rows(self) -> list[dict[str, Any]]:
+            return [
+                {
+                    "id": 3,
+                    "external_task_id": "TASK-3",
+                    "status": "failed",
+                    "metadata": {
+                        "factory_run_id": run.id,
+                        "source_task_id": "TASK-3",
+                    },
+                }
+            ]
+
+        def reopen_task_row(self, task_id: int, *, reason: str, metadata: dict[str, Any]) -> dict[str, Any]:
+            self.reopened.append((task_id, reason, metadata))
+            return {"id": task_id, "status": "pending"}
+
+        def claim_execution(self, task_id: int, **kwargs: Any) -> dict[str, Any]:
+            self.claimed.append((task_id, dict(kwargs)))
+            return {"success": True, "execution_attempt": identity.to_record()}
+
+        def settle_execution_attempt(
+            self,
+            command: SettleTaskRuntimeExecutionAttemptCommandV1,
+        ) -> dict[str, Any]:
+            self.settled.append(command)
+            return {"success": True, "code": "settled"}
+
+    runtime = _Runtime()
+    monkeypatch.setattr(stage_executor_module, "TaskRuntimeService", lambda workspace: runtime)
+
+    result = _executor(tmp_path)._reconcile_verified_runtime_delivery(
+        run=run,
+        authority=_verified_delivery_recovery_authority(),
+    )
+
+    assert result == {"success": True, "reconciled_task_ids": ["TASK-3"]}
+    assert runtime.reopened[0][0] == 3
+    assert runtime.reopened[0][1] == "canonical_delivery_verified_after_terminal_director_attempt"
+    assert runtime.claimed[0][1]["selection_source"] == "factory_verified_delivery_reconciliation"
+    assert runtime.settled[0].identity == identity
+    assert runtime.settled[0].outcome == "completed"
+    evidence = dict(runtime.settled[0].metadata["verified_delivery_reconciliation"])
+    assert evidence["task_boundary_completed_verified"] is True
+    assert evidence["qa_verdict_passed"] is True
+    assert evidence["sequence_barrier_satisfied"] is True
+    assert evidence["evidence_policy_passed"] is True
+
+
+def test_reconcile_verified_runtime_delivery_fails_closed_without_quality_authority(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _ForbiddenRuntime:
+        def __init__(self, workspace: str) -> None:
+            raise AssertionError(f"TaskRuntime must not mutate without quality authority: {workspace}")
+
+    monkeypatch.setattr(stage_executor_module, "TaskRuntimeService", _ForbiddenRuntime)
+    run = FactoryRun(
+        id="factory-runtime-reconcile-denied",
+        config=FactoryConfig(name="bench-run"),
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-08-10T00:00:00+00:00",
+    )
+
+    result = _executor(tmp_path)._reconcile_verified_runtime_delivery(
+        run=run,
+        authority=_verified_delivery_recovery_authority(quality_authorized=False),
+    )
+
+    assert result == {
+        "success": False,
+        "reason": "canonical_quality_authority_not_verified",
+        "reconciled_task_ids": [],
+    }

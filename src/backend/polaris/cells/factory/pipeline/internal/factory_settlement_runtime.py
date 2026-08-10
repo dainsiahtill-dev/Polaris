@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
@@ -75,6 +76,8 @@ _WAKE_DURABLE_PREFIX: Final[str] = "factory-settlement"
 # otherwise the workspace-derived durable remains stable across process restarts.
 _WAKE_DURABLE_VERSION: Final[str] = "v1"
 _WAKE_DRAIN_TIMEOUT_SECONDS: Final[float] = 30.0
+_WAKE_REPLAY_BACKOFF_SECONDS: Final[float] = 1.0
+_WAKE_REPLAY_MAX_BACKOFF_SECONDS: Final[float] = 30.0
 _WAKE_CONSUMER_SAFETY_FIELDS: Final[tuple[str, ...]] = (
     "durable_name",
     "ack_policy",
@@ -112,6 +115,7 @@ DirectedEffectRecoveryHandler = Callable[
 RunLedgerAppendHandler = Callable[[AppendRunLedgerEventCommandV1], RunLedgerAppendResultV1]
 LeaseReader = Callable[[], FactoryWorkspaceRunLeaseV1 | None]
 WakeCallback = Callable[[], Coroutine[Any, Any, SettlementReplayReport]]
+WakeBySourceFactCallback = Callable[[str], Coroutine[Any, Any, SettlementReplayReport]]
 
 
 def _canonical_workspace(value: str | Path) -> str:
@@ -173,12 +177,72 @@ FactoryRunServiceFactory = Callable[[str], FactoryRunServicePort]
 class SettlementWakeMessage(Protocol):
     """One JetStream delivery whose ACK follows durable FactStream progress."""
 
+    @property
+    def data(self) -> bytes:
+        """Return the persisted runtime.v2 notification payload."""
+
     async def ack(self) -> None:
         """Acknowledge delivery after an ACK-safe settlement replay."""
 
 
+@dataclass(frozen=True, slots=True)
+class _SettlementWakeDirective:
+    """Non-authoritative routing hint decoded from one runtime.v2 delivery."""
+
+    replay_required: bool
+    source_fact_event_id: str = ""
+    ack_after_replay: bool = False
+
+
+def _settlement_wake_directive(message: SettlementWakeMessage) -> _SettlementWakeDirective:
+    """Route a wake without treating transport payload as settlement authority.
+
+    TaskRuntime notifications carry the authoritative FactStream event id and
+    therefore select the consumer's exact-fact replay path.  Run Ledger updates
+    request one canonical full replay because they may close a pending barrier.
+    LLM telemetry cannot affect settlement and is acknowledged without replay.
+    Unknown or malformed payloads conservatively retain the legacy full replay.
+    """
+
+    raw = getattr(message, "data", b"")
+    if not isinstance(raw, bytes) or not raw:
+        return _SettlementWakeDirective(replay_required=True)
+    try:
+        envelope = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return _SettlementWakeDirective(replay_required=True)
+    if not isinstance(envelope, dict) or envelope.get("schema_version") != "runtime.v2":
+        return _SettlementWakeDirective(replay_required=True)
+
+    kind = str(envelope.get("kind") or "").strip()
+    if kind == "task_runtime_execution":
+        payload = envelope.get("payload")
+        if not isinstance(payload, dict):
+            return _SettlementWakeDirective(replay_required=True)
+        fact_stream = str(payload.get("fact_stream") or "").strip()
+        fact_event_id = str(payload.get("fact_event_id") or "").strip()
+        if fact_stream != "task_runtime.execution" or not fact_event_id:
+            return _SettlementWakeDirective(replay_required=True)
+        return _SettlementWakeDirective(
+            replay_required=True,
+            source_fact_event_id=fact_event_id,
+        )
+    if kind == "control_plane_ledger_projection_update":
+        return _SettlementWakeDirective(
+            replay_required=True,
+            ack_after_replay=True,
+        )
+    if kind.startswith("llm."):
+        return _SettlementWakeDirective(replay_required=False)
+    return _SettlementWakeDirective(replay_required=True)
+
+
 class SettlementWakeSubscription(Protocol):
     """Manual-ACK JetStream subscription used by Factory settlement."""
+
+    @property
+    def pending_msgs(self) -> int:
+        """Return deliveries already buffered by the local subscription."""
 
     async def consumer_info(self) -> SettlementConsumerInfo:
         """Return the server-authoritative configuration of this consumer."""
@@ -463,15 +527,15 @@ class RunLedgerFactorySettlementBarrierAdapter:
 class DurableJetStreamSettlementWakeBridge:
     """Durable explicit-ACK wake bridge for Factory settlement.
 
-    JetStream delivery is notification only.  Every message triggers a finite
-    re-read of canonical FactStream state; transport ACK occurs only after that
-    replay persisted an ACK-safe checkpoint.  Open barriers remain unacked and
-    later TaskRuntime or Run Ledger events trigger another replay.
+    JetStream delivery is notification only. TaskRuntime messages route by their
+    persisted FactStream id; Run Ledger messages trigger one canonical recheck;
+    LLM telemetry is ACKed without settlement work. TaskRuntime notifications
+    remain unacked until their exact fact reaches an ACK-safe decision.
 
     Complexity:
-        O(1) retained delivery state.  Each wake delegates FactStream traversal
-        to ``FactorySettlementConsumer`` and therefore inherits its bounded-page
-        O(n) replay cost for n unseen source facts.
+        O(1) retained delivery state. Normal TaskRuntime retries are O(1) exact-
+        fact lookups; conservative unknown/control-plane rechecks retain the
+        consumer's bounded-page O(n) replay cost for n unseen source facts.
     """
 
     delivery_mode: Final[str] = "jetstream_durable_explicit_ack"
@@ -484,7 +548,10 @@ class DurableJetStreamSettlementWakeBridge:
         subject: str,
         durable_name: str,
         wake: WakeCallback,
+        wake_by_source_fact: WakeBySourceFactCallback | None = None,
         drain_timeout_seconds: float = _WAKE_DRAIN_TIMEOUT_SECONDS,
+        replay_backoff_seconds: float = _WAKE_REPLAY_BACKOFF_SECONDS,
+        replay_max_backoff_seconds: float = _WAKE_REPLAY_MAX_BACKOFF_SECONDS,
     ) -> None:
         normalized_subject = str(subject or "").strip()
         normalized_durable_name = str(durable_name or "").strip()
@@ -492,11 +559,20 @@ class DurableJetStreamSettlementWakeBridge:
             raise ValueError("wake bridge subject and durable_name must be non-empty")
         if drain_timeout_seconds <= 0:
             raise ValueError("drain_timeout_seconds must be > 0")
+        if replay_backoff_seconds <= 0:
+            raise ValueError("replay_backoff_seconds must be > 0")
+        if replay_max_backoff_seconds < replay_backoff_seconds:
+            raise ValueError(
+                "replay_max_backoff_seconds must be >= replay_backoff_seconds"
+            )
         self._client = client
         self._subject = normalized_subject
         self._durable_name = normalized_durable_name
         self._wake = wake
+        self._wake_by_source_fact = wake_by_source_fact
         self._drain_timeout_seconds = float(drain_timeout_seconds)
+        self._replay_backoff_seconds = float(replay_backoff_seconds)
+        self._replay_max_backoff_seconds = float(replay_max_backoff_seconds)
         self._subscription: SettlementWakeSubscription | None = None
         self._task: asyncio.Task[None] | None = None
         self._delivery_lock = asyncio.Lock()
@@ -731,45 +807,85 @@ class DurableJetStreamSettlementWakeBridge:
                     self._failure = failure
                     raise failure from exc
                 return
+            directive = _settlement_wake_directive(message)
             async with self._delivery_lock:
                 if self._stopping:
                     return
-                replay = asyncio.create_task(
-                    self._wake(),
-                    name=f"factory-settlement-replay:{self._durable_name}",
-                )
-                self._active_replay = replay
-                try:
-                    report = await replay
-                except (FactorySettlementConsumerError, FactStreamError) as exc:
-                    logger.error(
-                        "Factory settlement wake replay failed for %s: %s",
-                        self._subject,
-                        exc,
-                        exc_info=True,
-                    )
+                if not directive.replay_required:
+                    await self._ack_delivery(message)
                     continue
-                finally:
-                    self._active_replay = None
-                self._last_report = report
-                if report.ack_safe:
-                    try:
-                        await message.ack()
-                    except (NatsError, JetStreamError, OSError, RuntimeError, ValueError) as exc:
-                        failure = FactorySettlementWakeBridgeError(
-                            "Factory settlement JetStream ACK failed",
-                            code="factory_settlement_wake_ack_failed",
-                            details={"subject": self._subject, "error": str(exc)},
+                replay_backoff_seconds = self._replay_backoff_seconds
+                while not self._stopping:
+                    if (
+                        directive.source_fact_event_id
+                        and self._wake_by_source_fact is not None
+                    ):
+                        replay_coro = self._wake_by_source_fact(
+                            directive.source_fact_event_id
                         )
-                        self._failure = failure
-                        raise failure from exc
-                logger.debug(
-                    "Factory settlement wake replay complete subject=%s decisions=%d ack_safe=%s durable_ack=%s",
-                    self._subject,
-                    len(report.decisions),
-                    report.ack_safe,
-                    report.ack_safe,
-                )
+                    else:
+                        replay_coro = self._wake()
+                    replay = asyncio.create_task(
+                        replay_coro,
+                        name=f"factory-settlement-replay:{self._durable_name}",
+                    )
+                    self._active_replay = replay
+                    try:
+                        report = await replay
+                    except (FactorySettlementConsumerError, FactStreamError) as exc:
+                        logger.error(
+                            "Factory settlement wake replay failed for %s: %s",
+                            self._subject,
+                            exc,
+                            exc_info=True,
+                        )
+                    else:
+                        self._last_report = report
+                        if report.ack_safe or directive.ack_after_replay:
+                            await self._ack_delivery(message)
+                            logger.debug(
+                                "Factory settlement wake replay complete "
+                                "subject=%s decisions=%d source_fact_hint=%s "
+                                "settlement_ack_safe=%s durable_ack=true",
+                                self._subject,
+                                len(report.decisions),
+                                directive.source_fact_event_id or "",
+                                report.ack_safe,
+                            )
+                            break
+                        logger.debug(
+                            "Factory settlement wake barrier remains open "
+                            "subject=%s decisions=%d retry_in_seconds=%s",
+                            self._subject,
+                            len(report.decisions),
+                            replay_backoff_seconds,
+                        )
+                    finally:
+                        self._active_replay = None
+
+                    # Retain a TaskRuntime source notification until its exact
+                    # canonical fact reaches an ACK-safe settlement decision.
+                    # The persisted fact id keeps retries O(1) instead of rescanning
+                    # the whole FactStream.  Control-plane notifications are ACKed
+                    # after one successful canonical recheck: their ledger update is
+                    # already durable and any later update emits a new notification.
+                    await asyncio.sleep(replay_backoff_seconds)
+                    replay_backoff_seconds = min(
+                        replay_backoff_seconds * 2.0,
+                        self._replay_max_backoff_seconds,
+                    )
+
+    async def _ack_delivery(self, message: SettlementWakeMessage) -> None:
+        try:
+            await message.ack()
+        except (NatsError, JetStreamError, OSError, RuntimeError, ValueError) as exc:
+            failure = FactorySettlementWakeBridgeError(
+                "Factory settlement JetStream ACK failed",
+                code="factory_settlement_wake_ack_failed",
+                details={"subject": self._subject, "error": str(exc)},
+            )
+            self._failure = failure
+            raise failure from exc
 
     def _observe_completion(self, task: asyncio.Task[None]) -> None:
         if task.cancelled():
@@ -1152,6 +1268,7 @@ async def create_factory_settlement_runtime(
                 subject=subject,
                 durable_name=durable_name,
                 wake=consumer.wake,
+                wake_by_source_fact=consumer.wake,
             )
         except (NatsError, JetStreamError, OSError, RuntimeError, ValueError) as exc:
             if wake_bridge_required:
