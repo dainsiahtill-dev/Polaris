@@ -8609,6 +8609,7 @@ class OrchestrationStageExecutor:
         artifact_quality_errors: list[str],
         repair_attempt: int,
         interface_discrepancy_evidence: dict[str, Any] | None = None,
+        owner_target_files: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         changed_files = self._workspace_quality_repair_changed_files()
         if not changed_files:
@@ -8621,7 +8622,11 @@ class OrchestrationStageExecutor:
             }
         declared_target_files = self._workspace_quality_repair_target_files()
         diagnostic_target_files = self._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors)
-        target_files = diagnostic_target_files or declared_target_files
+        target_files = (
+            _dedupe_workspace_repair_paths(owner_target_files)
+            if owner_target_files
+            else diagnostic_target_files or declared_target_files
+        )
         repair_context: dict[str, Any] = {
             "delivery_mode": "materialize_changes",
             "target_files": (target_files or changed_files)[:80],
@@ -8853,6 +8858,22 @@ class OrchestrationStageExecutor:
         )
 
     @staticmethod
+    def _workspace_quality_deferred_owner_targets(summary: dict[str, Any]) -> list[str]:
+        """Return precise targets deferred because the first repair task did not own them."""
+
+        if str(summary.get("stage") or "").strip() != "task_boundary_repair_targets_deferred":
+            return []
+        scope_filter = summary.get("task_boundary_scope_filter")
+        if not isinstance(scope_filter, Mapping):
+            return []
+        raw_targets = scope_filter.get("out_of_scope_repair_target_files")
+        if not isinstance(raw_targets, list | tuple | set):
+            return []
+        return _dedupe_workspace_repair_paths(
+            [str(item or "") for item in raw_targets if str(item or "").strip()]
+        )
+
+    @staticmethod
     def _workspace_quality_interface_discrepancy_evidence(
         summary: dict[str, Any],
         artifact_quality_errors: list[str] | None = None,
@@ -9028,6 +9049,8 @@ class OrchestrationStageExecutor:
             "explicit_quality_target_files",
             "repair_target_files",
             "rotated_repair_targets",
+            "task_boundary_scope_filter",
+            "deferred_owner_rebind",
             "plan_probe_preaudit",
             "interface_discrepancy_evidence",
             "deterministic_no_materialized_evidence",
@@ -9378,6 +9401,46 @@ class OrchestrationStageExecutor:
                     )
                     round_requires_task_boundary_triage = self._workspace_quality_summary_requires_task_boundary_triage(
                         dict(round_summary)
+                    )
+                deferred_owner_targets = self._workspace_quality_deferred_owner_targets(dict(round_summary))
+                if deferred_owner_targets:
+                    # Target inference happens inside the Director adapter after the
+                    # first TaskRuntime owner has been claimed. If the precise
+                    # verifier targets belong to a different PM task, the adapter
+                    # correctly refuses the write and returns structured ownership
+                    # evidence. Rebind once to that exact owner instead of failing
+                    # the chain or restarting PM/CE.
+                    deferred_summary = self._workspace_quality_repair_summary_projection(
+                        dict(round_summary),
+                        repair_errors,
+                    )
+                    deadline_detail = workspace_repair_deadline_blocker(
+                        f"before_deferred_owner_rebind_round_{round_index + 1}"
+                    )
+                    if deadline_detail:
+                        return write_workspace_validation_failure(
+                            "factory_quality_gate_workspace_repair_deadline_insufficient",
+                            deadline_detail,
+                            repair_override=current_workspace_repair_summary(
+                                residual_errors=repair_errors,
+                                deadline_detail=deadline_detail,
+                            ),
+                        )
+                    round_repair_results, round_summary = await self._apply_workspace_quality_llm_repairs(
+                        run_id=run.id,
+                        context=context,
+                        artifact_quality_errors=repair_errors,
+                        repair_attempt=round_index + 1,
+                        owner_target_files=deferred_owner_targets,
+                    )
+                    round_summary = dict(round_summary)
+                    round_summary["deferred_owner_rebind"] = {
+                        "attempted": True,
+                        "target_files": deferred_owner_targets,
+                        "previous_repair": deferred_summary,
+                    }
+                    round_requires_task_boundary_triage = (
+                        self._workspace_quality_summary_requires_task_boundary_triage(dict(round_summary))
                     )
                 cpp_post_repair_results: list[dict[str, Any]] = []
                 if not round_requires_task_boundary_triage:

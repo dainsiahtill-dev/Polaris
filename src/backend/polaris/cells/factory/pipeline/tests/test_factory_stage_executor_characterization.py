@@ -7308,6 +7308,7 @@ class TestRunWorkspaceQualityChecks:
 
         monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "test"]])
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
         monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fake_apply_workspace_quality_repairs)
         monkeypatch.setattr(
@@ -7328,6 +7329,111 @@ class TestRunWorkspaceQualityChecks:
         assert payload["repair"]["success"] is True
         assert payload["repair"]["source_tools"] == ["director_materialization_quality_repair"]
         assert payload["repair"]["rounds"][0]["source_tools"] == ["director_materialization_quality_repair"]
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_rebinds_deferred_repair_to_owning_director_task(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-owner-rebind",
+            config=FactoryConfig(name="quality-owner-rebind"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-10T00:00:00+00:00",
+        )
+        state = {"repaired": False}
+        owner_target_calls: list[list[str] | None] = []
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            return {
+                "command": command,
+                "exit_code": 0 if state["repaired"] else 1,
+                "passed": state["repaired"],
+                "stdout_tail": (
+                    "test passed"
+                    if state["repaired"]
+                    else "AssertionError: browser entrypoint is not referenced by declared HTML"
+                ),
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        def fake_apply_workspace_quality_repairs(
+            *,
+            run_id: str,
+            artifact_quality_errors: list[str],
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            assert run_id == "factory-quality-owner-rebind"
+            assert artifact_quality_errors
+            return [], {"attempted": False, "success": False, "source_tools": [], "tool_results": 0}
+
+        async def fake_apply_workspace_quality_llm_repairs(
+            *,
+            run_id: str,
+            context: dict[str, Any],
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+            interface_discrepancy_evidence: dict[str, Any] | None = None,
+            owner_target_files: list[str] | None = None,
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            del context, artifact_quality_errors, interface_discrepancy_evidence
+            assert run_id == "factory-quality-owner-rebind"
+            assert repair_attempt == 1
+            owner_target_calls.append(owner_target_files)
+            if owner_target_files is None:
+                return [], {
+                    "stage": "task_boundary_repair_targets_deferred",
+                    "attempted": True,
+                    "success": False,
+                    "success_reason": "repair_targets_outside_current_task_target_files",
+                    "source_tools": [],
+                    "tool_results": 0,
+                    "task_boundary_scope_filter": {
+                        "reason": "quality_repair_targets_outside_current_task_target_files",
+                        "out_of_scope_repair_target_files": ["index.html"],
+                    },
+                }
+            assert owner_target_files == ["index.html"]
+            state["repaired"] = True
+            return (
+                [{"success": True, "tool": "edit_file", "file": "index.html", "operation": "modify"}],
+                {
+                    "stage": "quality_repair",
+                    "attempted": True,
+                    "success": True,
+                    "source_tools": ["director_materialization_quality_repair"],
+                    "tool_results": 1,
+                    "write_tool_evidence": True,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "test"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fake_apply_workspace_quality_repairs)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_llm_repairs",
+            fake_apply_workspace_quality_llm_repairs,
+        )
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 1},
+        )
+
+        assert passed is True
+        assert owner_target_calls == [None, ["index.html"]]
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        rebind = payload["repair"]["rounds"][0]["repair_summary"]["deferred_owner_rebind"]
+        assert rebind["attempted"] is True
+        assert rebind["target_files"] == ["index.html"]
+        assert rebind["previous_repair"]["stage"] == "task_boundary_repair_targets_deferred"
 
     @pytest.mark.asyncio
     async def test_workspace_quality_llm_repair_context_includes_ce_blueprint_and_catalog(
