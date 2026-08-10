@@ -22,7 +22,7 @@ import subprocess
 import threading
 import unicodedata
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -7137,6 +7137,48 @@ class OrchestrationStageExecutor:
             deduped.append(normalized)
         return deduped
 
+    @staticmethod
+    def _workspace_quality_diagnostic_signature(errors: Iterable[str]) -> tuple[str, ...]:
+        """Return a stable verifier-diagnostic signature for convergence checks.
+
+        Repair success is owned by the post-repair verifier, not by a write-tool
+        receipt.  Normalize whitespace/case so formatting jitter does not buy
+        another Provider attempt, while preserving paths/codes/symbols needed to
+        distinguish a real diagnostic change.
+        """
+
+        normalized = {
+            " ".join(str(error or "").split()).casefold()
+            for error in errors
+            if str(error or "").strip()
+        }
+        return tuple(sorted(normalized))
+
+    @staticmethod
+    def _workspace_quality_repair_effect(
+        *,
+        before_signature: tuple[str, ...],
+        after_signature: tuple[str, ...],
+        verifier_passed: bool,
+        write_tool_evidence: bool,
+    ) -> str:
+        """Classify one local repair by verifier effect, never by model claim."""
+
+        if verifier_passed:
+            return "resolved"
+        if not write_tool_evidence:
+            return "no_op"
+        if len(after_signature) < len(before_signature):
+            return "progress"
+        if len(after_signature) > len(before_signature):
+            return "regression"
+        if after_signature == before_signature:
+            return "stagnant"
+        # An equal-count diagnostic swap is not demonstrated progress.  Treat it
+        # as stagnation so a model cannot burn the full budget by trading one
+        # compiler error for another indefinitely.
+        return "equal_count_swap"
+
     def _workspace_quality_repair_issue_payloads(
         self,
         artifact_quality_errors: list[str],
@@ -7696,6 +7738,45 @@ class OrchestrationStageExecutor:
         execution_attempt = TaskRuntimeExecutionAttemptIdentityV1.from_record(attempt_record)
         return external_task_id, task_row_id, execution_attempt
 
+    @staticmethod
+    def _workspace_quality_repair_owner_score(
+        candidate: Mapping[str, Any],
+        *,
+        run_id: str,
+        normalized_targets: set[str],
+    ) -> tuple[int, int]:
+        """Score only task-owned paths when selecting a verifier-repair owner.
+
+        ``project_declared_target_files`` is a project-wide inventory copied to
+        every Director task.  Treating it as ownership makes unrelated tasks tie
+        for every project file; the failed/rework priority then selects the wrong
+        task and the Director correctly refuses the out-of-scope edit.  Ownership
+        is established only by the task-local ``target_files``/``scope_paths``.
+        """
+
+        metadata = candidate.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        candidate_factory_run_id = str(metadata.get("factory_run_id") or "").strip()
+        external_id = str(metadata.get("external_task_id") or candidate.get("external_task_id") or "").strip()
+        if candidate_factory_run_id != run_id or not external_id or external_id.startswith("factory-"):
+            return (-1, -1)
+        raw_paths: list[Any] = []
+        for key in ("target_files", "scope_paths"):
+            value = metadata.get(key)
+            if isinstance(value, str):
+                raw_paths.append(value)
+            elif isinstance(value, list | tuple | set):
+                raw_paths.extend(value)
+        candidate_paths = {
+            str(path or "").strip().replace("\\", "/")
+            for path in raw_paths
+            if str(path or "").strip()
+        }
+        overlap = len(normalized_targets.intersection(candidate_paths))
+        status = str(candidate.get("status") or candidate.get("raw_status") or "").strip().lower()
+        rework_priority = 1 if status in {"pending", "ready", "blocked", "failed"} else 0
+        return (overlap, rework_priority)
+
     def _claim_workspace_quality_repair_attempt(
         self,
         *,
@@ -7726,28 +7807,11 @@ class OrchestrationStageExecutor:
         }
 
         def row_owner_score(candidate: Mapping[str, Any]) -> tuple[int, int]:
-            metadata = candidate.get("metadata")
-            metadata = metadata if isinstance(metadata, Mapping) else {}
-            candidate_factory_run_id = str(metadata.get("factory_run_id") or "").strip()
-            external_id = str(metadata.get("external_task_id") or candidate.get("external_task_id") or "").strip()
-            if candidate_factory_run_id != run_id or not external_id or external_id.startswith("factory-"):
-                return (-1, -1)
-            raw_paths: list[Any] = []
-            for key in ("target_files", "scope_paths", "project_declared_target_files"):
-                value = metadata.get(key)
-                if isinstance(value, str):
-                    raw_paths.append(value)
-                elif isinstance(value, list | tuple | set):
-                    raw_paths.extend(value)
-            candidate_paths = {
-                str(path or "").strip().replace("\\", "/")
-                for path in raw_paths
-                if str(path or "").strip()
-            }
-            overlap = len(normalized_targets.intersection(candidate_paths))
-            status = str(candidate.get("status") or candidate.get("raw_status") or "").strip().lower()
-            rework_priority = 1 if status in {"pending", "ready", "blocked", "failed"} else 0
-            return (overlap, rework_priority)
+            return self._workspace_quality_repair_owner_score(
+                candidate,
+                run_id=run_id,
+                normalized_targets=normalized_targets,
+            )
 
         owner_rows = [
             candidate
@@ -9426,6 +9490,8 @@ class OrchestrationStageExecutor:
             write_tool_evidence = False
             task_boundary_triage_required = False
             task_boundary_triage_summary: dict[str, Any] = {}
+            consecutive_stagnant_rounds = 0
+            convergence_stop_reason = ""
 
             def current_workspace_repair_summary(
                 *,
@@ -9449,6 +9515,8 @@ class OrchestrationStageExecutor:
                     "evidence": evidence[:12],
                     "max_rounds": max_rounds,
                     "rounds": repair_rounds,
+                    "consecutive_stagnant_rounds": consecutive_stagnant_rounds,
+                    "convergence_stop_reason": convergence_stop_reason,
                 }
                 if deadline_detail:
                     partial_summary["deadline_blocker"] = deadline_detail
@@ -9471,6 +9539,7 @@ class OrchestrationStageExecutor:
                 repair_errors = self._workspace_quality_repair_errors(latest_check_results or results)
                 if not repair_errors:
                     break
+                before_signature = self._workspace_quality_diagnostic_signature(repair_errors)
                 round_repair_results, round_summary = await self._apply_workspace_quality_deterministic_repairs(
                     run=run,
                     artifact_quality_errors=repair_errors,
@@ -9648,7 +9717,7 @@ class OrchestrationStageExecutor:
                     normalized_round_summary,
                     repair_errors,
                 )
-                round_payload = {
+                round_payload: dict[str, Any] = {
                     "round": round_index + 1,
                     "attempted": True,
                     "artifact_quality_errors": repair_errors[:10],
@@ -9667,8 +9736,23 @@ class OrchestrationStageExecutor:
                         round_payload["task_boundary_triage_required"] = True
                 repair_rounds.append(round_payload)
                 if round_requires_task_boundary_triage:
+                    convergence_stop_reason = "task_boundary_triage_required"
                     break
                 if not round_repair_results:
+                    round_payload["verifier_effect"] = "no_op"
+                    round_payload["verifier_authoritative_success"] = False
+                    round_payload["diagnostic_count_before"] = len(before_signature)
+                    round_payload["diagnostic_count_after"] = len(before_signature)
+                    projected_summary_raw = round_payload.get("repair_summary")
+                    if isinstance(projected_summary_raw, dict):
+                        projected_summary: dict[str, Any] = projected_summary_raw
+                        projected_summary["claimed_success_before_revalidation"] = bool(
+                            projected_summary.get("success")
+                        )
+                        projected_summary["success"] = False
+                        projected_summary["success_authority"] = "post_repair_verifier"
+                    consecutive_stagnant_rounds += 1
+                    convergence_stop_reason = "repair_produced_no_effect"
                     break
                 latest_check_results = []
                 rerun_results = []
@@ -9702,7 +9786,6 @@ class OrchestrationStageExecutor:
                         results.append(result)
                         latest_check_results.append(result)
                         rerun_results.append(result)
-                    break
                 else:
                     for command in run_commands:
                         result, deadline_detail = await run_workspace_quality_command_with_deadline(command, phase)
@@ -9721,6 +9804,53 @@ class OrchestrationStageExecutor:
                         results.append(round_depth_result)
                         latest_check_results.append(round_depth_result)
                         rerun_results.append(round_depth_result)
+                round_residual_failures = [
+                    item for item in latest_check_results if not bool(item.get("passed"))
+                ]
+                after_errors = (
+                    self._workspace_quality_repair_errors(round_residual_failures)
+                    if round_residual_failures
+                    else []
+                )
+                after_signature = self._workspace_quality_diagnostic_signature(after_errors)
+                verifier_passed = not round_residual_failures
+                repair_effect = self._workspace_quality_repair_effect(
+                    before_signature=before_signature,
+                    after_signature=after_signature,
+                    verifier_passed=verifier_passed,
+                    write_tool_evidence=round_write_tool_evidence,
+                )
+                round_payload.update(
+                    {
+                        "verifier_effect": repair_effect,
+                        "verifier_authoritative_success": verifier_passed,
+                        "diagnostic_count_before": len(before_signature),
+                        "diagnostic_count_after": len(after_signature),
+                        "residual_errors_after": after_errors[:10],
+                    }
+                )
+                projected_summary_raw = round_payload.get("repair_summary")
+                if isinstance(projected_summary_raw, dict):
+                    projected_summary = projected_summary_raw
+                    projected_summary["claimed_success_before_revalidation"] = bool(
+                        projected_summary.get("success")
+                    )
+                    projected_summary["success"] = verifier_passed
+                    projected_summary["success_authority"] = "post_repair_verifier"
+                    projected_summary["verifier_effect"] = repair_effect
+                if repair_effect in {"resolved", "progress"}:
+                    consecutive_stagnant_rounds = 0
+                else:
+                    consecutive_stagnant_rounds += 1
+                if verifier_passed:
+                    convergence_stop_reason = "verifier_passed"
+                    break
+                if round_prepare_failed:
+                    convergence_stop_reason = "prepare_after_repair_failed"
+                    break
+                if consecutive_stagnant_rounds >= 2:
+                    convergence_stop_reason = "two_consecutive_stagnant_repairs"
+                    break
             residual_failures = [item for item in latest_check_results if not bool(item.get("passed"))]
             residual_errors = self._workspace_quality_repair_errors(residual_failures) if residual_failures else []
             residual_coverage_report = self._workspace_quality_repair_coverage_report(residual_errors)
@@ -9740,6 +9870,8 @@ class OrchestrationStageExecutor:
                 "evidence": evidence[:12],
                 "max_rounds": max_rounds,
                 "rounds": repair_rounds,
+                "consecutive_stagnant_rounds": consecutive_stagnant_rounds,
+                "convergence_stop_reason": convergence_stop_reason,
             }
             if task_boundary_triage_required:
                 repair_summary.update(
@@ -9842,6 +9974,9 @@ class OrchestrationStageExecutor:
         gate = {
             "ok": passed,
             "summary": detail,
+            "gate_obligation_id": f"factory:{run.id}:workspace_validation",
+            "gate_subject_kind": "factory_run",
+            "gate_subject_id": run.id,
             "command_count_total": len(commands),
             "commands": commands,
             "requirements": {"workspace_validation": {"ok": passed, "detail": detail}},
@@ -9892,6 +10027,7 @@ class OrchestrationStageExecutor:
         workspace_checks_artifact: str = "",
         workspace_checks_passed: bool | None = None,
         status: str = "failed",
+        qa_invoked: bool = False,
     ) -> StageResult:
         target = str(context.get("qa_target") or "Quality gate")
         remaining_seconds = self._factory_deadline_remaining_seconds(context)
@@ -9902,7 +10038,10 @@ class OrchestrationStageExecutor:
             "review_type": "quality_gate",
             "target": target,
             "runtime_hard_gate_passed": False,
-            "verdict": "FAIL",
+            "verdict": "FAIL" if qa_invoked else "NOT_RUN",
+            "qa_invoked": qa_invoked,
+            "canonical_qa_verdict": False,
+            "verdict_source": "qa_runtime" if qa_invoked else "deterministic_factory_gate",
             "passed": False,
             "score": 0,
             "critical_issue_count": 1,
@@ -10114,6 +10253,129 @@ class OrchestrationStageExecutor:
                 return latest
             await asyncio.sleep(0.05)
 
+    def _canonical_qa_commit_identity(
+        self,
+        *,
+        run: FactoryRun,
+        context: dict[str, Any],
+    ) -> tuple[str, str]:
+        """Return the final owned task and its authoritative child run.
+
+        QA verdict envelopes are task-boundary scoped.  A Factory portfolio is
+        a tree of Director child runs, so committing the verdict against the
+        Factory root run would never match a TaskBoundary and would correctly
+        fail closed.  Bind the final PM contract task to its actual child run;
+        the Factory aggregate projection then observes the resulting gate.
+        """
+
+        projection = self._canonical_factory_projection(run, context)
+        task_boundary = projection.get("task_boundary")
+        task_boundary_map = task_boundary if isinstance(task_boundary, Mapping) else {}
+        latest_by_task = task_boundary_map.get("latest_by_task")
+        latest_by_task_map = latest_by_task if isinstance(latest_by_task, Mapping) else {}
+        pm_tasks = self._load_pm_plan_tasks("tasks/plan.json")
+        ordered_task_ids = [
+            helpers._canonical_task_id_token(task.get("id") or task.get("task_id"))
+            for task in pm_tasks
+            if isinstance(task, dict)
+        ]
+        for task_id in reversed([item for item in ordered_task_ids if item]):
+            boundary_raw = latest_by_task_map.get(task_id)
+            boundary = boundary_raw if isinstance(boundary_raw, Mapping) else {}
+            boundary_run_id = str(boundary.get("run_id") or "").strip()
+            if (
+                boundary_run_id
+                and boundary.get("ok") is True
+                and str(boundary.get("status") or "").strip().lower() == "completed_verified"
+            ):
+                return task_id, boundary_run_id
+        return "", ""
+
+    async def _commit_qa_role_report_authority(
+        self,
+        *,
+        run: FactoryRun,
+        context: dict[str, Any],
+        qa_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Commit the completed QA role report through ``qa.audit_verdict``."""
+
+        from polaris.cells.qa.audit_verdict.public import (
+            CommitQaRoleVerdictCommandV1,
+            commit_qa_role_verdict,
+        )
+
+        task_id, qa_run_id = self._canonical_qa_commit_identity(run=run, context=context)
+        if not task_id or not qa_run_id:
+            return {"success": False, "reason": "canonical_qa_task_boundary_identity_missing"}
+        verdict = str(qa_payload.get("verdict") or "").strip().upper()
+        passed = bool(qa_payload.get("passed"))
+        if not verdict:
+            verdict = "PASS" if passed else "FAIL"
+        if passed != (verdict == "PASS"):
+            return {"success": False, "reason": "qa_role_report_verdict_inconsistent"}
+        raw_findings = [
+            *(qa_payload.get("critical_issues") or []),
+            *(qa_payload.get("major_issues") or []),
+            *(qa_payload.get("warnings") or []),
+        ]
+        findings = tuple(str(item).strip() for item in raw_findings if str(item).strip())
+        target_files = tuple(self._collect_declared_delivery_targets(self._load_pm_plan_tasks("tasks/plan.json")))
+        commit_context = self._director_stage_materialization_settle_commit_context(
+            run=run,
+            run_id=qa_run_id,
+            diagnostics=[],
+            factory_stage="quality_gate",
+        )
+        job_token_raw = commit_context.get("job_token")
+        job_token = dict(job_token_raw) if isinstance(job_token_raw, Mapping) else {}
+        report_content_hash = hashlib.sha256(
+            json.dumps(qa_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        try:
+            score = float(qa_payload.get("score") or 0.0)
+        except (TypeError, ValueError):
+            score = 0.0
+        try:
+            critical_issue_count = int(qa_payload.get("critical_issue_count") or 0)
+        except (TypeError, ValueError):
+            critical_issue_count = len(qa_payload.get("critical_issues") or [])
+        try:
+            result = await asyncio.to_thread(
+                commit_qa_role_verdict,
+                CommitQaRoleVerdictCommandV1(
+                    task_id=task_id,
+                    workspace=str(self.workspace),
+                    run_id=qa_run_id,
+                    verdict=verdict,
+                    passed=passed,
+                    score=score,
+                    critical_issue_count=critical_issue_count,
+                    findings=findings,
+                    target_files=target_files,
+                    report_ref="runtime/qa/report.json",
+                    report_content_hash=report_content_hash,
+                    job_token=job_token,
+                    metadata={
+                        "source": "factory_stage_executor.quality_gate",
+                        "factory_run_id": run.id,
+                    },
+                ),
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("Canonical QA role verdict commit failed for %s: %s", run.id, exc)
+            return {"success": False, "reason": f"qa_role_verdict_commit_failed:{type(exc).__name__}:{exc}"}
+        metadata = dict(result.metadata)
+        return {
+            "success": bool(metadata.get("qa_verdict_committed")),
+            "verdict": result.verdict,
+            "ok": result.ok,
+            "task_id": task_id,
+            "run_id": qa_run_id,
+            "receipt": dict(metadata.get("qa_verdict_commit_receipt") or {}),
+            "reason": "" if metadata.get("qa_verdict_committed") else "qa_verdict_commit_receipt_missing",
+        }
+
     def _reconcile_verified_runtime_delivery(
         self,
         *,
@@ -10256,6 +10518,27 @@ class OrchestrationStageExecutor:
             )
 
         workspace_checks_passed, workspace_checks_artifact = await self._run_workspace_quality_checks(run, context)
+        if workspace_checks_passed is False:
+            # Deterministic physical verification owns artifact/build/test/lint/
+            # entrypoint failures. The workspace loop above already performs
+            # bounded, same-Director-task repair and affected-command
+            # revalidation. Sending the same hard failure to the advisory QA
+            # LLM duplicates tokens, can overwrite the typed residual with a
+            # subjective verdict, and cannot add authority. Preserve the
+            # verifier artifact and stop this stage as a repairable delivery
+            # failure; PM/CE remain out of the loop.
+            return self._build_quality_gate_failure_stage(
+                run,
+                reason_code="factory_quality_gate_workspace_validation_failed",
+                detail=(
+                    self._workspace_quality_failure_detail(workspace_checks_artifact)
+                    if workspace_checks_artifact
+                    else "Workspace validation failed without an authoritative evidence artifact"
+                ),
+                context=context,
+                workspace_checks_artifact=workspace_checks_artifact,
+                workspace_checks_passed=False,
+            )
         qa_input = self._build_qa_input_with_workspace_quality_evidence(
             context.get("qa_input"),
             workspace_checks_artifact,
@@ -10326,6 +10609,7 @@ class OrchestrationStageExecutor:
                 workspace_checks_artifact=workspace_checks_artifact,
                 workspace_checks_passed=workspace_checks_passed,
                 status="cancelled",
+                qa_invoked=True,
             )
         if final_status == "timeout":
             return self._build_quality_gate_failure_stage(
@@ -10335,6 +10619,7 @@ class OrchestrationStageExecutor:
                 context=context,
                 workspace_checks_artifact=workspace_checks_artifact,
                 workspace_checks_passed=workspace_checks_passed,
+                qa_invoked=True,
             )
 
         qa_report_path = self._artifact_path("runtime/qa/report.json")
@@ -10352,6 +10637,40 @@ class OrchestrationStageExecutor:
                     parse_error = exc
                     await asyncio.sleep(0.2)
         qa_payload: dict[str, Any] = loaded if isinstance(loaded, dict) else {}
+
+        preexisting_authority = helpers.evaluate_canonical_factory_authority(
+            self._canonical_factory_projection(run, context)
+        )
+        qa_commit: dict[str, Any] = {"success": False, "reason": "qa_role_report_unavailable"}
+        if preexisting_authority.qa_verdict_present:
+            # Idempotent recovery/replay: the ledger verdict is authority.  A
+            # stale or diagnostic report mirror must not append a competing
+            # revision or overwrite an already-committed canonical decision.
+            qa_commit = {
+                "success": True,
+                "verdict": "PASS" if preexisting_authority.qa_verdict_passed else "FAIL",
+                "ok": preexisting_authority.qa_verdict_passed,
+                "reason": "canonical_qa_verdict_already_present",
+            }
+        elif report_ready and parse_error is None and qa_payload:
+            qa_commit = await self._commit_qa_role_report_authority(
+                run=run,
+                context=context,
+                qa_payload=qa_payload,
+            )
+        if not bool(qa_commit.get("success")):
+            return self._build_quality_gate_failure_stage(
+                run,
+                reason_code="factory_quality_gate_qa_verdict_commit_failed",
+                detail=(
+                    "QA role execution completed but canonical qa.audit_verdict commit failed: "
+                    f"{qa_commit.get('reason') or 'unknown'}"
+                ),
+                context=context,
+                workspace_checks_artifact=workspace_checks_artifact,
+                workspace_checks_passed=workspace_checks_passed,
+                qa_invoked=True,
+            )
 
         canonical_authority = await self._wait_for_canonical_quality_authority(
             run,
@@ -10372,6 +10691,7 @@ class OrchestrationStageExecutor:
                 context=context,
                 workspace_checks_artifact=workspace_checks_artifact,
                 workspace_checks_passed=workspace_checks_passed,
+                qa_invoked=True,
             )
         if runtime_reconciliation.get("reconciled_task_ids"):
             canonical_authority = await self._wait_for_canonical_quality_authority(run, context)
@@ -10388,6 +10708,8 @@ class OrchestrationStageExecutor:
             f"report_consistent={report_consistent}; "
             f"canonical_authorized={is_success}; "
             f"canonical_reason={canonical_authority.reason_code}"
+            f"; qa_commit_run={qa_commit.get('run_id') or ''}"
+            f"; qa_commit_task={qa_commit.get('task_id') or ''}"
             f"; runtime_reconciled={runtime_reconciliation.get('reconciled_task_ids') or []}"
         )
         artifacts = ["runtime/qa/report.json"] if report_ready else []

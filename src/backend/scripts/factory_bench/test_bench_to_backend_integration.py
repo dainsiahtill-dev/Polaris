@@ -31,6 +31,7 @@ sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
 from scripts.factory_bench.run_factory_bench import (
     build_requirements_doc,
     map_factory_run_to_chain_results,
+    read_factory_qa_invocation_status,
     required_llm_roles_for_factory_record,
     run_factory_chain,
 )
@@ -419,6 +420,13 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         self.assertEqual(
             required_llm_roles_for_factory_record(
                 chain=clean_chain,
+                record={"qa_invoked": False},
+            ),
+            ("pm", "chief_engineer", "director"),
+        )
+        self.assertEqual(
+            required_llm_roles_for_factory_record(
+                chain=clean_chain,
                 record={"factory_bench_start_from": "director"},
             ),
             ("director", "qa"),
@@ -438,6 +446,25 @@ class TestFactoryRunsIntegration(unittest.TestCase):
             ),
             (),
         )
+
+    def test_read_factory_qa_invocation_status_distinguishes_not_run_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            report = workspace / ".polaris" / "roles" / "qa" / "factory-1" / "report.json"
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(
+                json.dumps(
+                    {
+                        "verdict": "NOT_RUN",
+                        "qa_invoked": False,
+                        "verdict_source": "deterministic_factory_gate",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertIs(read_factory_qa_invocation_status(workspace, "factory-1"), False)
 
     def test_map_factory_run_to_chain_results_hard_failed(self) -> None:
         """When status is cancelled (not failed/completed), exit_class=hard_failed."""

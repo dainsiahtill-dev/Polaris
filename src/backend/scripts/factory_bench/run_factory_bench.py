@@ -2422,6 +2422,33 @@ def project_final_request_refs(events: Sequence[Mapping[str, Any]]) -> list[dict
     return projected
 
 
+def read_factory_qa_invocation_status(workspace: Path, factory_run_id: str) -> bool | None:
+    """Read whether QA was physically invoked for one Factory run.
+
+    A deterministic workspace failure intentionally stops before advisory QA.
+    The resulting report is still a verdict artifact, but ``qa_invoked=false``;
+    requiring a QA provider route in that state misclassifies correct local
+    recovery as an LLM routing failure.
+    """
+
+    normalized_run_id = str(factory_run_id or "").strip()
+    if not normalized_run_id:
+        return None
+    candidates = (
+        workspace / ".polaris" / "roles" / "qa" / normalized_run_id / "report.json",
+        workspace / ".polaris" / "qa" / f"{normalized_run_id}.report.json",
+        workspace / ".polaris" / "qa" / "latest.report.json",
+    )
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+            continue
+        if isinstance(payload, Mapping) and isinstance(payload.get("qa_invoked"), bool):
+            return bool(payload["qa_invoked"])
+    return None
+
+
 def required_llm_roles_for_factory_record(
     *,
     chain: dict[str, Any],
@@ -2466,11 +2493,12 @@ def required_llm_roles_for_factory_record(
     director_evidence = False
     if isinstance(director_result, dict):
         director_evidence = any(value not in (None, "", 0) for value in director_result.values())
-    if start_from == "director_resume":
+    qa_invoked = record.get("qa_invoked")
+    if start_from in {"director", "director_resume"}:
         resume_roles = []
         if "director" in stage_hint or exit_class in {"director_partial", "qa_failed", "clean"} or director_evidence:
             resume_roles.append("director")
-        if (
+        if qa_invoked is not False and (
             bool(chain_results.get("qa_ran"))
             or "qa" in stage_hint
             or "quality" in stage_hint
@@ -2488,7 +2516,7 @@ def required_llm_roles_for_factory_record(
         return tuple(dict.fromkeys(roles))
     if "director" in stage_hint or exit_class in {"director_partial", "qa_failed", "clean"} or director_evidence:
         roles.append("director")
-    if (
+    if qa_invoked is not False and (
         bool(chain_results.get("qa_ran"))
         or "qa" in stage_hint
         or "quality" in stage_hint
@@ -4225,6 +4253,10 @@ def main() -> int:
         record["canonical_project_id"] = canonical_pid
         record["canonical_catalog_project_id"] = canonical_pid
         record["factory_run_id"] = str(chain.get("run_id") or run_id)
+        record["qa_invoked"] = read_factory_qa_invocation_status(
+            Path(project_workspace),
+            record["factory_run_id"],
+        )
         record["requested_instance_id"] = str(launcher_instance_meta.get("requested_instance_id") or "")
         record["instance_id"] = str(launcher_instance_meta.get("instance_id") or "")
         record["instance_launch_receipt"] = dict(launcher_instance_meta.get("launch_receipt") or {})
@@ -4410,7 +4442,7 @@ def main() -> int:
     agg = aggregate_factory_audits(records)
     goal_audit = aggregate_goal_audit(records)
     out_path = base / "factory_audits.json"
-    final_payload = {
+    final_payload: dict[str, Any] = {
         "aggregate": agg,
         "goal_audit": goal_audit,
         "records": records,

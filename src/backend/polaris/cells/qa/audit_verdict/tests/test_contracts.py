@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from polaris.cells.audit.evidence.public.contracts import (
@@ -16,6 +17,7 @@ from polaris.cells.events.fact_stream.public import (
     fact_stream_bootstrap_streams,
 )
 from polaris.cells.qa.audit_verdict.public.contracts import (
+    CommitQaRoleVerdictCommandV1,
     FailureSignalV1,
     GetQaVerdictQueryV1,
     ParseTracebackFramesCommandV1,
@@ -35,6 +37,7 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     project_qa_failure_execution_state,
 )
 from polaris.cells.qa.audit_verdict.public.service import (
+    commit_qa_role_verdict,
     get_qa_verdict_envelope,
     parse_traceback_frames,
     run_qa_audit,
@@ -82,6 +85,34 @@ class TestRunQaAuditCommandV1:
     def test_run_id_optional(self) -> None:
         cmd = RunQaAuditCommandV1(task_id="t1", workspace="/tmp", run_id="r1")
         assert cmd.run_id == "r1"
+
+
+class TestCommitQaRoleVerdictCommandV1:
+    def test_pass_report_is_normalized(self) -> None:
+        command = CommitQaRoleVerdictCommandV1(
+            task_id=" TASK-3 ",
+            workspace=" /workspace ",
+            run_id=" director-3 ",
+            verdict=" pass ",
+            passed=True,
+            score=96,
+            target_files=("src/main.ts", "src/main.ts"),
+        )
+
+        assert command.task_id == "TASK-3"
+        assert command.run_id == "director-3"
+        assert command.verdict == "PASS"
+        assert command.target_files == ("src/main.ts",)
+
+    def test_rejects_inconsistent_pass_flag(self) -> None:
+        with pytest.raises(ValueError, match="passed must be true exactly"):
+            CommitQaRoleVerdictCommandV1(
+                task_id="TASK-3",
+                workspace="/workspace",
+                run_id="director-3",
+                verdict="FAIL",
+                passed=True,
+            )
 
 
 class TestGetQaVerdictQueryV1:
@@ -454,6 +485,84 @@ def test_run_qa_audit_public_service_reports_missing_director_evidence(tmp_path:
     assert result.metadata["responsible_layer"] == "execution_control_plane"
     assert result.metadata["qa_verdict_committed"] is False
     assert result.metadata["qa_verdict_commit_receipt"] == {}
+
+
+def test_commit_qa_role_verdict_uses_evidence_barrier_before_final_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.qa.audit_verdict.public import service as service_module
+
+    commits: list[tuple[str, dict[str, object]]] = []
+
+    def commit_evidence(**kwargs: object) -> SimpleNamespace:
+        commits.append(("evidence", dict(kwargs)))
+        return SimpleNamespace(
+            to_dict=lambda: {"run_id": "director-3", "append_id": "append-1", "event_hash": "event-1"}
+        )
+
+    envelope_payload = {
+        "schema_version": "qa.verdict_envelope.v1",
+        "workspace": str(tmp_path),
+        "run_id": "director-3",
+        "task_id": "TASK-3",
+        "verdict": "PASS",
+        "ok": True,
+        "classification": {"failure_class": None, "responsible_layer": "qa"},
+        "content_hash": "envelope-hash",
+    }
+    envelope = SimpleNamespace(
+        ok=True,
+        verdict="PASS",
+        findings=(),
+        content_hash="envelope-hash",
+        to_dict=lambda: dict(envelope_payload),
+    )
+
+    def build_envelope(**kwargs: object) -> SimpleNamespace:
+        commits.append(("envelope", dict(kwargs)))
+        return envelope
+
+    def commit_verdict(**kwargs: object) -> SimpleNamespace:
+        commits.append(("verdict", dict(kwargs)))
+        return SimpleNamespace(
+            to_dict=lambda: {
+                "run_id": "director-3",
+                "append_id": "append-2",
+                "event_hash": "event-2",
+                "envelope_hash": "envelope-hash",
+                "verdict": "PASS",
+            }
+        )
+
+    monkeypatch.setattr(service_module, "commit_qa_evidence", commit_evidence)
+    monkeypatch.setattr(service_module, "_build_qa_verdict_envelope", build_envelope)
+    monkeypatch.setattr(service_module, "commit_qa_verdict", commit_verdict)
+
+    result = commit_qa_role_verdict(
+        CommitQaRoleVerdictCommandV1(
+            task_id="TASK-3",
+            workspace=str(tmp_path),
+            run_id="director-3",
+            verdict="PASS",
+            passed=True,
+            score=96,
+            target_files=("src/main.ts",),
+            report_ref="runtime/qa/report.json",
+            report_content_hash="report-hash",
+            job_token={"run_id": "director-3", "capability_audit": {"ok": True}},
+        )
+    )
+
+    assert [name for name, _ in commits] == ["evidence", "envelope", "verdict"]
+    assert commits[2][1]["evidence_commit_receipt"] == {
+        "run_id": "director-3",
+        "append_id": "append-1",
+        "event_hash": "event-1",
+    }
+    assert result.ok is True
+    assert result.verdict == "PASS"
+    assert result.metadata["qa_verdict_committed"] is True
 
 
 def test_run_visual_qa_audit_public_service_records_image_evidence_refs(tmp_path: Path) -> None:

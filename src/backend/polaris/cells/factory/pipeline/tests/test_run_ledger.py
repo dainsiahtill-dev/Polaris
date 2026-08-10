@@ -1260,3 +1260,61 @@ def test_persist_real_run_gate_ledger_consumes_platform_verifier_policy(
     assert ledger_meta["job_token"]["gate_policy"]["required_evidence_modalities"] == ["code", "command", "browser"]
     assert projection["ok"] is False
     assert projection["evidence_policy"]["missing_required_modalities"] == ["browser"]
+
+
+def test_persist_real_run_gate_ledger_builds_explicit_revision_chain(tmp_path: Path) -> None:
+    record = {
+        "id": "P1",
+        "run_id": "bench_1",
+        "project_id": "P1",
+        "factory_run_id": "bench_1",
+        "target_files": ["src/index.ts"],
+        "scope_paths": ["src/index.ts"],
+        "chain": {"run_id": "bench_1", "audit_bundle": {"blueprint_id": "bp-1"}},
+        "chain_results": {"contract_goal": "run project"},
+    }
+    base_gate = {
+        "ok": False,
+        "summary": "npm test failed",
+        "gate_obligation_id": "factory:bench_1:workspace_validation",
+        "gate_subject_kind": "factory_run",
+        "gate_subject_id": "bench_1",
+        "requirements": {"workspace_validation": {"ok": False, "detail": "npm test failed"}},
+        "commands": [{"ok": False, "tool": "npm test"}],
+        "command_count_total": 1,
+    }
+
+    first = persist_real_run_gate_ledger(
+        tmp_path,
+        record,
+        base_gate,
+        run_id="bench_1",
+        project_id="P1",
+        stage="workspace_validation",
+        gate_name="workspace_validation",
+    )
+    second = persist_real_run_gate_ledger(
+        tmp_path,
+        record,
+        {
+            **base_gate,
+            "ok": True,
+            "summary": "npm test passed",
+            "requirements": {"workspace_validation": {"ok": True, "detail": "npm test passed"}},
+            "commands": [{"ok": True, "tool": "npm test"}],
+        },
+        run_id="bench_1",
+        project_id="P1",
+        stage="workspace_validation",
+        gate_name="workspace_validation",
+    )
+
+    assert first["ledger_event"]["gate_revision"] == 1
+    assert "supersedes_content_id" not in first["ledger_event"]
+    assert second["ledger_event"]["gate_revision"] == 2
+    assert second["ledger_event"]["supersedes_content_id"] == first["content_id"]
+    projection = load_run_ledger_projection(tmp_path, run_id="bench_1")
+    assert projection["effective_gate_count"] == 1
+    assert projection["historical_failed_gate_count"] == 1
+    assert projection["failed_gates"] == []
+    assert projection["gate_revisions"]["integrity_ok"] is True

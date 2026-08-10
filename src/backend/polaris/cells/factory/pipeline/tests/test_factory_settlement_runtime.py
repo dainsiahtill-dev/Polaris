@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from itertools import pairwise
 from pathlib import Path
 from typing import Any, cast
 
@@ -1193,10 +1192,9 @@ async def test_durable_wake_bridge_withholds_ack_when_replay_is_not_ack_safe() -
 
 
 @pytest.mark.asyncio
-async def test_durable_wake_bridge_backs_off_between_open_barrier_replays() -> None:
+async def test_durable_wake_bridge_replays_open_barrier_once_per_delivery() -> None:
     subscription = RecordingJetStreamSubscription()
     first = AckTrackingMessage()
-    replayed = asyncio.Event()
     call_times: list[float] = []
     open_decision = SettlementDecision(
         source_fact_event_id="fact-open",
@@ -1210,9 +1208,6 @@ async def test_durable_wake_bridge_backs_off_between_open_barrier_replays() -> N
 
     async def wake() -> SettlementReplayReport:
         call_times.append(asyncio.get_running_loop().time())
-        if len(call_times) == 2:
-            replayed.set()
-            return SettlementReplayReport(decisions=())
         return SettlementReplayReport(decisions=(open_decision,))
 
     bridge = DurableJetStreamSettlementWakeBridge(
@@ -1225,27 +1220,25 @@ async def test_durable_wake_bridge_backs_off_between_open_barrier_replays() -> N
     await bridge.start()
     try:
         subscription.deliver(first)
-        await asyncio.wait_for(replayed.wait(), timeout=1.0)
+        await _wait_for_bridge_report(bridge)
+        await asyncio.sleep(0.1)
 
-        assert len(call_times) == 2
-        assert call_times[1] - call_times[0] >= 0.04
-        await asyncio.wait_for(first.acked.wait(), timeout=1.0)
-        assert first.ack_calls == 1
+        assert len(call_times) == 1
+        assert first.ack_calls == 0
     finally:
         await bridge.stop()
 
 
 @pytest.mark.asyncio
-async def test_durable_wake_bridge_backs_off_after_retryable_replay_error() -> None:
+async def test_durable_wake_bridge_retryable_error_does_not_block_next_delivery() -> None:
     subscription = RecordingJetStreamSubscription()
     first = AckTrackingMessage()
-    replayed = asyncio.Event()
+    second = AckTrackingMessage()
     call_times: list[float] = []
 
     async def wake() -> SettlementReplayReport:
         call_times.append(asyncio.get_running_loop().time())
         if len(call_times) == 2:
-            replayed.set()
             return SettlementReplayReport(decisions=())
         raise FactorySettlementRetryableError(
             "synthetic retryable replay failure",
@@ -1262,22 +1255,22 @@ async def test_durable_wake_bridge_backs_off_after_retryable_replay_error() -> N
     await bridge.start()
     try:
         subscription.deliver(first)
-        await asyncio.wait_for(replayed.wait(), timeout=1.0)
+        subscription.deliver(second)
+        await asyncio.wait_for(second.acked.wait(), timeout=1.0)
 
         assert len(call_times) == 2
-        assert call_times[1] - call_times[0] >= 0.04
-        await asyncio.wait_for(first.acked.wait(), timeout=1.0)
-        assert first.ack_calls == 1
+        assert first.ack_calls == 0
+        assert second.ack_calls == 1
     finally:
         await bridge.stop()
 
 
 @pytest.mark.asyncio
-async def test_durable_wake_bridge_caps_same_delivery_exponential_backoff() -> None:
+async def test_durable_wake_bridge_open_barrier_does_not_block_later_deliveries() -> None:
     subscription = RecordingJetStreamSubscription()
     first = AckTrackingMessage()
-    replayed = asyncio.Event()
-    call_times: list[float] = []
+    later = [AckTrackingMessage() for _ in range(10)]
+    wake_calls = 0
     open_decision = SettlementDecision(
         source_fact_event_id="fact-open",
         source_fact_seq=1,
@@ -1289,9 +1282,9 @@ async def test_durable_wake_bridge_caps_same_delivery_exponential_backoff() -> N
     )
 
     async def wake() -> SettlementReplayReport:
-        call_times.append(asyncio.get_running_loop().time())
-        if len(call_times) == 5:
-            replayed.set()
+        nonlocal wake_calls
+        wake_calls += 1
+        if wake_calls > 1:
             return SettlementReplayReport(decisions=())
         return SettlementReplayReport(decisions=(open_decision,))
 
@@ -1306,13 +1299,13 @@ async def test_durable_wake_bridge_caps_same_delivery_exponential_backoff() -> N
     await bridge.start()
     try:
         subscription.deliver(first)
-        await asyncio.wait_for(replayed.wait(), timeout=1.0)
-        await asyncio.wait_for(first.acked.wait(), timeout=1.0)
+        for message in later:
+            subscription.deliver(message)
+        await asyncio.wait_for(later[-1].acked.wait(), timeout=1.0)
 
-        intervals = [later - earlier for earlier, later in pairwise(call_times)]
-        assert intervals[0] >= 0.008
-        assert all(interval >= 0.018 for interval in intervals[1:])
-        assert first.ack_calls == 1
+        assert wake_calls == 11
+        assert first.ack_calls == 0
+        assert all(message.ack_calls == 1 for message in later)
     finally:
         await bridge.stop()
 
@@ -1375,9 +1368,7 @@ async def test_durable_wake_bridge_routes_task_runtime_delivery_by_fact_id() -> 
 
     async def hinted_wake(source_fact_event_id: str) -> SettlementReplayReport:
         hints.append(source_fact_event_id)
-        if len(hints) == 1:
-            return SettlementReplayReport(decisions=(open_decision,))
-        return SettlementReplayReport(decisions=())
+        return SettlementReplayReport(decisions=(open_decision,))
 
     bridge = DurableJetStreamSettlementWakeBridge(
         client=RecordingWakeClient(RecordingJetStreamContext(subscription)),
@@ -1390,10 +1381,11 @@ async def test_durable_wake_bridge_routes_task_runtime_delivery_by_fact_id() -> 
     await bridge.start()
     try:
         subscription.deliver(message)
-        await asyncio.wait_for(message.acked.wait(), timeout=1.0)
+        await _wait_for_bridge_report(bridge)
+        await asyncio.sleep(0.05)
 
-        assert hints == ["fact-terminal-1", "fact-terminal-1"]
-        assert message.ack_calls == 1
+        assert hints == ["fact-terminal-1"]
+        assert message.ack_calls == 0
     finally:
         await bridge.stop()
 

@@ -885,6 +885,16 @@ def build_gate_ledger_event(
         },
         "physical_evidence": physical_evidence,
     }
+    for source_key, event_key in (
+        ("gate_obligation_id", "gate_obligation_id"),
+        ("gate_subject_kind", "gate_subject_kind"),
+        ("gate_subject_id", "gate_subject_id"),
+        ("gate_revision", "gate_revision"),
+        ("supersedes_content_id", "supersedes_content_id"),
+    ):
+        value = gate.get(source_key)
+        if value not in (None, ""):
+            event[event_key] = value
     event["content_id"] = stable_hash(_event_content_payload(event))
     event["event_id"] = event["content_id"]
     return event
@@ -904,11 +914,42 @@ def persist_real_run_gate_ledger(
 
     token_record = _record_with_control_plane_verifier_policy(workspace, record)
     token = build_job_token_from_record(token_record, run_id=run_id, project_id=project_id, stage=stage)
-    event = build_gate_ledger_event(token, gate, gate_name=gate_name)
+    revision_gate = dict(gate)
+    obligation_id = _clean_string(revision_gate.get("gate_obligation_id"))
+    subject_kind = _clean_string(revision_gate.get("gate_subject_kind"))
+    subject_id = _clean_string(revision_gate.get("gate_subject_id"))
+    ledger_run_id = token.run_id or run_id or "unknown"
+    if obligation_id or subject_kind or subject_id:
+        if not obligation_id or not subject_kind or not subject_id:
+            raise ValueError("gate revision identity requires obligation_id, subject_kind, and subject_id")
+        previous_events = RunLedger(workspace, run_id=ledger_run_id).read_events()
+        previous = next(
+            (
+                event
+                for event in reversed(previous_events)
+                if isinstance(event, dict)
+                and event.get("event_type") == "gate_evaluated"
+                and _clean_string(event.get("gate_obligation_id")) == obligation_id
+                and _clean_string(event.get("gate_subject_kind")) == subject_kind
+                and _clean_string(event.get("gate_subject_id")) == subject_id
+            ),
+            None,
+        )
+        if previous is None:
+            revision_gate["gate_revision"] = 1
+            revision_gate.pop("supersedes_content_id", None)
+        else:
+            previous_revision = int(previous.get("gate_revision") or 0)
+            previous_content_id = _clean_string(previous.get("content_id") or previous.get("event_id"))
+            if previous_revision < 1 or not previous_content_id:
+                raise ValueError("previous gate revision metadata is invalid")
+            revision_gate["gate_revision"] = previous_revision + 1
+            revision_gate["supersedes_content_id"] = previous_content_id
+    event = build_gate_ledger_event(token, revision_gate, gate_name=gate_name)
     persisted = append_run_ledger_event(
         AppendRunLedgerEventCommandV1(
             workspace=str(workspace),
-            run_id=token.run_id or run_id or "unknown",
+            run_id=ledger_run_id,
             event=event,
         )
     ).receipt

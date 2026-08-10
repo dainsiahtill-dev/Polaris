@@ -142,6 +142,59 @@ class RunQaAuditCommandV1:
 
 
 @dataclass(frozen=True)
+class CommitQaRoleVerdictCommandV1:
+    """Commit one completed QA role report through the canonical QA owner.
+
+    The role report is evidence, not authority.  ``qa.audit_verdict`` still
+    rebuilds the verdict envelope from the Run Ledger barrier and artifact
+    evidence before it commits the final ``qa_verdict`` gate.
+    """
+
+    task_id: str
+    workspace: str
+    run_id: str
+    verdict: str
+    passed: bool
+    score: float = 0.0
+    critical_issue_count: int = 0
+    findings: tuple[str, ...] = field(default_factory=tuple)
+    target_files: tuple[str, ...] = field(default_factory=tuple)
+    report_ref: str = ""
+    report_content_hash: str = ""
+    job_token: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "run_id", _require_non_empty("run_id", self.run_id))
+        verdict = _require_non_empty("verdict", self.verdict).upper()
+        if verdict not in {"PASS", "FAIL", "BLOCKED", "NEEDS_REVIEW"}:
+            raise ValueError(f"unsupported QA role verdict: {verdict!r}")
+        passed = bool(self.passed)
+        if passed != (verdict == "PASS"):
+            raise ValueError("passed must be true exactly when verdict is PASS")
+        score = float(self.score)
+        if score < 0.0 or score > 100.0:
+            raise ValueError("score must be between 0 and 100")
+        critical_issue_count = int(self.critical_issue_count)
+        if critical_issue_count < 0:
+            raise ValueError("critical_issue_count must be >= 0")
+        if passed and critical_issue_count:
+            raise ValueError("PASS verdict cannot contain critical issues")
+        object.__setattr__(self, "verdict", verdict)
+        object.__setattr__(self, "passed", passed)
+        object.__setattr__(self, "score", score)
+        object.__setattr__(self, "critical_issue_count", critical_issue_count)
+        object.__setattr__(self, "findings", _to_string_tuple(list(self.findings)))
+        object.__setattr__(self, "target_files", _to_string_tuple(list(self.target_files)))
+        object.__setattr__(self, "report_ref", str(self.report_ref or "").strip())
+        object.__setattr__(self, "report_content_hash", str(self.report_content_hash or "").strip())
+        object.__setattr__(self, "job_token", _to_dict_copy(self.job_token))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
 class VisualAuditFindingV1:
     """One typed QA finding derived from image evidence."""
 
@@ -645,6 +698,7 @@ __all__ = [
     "QA_PLATFORM_FAILURE_CLASSES",
     # Task Market consumer contracts
     "ClaimQaTaskCommandV1",
+    "CommitQaRoleVerdictCommandV1",
     "FailureSignalV1",
     "GetQaVerdictQueryV1",
     "ParseTracebackFramesCommandV1",

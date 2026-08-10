@@ -2321,6 +2321,249 @@ def test_required_evidence_distinguishes_missing_from_failed() -> None:
     assert missing_projection["evidence_policy"]["failed_required_modalities"] == []
 
 
+def test_repaired_gate_revision_supersedes_historical_failure_for_current_outcome() -> None:
+    failed = {
+        "event_type": "gate_evaluated",
+        "stage": "workspace_validation",
+        "gate_obligation_id": "factory-1:workspace-validation",
+        "gate_subject_kind": "factory_run",
+        "gate_subject_id": "factory-1",
+        "gate_revision": 1,
+        "content_id": "a" * 64,
+        "gate": {"name": "workspace_validation", "ok": False, "summary": "npm test failed"},
+        "job_token": {
+            "token_id": "token-1",
+            "run_id": "factory-1",
+            "factory_run_id": "factory-1",
+            "project_id": "P1",
+            "target_files": ["tests/verify.test.ts", "src/verify.ts"],
+            "capability_audit": {"ok": True, "issues": []},
+            "gate_policy": {"required_evidence_modalities": ["command"]},
+        },
+        "physical_evidence": {
+            "modalities": {"command": {"present": True, "ok": False, "detail": "npm test failed"}}
+        },
+    }
+    repaired = {
+        **failed,
+        "gate_revision": 2,
+        "supersedes_content_id": "a" * 64,
+        "content_id": "b" * 64,
+        "gate": {"name": "workspace_validation", "ok": True, "summary": "npm test passed after repair"},
+        "physical_evidence": {
+            "modalities": {"command": {"present": True, "ok": True, "detail": "npm test passed"}}
+        },
+    }
+
+    projection = build_run_ledger_projection([failed, repaired, _successful_tool_lifecycle_event()])
+
+    assert projection["gate_count"] == 2
+    assert projection["effective_gate_count"] == 1
+    assert projection["historical_failed_gate_count"] == 1
+    assert projection["gates"][0]["effective"] is False
+    assert projection["gates"][1]["effective"] is True
+    assert projection["failed_gates"] == []
+    assert projection["evidence_policy"]["failed_required_modalities"] == []
+    assert projection["outcome_ok"] is True
+    assert projection["ok"] is True
+
+
+def test_gate_revision_does_not_supersede_a_different_target_scope() -> None:
+    base_token = {
+        "token_id": "token-1",
+        "run_id": "factory-1",
+        "factory_run_id": "factory-1",
+        "project_id": "P1",
+        "capability_audit": {"ok": True, "issues": []},
+        "gate_policy": {},
+    }
+    first = {
+        "event_type": "gate_evaluated",
+        "stage": "director",
+        "gate": {"name": "task_delivery", "ok": False, "summary": "TASK-1 failed"},
+        "job_token": {**base_token, "target_files": ["src/a.ts"]},
+        "physical_evidence": {},
+    }
+    second = {
+        **first,
+        "gate": {"name": "task_delivery", "ok": True, "summary": "TASK-2 passed"},
+        "job_token": {**base_token, "target_files": ["src/b.ts"]},
+    }
+
+    projection = build_run_ledger_projection([first, second, _successful_tool_lifecycle_event()])
+
+    assert projection["effective_gate_count"] == 2
+    assert [gate["summary"] for gate in projection["failed_gates"]] == ["TASK-1 failed"]
+    assert projection["outcome_ok"] is False
+
+
+def test_gate_revision_does_not_supersede_a_different_task_owner_with_same_scope() -> None:
+    base = {
+        "event_type": "gate_evaluated",
+        "stage": "director",
+        "gate_obligation_id": "TASK-A:delivery",
+        "gate_subject_kind": "director_task",
+        "gate_subject_id": "TASK-A",
+        "gate_revision": 1,
+        "content_id": "a" * 64,
+        "gate": {"name": "task_delivery", "ok": False, "summary": "TASK-A failed"},
+        "job_token": {
+            "token_id": "token-1",
+            "run_id": "factory-1",
+            "factory_run_id": "factory-1",
+            "project_id": "P1",
+            "target_files": ["src/shared.ts"],
+            "capability_audit": {"ok": True, "issues": []},
+            "gate_policy": {},
+        },
+        "physical_evidence": {},
+    }
+    sibling = {
+        **base,
+        "task_id": "TASK-B",
+        "gate_obligation_id": "TASK-B:delivery",
+        "gate_subject_id": "TASK-B",
+        "content_id": "b" * 64,
+        "gate": {"name": "task_delivery", "ok": True, "summary": "TASK-B passed"},
+    }
+    base["task_id"] = "TASK-A"
+
+    projection = build_run_ledger_projection([base, sibling, _successful_tool_lifecycle_event()])
+
+    assert projection["effective_gate_count"] == 2
+    assert [gate["summary"] for gate in projection["failed_gates"]] == ["TASK-A failed"]
+    assert projection["outcome_ok"] is False
+
+
+def test_latest_failed_gate_revision_supersedes_historical_success() -> None:
+    passed = {
+        "event_type": "gate_evaluated",
+        "stage": "workspace_validation",
+        "gate_obligation_id": "factory-1:workspace-validation",
+        "gate_subject_kind": "factory_run",
+        "gate_subject_id": "factory-1",
+        "gate_revision": 1,
+        "content_id": "a" * 64,
+        "gate": {"name": "workspace_validation", "ok": True, "summary": "npm test passed"},
+        "job_token": {
+            "token_id": "token-1",
+            "run_id": "factory-1",
+            "factory_run_id": "factory-1",
+            "project_id": "P1",
+            "target_files": ["tests/verify.test.ts", "src/verify.ts"],
+            "capability_audit": {"ok": True, "issues": []},
+            "gate_policy": {"required_evidence_modalities": ["command"]},
+        },
+        "physical_evidence": {
+            "modalities": {"command": {"present": True, "ok": True, "detail": "npm test passed"}}
+        },
+    }
+    regressed = {
+        **passed,
+        "gate_revision": 2,
+        "supersedes_content_id": "a" * 64,
+        "content_id": "b" * 64,
+        "gate": {"name": "workspace_validation", "ok": False, "summary": "npm test regressed"},
+        "physical_evidence": {
+            "modalities": {"command": {"present": True, "ok": False, "detail": "npm test regressed"}}
+        },
+    }
+
+    projection = build_run_ledger_projection([passed, regressed, _successful_tool_lifecycle_event()])
+
+    assert projection["effective_gate_count"] == 1
+    assert [gate["summary"] for gate in projection["failed_gates"]] == ["npm test regressed"]
+    assert projection["evidence_policy"]["failed_required_modalities"] == ["command"]
+    assert projection["outcome_ok"] is False
+    assert projection["ok"] is False
+
+
+def test_repaired_gate_revision_cannot_shrink_required_evidence_contract() -> None:
+    failed = {
+        "event_type": "gate_evaluated",
+        "stage": "workspace_validation",
+        "gate_obligation_id": "factory-1:workspace-validation",
+        "gate_subject_kind": "factory_run",
+        "gate_subject_id": "factory-1",
+        "gate_revision": 1,
+        "content_id": "a" * 64,
+        "gate": {"name": "workspace_validation", "ok": False, "summary": "npm test failed"},
+        "job_token": {
+            "token_id": "token-1",
+            "run_id": "factory-1",
+            "factory_run_id": "factory-1",
+            "project_id": "P1",
+            "target_files": ["tests/verify.test.ts", "src/verify.ts"],
+            "capability_audit": {"ok": True, "issues": []},
+            "gate_policy": {"required_evidence_modalities": ["command"]},
+        },
+        "physical_evidence": {
+            "modalities": {"command": {"present": True, "ok": False, "detail": "npm test failed"}}
+        },
+    }
+    invalid_repair = {
+        **failed,
+        "gate_revision": 2,
+        "supersedes_content_id": "a" * 64,
+        "content_id": "b" * 64,
+        "gate": {"name": "workspace_validation", "ok": True, "summary": "claimed repaired"},
+        "job_token": {
+            **failed["job_token"],
+            "gate_policy": {"required_evidence_modalities": []},
+        },
+        "physical_evidence": {},
+    }
+
+    projection = build_run_ledger_projection([failed, invalid_repair, _successful_tool_lifecycle_event()])
+
+    assert projection["effective_gate_count"] == 1
+    assert projection["effective_gates"][0]["required_evidence_modalities"] == ["command"]
+    assert projection["evidence_policy"]["missing_required_modalities"] == ["command"]
+    assert projection["integrity_ok"] is False
+    assert projection["ok"] is False
+
+
+def test_gate_revision_fork_fails_projection_integrity() -> None:
+    first = {
+        "event_type": "gate_evaluated",
+        "stage": "workspace_validation",
+        "gate_obligation_id": "factory-1:workspace-validation",
+        "gate_subject_kind": "factory_run",
+        "gate_subject_id": "factory-1",
+        "gate_revision": 1,
+        "content_id": "a" * 64,
+        "gate": {"name": "workspace_validation", "ok": False, "summary": "initial failure"},
+        "job_token": {
+            "token_id": "token-1",
+            "run_id": "factory-1",
+            "factory_run_id": "factory-1",
+            "project_id": "P1",
+            "capability_audit": {"ok": True, "issues": []},
+            "gate_policy": {},
+        },
+        "physical_evidence": {},
+    }
+    repaired = {
+        **first,
+        "gate_revision": 2,
+        "supersedes_content_id": "a" * 64,
+        "content_id": "b" * 64,
+        "gate": {"name": "workspace_validation", "ok": True, "summary": "valid repair"},
+    }
+    fork = {
+        **repaired,
+        "content_id": "c" * 64,
+        "gate": {"name": "workspace_validation", "ok": True, "summary": "stale fork"},
+    }
+
+    projection = build_run_ledger_projection([first, repaired, fork, _successful_tool_lifecycle_event()])
+
+    assert projection["gate_revisions"]["integrity_ok"] is False
+    assert projection["gate_revisions"]["issues"] == ["gate_revision_chain_fork_or_stale:2"]
+    assert projection["integrity_ok"] is False
+    assert projection["ok"] is False
+
+
 def test_projection_exposes_tool_dispatch_dropped() -> None:
     lifecycle = build_tool_call_lifecycle_receipt(
         run_id="run-1",

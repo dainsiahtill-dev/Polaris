@@ -384,6 +384,14 @@ _MATERIALIZATION_NODE_MANIFEST_RUNTIME_SOURCE_TOOLS = (
 )
 _MATERIALIZATION_TARGET_RUNTIME_SOURCE_TOOLS = (
     "deterministic_javascript_test_missing_target_repair",
+    # Direct Node execution of TypeScript tests does not apply NodeNext's
+    # emitted-JavaScript import contract.  Runtime diagnostics can therefore
+    # prove that ``tests/*.ts`` must import an existing sibling ``*.ts`` file
+    # instead of a missing ``*.js`` file.  Keep this executable binding in the
+    # runtime-smoke step: coverage without schedule ownership was reported as
+    # ``covered_unplannable`` and incorrectly escalated an ordinary Director
+    # edit to Chief Engineer triage.
+    "deterministic_typescript_local_js_import_repair",
     "deterministic_javascript_typescript_annotation_repair",
     "deterministic_javascript_missing_export_repair",
     "deterministic_javascript_esm_commonjs_entrypoint_repair",

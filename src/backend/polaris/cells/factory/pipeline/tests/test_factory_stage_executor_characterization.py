@@ -181,6 +181,34 @@ def _bootstrap_fact_stream_workspace(workspace: Path) -> None:
     )
 
 
+def test_canonical_qa_commit_identity_uses_final_owned_task_child_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = OrchestrationStageExecutor(tmp_path)
+    run = SimpleNamespace(id="factory-run")
+    monkeypatch.setattr(
+        executor,
+        "_load_pm_plan_tasks",
+        lambda _path: [{"id": "TASK-1"}, {"id": "TASK-2"}, {"id": "TASK-3"}],
+    )
+    monkeypatch.setattr(
+        executor,
+        "_canonical_factory_projection",
+        lambda _run, _context: {
+            "task_boundary": {
+                "latest_by_task": {
+                    "TASK-1": {"run_id": "director-1", "ok": True, "status": "completed_verified"},
+                    "TASK-2": {"run_id": "director-2", "ok": True, "status": "completed_verified"},
+                    "TASK-3": {"run_id": "director-3", "ok": True, "status": "completed_verified"},
+                }
+            }
+        },
+    )
+
+    assert executor._canonical_qa_commit_identity(run=run, context={}) == ("TASK-3", "director-3")
+
+
 @pytest.fixture(autouse=True)
 def _bootstrap_real_fact_stream_workspace(request: pytest.FixtureRequest) -> None:
     """Provision FactStream before characterization tests use a real workspace."""
@@ -1023,7 +1051,7 @@ async def test_quality_gate_authority_ignores_report_and_workspace_display_statu
         _run: FactoryRun,
         _context: dict[str, Any],
     ) -> tuple[bool, str]:
-        return False, ""
+        return True, ""
 
     class _Service:
         async def execute_qa_run(self, **_kwargs: Any) -> CommandResult:
@@ -6081,7 +6109,8 @@ class TestQualityGateDeadlineHandling:
         report_path = Path(resolve_logical_path(tmp_path, "runtime/qa/report.json"))
         report = json.loads(report_path.read_text(encoding="utf-8"))
         assert report["passed"] is False
-        assert report["verdict"] == "FAIL"
+        assert report["verdict"] == "NOT_RUN"
+        assert report["qa_invoked"] is False
         assert "factory_quality_gate_deadline_insufficient_before_checks" in report["warnings"]
         assert Path(resolve_logical_path(tmp_path, "workspace/qa/latest.report.json")).is_file()
 
@@ -6240,7 +6269,7 @@ class TestQualityGateDeadlineHandling:
         assert Path(resolve_logical_path(tmp_path, "workspace/qa/latest.report.json")).exists() is False
 
     @pytest.mark.asyncio
-    async def test_quality_gate_workspace_validation_failure_still_runs_qa_judgement(
+    async def test_quality_gate_workspace_validation_failure_skips_advisory_qa_judgement(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -6308,24 +6337,52 @@ class TestQualityGateDeadlineHandling:
         )
 
         assert result.status == "failed"
-        assert "workspace_checks_diagnostic=False" in result.output
-        assert "canonical_authorized=False" in result.output
-        assert qa_calls
-        qa_input = str(qa_calls[0]["options"]["input"])
-        assert "workspace-quality evidence attached to this QA request" in qa_input
-        assert "runtime/qa/workspace-validation.json" not in qa_input
-        assert "ReferenceError: exports is not defined in ES module scope" not in qa_input
-        qa_metadata = qa_calls[0]["options"]["metadata"]
-        assert qa_metadata["workspace_quality_evidence"]["passed"] is False
-        assert (
-            qa_metadata["workspace_quality_evidence"]["commands"][0]["stderr_tail"]
-            == "ReferenceError: exports is not defined in ES module scope"
-        )
+        assert "factory_quality_gate_workspace_validation_failed" in result.output
+        assert "ReferenceError: exports is not defined in ES module scope" in result.output
+        assert qa_calls == []
         report_path = Path(resolve_logical_path(tmp_path, "runtime/qa/report.json"))
         report = json.loads(report_path.read_text(encoding="utf-8"))
         assert report["passed"] is False
-        assert report["verdict"] == "FAIL"
+        assert report["verdict"] == "NOT_RUN"
+        assert report["qa_invoked"] is False
+        assert report["workspace_checks_passed"] is False
         assert Path(resolve_logical_path(tmp_path, "workspace/qa/latest.report.json")).is_file()
+
+    @pytest.mark.asyncio
+    async def test_quality_gate_workspace_failure_without_artifact_fails_closed_before_qa(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="run-workspace-fail-no-artifact",
+            config=FactoryConfig(name="workspace-fail-no-artifact"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        async def fake_workspace_checks(_run: FactoryRun, _context: dict[str, Any]) -> tuple[bool, str]:
+            return False, ""
+
+        def fail_if_qa_started(_context: dict[str, Any]) -> object:
+            raise AssertionError("QA must not start when hard-verifier evidence is missing")
+
+        monkeypatch.setattr(executor, "_run_workspace_quality_checks", fake_workspace_checks)
+        monkeypatch.setattr(executor, "_build_orchestration_service", fail_if_qa_started)
+
+        result = await executor._execute_quality_gate(
+            run,
+            _factory_stage_context({"qa_target": "Quality gate"}),
+        )
+
+        assert result.status == "failed"
+        assert "without an authoritative evidence artifact" in result.output
+        report = json.loads(
+            Path(resolve_logical_path(tmp_path, "runtime/qa/report.json")).read_text(encoding="utf-8")
+        )
+        assert report["passed"] is False
+        assert report["workspace_checks_passed"] is False
 
     @pytest.mark.asyncio
     async def test_workspace_quality_deadline_insufficient_writes_validation_failure(
@@ -7759,6 +7816,179 @@ class TestRunWorkspaceQualityChecks:
         assert rebind["attempted"] is True
         assert rebind["target_files"] == ["index.html"]
         assert rebind["previous_repair"]["stage"] == "task_boundary_repair_targets_deferred"
+
+    def test_workspace_quality_owner_score_ignores_project_wide_target_inventory(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        executor = _executor(tmp_path)
+        project_targets = ["src/main.ts", "src/engine/simulation.ts"]
+        failed_non_owner = {
+            "status": "failed",
+            "metadata": {
+                "factory_run_id": "factory-owner-score",
+                "external_task_id": "TASK-1",
+                "target_files": ["src/main.ts"],
+                "scope_paths": ["src/main.ts"],
+                "project_declared_target_files": project_targets,
+            },
+        }
+        completed_owner = {
+            "status": "completed",
+            "metadata": {
+                "factory_run_id": "factory-owner-score",
+                "external_task_id": "TASK-2",
+                "target_files": ["src/engine/simulation.ts"],
+                "scope_paths": ["src/engine/simulation.ts"],
+                "project_declared_target_files": project_targets,
+            },
+        }
+
+        non_owner_score = executor._workspace_quality_repair_owner_score(
+            failed_non_owner,
+            run_id="factory-owner-score",
+            normalized_targets={"src/engine/simulation.ts"},
+        )
+        owner_score = executor._workspace_quality_repair_owner_score(
+            completed_owner,
+            run_id="factory-owner-score",
+            normalized_targets={"src/engine/simulation.ts"},
+        )
+
+        assert non_owner_score == (0, 1)
+        assert owner_score == (1, 0)
+        assert owner_score > non_owner_score
+
+    def test_workspace_quality_repair_effect_requires_post_repair_verifier_progress(self) -> None:
+        classify = OrchestrationStageExecutor._workspace_quality_repair_effect
+
+        assert classify(
+            before_signature=("ts7015:a",),
+            after_signature=(),
+            verifier_passed=True,
+            write_tool_evidence=True,
+        ) == "resolved"
+        assert classify(
+            before_signature=("ts7015:a",),
+            after_signature=("ts2551:b",),
+            verifier_passed=False,
+            write_tool_evidence=True,
+        ) == "equal_count_swap"
+        assert classify(
+            before_signature=("ts7015:a",),
+            after_signature=("ts7015:a", "ts2339:b"),
+            verifier_passed=False,
+            write_tool_evidence=True,
+        ) == "regression"
+        assert classify(
+            before_signature=("ts7015:a",),
+            after_signature=("ts7015:a",),
+            verifier_passed=False,
+            write_tool_evidence=False,
+        ) == "no_op"
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_stops_after_two_equal_count_diagnostic_swaps(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-stagnation",
+            config=FactoryConfig(name="quality-stagnation"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-10T00:00:00+00:00",
+        )
+        diagnostics = (
+            "src/index.ts(1,1): error TS7015: first",
+            "src/index.ts(1,1): error TS2551: swapped",
+            "src/index.ts(1,1): error TS2339: swapped again",
+        )
+        command_calls = 0
+        repair_calls = 0
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            nonlocal command_calls
+            del timeout_seconds
+            diagnostic = diagnostics[min(command_calls, len(diagnostics) - 1)]
+            command_calls += 1
+            return {
+                "command": command,
+                "exit_code": 2,
+                "passed": False,
+                "stdout_tail": diagnostic,
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def fake_apply_workspace_quality_deterministic_repairs(
+            *,
+            run: FactoryRun,
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal repair_calls
+            assert run.id == "factory-quality-stagnation"
+            assert artifact_quality_errors
+            repair_calls += 1
+            return (
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {
+                            "source_tool": "deterministic_typescript_test_repair",
+                            "file": "src/index.ts",
+                            "operation": "modify",
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    # A writer/provider claim is non-authoritative until the
+                    # affected verifier proves the defect was reduced.
+                    "success": True,
+                    "source_tools": ["deterministic_typescript_test_repair"],
+                    "tool_results": 1,
+                    "write_tool_evidence": True,
+                    "attempt": repair_attempt,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_deterministic_repairs",
+            fake_apply_workspace_quality_deterministic_repairs,
+        )
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 3},
+        )
+
+        assert passed is False
+        assert command_calls == 3
+        assert repair_calls == 2
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        repair = payload["repair"]
+        assert repair["success"] is False
+        assert repair["consecutive_stagnant_rounds"] == 2
+        assert repair["convergence_stop_reason"] == "two_consecutive_stagnant_repairs"
+        assert [item["verifier_effect"] for item in repair["rounds"]] == [
+            "equal_count_swap",
+            "equal_count_swap",
+        ]
+        for item in repair["rounds"]:
+            assert item["verifier_authoritative_success"] is False
+            assert item["repair_summary"]["claimed_success_before_revalidation"] is True
+            assert item["repair_summary"]["success"] is False
+            assert item["repair_summary"]["success_authority"] == "post_repair_verifier"
 
     @pytest.mark.asyncio
     async def test_workspace_quality_llm_repair_context_includes_ce_blueprint_and_catalog(

@@ -20,6 +20,7 @@ public_contracts:
   - polaris.cells.qa.audit_verdict.public.contracts
   - polaris.cells.qa.audit_verdict.public.service
   commands:
+  - CommitQaRoleVerdictCommandV1
   - ParseTracebackFramesCommandV1
   - RunQaAuditCommandV1
   - RunVisualQaAuditCommandV1

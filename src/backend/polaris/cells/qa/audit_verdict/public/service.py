@@ -28,6 +28,7 @@ from polaris.cells.qa.audit_verdict.internal.qa_service import (
 from polaris.cells.qa.audit_verdict.internal.quality_service import QualityService, get_quality_service
 from polaris.cells.qa.audit_verdict.public.contracts import (
     ClaimQaTaskCommandV1,
+    CommitQaRoleVerdictCommandV1,
     FailureSignalV1,
     GetQaVerdictQueryV1,
     ParseTracebackFramesCommandV1,
@@ -330,6 +331,91 @@ def run_qa_audit(command: RunQaAuditCommandV1) -> QaAuditResultV1:
         command.task_id, command.workspace, result, run_id=command.run_id or str(criteria.get("run_id") or "") or None
     )
     return result
+
+
+def commit_qa_role_verdict(command: CommitQaRoleVerdictCommandV1) -> QaAuditResultV1:
+    """Commit a role-produced QA report without granting the role authority.
+
+    The report first becomes a non-authoritative evidence fact.  The QA verdict
+    engine then re-reads the canonical Run Ledger behind that evidence barrier,
+    checks the owning TaskBoundary and artifact quality, and only then commits
+    the final verdict.  This closes the Factory role-adapter path that formerly
+    wrote ``report.json`` but never produced a canonical ``qa_verdict`` gate.
+    """
+
+    if not isinstance(command, CommitQaRoleVerdictCommandV1):
+        raise TypeError("command must be CommitQaRoleVerdictCommandV1")
+
+    failure_class = "" if command.passed else FailureClassV1.IMPLEMENTATION_DEFECT.value
+    audit_payload: dict[str, Any] = {
+        "schema_version": "qa.role_report_evidence.v1",
+        "verdict": command.verdict,
+        "ok": command.passed,
+        "score": command.score,
+        "critical_issue_count": command.critical_issue_count,
+        "failure_class": failure_class,
+        "responsible_layer": "qa" if command.passed else "director",
+        "findings": list(command.findings),
+        "report_ref": command.report_ref,
+        "report_content_hash": command.report_content_hash,
+        "metadata": dict(command.metadata),
+        "evidence_authoritative": False,
+    }
+    barrier_receipt = commit_qa_evidence(
+        workspace=command.workspace,
+        run_id=command.run_id,
+        task_id=command.task_id,
+        gate_name="qa_role_evidence",
+        ok=command.passed,
+        summary=f"QA role report observed {command.verdict}",
+        verdict=command.verdict,
+        audit_result=audit_payload,
+        failure_reason=("" if command.passed else "QA role report rejected the delivery"),
+        job_token=command.job_token,
+    ).to_dict()
+    envelope_command = RunQaAuditCommandV1(
+        task_id=command.task_id,
+        workspace=command.workspace,
+        run_id=command.run_id,
+        criteria={
+            "run_id": command.run_id,
+            "job_token": dict(command.job_token),
+            "target_files": list(command.target_files),
+            "changed_files": list(command.target_files),
+            "source_qa_report_ref": command.report_ref,
+            "source_qa_report_content_hash": command.report_content_hash,
+        },
+        evidence_paths=((command.report_ref,) if command.report_ref else ()),
+    )
+    envelope = _build_qa_verdict_envelope(
+        command=envelope_command,
+        audit_result=audit_payload,
+        barrier_receipt=barrier_receipt,
+    )
+    final_receipt = commit_qa_verdict(
+        workspace=command.workspace,
+        run_id=command.run_id,
+        task_id=command.task_id,
+        envelope=envelope.to_dict(),
+        evidence_commit_receipt=barrier_receipt,
+        job_token=command.job_token,
+    ).to_dict()
+    base_result = QaAuditResultV1(
+        ok=False,
+        task_id=command.task_id,
+        workspace=command.workspace,
+        verdict="EVIDENCE_ONLY",
+        score=command.score,
+        findings=command.findings,
+        suggestions=(),
+        metadata={
+            "source": "qa_role_report",
+            "report_ref": command.report_ref,
+            "report_content_hash": command.report_content_hash,
+            "observed_verdict": command.verdict,
+        },
+    )
+    return _result_with_envelope(base_result, envelope, final_verdict_receipt=final_receipt)
 
 
 def _persist_qa_verdict(
@@ -687,6 +773,7 @@ __all__ = [
     "VisualQaAuditResultV1",
     "build_qa_verdict_envelope",
     "claim_qa_task",
+    "commit_qa_role_verdict",
     "get_quality_service",
     "get_review_gate",
     "parse_traceback_frames",

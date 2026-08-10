@@ -973,6 +973,111 @@ def _evidence_modalities_from_physical_evidence(physical_evidence: dict[str, Any
     return modalities
 
 
+GateRevisionKey = tuple[str, str, str, str, str, str, str]
+
+
+def _gate_revision_key(event: dict[str, Any]) -> GateRevisionKey | None:
+    """Return an explicit stable obligation identity, never a scope guess.
+
+    Legacy events without a first-class obligation and subject remain independent
+    immutable gates. Target paths are authorization scope, not identity: sibling
+    tasks may legitimately share them.
+    """
+
+    raw_gate = event.get("gate")
+    gate = raw_gate if isinstance(raw_gate, dict) else {}
+    raw_token = event.get("job_token")
+    token = raw_token if isinstance(raw_token, dict) else {}
+    factory_run_id = _clean_string(token.get("factory_run_id"))
+    project_id = _clean_string(token.get("project_id"))
+    authority_id = factory_run_id or _clean_string(token.get("run_id")) or _clean_string(token.get("token_id"))
+    obligation_id = _clean_string(event.get("gate_obligation_id") or gate.get("obligation_id"))
+    subject_kind = _clean_string(event.get("gate_subject_kind") or gate.get("subject_kind"))
+    subject_id = _clean_string(event.get("gate_subject_id") or gate.get("subject_id"))
+    if not obligation_id or not subject_kind or not subject_id:
+        return None
+    return (
+        authority_id,
+        project_id,
+        _clean_string(event.get("stage") or token.get("stage")),
+        _clean_string(gate.get("name")) or "unknown",
+        obligation_id,
+        subject_kind,
+        subject_id,
+    )
+
+
+def _effective_gate_event_indexes(events: list[dict[str, Any]]) -> tuple[frozenset[int], tuple[str, ...]]:
+    """Select only explicitly chained revisions; keep legacy events independent."""
+
+    effective_indexes = {
+        index
+        for index, event in enumerate(events)
+        if isinstance(event, dict) and event.get("event_type") == "gate_evaluated"
+    }
+    latest_by_obligation: dict[GateRevisionKey, tuple[int, int, str]] = {}
+    issues: list[str] = []
+    for index, event in enumerate(events):
+        if not isinstance(event, dict) or event.get("event_type") != "gate_evaluated":
+            continue
+        key = _gate_revision_key(event)
+        if key is None:
+            continue
+        raw_gate = event.get("gate")
+        gate = raw_gate if isinstance(raw_gate, dict) else {}
+        try:
+            revision = int(event.get("gate_revision") or gate.get("revision") or 0)
+        except (TypeError, ValueError):
+            revision = 0
+        supersedes = _clean_string(event.get("supersedes_content_id") or gate.get("supersedes_content_id"))
+        content_id = _clean_string(event.get("content_id") or event.get("event_id"))
+        previous = latest_by_obligation.get(key)
+        if not content_id or revision < 1:
+            issues.append(f"invalid_gate_revision_metadata:{index}")
+            continue
+        if previous is None:
+            if revision != 1 or supersedes:
+                issues.append(f"gate_revision_chain_missing_parent:{index}")
+                continue
+        else:
+            previous_index, previous_revision, previous_content_id = previous
+            if revision != previous_revision + 1 or supersedes != previous_content_id:
+                issues.append(f"gate_revision_chain_fork_or_stale:{index}")
+                continue
+            effective_indexes.discard(previous_index)
+        latest_by_obligation[key] = (index, revision, content_id)
+    return frozenset(effective_indexes), tuple(issues)
+
+
+def _required_modalities_by_gate_obligation(
+    events: list[dict[str, Any]],
+) -> dict[GateRevisionKey, list[str]]:
+    """Preserve the strongest required-evidence contract across revisions.
+
+    A repaired gate may supersede an earlier outcome, but it must not erase an
+    evidence obligation by publishing a narrower retry token.  Required
+    modalities therefore accumulate for the stable obligation while observed
+    evidence and the pass/fail verdict still come from the latest revision.
+    """
+
+    required_by_obligation: dict[GateRevisionKey, list[str]] = {}
+    for event in events:
+        if not isinstance(event, dict) or event.get("event_type") != "gate_evaluated":
+            continue
+        raw_token = event.get("job_token")
+        token = raw_token if isinstance(raw_token, dict) else {}
+        key = _gate_revision_key(event)
+        if key is None:
+            continue
+        required_by_obligation[key] = _string_list(
+            [
+                *required_by_obligation.get(key, []),
+                *_required_modalities_from_job_token(token),
+            ]
+        )
+    return required_by_obligation
+
+
 def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     """Build the canonical read model for ledger-backed UI/QA projections."""
 
@@ -994,7 +1099,9 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     task_boundary_verdicts: list[dict[str, Any]] = []
     tool_lifecycle_events: list[dict[str, Any]] = []
     tool_lifecycle_requirement_events: list[dict[str, Any]] = []
-    for event in events:
+    effective_gate_event_indexes, gate_revision_issues = _effective_gate_event_indexes(events)
+    required_modalities_by_obligation = _required_modalities_by_gate_obligation(events)
+    for event_index, event in enumerate(events):
         if not isinstance(event, dict):
             continue
         event_type = event.get("event_type")
@@ -1043,6 +1150,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         raw_gate = event.get("gate")
         gate: dict[str, Any] = raw_gate if isinstance(raw_gate, dict) else {}
+        gate_is_effective = event_index in effective_gate_event_indexes
         raw_physical_evidence = event.get("physical_evidence")
         physical_evidence: dict[str, Any] = raw_physical_evidence if isinstance(raw_physical_evidence, dict) else {}
         raw_job_token = event.get("job_token")
@@ -1050,11 +1158,12 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         raw_capability_audit = job_token.get("capability_audit")
         capability_audit: dict[str, Any] = raw_capability_audit if isinstance(raw_capability_audit, dict) else {}
         issues = capability_audit.get("issues")
-        if isinstance(issues, list):
+        if gate_is_effective and isinstance(issues, list):
             capability_issues.extend(str(item) for item in issues if str(item))
         token_id = _clean_string(job_token.get("token_id"))
         if token_id:
             job_token_ids.append(token_id)
+        if gate_is_effective:
             latest_token = job_token
         command_count_total += int(physical_evidence.get("command_count") or 0)
         sampled_command_count += int(physical_evidence.get("sampled_command_count") or 0)
@@ -1072,30 +1181,38 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
                 metadata=_dict_value(tool_receipt_modality.get("metadata")),
             )
         gate_enabled_modalities = _enabled_modalities_from_job_token(job_token)
-        gate_required_modalities = _required_modalities_from_job_token(job_token)
-        enabled_modalities.extend(gate_enabled_modalities)
-        required_modalities.extend(gate_required_modalities)
+        declared_gate_required_modalities = _required_modalities_from_job_token(job_token)
+        gate_revision_key = _gate_revision_key(event)
+        gate_required_modalities = (
+            required_modalities_by_obligation.get(gate_revision_key, declared_gate_required_modalities)
+            if gate_is_effective and gate_revision_key is not None
+            else declared_gate_required_modalities
+        )
+        if gate_is_effective:
+            enabled_modalities.extend(gate_enabled_modalities)
+            required_modalities.extend(gate_required_modalities)
         gate_missing_required_modalities, gate_failed_required_modalities = _required_modalities_status(
             gate_required_modalities,
             gate_modalities,
         )
-        missing_required_modalities.extend(gate_missing_required_modalities)
-        failed_required_modalities.extend(gate_failed_required_modalities)
-        for modality_name, modality in gate_modalities.items():
-            summary = evidence_modalities.setdefault(
-                modality_name,
-                {"total": 0, "present": 0, "ok": 0, "failed": 0, "latest_detail": ""},
-            )
-            summary["total"] = int(summary["total"]) + 1
-            if modality.get("present"):
-                summary["present"] = int(summary["present"]) + 1
-            if modality.get("ok"):
-                summary["ok"] = int(summary["ok"]) + 1
-            else:
-                summary["failed"] = int(summary["failed"]) + 1
-            detail = _clean_string(modality.get("detail"))
-            if detail:
-                summary["latest_detail"] = detail
+        if gate_is_effective:
+            missing_required_modalities.extend(gate_missing_required_modalities)
+            failed_required_modalities.extend(gate_failed_required_modalities)
+            for modality_name, modality in gate_modalities.items():
+                summary = evidence_modalities.setdefault(
+                    modality_name,
+                    {"total": 0, "present": 0, "ok": 0, "failed": 0, "latest_detail": ""},
+                )
+                summary["total"] = int(summary["total"]) + 1
+                if modality.get("present"):
+                    summary["present"] = int(summary["present"]) + 1
+                if modality.get("ok"):
+                    summary["ok"] = int(summary["ok"]) + 1
+                else:
+                    summary["failed"] = int(summary["failed"]) + 1
+                detail = _clean_string(modality.get("detail"))
+                if detail:
+                    summary["latest_detail"] = detail
         gates.append(
             {
                 "name": _clean_string(gate.get("name")) or "unknown",
@@ -1112,16 +1229,28 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "required_evidence_modalities": gate_required_modalities,
                 "missing_required_evidence_modalities": gate_missing_required_modalities,
                 "failed_required_evidence_modalities": gate_failed_required_modalities,
+                "effective": gate_is_effective,
+                "gate_obligation_id": _clean_string(event.get("gate_obligation_id") or gate.get("obligation_id")),
+                "gate_subject_kind": _clean_string(event.get("gate_subject_kind") or gate.get("subject_kind")),
+                "gate_subject_id": _clean_string(event.get("gate_subject_id") or gate.get("subject_id")),
+                "gate_revision": _int_value(event.get("gate_revision") or gate.get("revision")),
+                "supersedes_content_id": _clean_string(
+                    event.get("supersedes_content_id") or gate.get("supersedes_content_id")
+                ),
             }
         )
-    failed_gates = [gate for gate in gates if not gate["ok"]]
-    capability_ok = bool(gates) and not capability_issues and all(gate["capability_ok"] for gate in gates)
+    effective_gates = [gate for gate in gates if gate["effective"]]
+    failed_gates = [gate for gate in effective_gates if not gate["ok"]]
+    historical_failed_gate_count = sum(not gate["ok"] for gate in gates)
+    capability_ok = bool(effective_gates) and not capability_issues and all(
+        gate["capability_ok"] for gate in effective_gates
+    )
     enabled_modalities = _string_list(enabled_modalities)
     required_modalities = _string_list(required_modalities)
     missing_required_modalities = _string_list(missing_required_modalities)
     failed_required_modalities = _string_list(failed_required_modalities)
-    evidence_policy_integrity_ok = bool(gates) and not missing_required_modalities
-    evidence_policy_outcome_ok = bool(gates) and not failed_required_modalities
+    evidence_policy_integrity_ok = bool(effective_gates) and not missing_required_modalities
+    evidence_policy_outcome_ok = bool(effective_gates) and not failed_required_modalities
     evidence_policy_ok = evidence_policy_integrity_ok and evidence_policy_outcome_ok
     latest_task_boundary_by_task: dict[str, dict[str, Any]] = {}
     suppressed_non_mutating_deferred_count = 0
@@ -1161,8 +1290,15 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         _tl_failure_status = project_tool_lifecycle_failure_status(tool_lifecycle_summary)
         if not _tl_failure_status.get("failed"):
             tool_lifecycle_ok = True
-    integrity_ok = bool(gates) and capability_ok and evidence_policy_integrity_ok and tool_lifecycle_ok
-    outcome_ok = bool(gates) and not failed_gates and not failed_required_modalities and task_boundary_ok
+    gate_revision_integrity_ok = not gate_revision_issues
+    integrity_ok = (
+        bool(effective_gates)
+        and capability_ok
+        and evidence_policy_integrity_ok
+        and tool_lifecycle_ok
+        and gate_revision_integrity_ok
+    )
+    outcome_ok = bool(effective_gates) and not failed_gates and not failed_required_modalities and task_boundary_ok
     projection_ok = integrity_ok and outcome_ok
     return {
         "schema_version": 1,
@@ -1172,9 +1308,16 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         "outcome_ok": outcome_ok,
         "event_count": len(events),
         "gate_count": len(gates),
+        "effective_gate_count": len(effective_gates),
+        "historical_failed_gate_count": historical_failed_gate_count,
         "missing": ([] if gates else ["gate_events"]) + missing_required_modalities,
         "gates": gates,
+        "effective_gates": effective_gates,
         "failed_gates": failed_gates,
+        "gate_revisions": {
+            "integrity_ok": gate_revision_integrity_ok,
+            "issues": list(gate_revision_issues),
+        },
         "capability": {
             "ok": capability_ok,
             "issues": sorted(set(capability_issues)),

@@ -1371,6 +1371,42 @@ def test_materialization_plan_probe_query_uses_runtime_schedule_source_tools() -
     )
 
 
+def test_materialization_runtime_probe_plans_direct_node_typescript_import_repair() -> None:
+    diagnostic = (
+        "npm test failed (exit=1): Error [ERR_MODULE_NOT_FOUND]: Cannot find module "
+        "/workspace/src/verify.js imported from /workspace/tests/verify.test.ts"
+    )
+    base_files = {
+        "package.json": '{"type":"module","scripts":{"test":"node --test tests/verify.test.ts"}}\n',
+        "tsconfig.json": (
+            '{"compilerOptions":{"module":"NodeNext","moduleResolution":"NodeNext"},'
+            '"include":["src/**/*.ts"],"exclude":["tests"]}\n'
+        ),
+        "src/verify.ts": "export function verify(): boolean { return true; }\n",
+        "tests/verify.test.ts": (
+            'import { verify } from "../src/verify.js";\n'
+            'import test from "node:test";\n'
+            'test("verify", () => { if (!verify()) throw new Error("failed"); });\n'
+        ),
+    }
+
+    result = query_director_repair_materialization_plan_probe(
+        QueryDirectorRepairMaterializationPlanProbeV1(
+            artifact_quality_errors=(diagnostic,),
+            base_files=base_files,
+            step_id="materialization.target_runtime",
+        )
+    )
+
+    source_tool = js_syntax.TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL
+    assert source_tool in result.requested_source_tools
+    assert source_tool in result.candidate_source_tools
+    assert source_tool in result.plannable_source_tools
+    assert result.status == "covered_plannable"
+    assert result.plan_probe_result is not None
+    assert result.plan_probe_result.covered_unplannable_source_tools == ()
+
+
 def test_javascript_missing_export_without_declaration_is_covered_unplannable() -> None:
     diagnostics = (
         "file:///tmp/project/src/index.js:1\n"

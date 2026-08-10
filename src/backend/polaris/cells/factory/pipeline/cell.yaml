@@ -66,6 +66,7 @@ depends_on:
 - control_plane.verifier_execution
 - runtime.projection
 - director.runtime
+- qa.audit_verdict
 subgraphs:
 - storage_archive_pipeline
 state_owners:

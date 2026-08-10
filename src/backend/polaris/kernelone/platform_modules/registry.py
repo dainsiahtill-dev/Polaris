@@ -272,6 +272,7 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
         ),
         owner_paths=(
             "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
             "src/backend/polaris/cells/runtime/task_runtime/internal/service.py",
             "src/backend/polaris/cells/roles/kernel/public/deferred_repair_commit_service.py",
         ),
@@ -279,6 +280,11 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "src/backend/polaris/cells/factory/pipeline/tests/test_director_binding_fanout.py",
             "src/backend/polaris/cells/factory/pipeline/tests/test_director_fanout_evidence.py",
             "src/backend/polaris/cells/factory/pipeline/tests/test_director_stage_materialization_settle.py",
+            "src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py::"
+            "TestRunWorkspaceQualityChecks::"
+            "test_workspace_quality_owner_score_ignores_project_wide_target_inventory",
+            "src/backend/polaris/cells/factory/pipeline/tests/test_factory_settlement_runtime.py::"
+            "test_durable_wake_bridge_open_barrier_does_not_block_later_deliveries",
             "src/backend/polaris/cells/roles/kernel/tests/test_deferred_repair_commit_service.py",
         ),
         invariants=(
@@ -287,6 +293,8 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "director_stage_materialization_settle_on_timeout_or_incomplete",
             "cancelled_director_stage_skips_materialization_settle",
             "deferred_settle_partitions_non_conflicting_target_paths",
+            "workspace_repair_reopens_exact_task_owner_not_project_wide_inventory_peer",
+            "settlement_open_barrier_never_monopolizes_the_durable_consumer",
         ),
         depends_on=("M02_physical_attempt_authority", "M04_final_request_context", "M03_tool_batch_deo"),
         markers=("module_director_fanout",),
@@ -317,6 +325,9 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
         ),
         pytest_targets=(
             "src/backend/polaris/cells/factory/pipeline/tests/test_factory_execution_control_plane_ssot.py",
+            "src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py::"
+            "TestQualityGateDeadlineHandling::"
+            "test_quality_gate_workspace_validation_failure_skips_advisory_qa_judgement",
             "src/backend/polaris/kernelone/platform_modules/tests/test_residual_attribution.py",
             "src/backend/polaris/kernelone/platform_modules/tests/test_registry.py",
         ),
@@ -326,6 +337,7 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "stage_persistence_commits_before_next_stage",
             "residual_maps_to_exactly_one_module_id",
             "residual_attribution_is_non_terminal_and_workflow_owner_schedules",
+            "hard_workspace_failure_skips_advisory_qa_provider_call",
         ),
         depends_on=("M05_stage_lease_heartbeat", "M06_director_multi_task"),
         markers=("module_factory_chain",),
@@ -341,12 +353,23 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
         summary="Tool lifecycle missing vs failed is distinct; ledger never projects failed as missing.",
         owner_paths=(
             "src/backend/polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py",
+            "src/backend/polaris/cells/control_plane/run_ledger/public/projection.py",
             "src/backend/polaris/cells/events/fact_stream/public/service.py",
         ),
-        pytest_targets=("src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py",),
+        pytest_targets=(
+            "src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py",
+            "src/backend/polaris/cells/control_plane/run_ledger/tests/test_public_service.py::"
+            "test_repaired_gate_revision_supersedes_historical_failure_for_current_outcome",
+            "src/backend/polaris/cells/control_plane/run_ledger/tests/test_public_service.py::"
+            "test_latest_failed_gate_revision_supersedes_historical_success",
+            "src/backend/polaris/cells/control_plane/run_ledger/tests/test_public_service.py::"
+            "test_repaired_gate_revision_cannot_shrink_required_evidence_contract",
+        ),
         invariants=(
             "missing_vs_failed_modalities_distinct",
             "tool_lifecycle_required_when_task_claims_tools",
+            "latest_gate_revision_controls_current_outcome_history_remains_immutable",
+            "gate_retry_cannot_shrink_required_evidence_contract",
         ),
         depends_on=("M03_tool_batch_deo", "M06_director_multi_task"),
         markers=("module_run_ledger",),
@@ -405,6 +428,8 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "test_public_runtime_dependency_repair_tsconfig_types_when_atypes_node_already_declared",
             "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
             "test_typescript_ts2459_declares_locally_reexports_imported_type",
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
+            "test_materialization_runtime_probe_plans_direct_node_typescript_import_repair",
             "src/backend/polaris/cells/director/runtime/tests/test_typescript_m10_strict_compile_repairs.py",
         ),
         invariants=(
@@ -430,6 +455,7 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "ts2580_process_adds_atypes_node_and_tsconfig_types",
             "ts2580_existing_atypes_node_still_sets_tsconfig_types",
             "ts2459_type_reexport_uses_write_file_not_empty_search_edit",
+            "direct_node_typescript_import_repair_is_runtime_scheduled",
         ),
         depends_on=("M03_tool_batch_deo", "M04_final_request_context", "M06_director_multi_task"),
         sealed_by_defect="",
