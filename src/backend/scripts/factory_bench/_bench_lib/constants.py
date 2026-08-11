@@ -68,6 +68,8 @@ from scripts.factory_bench.factory_http_client import (
     _http_post_json as _shared_http_post_json,
     cancel_factory_run,
     get_audit_bundle,
+    list_factory_runs,
+    retry_factory_run_from_director,
     start_factory_run,
     wait_run_until_terminal,
 )

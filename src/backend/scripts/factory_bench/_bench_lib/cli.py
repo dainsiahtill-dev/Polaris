@@ -282,7 +282,11 @@ def main() -> int:
             "canonical_catalog_project_id": canonical_pid,
         }
         if resume_director:
-            catalog_meta = _require_workspace_catalog_meta(base, workspace, catalog_identity)
+            # Resume binds a new Bench attempt to the immutable workspace from
+            # the original Factory run. The attempt id must not be confused
+            # with the workspace's source run id.
+            resume_identity = {key: value for key, value in catalog_identity.items() if key != "run_id"}
+            catalog_meta = _require_workspace_catalog_meta(base, workspace, resume_identity)
         else:
             catalog_meta = _write_workspace_catalog_meta_exclusive(
                 base,
@@ -608,6 +612,14 @@ def main() -> int:
         #   or a legacy subprocess reached an interrupted terminal state.
         chain_error = str(chain.get("error") or "")
         chain_is_terminal = _chain_reached_terminal(chain)
+        chain_attempt_started = bool(str(chain.get("run_id") or "").strip()) or chain_error not in {
+            "director_resume_run_missing",
+            "isolated_instance_start_failed",
+            "measurement_contaminated",
+            "runtime_project_contamination",
+            "start_failed",
+            "workspace_switch_failed",
+        }
         chain_results_raw = chain.get("chain_results")
         chain_results_for_status: dict[str, Any] = chain_results_raw if isinstance(chain_results_raw, dict) else {}
         chain_status_raw = str(chain_results_for_status.get("exit_class", ""))
@@ -615,7 +627,7 @@ def main() -> int:
         record = build_factory_audit_record(
             project=project,
             workspace=str(workspace),
-            artifact_globs=discover_artifacts(workspace, runtime_dirs),
+            artifact_globs=discover_artifacts(workspace, runtime_dirs) if chain_attempt_started else {},
             chain_terminal=chain_is_terminal,
             chain_status=chain_status_raw,
             chain_phase=chain_phase_raw,
@@ -638,8 +650,12 @@ def main() -> int:
                 chain.get("chain_results")
                 if "chain_results" in chain
                 else read_chain_results_from_runtime_dirs(runtime_dirs)
+                if chain_attempt_started
+                else {}
             )
-        contract_goal = record["chain_results"]["contract_goal"]
+        if not isinstance(record.get("chain_results"), dict):
+            record["chain_results"] = {}
+        contract_goal = str(record["chain_results"].get("contract_goal") or "")
         own_overlap = brief_goal_overlap(str(project.get("brief") or ""), contract_goal)
         record["goal_brief_overlap"] = round(own_overlap, 3)
         # Language-robust contamination detection: an absolute threshold
@@ -677,10 +693,15 @@ def main() -> int:
         record["canonical_project_id"] = canonical_pid
         record["canonical_catalog_project_id"] = canonical_pid
         record["factory_run_id"] = str(chain.get("run_id") or run_id)
-        record["qa_invoked"] = read_factory_qa_invocation_status(
-            Path(project_workspace),
-            record["factory_run_id"],
+        record["qa_invoked"] = (
+            read_factory_qa_invocation_status(
+                Path(project_workspace),
+                record["factory_run_id"],
+            )
+            if chain_attempt_started
+            else {"invoked": False, "reason": "current_attempt_not_started"}
         )
+        record["chain_attempt_started"] = chain_attempt_started
         record["requested_instance_id"] = str(launcher_instance_meta.get("requested_instance_id") or "")
         record["instance_id"] = str(launcher_instance_meta.get("instance_id") or "")
         record["instance_launch_receipt"] = dict(launcher_instance_meta.get("launch_receipt") or {})
@@ -763,7 +784,7 @@ def main() -> int:
             f"files={record['code_file_count']} source={record.get('source_file_count', '?')} "
             f"plan={record['has_plan_doc']} blueprint={record['has_blueprint_doc']} "
             f"verdict_artifact={record['has_qa_verdict']} qa_authoritative={canonical_qa['authoritative']} "
-            f"qa_passed={canonical_qa['ok']} director_artifact={record['chain_results']['director']} "
+            f"qa_passed={canonical_qa['ok']} director_artifact={record['chain_results'].get('director', {})} "
             f"goal_overlap={record['goal_brief_overlap']}"
             f"{' [WRONG-PRODUCT? ~' + record['wrong_product_match'] + ']' if record['wrong_product_suspect'] else ''} "
             f"chain_exit={chain.get('exit_code')} ({chain.get('duration_s')}s)",

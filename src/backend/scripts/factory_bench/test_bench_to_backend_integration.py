@@ -197,7 +197,7 @@ class TestFactoryRunsIntegration(unittest.TestCase):
           - POST /v2/factory/runs is called with the workspace and directive.
           - runtime.v2 event waiting is called with the run id and workspace.
           - GET /v2/factory/runs/{run_id}/audit-bundle is fetched.
-          - chain_results has qa_ran=True, qa_passed=True, exit_class="clean".
+          - legacy audit JSON stays non-authoritative until canonical projection.
           - exit_code is 0.
         """
         project = {
@@ -212,7 +212,7 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         self._setup_audit_bundle(run_id, qa_passed=True)
 
         with patch(
-            "scripts.factory_bench.run_factory_bench.wait_run_until_terminal",
+            "scripts.factory_bench._bench_lib.chain.wait_run_until_terminal",
             return_value={"run_id": run_id, "status": "completed", "phase": "qa_gate"},
         ) as wait_mock:
             result = run_factory_chain(
@@ -258,9 +258,10 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         # --- result shape assertions ---
         chain_results = result.get("chain_results")
         self.assertIsInstance(chain_results, dict, "chain_results must be a dict")
-        self.assertEqual(chain_results.get("qa_ran"), True)
-        self.assertEqual(chain_results.get("qa_passed"), True)
-        self.assertEqual(chain_results.get("exit_class"), "clean")
+        self.assertIs(chain_results.get("qa_ran"), None)
+        self.assertIs(chain_results.get("qa_passed"), None)
+        self.assertEqual(chain_results.get("exit_class"), "legacy_unknown")
+        self.assertEqual(chain_results.get("authoritative"), False)
         self.assertEqual(result.get("exit_code"), 0)
         self.assertEqual(result.get("run_id"), run_id)
 
@@ -285,7 +286,7 @@ class TestFactoryRunsIntegration(unittest.TestCase):
             on_status({"run_id": run_id, "status": "running", "phase": "director_dispatch"})
             return {"run_id": run_id, "status": "completed", "phase": "qa_gate"}
 
-        with patch("scripts.factory_bench.run_factory_bench.wait_run_until_terminal", _fake_wait):
+        with patch("scripts.factory_bench._bench_lib.chain.wait_run_until_terminal", _fake_wait):
             result = run_factory_chain(
                 project,
                 self.workspace,
@@ -307,7 +308,7 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         )
 
     def test_run_factory_chain_failed_qa(self) -> None:
-        """Mock returns a failed QA state; assert exit_code=1 and exit_class=qa_failed."""
+        """Factory failure sets exit code; audit JSON cannot author QA failure."""
         project = {
             "id": "L1-02",
             "title": "Broken Project",
@@ -319,7 +320,7 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         run_id = self._expected_run_id()
         self._setup_audit_bundle(run_id, qa_passed=False)
         with patch(
-            "scripts.factory_bench.run_factory_bench.wait_run_until_terminal",
+            "scripts.factory_bench._bench_lib.chain.wait_run_until_terminal",
             return_value={"run_id": run_id, "status": "failed", "phase": "qa_gate"},
         ):
             result = run_factory_chain(
@@ -333,9 +334,10 @@ class TestFactoryRunsIntegration(unittest.TestCase):
 
         chain_results = result.get("chain_results")
         self.assertIsInstance(chain_results, dict)
-        self.assertEqual(chain_results.get("qa_ran"), True)
-        self.assertEqual(chain_results.get("qa_passed"), False)
-        self.assertEqual(chain_results.get("exit_class"), "qa_failed")
+        self.assertIs(chain_results.get("qa_ran"), None)
+        self.assertIs(chain_results.get("qa_passed"), None)
+        self.assertEqual(chain_results.get("exit_class"), "legacy_unknown")
+        self.assertEqual(chain_results.get("authoritative"), False)
         self.assertEqual(result.get("exit_code"), 1)
 
     def test_map_factory_run_to_chain_results_director_partial(self) -> None:
@@ -521,7 +523,7 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         log_path = Path(self._tmp.name) / "chain.log"
         run_id = self._expected_run_id()
         with patch(
-            "scripts.factory_bench.run_factory_bench.wait_run_until_terminal",
+            "scripts.factory_bench._bench_lib.chain.wait_run_until_terminal",
             return_value={
                 "run_id": run_id,
                 "status": "running",

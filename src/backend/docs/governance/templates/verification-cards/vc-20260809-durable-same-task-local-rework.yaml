@@ -19,6 +19,7 @@ verification_card:
     - Factory now advances convergence after Director failure and quality-gate fact commits.
     - FactoryRunDriverRuntimeV1 owns task lifetime and recovers runnable or committed-local-rework runs at startup.
     - restart replay permanently closes the old physical-attempt epoch, then a newer workspace fencing token opens a fresh epoch.
+    - FAILED is terminal for closeout but nonterminal for an explicit same-stage retry; retry must reconstruct or verify the closed epoch before opening a newer one.
   premortem:
     - risk: staged TaskMarket item is absent; defense: current same-task action mutates TaskRuntime authority directly.
     - risk: stale action reopens a newer run; defense: bind run, contract, cursor claim and owner execution anchor.
@@ -28,6 +29,8 @@ verification_card:
     - risk: same diagnostic loops forever; defense: semantic fingerprint plus max three attempts and stagnation policy.
     - risk: backend restarts after action commit; defense: lifespan driver merges run status with pending exact-row actions.
     - risk: replay safety permanently kills the whole run; defense: old epoch stays closed while an explicit fenced lifecycle transition creates a new epoch.
+    - risk: retry after backend restart creates an empty coordinator without replay; defense: missing coordinator forces durable role-evidence/provider-lifecycle replay before epoch reopen.
+    - risk: a synthetic FAILED snapshot bypasses terminal settlement; defense: only an already-live open coordinator keeps legacy in-process behavior; closed or missing epochs require settled release evidence.
   verification_plan:
     - test: task-runtime same-task command rejects forged receipt and cross-run identity.
     - test: task-runtime reopens exact terminal row and leaves unrelated rows unchanged.
@@ -37,6 +40,9 @@ verification_card:
     - test: Factory stage owner-fact commits explicitly wake the existing supervisor without polling.
     - test: backend restart after action commit resumes exact Director task without a new HTTP run request.
     - test: crash recovery emits one driver claim and at most one physical effect.
+    - test: real terminal FAILED closeout can retry in the same service only after opening a new execution epoch.
+    - test: real terminal FAILED closeout can retry after service restart only after durable replay and a higher fencing token.
+    - test: a second service cannot directly execute or mutate a live run without replay.
     - command: ruff check and format over changed files.
     - command: mypy over changed production modules.
     - command: focused Factory and TaskRuntime pytest suites.

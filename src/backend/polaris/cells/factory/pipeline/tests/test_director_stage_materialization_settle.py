@@ -913,7 +913,7 @@ def test_materialization_settle_close_failure_is_returned(tmp_path: Path, monkey
             return {"success": False, "reason": "settlement_directed_effect_unresolved"}
 
     monkeypatch.setattr(
-        "polaris.cells.factory.pipeline.internal.factory_stage_executor.TaskRuntimeService",
+        "polaris.cells.factory.pipeline.internal.factory_materialization_impl.TaskRuntimeService",
         lambda _workspace: _FailedTaskRuntime(),
     )
     result = executor._settle_director_stage_materialization_attempt(
@@ -964,11 +964,11 @@ def test_claim_director_stage_materialization_settle_attempt_mints_unique_extern
             }
 
     monkeypatch.setattr(
-        "polaris.cells.factory.pipeline.internal.factory_stage_executor.TaskRuntimeService",
+        "polaris.cells.factory.pipeline.internal.factory_materialization_impl.TaskRuntimeService",
         lambda _ws: _FakeTR(),
     )
     monkeypatch.setattr(
-        "polaris.cells.factory.pipeline.internal.factory_stage_executor.bind_runtime_task_to_factory_run",
+        "polaris.cells.factory.pipeline.internal.factory_materialization_impl.bind_runtime_task_to_factory_run",
         lambda _cmd: SimpleNamespace(ok=True, code="ok"),
     )
     monkeypatch.setattr(
@@ -1261,7 +1261,7 @@ def test_seal_director_stage_missing_tool_lifecycles_appends_blocked_receipt(
 
     with (
         patch(
-            "polaris.cells.factory.pipeline.internal.factory_stage_executor.load_run_ledger_projection",
+            "polaris.cells.factory.pipeline.internal.factory_materialization_impl.load_run_ledger_projection",
             return_value=projection,
         ),
         patch(

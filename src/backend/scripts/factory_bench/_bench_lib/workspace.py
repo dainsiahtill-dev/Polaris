@@ -203,6 +203,26 @@ def _workspace_catalog_meta_matches(
     )
 
 
+def _workspace_catalog_meta_matches_project(
+    bench_workspace: Path,
+    workspace: Path,
+    *,
+    project_id: str,
+) -> bool:
+    """Match a resumable physical workspace independently of a new attempt id."""
+    try:
+        payload, identity, _catalog_hash = _read_workspace_catalog_meta_bound(bench_workspace, workspace)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return bool(
+        payload.get("project_id") == project_id
+        and str(payload.get("run_id") or "").strip()
+        and payload.get("workspace_nonce") == workspace.name
+        and payload.get("workspace_device") == identity["device"]
+        and payload.get("workspace_inode") == identity["inode"]
+    )
+
+
 def _require_workspace_catalog_meta(
     bench_workspace: Path,
     workspace: Path,
@@ -340,39 +360,55 @@ def _project_workspace_for_run(
         raise RuntimeError("legacy director-resume workspace is not identity-bound; explicit migration is required")
     candidates: list[Path] = []
 
-    run_component = _identity_workspace_component(run_id, fallback="run")
     project_component = _identity_workspace_component(project_id, fallback="project")
-    fresh_parent = root / "workspaces" / run_component / project_component
+    workspaces_root = root / "workspaces"
     try:
-        fresh_parent_fd = _open_bench_directory_hierarchy(
+        workspaces_fd = _open_bench_directory_hierarchy(
             root,
-            ("workspaces", run_component, project_component),
+            ("workspaces",),
             create=False,
         )
     except FileNotFoundError:
-        fresh_parent_fd = -1
-    if fresh_parent_fd >= 0:
+        workspaces_fd = -1
+    if workspaces_fd >= 0:
         try:
-            entry_names = sorted(os.listdir(fresh_parent_fd))
-            for entry_name in entry_names:
-                snapshot = os.stat(entry_name, dir_fd=fresh_parent_fd, follow_symlinks=False)
-                if stat.S_ISLNK(snapshot.st_mode):
-                    raise RuntimeError("director-resume candidate must not be a symlink")
-                if not stat.S_ISDIR(snapshot.st_mode):
+            for run_component in sorted(os.listdir(workspaces_fd)):
+                run_snapshot = os.stat(run_component, dir_fd=workspaces_fd, follow_symlinks=False)
+                if stat.S_ISLNK(run_snapshot.st_mode):
+                    raise RuntimeError("director-resume run directory must not be a symlink")
+                if not stat.S_ISDIR(run_snapshot.st_mode):
                     continue
-                candidate = (fresh_parent / entry_name).absolute()
-                if _workspace_catalog_meta_matches(root, candidate, run_id=run_id, project_id=project_id):
-                    candidates.append(candidate)
+                fresh_parent = workspaces_root / run_component / project_component
+                try:
+                    fresh_parent_fd = _open_bench_directory_hierarchy(
+                        root,
+                        ("workspaces", run_component, project_component),
+                        create=False,
+                    )
+                except FileNotFoundError:
+                    continue
+                try:
+                    for entry_name in sorted(os.listdir(fresh_parent_fd)):
+                        snapshot = os.stat(entry_name, dir_fd=fresh_parent_fd, follow_symlinks=False)
+                        if stat.S_ISLNK(snapshot.st_mode):
+                            raise RuntimeError("director-resume candidate must not be a symlink")
+                        if not stat.S_ISDIR(snapshot.st_mode):
+                            continue
+                        candidate = (fresh_parent / entry_name).absolute()
+                        if _workspace_catalog_meta_matches_project(root, candidate, project_id=project_id):
+                            candidates.append(candidate)
+                finally:
+                    os.close(fresh_parent_fd)
         finally:
-            os.close(fresh_parent_fd)
+            os.close(workspaces_fd)
     if len(candidates) == 1:
         return candidates[0]
     if not candidates:
         raise FileNotFoundError(
-            f"director-resume workspace not found for run_id={run_component!r} project_id={project_component!r}"
+            f"director-resume workspace not found for attempt_run_id={run_id!r} project_id={project_component!r}"
         )
     raise RuntimeError(
-        f"director-resume workspace is ambiguous for run_id={run_component!r} "
+        f"director-resume workspace is ambiguous for attempt_run_id={run_id!r} "
         f"project_id={project_component!r}: {len(candidates)} candidates"
     )
 
@@ -617,14 +653,24 @@ def _director_resume_delivery_files(workspace: Path, tasks: list[dict[str, Any]]
 
 
 def _prepare_director_resume_workspace(workspace: Path) -> None:
-    if _director_resume_has_ce_blueprint(workspace):
+    from polaris.cells.factory.pipeline.internal.factory_stage_executor import OrchestrationStageExecutor
+
+    executor = OrchestrationStageExecutor(workspace)
+    # Modern TaskRuntime is FactStream-authoritative and may intentionally have
+    # no ``runtime/tasks/task_*.json`` mirror after an isolated backend stops.
+    # Restore the durable PM plan mirror first. Director dispatch will
+    # materialize and bind canonical task rows to the NEW Factory run via
+    # ``_materialize_pm_plan_taskboard``; the bench preflight must not require
+    # obsolete file rows or mint unbound TaskRuntime facts itself.
+    executor._ensure_pm_plan_contract_available()
+    has_current_plan = bool(_director_resume_plan_tasks(workspace))
+    has_current_taskboard = _director_resume_has_taskboard(workspace)
+    if _director_resume_has_ce_blueprint(workspace) and (has_current_taskboard or not has_current_plan):
         _rehydrate_director_resume_taskboard(workspace)
     tasks = _director_resume_plan_tasks(workspace)
     missing: list[str] = []
     if not tasks:
         missing.append("runtime/tasks/plan.json")
-    if not _director_resume_has_taskboard(workspace):
-        missing.append("runtime/tasks/task_*.json")
     if not _director_resume_has_ce_blueprint(workspace):
         missing.append(".polaris/blueprints/latest.review.json")
     if missing:
@@ -637,9 +683,7 @@ def _prepare_director_resume_workspace(workspace: Path) -> None:
             "Director-only resume snapshot is missing and workspace already has delivery files: "
             + ", ".join(delivery_files[:12])
         )
-    from polaris.cells.factory.pipeline.internal.factory_stage_executor import OrchestrationStageExecutor
-
-    OrchestrationStageExecutor(workspace)._create_pre_director_snapshot(run_id="bench_director_resume_seed")
+    executor._create_pre_director_snapshot(run_id="bench_director_resume_seed")
 
 
 def _attach_platform_residual_attribution(

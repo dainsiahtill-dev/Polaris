@@ -803,6 +803,25 @@ async def test_factory_service_rejects_stale_source_token_before_mutation(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_factory_service_exposes_current_token_for_stale_run_replay_without_mutation(tmp_path: Path) -> None:
+    """A prior-run fact must be fenced by token comparison, not crash boot-time replay."""
+    service = RecordingFactoryService(tmp_path)
+    adapter = FactoryRunServiceSettlementAdapter(
+        workspace=str(tmp_path),
+        service=service,
+        lease_reader=lambda: _lease(tmp_path, token=8, run_id="factory-2"),
+    )
+
+    current_token = adapter.bind(_barrier_query(tmp_path, token=7))
+
+    assert current_token == 8
+    with pytest.raises(FactorySettlementFencedError) as raised:
+        await adapter.settle_terminal_run("factory-1")
+    assert raised.value.code == "factory_workspace_run_fenced"
+    assert service.settle_calls == []
+
+
+@pytest.mark.asyncio
 async def test_durable_wake_bridge_start_waits_for_subscription_ready() -> None:
     subscription = RecordingJetStreamSubscription()
     jetstream = RecordingJetStreamContext(subscription, ready_immediately=False)

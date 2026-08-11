@@ -28,6 +28,8 @@ from factory_http_client import (
     get_audit_bundle,
     get_run_artifacts,
     get_run_status,
+    list_factory_runs,
+    retry_factory_run_from_director,
     start_factory_run,
     wait_run_until_terminal,
 )
@@ -288,6 +290,53 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(
             req.full_url,
             "http://localhost:49977/v2/factory/runs/run-42?workspace=%2Ftmp%2Ffactory%20bench%2FL1-01",
+        )
+
+    def test_list_factory_runs_is_workspace_bound(self) -> None:
+        payload = {"runs": [{"run_id": "run-42", "status": "failed"}], "total": 1}
+        fake_resp = FakeHTTPResponse(json.dumps(payload).encode("utf-8"))
+        with patch("urllib.request.urlopen", return_value=fake_resp) as mock_urlopen:
+            result = list_factory_runs(
+                "http://localhost:49977",
+                token="t",
+                workspace="/tmp/factory bench/L1-01",
+            )
+
+        self.assertEqual(result, payload)
+        req = mock_urlopen.call_args[0][0]
+        self.assertEqual(
+            req.full_url,
+            "http://localhost:49977/v2/factory/runs?workspace=%2Ftmp%2Ffactory%20bench%2FL1-01&limit=100&offset=0",
+        )
+        self.assertEqual(req.get_header("Authorization"), "Bearer t")
+
+    def test_retry_factory_run_from_director_uses_same_run_control(self) -> None:
+        fake_resp = FakeHTTPResponse(
+            json.dumps({"run_id": "run-42", "status": "recovering"}).encode("utf-8")
+        )
+        with patch("urllib.request.urlopen", return_value=fake_resp) as mock_urlopen:
+            result = retry_factory_run_from_director(
+                "http://localhost:49977",
+                "run-42",
+                token="t",
+                workspace="/tmp/ws",
+                reason="repair failed Director task",
+            )
+
+        self.assertEqual(result, {"run_id": "run-42", "status": "recovering"})
+        req = mock_urlopen.call_args[0][0]
+        self.assertEqual(
+            req.full_url,
+            "http://localhost:49977/v2/factory/runs/run-42/control?workspace=%2Ftmp%2Fws",
+        )
+        self.assertEqual(req.get_header("Authorization"), "Bearer t")
+        self.assertEqual(
+            json.loads(req.data.decode("utf-8")),
+            {
+                "action": "retry_phase",
+                "target_phase": "implementation",
+                "reason": "repair failed Director task",
+            },
         )
 
     def test_cancel_factory_run(self) -> None:

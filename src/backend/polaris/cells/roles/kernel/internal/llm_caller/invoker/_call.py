@@ -1125,7 +1125,7 @@ class _InvokerCallMixin:
         task_id = task_id or getattr(context, "task_id", None)
         role_id = str(getattr(profile, "role_id", "unknown") or "unknown")
         model = profile.model or "default"
-        from .helpers import resolve_max_tokens
+        from ..helpers import resolve_max_tokens
 
         context_override = getattr(context, "context_override", None)
         effective_max_tokens = resolve_max_tokens(max_tokens, context_override)

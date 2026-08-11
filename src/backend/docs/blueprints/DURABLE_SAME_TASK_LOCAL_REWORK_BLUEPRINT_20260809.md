@@ -1,6 +1,6 @@
 # Durable Same-Task Local Rework Blueprint
 
-- 状态: Restart integration complete; fresh Bench verification pending
+- 状态: Restart integration hardening active; fresh Bench verification pending
 - 日期: 2026-08-09
 - 关联: ADR-0100, ADR-0101
 
@@ -49,6 +49,12 @@ execution epoch。禁止复活旧 attempt authority，也禁止把“旧 epoch �
 “整个 Factory run 永久关闭”。真实后端子进程测试已证明无需新 HTTP start 请求即可
 从 `RUNNING → RECOVERING → terminal`。
 
+`FAILED` run 的显式同阶段 retry 也必须执行相同代际切换。若 backend 已重启、
+process-local coordinator 缺失，`retry_run_from_stage` 必须先从 durable role-evidence / provider-lifecycle
+facts 重放并结清旧 epoch；若仍在同一进程但 terminal drain 已关闭 coordinator，则必须验证
+持久化 release evidence 与 physical-attempt drain 均已 settled。只有这些前置证据成立，才能开
+新 epoch 并继续原 Director 阶段。普通第二服务不得借 retry 之外的 mutation 绕过 replay fence。
+
 ## 模块职责
 
 - `factory.pipeline`: 只在 CE contract、Director/QA/Run Ledger owner facts 变化后发送
@@ -85,7 +91,9 @@ execution epoch。禁止复活旧 attempt authority，也禁止把“旧 epoch �
 10. backend 在 action commit、Director edit、verifier rerun 任一切点重启后，必须从
     durable claim 恢复且最多产生一次物理 effect。
 11. restart replay 只永久关闭旧 physical-attempt epoch；新 epoch 必须使用更高
-    workspace fencing token，旧进程/旧 grant/旧 provider request 永远不可复活。
+   workspace fencing token，旧进程/旧 grant/旧 provider request 永远不可复活。
+12. `FAILED` retry 必须以 terminal release + settled physical-attempt evidence 为前置；
+    coordinator 缺失时必须先 durable replay，禁止直接 new coordinator 或复活旧 grant。
 
 ## 失败防御
 
@@ -106,3 +114,6 @@ execution epoch。禁止复活旧 attempt authority，也禁止把“旧 epoch �
    只有 `COMPLETED_VERIFIED` 才能声明项目跑通。
 7. crash-recovery: action commit 后终止 backend，重启后无需 HTTP 客户端重提请求，
    lifespan-owned stage driver 必须自动消费 exact row 并继续 affected verifier。
+8. failed-retry recovery: 真实 terminal close 后，同进程与重启后两种 `retry_run_from_stage`
+   都只开启新 epoch；重启路径必须先 replay，普通第二服务直接执行仍返回
+   `factory_physical_attempt_replay_required`。

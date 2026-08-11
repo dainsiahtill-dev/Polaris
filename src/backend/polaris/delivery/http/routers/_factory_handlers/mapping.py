@@ -310,6 +310,15 @@ def _build_retry_start_request(run: FactoryRun, workspace: str) -> FactoryStartR
     if not start_from:
         start_from = _infer_start_from_stages(configured_stages)
 
+    # A same-run retry at Director is a Director resume even when the original
+    # run started at PM. This controls workspace semantics, not event-chain
+    # identity: restore the committed pre-Director snapshot instead of taking a
+    # new snapshot over partially failed output. PM/CE events stay immutable in
+    # the same Factory run and are not re-executed.
+    retry_execution_stage = str(run.metadata.get("retry_execution_stage") or "").strip()
+    if retry_execution_stage == "director_dispatch":
+        start_from = "director_resume"
+
     directive_value = _coerce_optional_string(start_payload.get("directive"))
     if directive_value is None:
         directive_value = _coerce_optional_string(run.config.description)
@@ -320,8 +329,11 @@ def _build_retry_start_request(run: FactoryRun, workspace: str) -> FactoryStartR
         directive=directive_value,
         run_director=bool(start_payload.get("run_director", "director_dispatch" in configured_stages)),
         director_iterations=_coerce_director_iterations(start_payload.get("director_iterations", 0)),
+        director_workflow_execution_mode=start_payload.get("director_workflow_execution_mode"),
+        director_dispatch_driver="task-market",
         loop=bool(start_payload.get("loop", run.metadata.get("loop_requested", False))),
         input_source=_coerce_optional_string(start_payload.get("input_source")),
+        persist_workspace=False,
     )
 
 

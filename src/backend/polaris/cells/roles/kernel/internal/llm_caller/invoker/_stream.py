@@ -83,7 +83,7 @@ class _InvokerStreamMixin:
         role_id = str(getattr(profile, "role_id", "unknown") or "unknown")
         model = profile.model or "default"
         start_time = time.perf_counter()
-        from .helpers import resolve_max_tokens, resolve_temperature
+        from ..helpers import resolve_max_tokens, resolve_temperature
 
         context_override = getattr(context, "context_override", None)
         effective_max_tokens = resolve_max_tokens(max_tokens, context_override)
@@ -304,7 +304,7 @@ class _InvokerStreamMixin:
         turn_round: int = 0,
     ) -> dict[str, Any]:
         """Decision-phase LLM call via DecisionCaller."""
-        from .decision_caller import DecisionCaller
+        from ..decision_caller import DecisionCaller
 
         caller = DecisionCaller(self)
         return await caller.call(
@@ -329,7 +329,7 @@ class _InvokerStreamMixin:
         turn_round: int = 0,
     ) -> dict[str, Any]:
         """Finalization-phase LLM call via FinalizationCaller."""
-        from .finalization_caller import FinalizationCaller
+        from ..finalization_caller import FinalizationCaller
 
         caller = FinalizationCaller(self)
         return await caller.call(

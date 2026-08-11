@@ -358,6 +358,56 @@ def start_factory_run(
     return _http_post_json(f"{backend_url}/v2/factory/runs", payload, token=token, return_errors=True)
 
 
+def list_factory_runs(
+    backend_url: str,
+    *,
+    token: str = "",
+    workspace: str = "",
+    limit: int = 100,
+) -> dict[str, Any] | None:
+    """List Factory runs bound to one workspace.
+
+    Recovery callers use this read-only projection to find the authoritative
+    failed run whose PM and Chief Engineer checkpoints are already committed.
+    """
+
+    url = _append_query_params(
+        f"{backend_url}/v2/factory/runs",
+        {
+            "workspace": workspace,
+            "limit": str(max(1, min(int(limit), 100))),
+            "offset": "0",
+        },
+    )
+    return _http_get_json(url, token=token)
+
+
+def retry_factory_run_from_director(
+    backend_url: str,
+    run_id: str,
+    *,
+    token: str = "",
+    workspace: str = "",
+    reason: str = "",
+) -> dict[str, Any] | None:
+    """Resume the same Factory event chain at its Director checkpoint."""
+
+    url = _append_query_params(
+        f"{backend_url}/v2/factory/runs/{run_id}/control",
+        {"workspace": workspace},
+    )
+    return _http_post_json(
+        url,
+        {
+            "action": "retry_phase",
+            "target_phase": "implementation",
+            "reason": reason or "factory-bench Director checkpoint recovery",
+        },
+        token=token,
+        return_errors=True,
+    )
+
+
 def get_run_status(
     backend_url: str,
     run_id: str,

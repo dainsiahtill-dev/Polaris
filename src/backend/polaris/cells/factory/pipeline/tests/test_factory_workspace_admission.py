@@ -96,9 +96,7 @@ async def test_quality_stage_commit_explicitly_wakes_completion_with_ce_owned_id
     )
     ce_artifact = tmp_path / "ce-portfolio.json"
     ce_artifact.write_text(
-        '{"project_completion_contract":{"project_id":"project-1","contract_hash":"'
-        + ("a" * 64)
-        + '"}}',
+        '{"project_completion_contract":{"project_id":"project-1","contract_hash":"' + ("a" * 64) + '"}}',
         encoding="utf-8",
     )
     ce_result = StageResult(
@@ -2066,6 +2064,7 @@ async def test_inflight_stage_claim_survives_wrapper_return_until_child_settles(
         "director_dispatch",
         {"heartbeat_interval_seconds": 0},
     )
+    old_port = service._physical_attempt_coordinator(run.id)
     assert first.metadata["inflight_run_continues"] is True
     assert service._admission.current().stage_execution_claim is not None
 
@@ -2085,11 +2084,13 @@ async def test_inflight_stage_claim_survives_wrapper_return_until_child_settles(
     assert released_lease is not None
     assert released_lease.stage_execution_claim is None
 
-    with pytest.raises(
-        FactoryPhysicalAttemptControlError,
-        match="factory_physical_attempt_recovered_run_permanently_closed",
-    ):
-        await service.retry_run_from_stage(run.id, target_stage="director_dispatch")
+    retried = await service.retry_run_from_stage(run.id, target_stage="director_dispatch")
+    new_port = service._physical_attempt_coordinator(run.id)
+
+    assert retried.status is FactoryRunStatus.RECOVERING
+    assert old_port.admission_closed is True
+    assert new_port is not old_port
+    assert new_port.admission_closed is False
     assert service._admission.current().stage_execution_claim is None
     assert executor.entered_count == 1
 
@@ -2497,6 +2498,84 @@ async def test_stale_owner_replay_failure_rolls_back_claim_without_release(
     assert durable.expires_at == stale.expires_at
     assert durable.lifecycle_operation_claim is None
     assert run.id not in restarted._physical_attempt_coordinators
+
+
+@pytest.mark.asyncio
+async def test_terminal_failed_run_retry_opens_fresh_epoch_in_same_service(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "runtime"
+    workspace.mkdir()
+    service = FactoryRunService(
+        workspace,
+        cache_root=cache_root,
+        executor=_SuccessfulStageExecutor(),
+    )
+    run = await service.create_run(FactoryConfig(name="same-service-failed-retry", stages=["director_dispatch"]))
+    await service.start_run(run.id)
+    old_port = service._physical_attempt_coordinator(run.id)
+
+    failed = await service.complete_run(run.id, success=False)
+    assert failed.status is FactoryRunStatus.FAILED
+    assert failed.metadata["factory_workspace_run_lease"]["state"] == "released"
+    assert old_port.admission_closed is True
+
+    retried = await service.retry_run_from_stage(
+        run.id,
+        target_stage="director_dispatch",
+        reason="repair only failed Director stage",
+    )
+
+    new_port = service._physical_attempt_coordinator(run.id)
+    assert retried.status is FactoryRunStatus.RECOVERING
+    assert retried.metadata["factory_physical_attempt_execution_epoch"] == 2
+    assert retried.metadata["factory_physical_attempt_restart_replay"]["source"] == ("failed_run_stage_retry")
+    assert old_port.admission_closed is True
+    assert new_port is not old_port
+    assert new_port.admission_closed is False
+
+
+@pytest.mark.asyncio
+async def test_terminal_failed_run_retry_replays_before_new_epoch_after_restart(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "runtime"
+    workspace.mkdir()
+    owner = FactoryRunService(
+        workspace,
+        cache_root=cache_root,
+        executor=_SuccessfulStageExecutor(),
+    )
+    run = await owner.create_run(FactoryConfig(name="restarted-failed-retry", stages=["director_dispatch"]))
+    await owner.start_run(run.id)
+    old_port = owner._physical_attempt_coordinator(run.id)
+    failed = await owner.complete_run(run.id, success=False)
+    released_token = failed.metadata["factory_workspace_run_lease"]["fencing_token"]
+
+    restarted = FactoryRunService(
+        workspace,
+        cache_root=cache_root,
+        executor=_SuccessfulStageExecutor(),
+    )
+    assert run.id not in restarted._physical_attempt_coordinators
+
+    retried = await restarted.retry_run_from_stage(
+        run.id,
+        target_stage="director_dispatch",
+        reason="resume exact Director boundary",
+    )
+
+    new_port = restarted._physical_attempt_coordinator(run.id)
+    events = await restarted.get_run_events(run.id)
+    event_types = [str(event.get("type") or "") for event in events]
+    assert retried.status is FactoryRunStatus.RECOVERING
+    assert retried.metadata["factory_physical_attempt_execution_epoch"] == 2
+    assert retried.metadata["factory_workspace_run_lease"]["fencing_token"] > released_token
+    assert old_port.admission_closed is True
+    assert new_port.admission_closed is False
+    assert event_types[-3:] == [
+        "physical_attempt_failed_retry_replayed",
+        "physical_attempt_execution_epoch_reopened",
+        "retry_requested",
+    ]
 
 
 @pytest.mark.asyncio

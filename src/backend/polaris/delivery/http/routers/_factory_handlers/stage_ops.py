@@ -257,7 +257,7 @@ def _reset_current_director_resume_taskboard(
     return evidence
 
 
-def _chief_engineer_blueprint_count(workspace: str) -> int:
+def _chief_engineer_review_evidence(workspace: str) -> tuple[Path | None, dict[str, Any]]:
     workspace_path = Path(workspace)
     candidates = [
         workspace_path / ".polaris" / "blueprints" / "latest.review.json",
@@ -280,8 +280,53 @@ def _chief_engineer_blueprint_count(workspace: str) -> int:
             count = 0
         blueprints = payload.get("blueprints")
         if count > 0 or (isinstance(blueprints, list) and bool(blueprints)):
-            return max(count, len(blueprints) if isinstance(blueprints, list) else 0)
-    return 0
+            return resolved, payload
+    return None, {}
+
+
+def _chief_engineer_blueprint_count(workspace: str) -> int:
+    _source, payload = _chief_engineer_review_evidence(workspace)
+    raw_count = payload.get("generated_blueprints")
+    try:
+        count = int(str(raw_count or 0))
+    except (TypeError, ValueError):
+        count = 0
+    blueprints = payload.get("blueprints")
+    return max(count, len(blueprints) if isinstance(blueprints, list) else 0)
+
+
+def _bind_director_resume_chief_engineer_review(workspace: str, *, run_id: str) -> Path:
+    """Bind trusted prior CE evidence to a new Director-only Factory run.
+
+    A resumed run receives a new ``factory_run_id``. Director's canonical
+    handoff guard intentionally reads only the review bound to that run, so the
+    HTTP admission layer must derive a run-local binding from the CE evidence
+    it already admitted. The original run identity remains explicit provenance;
+    PM/CE are not rerun and normal Factory runs never use this path.
+    """
+
+    resolved_run_id = str(run_id or "").strip()
+    source_path, source_payload = _chief_engineer_review_evidence(workspace)
+    if not resolved_run_id or source_path is None or not source_payload:
+        raise StructuredHTTPException(
+            status_code=409,
+            code="DIRECTOR_RESUME_EVIDENCE_MISSING",
+            message="Director-only Factory run could not bind trusted Chief Engineer review evidence",
+            details={"workspace": workspace, "run_id": resolved_run_id},
+        )
+
+    source_factory_run_id = str(source_payload.get("factory_run_id") or "").strip()
+    bound_payload = dict(source_payload)
+    bound_payload["factory_run_id"] = resolved_run_id
+    bound_payload["director_resume_binding"] = {
+        "source_factory_run_id": source_factory_run_id,
+        "source_path": str(source_path),
+        "bound_factory_run_id": resolved_run_id,
+        "bound_at": datetime.now(timezone.utc).isoformat(),
+    }
+    target = Path(resolve_runtime_path(workspace, f"runtime/state/blueprints/{resolved_run_id}.review.json"))
+    _write_json_text_atomic(target, bound_payload)
+    return target
 
 
 def _pre_director_snapshot_ready(workspace: str) -> bool:
@@ -293,13 +338,13 @@ def _pre_director_snapshot_ready(workspace: str) -> bool:
 
 
 def _ensure_director_resume_evidence_ready(workspace: str) -> None:
-    if _chief_engineer_blueprint_count(workspace) > 0:
+    has_current_plan = _pm_plan_task_count(workspace) > 0
+    has_current_taskboard = _taskboard_record_count(workspace) > 0
+    if _chief_engineer_blueprint_count(workspace) > 0 and (has_current_taskboard or not has_current_plan):
         _rehydrate_director_resume_taskboard(workspace)
     missing: list[str] = []
     if _pm_plan_task_count(workspace) <= 0:
         missing.append("runtime/tasks/plan.json")
-    if _taskboard_record_count(workspace) <= 0:
-        missing.append("runtime/tasks/task_*.json")
     if _chief_engineer_blueprint_count(workspace) <= 0:
         missing.append(".polaris/blueprints/latest.review.json")
     if not _pre_director_snapshot_ready(workspace):
@@ -308,13 +353,12 @@ def _ensure_director_resume_evidence_ready(workspace: str) -> None:
         raise StructuredHTTPException(
             status_code=409,
             code="DIRECTOR_RESUME_EVIDENCE_MISSING",
-            message="Director-only Factory run requires trusted PM, Chief Engineer, TaskBoard, and pre-Director snapshot evidence",
+            message="Director-only Factory run requires trusted PM, Chief Engineer, and pre-Director snapshot evidence",
             details={
                 "workspace": workspace,
                 "missing_evidence": missing,
                 "required_evidence": [
                     "runtime/tasks/plan.json",
-                    "runtime/tasks/task_*.json",
                     ".polaris/blueprints/latest.review.json",
                     ".polaris/factory_snapshots/pre_director/manifest.json",
                 ],
@@ -1645,6 +1689,7 @@ __all__ = [
     "_artifact_item_from_stage_ref",
     "_artifact_response_path",
     "_attach_control_plane_projection",
+    "_bind_director_resume_chief_engineer_review",
     "_build_artifacts_response",
     "_build_director_convergence",
     "_build_factory_audit_bundle",
@@ -1654,6 +1699,7 @@ __all__ = [
     "_build_summary_markdown",
     "_check_docs_ready",
     "_chief_engineer_blueprint_count",
+    "_chief_engineer_review_evidence",
     "_classify_factory_failure_code",
     "_count_events_by_type",
     "_decide_delivery_loop_action",

@@ -773,6 +773,8 @@ async def _start_factory_run_core(
     )
 
     run = await service.create_run(config)
+    if start_from == "director_resume":
+        _bind_director_resume_chief_engineer_review(workspace, run_id=run.id)
     run = await service.start_run(run.id)
     _store_start_request_metadata(run, payload, start_from)
     await _save_service_run(service, run)

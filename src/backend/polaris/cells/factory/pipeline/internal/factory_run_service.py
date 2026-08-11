@@ -802,7 +802,8 @@ class FactoryRunService:
     ) -> FactoryWorkspaceRunLeaseV1:
         current = self._admission.current()
         if (
-            operation not in {
+            operation
+            not in {
                 "recover_run",
                 "recover_stale_workspace_owner",
                 "resume_recovered_run",
@@ -1797,9 +1798,8 @@ class FactoryRunService:
                 and current_lease.state.value in {"active", "draining"}
             )
         completion_facts_changed = (
-            (result.stage == "director_dispatch" and result.status != "success")
-            or result.stage == "quality_gate"
-        )
+            result.stage == "director_dispatch" and result.status != "success"
+        ) or result.stage == "quality_gate"
         if completion_facts_changed:
             try:
                 completion_result = await self._notify_project_completion_supervisor(run_id, result)
@@ -2071,6 +2071,193 @@ class FactoryRunService:
             return 0.0
         return max(0.05, min(value, 300.0))
 
+    @staticmethod
+    def _require_failed_retry_terminal_release(run: FactoryRun) -> None:
+        """Require durable proof that a failed run's old epoch fully drained."""
+
+        lease_payload = run.metadata.get(_WORKSPACE_LEASE_METADATA_KEY)
+        lease = lease_payload if isinstance(lease_payload, Mapping) else {}
+        release_payload = lease.get("release_evidence")
+        release = release_payload if isinstance(release_payload, Mapping) else {}
+        details_payload = release.get("details")
+        details = details_payload if isinstance(details_payload, Mapping) else {}
+        drain_payload = details.get("physical_attempt_drain")
+        drain = drain_payload if isinstance(drain_payload, Mapping) else {}
+        settlement_payload = details.get("task_runtime_settlement")
+        settlement = settlement_payload if isinstance(settlement_payload, Mapping) else {}
+        if (
+            str(lease.get("run_id") or "").strip() != run.id
+            or str(lease.get("state") or "").strip().lower() != "released"
+            or str(release.get("factory_run_id") or "").strip() != run.id
+            or drain.get("settled") is not True
+            or settlement.get("settled") is not True
+        ):
+            raise FactoryPhysicalAttemptControlError("factory_physical_attempt_retry_terminal_settlement_missing")
+
+    async def _replay_failed_retry_physical_attempt_epoch_locked(
+        self,
+        run: FactoryRun,
+    ) -> FactoryPhysicalAttemptLiveControlPort:
+        """Replay and permanently close the old epoch before failed-run retry."""
+
+        operation = "recover_run"
+        nonce = f"lifecycle_{uuid.uuid4().hex}"
+        claimed = False
+        try:
+            lease = self._claim_lifecycle_operation(
+                run,
+                operation=operation,
+                nonce=nonce,
+                acquire_if_available=True,
+            )
+            claimed = True
+            if lease.state.value != "draining":
+                raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_retry_replay_fence_missing")
+            settlement = await self._require_child_session_settlement_for_reentry(
+                run,
+                operation="retry_run_from_stage_restart_replay",
+            )
+            await self._reconcile_stage_execution_claim(run, settlement=settlement)
+            replayed = self._physical_attempt_coordinator(run.id)
+            physical_drain = replayed.close()
+            if not physical_drain.settled:
+                raise FactoryPhysicalAttemptReplayError(
+                    "factory_physical_attempt_replay_terminal_settlement_incomplete"
+                )
+            run.metadata["factory_physical_attempt_admission_dead"] = True
+            release_evidence = self._workspace_release_evidence(
+                run.id,
+                settlement,
+                source="factory_failed_retry_physical_attempt_restart_replay",
+                observed_at=self._now(),
+                details={
+                    "physical_attempt_replay_fence": True,
+                    "physical_attempt_drain": {
+                        "factory_run_id": physical_drain.factory_run_id,
+                        "settled": physical_drain.settled,
+                        "blocking_reservation_ids": list(physical_drain.blocking_reservation_ids),
+                        "terminal_failure_reservation_ids": list(physical_drain.terminal_failure_reservation_ids),
+                        "by_authority": [asdict(state) for state in physical_drain.by_authority],
+                    },
+                },
+            )
+            released = self._admission.release(
+                run.id,
+                fencing_token=lease.fencing_token,
+                settlement_evidence=release_evidence,
+                operation_nonce=nonce,
+            )
+            self._attach_workspace_lease(run, released)
+            run.updated_at = self._now()
+            await self.store.save_run(run)
+            await self._append_event(
+                run.id,
+                {
+                    "type": "physical_attempt_failed_retry_replayed",
+                    "message": "Failed-run retry replayed and settled the prior physical-attempt epoch",
+                    "timestamp": run.updated_at,
+                },
+            )
+            claimed = False
+            return replayed
+        except Exception:
+            if claimed:
+                await self._rollback_lifecycle_operation(
+                    run,
+                    operation=operation,
+                    nonce=nonce,
+                    reason="retry_run_from_stage_restart_replay_failed",
+                )
+            raise
+
+    async def _open_fresh_physical_attempt_execution_epoch_locked(
+        self,
+        run: FactoryRun,
+        *,
+        replayed: FactoryPhysicalAttemptLiveControlPort,
+        source: str,
+    ) -> FactoryRun:
+        """Open a new fenced epoch after the prior coordinator is settled."""
+
+        replay_drain = replayed.close()
+        if not replay_drain.settled:
+            raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_terminal_settlement_incomplete")
+        operation = "resume_recovered_run"
+        nonce = f"lifecycle_{uuid.uuid4().hex}"
+        claimed = False
+        try:
+            lease = self._claim_lifecycle_operation(
+                run,
+                operation=operation,
+                nonce=nonce,
+                acquire_if_available=True,
+            )
+            claimed = True
+            new_epoch = max(
+                2,
+                int(run.metadata.get("factory_physical_attempt_execution_epoch") or 1) + 1,
+            )
+            self._physical_attempt_coordinators[run.id] = FactoryPhysicalAttemptLiveControlPort(
+                factory_run_id=run.id,
+                revalidate_active_stage_claim=self._revalidate_active_physical_attempt_stage_claim,
+            )
+            run.metadata.pop("factory_physical_attempt_admission_dead", None)
+            run.metadata["factory_physical_attempt_execution_epoch"] = new_epoch
+            run.metadata["factory_physical_attempt_restart_replay"] = {
+                "previous_epoch_closed": True,
+                "previous_epoch_settled": True,
+                "new_epoch": new_epoch,
+                "new_workspace_fencing_token": lease.fencing_token,
+                "source": source,
+                "resumed_at": self._now(),
+            }
+            run.updated_at = self._now()
+            await self.store.save_run(run)
+            await self._append_event(
+                run.id,
+                {
+                    "type": "physical_attempt_execution_epoch_reopened",
+                    "execution_epoch": new_epoch,
+                    "workspace_fencing_token": lease.fencing_token,
+                    "source": source,
+                    "message": "Prior attempt epoch is closed; a new fenced epoch is active",
+                    "timestamp": run.updated_at,
+                },
+            )
+            await self._release_lifecycle_operation(
+                run,
+                operation=operation,
+                nonce=nonce,
+            )
+            claimed = False
+            return run
+        except Exception:
+            self._physical_attempt_coordinators[run.id] = replayed
+            if claimed:
+                await self._rollback_lifecycle_operation(
+                    run,
+                    operation=operation,
+                    nonce=nonce,
+                    reason="resume_recovered_run_failed",
+                )
+            raise
+
+    async def _prepare_failed_retry_execution_epoch_locked(self, run: FactoryRun) -> FactoryRun:
+        """Make one explicit FAILED retry safe without replaying PM or CE."""
+
+        current = self._physical_attempt_coordinators.get(run.id)
+        if current is not None and not current.admission_closed:
+            return run
+        replayed = (
+            current if current is not None else await self._replay_failed_retry_physical_attempt_epoch_locked(run)
+        )
+        self._require_failed_retry_terminal_release(run)
+        return await self._open_fresh_physical_attempt_execution_epoch_locked(
+            run,
+            replayed=replayed,
+            source="failed_run_stage_retry",
+        )
+
     async def recover_run(self, run_id: str) -> FactoryRun:
         """Recover a run from durable storage."""
         run_lock = self._get_run_lock(run_id)
@@ -2198,13 +2385,9 @@ class FactoryRunService:
             if run.status in TERMINAL_RUN_STATUSES:
                 return run
             if run.status is not FactoryRunStatus.RECOVERING:
-                raise FactoryPhysicalAttemptControlError(
-                    "factory_physical_attempt_resume_requires_recovering_run"
-                )
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_resume_requires_recovering_run")
             if run.metadata.get("factory_physical_attempt_admission_dead") is not True:
-                raise FactoryPhysicalAttemptControlError(
-                    "factory_physical_attempt_resume_requires_replay_fence"
-                )
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_resume_requires_replay_fence")
 
             replayed = self._physical_attempt_coordinator(run.id)
             replay_drain = replayed.close()
@@ -2224,64 +2407,11 @@ class FactoryRunService:
                 raise FactoryPhysicalAttemptControlError(
                     "factory_physical_attempt_resume_replay_release_evidence_missing"
                 )
-
-            operation = "resume_recovered_run"
-            nonce = f"lifecycle_{uuid.uuid4().hex}"
-            claimed = False
-            try:
-                lease = self._claim_lifecycle_operation(
-                    run,
-                    operation=operation,
-                    nonce=nonce,
-                    acquire_if_available=True,
-                )
-                claimed = True
-                new_epoch = max(
-                    2,
-                    int(run.metadata.get("factory_physical_attempt_execution_epoch") or 1) + 1,
-                )
-                self._physical_attempt_coordinators[run.id] = FactoryPhysicalAttemptLiveControlPort(
-                    factory_run_id=run.id,
-                    revalidate_active_stage_claim=self._revalidate_active_physical_attempt_stage_claim,
-                )
-                run.metadata.pop("factory_physical_attempt_admission_dead", None)
-                run.metadata["factory_physical_attempt_execution_epoch"] = new_epoch
-                run.metadata["factory_physical_attempt_restart_replay"] = {
-                    "previous_epoch_closed": True,
-                    "previous_epoch_settled": True,
-                    "new_epoch": new_epoch,
-                    "new_workspace_fencing_token": lease.fencing_token,
-                    "resumed_at": self._now(),
-                }
-                run.updated_at = self._now()
-                await self.store.save_run(run)
-                await self._append_event(
-                    run.id,
-                    {
-                        "type": "physical_attempt_execution_epoch_reopened",
-                        "execution_epoch": new_epoch,
-                        "workspace_fencing_token": lease.fencing_token,
-                        "message": "Restart replay closed the old attempt epoch; a new fenced epoch is active",
-                        "timestamp": run.updated_at,
-                    },
-                )
-                await self._release_lifecycle_operation(
-                    run,
-                    operation=operation,
-                    nonce=nonce,
-                )
-                claimed = False
-                return run
-            except Exception:
-                self._physical_attempt_coordinators[run.id] = replayed
-                if claimed:
-                    await self._rollback_lifecycle_operation(
-                        run,
-                        operation=operation,
-                        nonce=nonce,
-                        reason="resume_recovered_run_failed",
-                    )
-                raise
+            return await self._open_fresh_physical_attempt_execution_epoch_locked(
+                run,
+                replayed=replayed,
+                source="restart_replay",
+            )
 
     async def retry_run_from_stage(
         self,
@@ -2302,6 +2432,7 @@ class FactoryRunService:
             if run.status != FactoryRunStatus.FAILED:
                 raise ValueError(f"Run {run_id} cannot be retried in status {run.status.value}")
 
+            run = await self._prepare_failed_retry_execution_epoch_locked(run)
             self._require_physical_attempt_admission_open(run.id)
             self._acquire_workspace_lease(run)
             settlement = await self._require_child_session_settlement_for_reentry(

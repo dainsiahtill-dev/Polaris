@@ -20,6 +20,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 from polaris.bootstrap.config import Settings
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.factory.pipeline.public.types import RunPhase
 from polaris.cells.runtime.state_owner.public.service import AppState
 
@@ -143,6 +148,7 @@ def _make_factory_run(
 def _write_director_resume_evidence(workspace: Path) -> None:
     from polaris.kernelone.storage import resolve_runtime_path
 
+    _bootstrap_test_fact_stream(workspace)
     plan_path = Path(resolve_runtime_path(str(workspace), "runtime/tasks/plan.json"))
     plan_path.parent.mkdir(parents=True, exist_ok=True)
     plan_path.write_text(
@@ -158,7 +164,11 @@ def _write_director_resume_evidence(workspace: Path) -> None:
     blueprint_path.parent.mkdir(parents=True, exist_ok=True)
     blueprint_path.write_text(
         json.dumps(
-            {"generated_blueprints": 1, "blueprints": [{"task_id": "TASK-1"}]},
+            {
+                "factory_run_id": "factory_original123",
+                "generated_blueprints": 1,
+                "blueprints": [{"task_id": "TASK-1", "blueprint_id": "ce_TASK-1_original"}],
+            },
             ensure_ascii=False,
         ),
         encoding="utf-8",
@@ -168,6 +178,17 @@ def _write_director_resume_evidence(workspace: Path) -> None:
     snapshot_path.write_text(
         json.dumps({"snapshot_kind": "pre_director_workspace", "files": []}, ensure_ascii=False),
         encoding="utf-8",
+    )
+
+
+def _bootstrap_test_fact_stream(workspace: Path) -> None:
+    workspace.mkdir(parents=True, exist_ok=True)
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="factory_router_unit_test",
+        )
     )
 
 
@@ -181,6 +202,7 @@ def test_director_resume_evidence_rehydrates_source_taskboard(
 
     workspace = tmp_path / "resume-unit"
     workspace.mkdir()
+    _bootstrap_test_fact_stream(workspace)
     runtime_projects = tmp_path / "runtime-projects"
     legacy_runtime = runtime_projects / "resume-unit-222222222222" / "runtime"
     monkeypatch.setattr(
@@ -254,6 +276,7 @@ def test_director_resume_evidence_resets_current_dirty_taskboard(
 
     workspace = tmp_path / "resume-current-unit"
     workspace.mkdir()
+    _bootstrap_test_fact_stream(workspace)
     runtime_projects = tmp_path / "runtime-projects"
     monkeypatch.setattr(
         factory,
@@ -388,6 +411,34 @@ def test_execution_stages_for_explicit_retry_phase_reruns_target_stage() -> None
     ]
 
 
+def test_retry_start_request_marks_same_run_director_retry_as_resume() -> None:
+    """Director retry restores its checkpoint without rerunning PM or CE."""
+    from polaris.delivery.http.routers.factory import _build_retry_start_request
+
+    run = _make_factory_run(
+        status="recovering",
+        stages=["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
+        metadata={
+            "retry_execution_stage": "director_dispatch",
+            "factory_start_request": {
+                "workspace": "/tmp/project",
+                "start_from": "pm",
+                "directive": "Build project",
+                "director_workflow_execution_mode": "serial",
+                "director_dispatch_driver": "task-market",
+                "persist_workspace": True,
+            },
+        },
+    )
+
+    request = _build_retry_start_request(run, "/tmp/project")
+
+    assert request.start_from == "director_resume"
+    assert request.director_workflow_execution_mode == "serial"
+    assert request.director_dispatch_driver == "task-market"
+    assert request.persist_workspace is False
+
+
 # ---------------------------------------------------------------------------
 # GET /v2/factory/runs
 # ---------------------------------------------------------------------------
@@ -470,8 +521,8 @@ async def test_start_factory_run_success(client: AsyncClient, monkeypatch: pytes
             "polaris.delivery.http.routers.factory.save_persisted_settings",
         ),
         patch(
-            "polaris.delivery.http.routers.factory.create_task_with_context",
-        ) as create_task_with_context_mock,
+            "polaris.delivery.http.routers.factory._schedule_factory_run_task",
+        ) as schedule_run_mock,
         patch("polaris.delivery.http.routers.factory.ensure_required_roles_ready") as mock_roles_ready,
     ):
         mock_svc = MagicMock()
@@ -508,8 +559,7 @@ async def test_start_factory_run_success(client: AsyncClient, monkeypatch: pytes
             "qa",
         ]
         assert mock_roles_ready.call_args.kwargs["live_check"] is False
-        scheduled_coro = create_task_with_context_mock.call_args.args[0]
-        assert scheduled_coro.cr_frame is None
+        schedule_run_mock.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -532,8 +582,8 @@ async def test_start_factory_run_from_architect_requires_architect_readiness(
             "polaris.delivery.http.routers.factory.save_persisted_settings",
         ),
         patch(
-            "polaris.delivery.http.routers.factory.create_task_with_context",
-        ) as create_task_with_context_mock,
+            "polaris.delivery.http.routers.factory._schedule_factory_run_task",
+        ) as schedule_run_mock,
         patch("polaris.delivery.http.routers.factory.ensure_required_roles_ready") as mock_roles_ready,
     ):
         mock_svc = MagicMock()
@@ -568,8 +618,7 @@ async def test_start_factory_run_from_architect_requires_architect_readiness(
         "qa",
     ]
     assert mock_roles_ready.call_args.kwargs["live_check"] is False
-    scheduled_coro = create_task_with_context_mock.call_args.args[0]
-    assert scheduled_coro.cr_frame is None
+    schedule_run_mock.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -590,18 +639,10 @@ async def test_start_factory_run_from_director_resume_uses_director_only_stage_g
     )
 
     with (
-        patch(
-            "polaris.delivery.http.routers.factory.FactoryRunService",
-        ) as mock_svc_cls,
-        patch(
-            "polaris.delivery.http.routers.factory.sync_process_settings_environment",
-        ),
-        patch(
-            "polaris.delivery.http.routers.factory.save_persisted_settings",
-        ),
-        patch(
-            "polaris.delivery.http.routers.factory.create_task_with_context",
-        ) as create_task_with_context_mock,
+        patch("polaris.delivery.http.routers.factory.FactoryRunService") as mock_svc_cls,
+        patch("polaris.delivery.http.routers.factory.sync_process_settings_environment"),
+        patch("polaris.delivery.http.routers.factory.save_persisted_settings"),
+        patch("polaris.delivery.http.routers.factory._schedule_factory_run_task") as schedule_run_mock,
         patch("polaris.delivery.http.routers.factory.ensure_required_roles_ready") as mock_roles_ready,
     ):
         mock_svc = MagicMock()
@@ -628,8 +669,34 @@ async def test_start_factory_run_from_director_resume_uses_director_only_stage_g
     assert config.stages == ["director_dispatch", "quality_gate"]
     assert mock_roles_ready.call_args.kwargs["default_roles"] == ["director", "qa"]
     assert mock_roles_ready.call_args.kwargs["force_roles"] == ["director", "qa"]
-    scheduled_coro = create_task_with_context_mock.call_args.args[0]
-    assert scheduled_coro.cr_frame is None
+    schedule_run_mock.assert_called_once()
+    from polaris.kernelone.storage import resolve_runtime_path
+
+    bound_review_path = Path(
+        resolve_runtime_path(str(workspace), "runtime/state/blueprints/factory_director123.review.json")
+    )
+    bound_review = json.loads(bound_review_path.read_text(encoding="utf-8"))
+    assert bound_review["factory_run_id"] == "factory_director123"
+    assert bound_review["director_resume_binding"]["source_factory_run_id"] == "factory_original123"
+    assert bound_review["blueprints"][0]["blueprint_id"] == "ce_TASK-1_original"
+
+
+def test_director_resume_evidence_accepts_plan_without_task_file_mirror(
+    tmp_path: Path,
+) -> None:
+    """TaskRuntime rows are rematerialized by Director dispatch for the new run."""
+    from polaris.delivery.http.routers import factory
+    from polaris.kernelone.storage import resolve_runtime_path
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    _write_director_resume_evidence(workspace)
+    task_mirror = Path(resolve_runtime_path(str(workspace), "runtime/tasks/task_1.json"))
+    task_mirror.unlink()
+
+    factory._ensure_director_resume_evidence_ready(str(workspace))
+
+    assert not task_mirror.exists()
 
 
 @pytest.mark.asyncio
@@ -637,7 +704,7 @@ async def test_start_factory_run_from_director_resume_fails_closed_without_resum
     client: AsyncClient,
     tmp_path: Path,
 ) -> None:
-    """Director-only resume requires PM, CE, TaskBoard and snapshot evidence."""
+    """Director-only resume requires PM, CE and snapshot evidence."""
     workspace = tmp_path / "project"
     workspace.mkdir()
 
@@ -694,8 +761,8 @@ async def test_start_factory_run_enables_live_llm_preflight_when_env_requests_it
             "polaris.delivery.http.routers.factory.save_persisted_settings",
         ),
         patch(
-            "polaris.delivery.http.routers.factory.create_task_with_context",
-        ) as create_task_with_context_mock,
+            "polaris.delivery.http.routers.factory._schedule_factory_run_task",
+        ) as schedule_run_mock,
         patch("polaris.delivery.http.routers.factory.ensure_required_roles_ready") as mock_roles_ready,
     ):
         mock_svc = MagicMock()
@@ -717,8 +784,7 @@ async def test_start_factory_run_enables_live_llm_preflight_when_env_requests_it
 
     assert response.status_code == 200
     assert mock_roles_ready.call_args.kwargs["live_check"] is True
-    scheduled_coro = create_task_with_context_mock.call_args.args[0]
-    assert scheduled_coro.cr_frame is None
+    schedule_run_mock.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -737,8 +803,8 @@ async def test_start_factory_run_blocks_when_stage_roles_not_ready(client: Async
             "polaris.delivery.http.routers.factory.save_persisted_settings",
         ),
         patch(
-            "polaris.delivery.http.routers.factory.create_task_with_context",
-        ) as create_task_with_context_mock,
+            "polaris.delivery.http.routers.factory._schedule_factory_run_task",
+        ) as schedule_run_mock,
         patch("polaris.delivery.http.routers.factory.ensure_required_roles_ready") as mock_roles_ready,
     ):
         mock_roles_ready.side_effect = StructuredHTTPException(
@@ -768,7 +834,7 @@ async def test_start_factory_run_blocks_when_stage_roles_not_ready(client: Async
     assert data["error"]["code"] == "RUNTIME_ROLES_NOT_READY"
     assert data["error"]["details"]["missing_roles"] == ["pm"]
     mock_svc_cls.return_value.create_run.assert_not_called()
-    create_task_with_context_mock.assert_not_called()
+    schedule_run_mock.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1125,8 +1191,8 @@ async def test_control_factory_run_retry_from_checkpoint(client: AsyncClient) ->
             "polaris.delivery.http.routers.factory.FactoryRunService",
         ) as mock_svc_cls,
         patch(
-            "polaris.delivery.http.routers.factory.create_task_with_context",
-        ) as create_task_with_context_mock,
+            "polaris.delivery.http.routers.factory._schedule_factory_run_task",
+        ) as schedule_run_mock,
     ):
         mock_svc = MagicMock()
         mock_svc_cls.return_value = mock_svc
@@ -1142,8 +1208,7 @@ async def test_control_factory_run_retry_from_checkpoint(client: AsyncClient) ->
         assert data["run_id"] == "factory_abc"
         assert data["status"] == "recovering"
         mock_svc.retry_run_from_stage.assert_awaited_once_with("factory_abc", None, "operator retry")
-        scheduled_coro = create_task_with_context_mock.call_args.args[0]
-        assert scheduled_coro.cr_frame is None
+        schedule_run_mock.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -1161,8 +1226,8 @@ async def test_control_factory_run_retry_phase(client: AsyncClient) -> None:
             "polaris.delivery.http.routers.factory.FactoryRunService",
         ) as mock_svc_cls,
         patch(
-            "polaris.delivery.http.routers.factory.create_task_with_context",
-        ) as create_task_with_context_mock,
+            "polaris.delivery.http.routers.factory._schedule_factory_run_task",
+        ) as schedule_run_mock,
     ):
         mock_svc = MagicMock()
         mock_svc_cls.return_value = mock_svc
@@ -1181,8 +1246,7 @@ async def test_control_factory_run_retry_phase(client: AsyncClient) -> None:
             "director_dispatch",
             "rerun delivery",
         )
-        scheduled_coro = create_task_with_context_mock.call_args.args[0]
-        assert scheduled_coro.cr_frame is None
+        schedule_run_mock.assert_called_once()
 
 
 @pytest.mark.asyncio

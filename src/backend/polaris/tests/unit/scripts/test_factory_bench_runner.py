@@ -25,6 +25,14 @@ from polaris.cells.events.fact_stream.public import (
     fact_stream_bootstrap_streams,
 )
 from scripts.factory_bench import run_factory_bench as bench
+from scripts.factory_bench._bench_lib import (
+    artifacts as bench_artifacts,
+    chain as bench_chain,
+    cli as bench_cli,
+    gates as bench_gates,
+    session as bench_session,
+    workspace as bench_workspace,
+)
 from scripts.factory_bench.run_factory_bench import (
     _allocate_fresh_project_workspace,
     _desktop_backend_info_path,
@@ -51,13 +59,14 @@ from scripts.factory_bench.run_factory_bench import (
 )
 
 _LAST_FACTORY_START_PAYLOAD: dict[str, Any] = {}
+_LAST_FACTORY_RESUME_CALL: dict[str, Any] = {}
 
 
 @pytest.fixture(autouse=True)
 def _isolate_instance_registry(monkeypatch: Any, tmp_path: Path) -> None:
     monkeypatch.setenv("KERNELONE_INSTANCE_HOME", str(tmp_path / "instances-home"))
     monkeypatch.setenv("FACTORY_BENCH_LAUNCHER_INSTANCE_MODE", "observed")
-    monkeypatch.setattr(bench, "persist_real_run_gate_ledger", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(bench_cli, "persist_real_run_gate_ledger", lambda *_args, **_kwargs: {"ok": True})
     bench.configure_bench_backend("", "", "")
 
 
@@ -107,8 +116,8 @@ def test_fresh_project_workspace_allocations_have_distinct_physical_identities(t
     assert second.is_dir()
     assert first.is_relative_to(tmp_path.resolve())
     assert second.is_relative_to(tmp_path.resolve())
-    first_roots = bench.resolve_storage_roots(first)
-    second_roots = bench.resolve_storage_roots(second)
+    first_roots = bench_workspace.resolve_storage_roots(first)
+    second_roots = bench_workspace.resolve_storage_roots(second)
     assert first_roots.workspace_key != second_roots.workspace_key
     assert first_roots.runtime_root != second_roots.runtime_root
 
@@ -198,6 +207,28 @@ def test_director_resume_resolves_one_run_scoped_fresh_workspace(tmp_path: Path)
         tmp_path,
         project_id="L1-04",
         run_id="run-identity",
+        resume_director=True,
+    )
+
+    assert resumed == fresh
+
+
+def test_director_resume_resolves_frozen_workspace_from_prior_attempt(tmp_path: Path) -> None:
+    fresh = _allocate_fresh_project_workspace(
+        tmp_path,
+        project_id="L1-04",
+        run_id="original-run",
+    )
+    bench._write_workspace_catalog_meta_exclusive(
+        tmp_path,
+        fresh,
+        {"run_id": "original-run", "project_id": "L1-04"},
+    )
+
+    resumed = _project_workspace_for_run(
+        tmp_path,
+        project_id="L1-04",
+        run_id="new-repair-attempt",
         resume_director=True,
     )
 
@@ -297,7 +328,7 @@ def test_fresh_project_workspace_rejects_intermediate_symlink_without_external_w
 
 def test_isolated_launch_receipt_rejects_relocated_workspace_ancestor(tmp_path: Path, monkeypatch: Any) -> None:
     """A moved ancestor plus symlink at the old path must not preserve launch authority."""
-    monkeypatch.setattr(bench, "compute_source_fingerprint", lambda _root: "source-fingerprint")
+    monkeypatch.setattr(bench_session, "compute_source_fingerprint", lambda _root: "source-fingerprint")
     workspace = _allocate_fresh_project_workspace(tmp_path, project_id="L1-04", run_id="run-identity")
     catalog_meta = _write_test_workspace_catalog(
         tmp_path,
@@ -413,7 +444,13 @@ def _factory_chain_destructive_findings(
 
 
 def test_factory_chain_paths_never_purge_enrolled_runtime_roots() -> None:
-    module_source = inspect.getsource(bench)
+    module_source = "\n".join(
+        (
+            inspect.getsource(bench_workspace),
+            inspect.getsource(bench_chain),
+            inspect.getsource(bench_cli),
+        )
+    )
     protected_names = {
         "_allocate_fresh_project_workspace",
         "_project_workspace_for_run",
@@ -479,7 +516,7 @@ def _write_test_workspace_catalog(
 
 
 def test_isolated_launch_receipts_are_unique_and_auditable(monkeypatch: Any, tmp_path: Path) -> None:
-    monkeypatch.setattr(bench, "compute_source_fingerprint", lambda _root: "source-fingerprint")
+    monkeypatch.setattr(bench_session, "compute_source_fingerprint", lambda _root: "source-fingerprint")
     workspace = tmp_path / "factory-bench-same-workdir" / "L1-01"
     workspace.mkdir(parents=True)
     catalog_meta = _write_test_workspace_catalog(workspace.parent, workspace, run_id="run-identity", project_id="L1-01")
@@ -516,13 +553,14 @@ def test_isolated_launch_receipts_are_unique_and_auditable(monkeypatch: Any, tmp
     assert first["requested_project_id"] == "L1-01"
     assert first["canonical_project_id"] == "L1-01"
     assert first["run_id"] == "run-identity"
+    assert first["workspace_source_run_id"] == "run-identity"
 
 
 def test_isolated_launch_receipt_rejects_prelaunch_same_path_replacement(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(bench, "compute_source_fingerprint", lambda _root: "source-fingerprint")
+    monkeypatch.setattr(bench_session, "compute_source_fingerprint", lambda _root: "source-fingerprint")
     workspace = _allocate_fresh_project_workspace(tmp_path, project_id="L1-01", run_id="run-identity")
     catalog_meta = _write_test_workspace_catalog(tmp_path, workspace, run_id="run-identity", project_id="L1-01")
     displaced = workspace.with_name(f"{workspace.name}-displaced")
@@ -545,7 +583,7 @@ def test_isolated_launch_receipt_rejects_prelaunch_same_path_replacement(
 def test_isolated_launch_forwards_fresh_receipt_to_supervisor(monkeypatch: Any, tmp_path: Path) -> None:
     from polaris.cells.instances.internal.service import InstanceSupervisor
 
-    monkeypatch.setattr(bench, "compute_source_fingerprint", lambda _root: "source-fingerprint")
+    monkeypatch.setattr(bench_session, "compute_source_fingerprint", lambda _root: "source-fingerprint")
     monkeypatch.setattr(bench, "_wait_backend_health", lambda *_args, **_kwargs: True)
     workspace = tmp_path / "factory-bench-same-workdir" / "L1-01"
     workspace.mkdir(parents=True)
@@ -601,6 +639,104 @@ def test_isolated_launch_forwards_fresh_receipt_to_supervisor(monkeypatch: Any, 
     assert captured["metadata"]["instance_launch_receipt"] == receipt
 
 
+def test_director_resume_stops_only_owned_prior_bench_instance(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    from polaris.cells.instances.internal.service import InstanceSupervisor
+
+    monkeypatch.setattr(bench_session, "compute_source_fingerprint", lambda _root: "source-fingerprint")
+    monkeypatch.setattr(bench, "_wait_backend_health", lambda *_args, **_kwargs: True)
+    workspace = _allocate_fresh_project_workspace(tmp_path, project_id="L1-01", run_id="original-run")
+    catalog_meta = _write_test_workspace_catalog(
+        tmp_path,
+        workspace,
+        run_id="original-run",
+        project_id="L1-01",
+    )
+    receipt = bench._new_isolated_bench_launch_receipt(
+        bench_session_id="bench-resume",
+        run_id="repair-attempt",
+        project_id="L1-01",
+        requested_project_id="L1-01",
+        canonical_project_id="L1-01",
+        bench_workspace=tmp_path,
+        project_workspace=str(workspace),
+        workspace_catalog_meta=catalog_meta,
+    )
+    stopped: list[str] = []
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr(
+        InstanceSupervisor,
+        "list_instances",
+        lambda _self: [
+            {
+                "instance_id": "owned-prior",
+                "kind": "bench_project",
+                "status": "running",
+                "workspace": str(workspace),
+                "metadata": {
+                    "internal_test_only": True,
+                    "instance_launch_receipt": {
+                        "run_id": "original-run",
+                        "bench_workspace": str(tmp_path),
+                        "project_id": "L1-01",
+                    },
+                },
+            },
+            {
+                "instance_id": "foreign-instance",
+                "kind": "bench_project",
+                "status": "running",
+                "workspace": str(workspace),
+                "metadata": {
+                    "internal_test_only": True,
+                    "instance_launch_receipt": {
+                        "run_id": "another-run",
+                        "bench_workspace": str(tmp_path),
+                        "project_id": "L1-01",
+                    },
+                },
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        InstanceSupervisor,
+        "stop_instance",
+        lambda _self, instance_id: stopped.append(instance_id) or {"instance_id": instance_id, "status": "stopped"},
+    )
+
+    def _start(_self: InstanceSupervisor, request: dict[str, Any]) -> dict[str, Any]:
+        captured.update(request)
+        return {
+            "instance_id": request["instance_id"],
+            "workspace": request["workspace"],
+            "runtime_root": request["runtime_root"],
+            "backend_url": "http://127.0.0.1:60101",
+            "frontend_url": "http://127.0.0.1:5174",
+            "token": "isolated-generated-token",
+            "metadata": request["metadata"],
+        }
+
+    monkeypatch.setattr(InstanceSupervisor, "start_instance", _start)
+
+    result = bench._start_isolated_bench_project_instance(
+        bench_session_id="bench-resume",
+        project_id="L1-01",
+        project_title="One",
+        level=1,
+        bench_workspace=tmp_path,
+        project_workspace=str(workspace),
+        backend_token="token",
+        launch_receipt=receipt,
+    )
+
+    assert result is not None and result["ok"] is True
+    assert stopped == ["owned-prior"]
+    assert captured["metadata"]["instance_launch_receipt"]["resume_predecessor_instance_ids"] == ["owned-prior"]
+
+
 def test_isolated_launch_reports_registry_corruption_as_platform_failure(
     monkeypatch: Any,
     tmp_path: Path,
@@ -613,7 +749,7 @@ def test_isolated_launch_reports_registry_corruption_as_platform_failure(
     original_bytes = b'{"schema_version": 1, "instances": ['
     registry_path.write_bytes(original_bytes)
     monkeypatch.setenv(instance_service.INSTANCE_HOME_ENV, str(instance_home))
-    monkeypatch.setattr(bench, "compute_source_fingerprint", lambda _root: "source-fingerprint")
+    monkeypatch.setattr(bench_session, "compute_source_fingerprint", lambda _root: "source-fingerprint")
     side_effects = {"allocate": 0, "spawn": 0}
 
     def _unexpected_allocate(*_args: Any, **_kwargs: Any) -> int:
@@ -714,7 +850,7 @@ def test_shared_reporting_overrides_isolated_default() -> None:
 
 
 def test_isolated_launch_receipts_get_new_run_scoped_instance_ids(tmp_path: Path, monkeypatch: Any) -> None:
-    monkeypatch.setattr(bench, "compute_source_fingerprint", lambda _root: "source-fingerprint")
+    monkeypatch.setattr(bench_session, "compute_source_fingerprint", lambda _root: "source-fingerprint")
     first_workspace = _allocate_fresh_project_workspace(tmp_path, project_id="L1-01", run_id="run-001")
     first_meta = _write_test_workspace_catalog(
         tmp_path,
@@ -772,6 +908,7 @@ def _matching_isolated_launch_identity(
         "launch_scope": "run-001:L1-01:nonce",
         "launch_nonce": "nonce",
         "run_id": "run-001",
+        "workspace_source_run_id": "run-001",
         "project_id": "L1-01",
         "requested_project_id": "L1-01",
         "canonical_project_id": "L1-01",
@@ -936,7 +1073,7 @@ def test_bench_observation_posts_use_short_timeout(monkeypatch: Any) -> None:
         timeouts.append(timeout_s)
         return {"appended": True, "updated": True}
 
-    monkeypatch.setattr(bench, "_http_post_json", _capture_post)
+    monkeypatch.setattr(bench_session, "_http_post_json", _capture_post)
 
     assert bench._push_bench_event_to_backend(
         backend_url="http://127.0.0.1:49977",
@@ -1164,12 +1301,14 @@ def test_bench_reads_authoritative_task_boundary_without_appending(tmp_path: Pat
             },
         )
     )
-    projection = bench.load_run_ledger_projection(workspace, run_id="run-task-boundary")
+    projection = bench_cli.load_run_ledger_projection(workspace, run_id="run-task-boundary")
     event_count_before = int(projection["event_count"])
 
     verdict = bench._read_task_boundary_verdict_from_run_ledger_projection(projection)
 
-    event_count_after = int(bench.load_run_ledger_projection(workspace, run_id="run-task-boundary")["event_count"])
+    event_count_after = int(
+        bench_cli.load_run_ledger_projection(workspace, run_id="run-task-boundary")["event_count"]
+    )
 
     assert verdict["ok"] is False
     assert verdict["failure_class"] == "DEPENDENCY_NOT_UNLOCKED"
@@ -1232,7 +1371,7 @@ def test_canonical_projection_preserves_operational_evidence_fields() -> None:
         },
     )
 
-    projection = bench.build_canonical_bench_projection(record)
+    projection = bench_gates.build_canonical_bench_projection(record)
 
     assert projection["source"] == "canonical_projection"
     assert projection["requested_project_id"] == "requested-L1-01"
@@ -1273,7 +1412,12 @@ def test_legacy_chain_text_cannot_override_canonical_execution() -> None:
 
 
 def test_runner_audits_llm_routes_for_llm_backed_roles_only() -> None:
-    source = Path(bench.__file__).read_text(encoding="utf-8")
+    source = "\n".join(
+        (
+            inspect.getsource(bench_cli),
+            inspect.getsource(bench_gates),
+        )
+    )
 
     assert bench.FACTORY_BENCH_REQUIRED_LLM_ROLES == ("pm", "chief_engineer", "director", "qa")
     assert "require_all_director_routes=False" in source
@@ -1352,7 +1496,7 @@ def test_runtime_dir_candidates_merge_artifacts_and_chain_results(
     )
     os.utime(runtime_a, (100, 100))
     os.utime(runtime_b, (200, 200))
-    monkeypatch.setattr(bench, "_RUNTIME_PROJECT_BASES", (runtime_base_a, runtime_base_b))
+    monkeypatch.setattr(bench_artifacts, "_RUNTIME_PROJECT_BASES", (runtime_base_a, runtime_base_b))
 
     runtime_dirs = resolve_runtime_dirs_for_workspace(workspace)
     artifacts = discover_artifacts(workspace, runtime_dirs)
@@ -1387,7 +1531,7 @@ def test_runtime_dir_candidates_prefer_exact_workspace_evidence(
     )
     os.utime(current_runtime, (100, 100))
     os.utime(stale_runtime, (200, 200))
-    monkeypatch.setattr(bench, "_RUNTIME_PROJECT_BASES", (runtime_base,))
+    monkeypatch.setattr(bench_artifacts, "_RUNTIME_PROJECT_BASES", (runtime_base,))
 
     runtime_dirs = resolve_runtime_dirs_for_workspace(workspace)
 
@@ -1477,7 +1621,7 @@ def test_build_bench_backend_audit_context_writes_record_fields(monkeypatch: Any
             },
         }
 
-    monkeypatch.setattr(bench, "check_backend_freshness", _fake_check_backend_freshness)
+    monkeypatch.setattr(bench_gates, "check_backend_freshness", _fake_check_backend_freshness)
 
     context = bench.build_bench_backend_audit_context(
         "http://127.0.0.1:49977",
@@ -1626,7 +1770,7 @@ def test_explicit_bench_session_id_is_registered(monkeypatch: Any) -> None:
         captured.update(kwargs)
         return str(kwargs["session_id"])
 
-    monkeypatch.setattr(bench, "_push_bench_session_to_backend", _fake_push)
+    monkeypatch.setattr(bench_session, "_push_bench_session_to_backend", _fake_push)
 
     session_id = bench._ensure_bench_session(
         backend_url="http://127.0.0.1:49977",
@@ -1651,7 +1795,7 @@ def test_bench_session_registration_uses_backend_assigned_id(monkeypatch: Any) -
         captured.update(kwargs)
         return "bench-generated"
 
-    monkeypatch.setattr(bench, "_push_bench_session_to_backend", _fake_push)
+    monkeypatch.setattr(bench_session, "_push_bench_session_to_backend", _fake_push)
 
     session_id = bench._ensure_bench_session(
         backend_url="http://127.0.0.1:49977",
@@ -1672,7 +1816,7 @@ def test_bench_session_registration_uses_observation_timeout(monkeypatch: Any) -
         captured["token"] = token
         return {"session_id": "bench-generated"}
 
-    monkeypatch.setattr(bench, "_http_post_json", _capture_post)
+    monkeypatch.setattr(bench_session, "_http_post_json", _capture_post)
 
     session_id = bench._push_bench_session_to_backend(
         backend_url="http://127.0.0.1:49977",
@@ -1697,7 +1841,7 @@ def test_bench_observation_failure_circuit_breaks_followup_posts(monkeypatch: An
         calls.append(url)
         return None
 
-    monkeypatch.setattr(bench, "_http_post_json", _failing_post)
+    monkeypatch.setattr(bench_session, "_http_post_json", _failing_post)
 
     assert not bench._push_bench_event_to_backend(
         backend_url="http://127.0.0.1:49977",
@@ -1805,7 +1949,7 @@ def _capture_run_chain_command(
         captured.append(cmd)
         return subprocess.CompletedProcess(cmd, 0)
 
-    monkeypatch.setattr(bench.subprocess, "run", _fake_run)
+    monkeypatch.setattr(bench_chain.subprocess, "run", _fake_run)
     kwargs: dict[str, Any] = {}
     if director_workflow_execution_mode is not None:
         kwargs["director_workflow_execution_mode"] = director_workflow_execution_mode
@@ -1882,16 +2026,16 @@ def test_main_task_market_driver_uses_http_factory_chain_without_legacy_fallback
         ],
     )
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "load_projects",
         lambda: [{"id": "L1-01", "level": 1, "title": "Known", "brief": "Build something"}],
     )
-    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
-    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "token")
-    monkeypatch.setattr(bench, "_push_bench_session_to_backend", lambda **_kwargs: "bench-task-market")
-    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(bench, "_push_bench_workspace_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
+    monkeypatch.setattr(bench_cli, "_resolve_backend_token", lambda: "token")
+    monkeypatch.setattr(bench_cli, "_ensure_bench_session", lambda **_kwargs: "bench-task-market")
+    monkeypatch.setattr(bench_cli, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench_cli, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_push_bench_workspace_to_backend", lambda **_kwargs: True)
 
     def _legacy_chain(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         calls.append("legacy")
@@ -1902,7 +2046,7 @@ def test_main_task_market_driver_uses_http_factory_chain_without_legacy_fallback
         raise KeyboardInterrupt()
 
     monkeypatch.setattr(bench, "run_chain", _legacy_chain)
-    monkeypatch.setattr(bench, "run_factory_chain", _http_chain)
+    monkeypatch.setattr(bench_cli, "run_factory_chain", _http_chain)
 
     result = bench.main()
 
@@ -1911,7 +2055,7 @@ def test_main_task_market_driver_uses_http_factory_chain_without_legacy_fallback
 
 
 def test_main_marks_backend_session_failed_when_run_aborts(monkeypatch: Any, tmp_path: Path) -> None:
-    monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
+    monkeypatch.setattr(bench_cli, "load_run_ledger_projection", _ok_run_ledger_projection)
     completed: list[dict[str, Any]] = []
 
     monkeypatch.setattr(
@@ -1928,27 +2072,27 @@ def test_main_marks_backend_session_failed_when_run_aborts(monkeypatch: Any, tmp
         ],
     )
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "load_projects",
         lambda: [{"id": "L1-01", "level": 1, "title": "Abort case", "brief": "Build something"}],
     )
-    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
-    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "token")
-    monkeypatch.setattr(bench, "_push_bench_session_to_backend", lambda **_kwargs: "bench-abort")
-    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(bench, "_push_bench_workspace_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
+    monkeypatch.setattr(bench_cli, "_resolve_backend_token", lambda: "token")
+    monkeypatch.setattr(bench_cli, "_ensure_bench_session", lambda **_kwargs: "bench-abort")
+    monkeypatch.setattr(bench_cli, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench_cli, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_push_bench_workspace_to_backend", lambda **_kwargs: True)
 
     def _capture_complete(**kwargs: Any) -> bool:
         completed.append(kwargs)
         return True
 
-    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", _capture_complete)
+    monkeypatch.setattr(bench_cli, "_push_bench_complete_to_backend", _capture_complete)
 
     def _abort(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         raise RuntimeError("simulated runner abort")
 
-    monkeypatch.setattr(bench, "run_factory_chain", _abort)
+    monkeypatch.setattr(bench_cli, "run_factory_chain", _abort)
 
     result = bench.main()
 
@@ -1977,7 +2121,7 @@ def test_main_rejects_unknown_explicit_project_ids(
         ],
     )
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "load_projects",
         lambda: [{"id": "L1-01", "level": 1, "title": "Known", "brief": "Build something"}],
     )
@@ -1985,7 +2129,7 @@ def test_main_rejects_unknown_explicit_project_ids(
     def _unexpected_session(*_args: Any, **_kwargs: Any) -> str:
         raise AssertionError("unknown explicit ids must fail before creating a bench session")
 
-    monkeypatch.setattr(bench, "_ensure_bench_session", _unexpected_session)
+    monkeypatch.setattr(bench_cli, "_ensure_bench_session", _unexpected_session)
 
     result = bench.main()
 
@@ -2032,11 +2176,11 @@ def test_main_defaults_to_l1_through_l12_catalog(monkeypatch: Any, tmp_path: Pat
     ]
 
     monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--work-dir", str(tmp_path)])
-    monkeypatch.setattr(bench, "load_projects", lambda: projects)
-    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "")
-    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "")
-    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "load_projects", lambda: projects)
+    monkeypatch.setattr(bench_cli, "_resolve_backend_url", lambda: "")
+    monkeypatch.setattr(bench_cli, "_resolve_backend_token", lambda: "")
+    monkeypatch.setattr(bench_cli, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench_cli, "_push_bench_complete_to_backend", lambda **_kwargs: True)
 
     def _capture_session(**kwargs: Any) -> str:
         captured.update(kwargs)
@@ -2045,8 +2189,8 @@ def test_main_defaults_to_l1_through_l12_catalog(monkeypatch: Any, tmp_path: Pat
     def _stop_after_registration(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(bench, "_ensure_bench_session", _capture_session)
-    monkeypatch.setattr(bench, "run_factory_chain", _stop_after_registration)
+    monkeypatch.setattr(bench_cli, "_ensure_bench_session", _capture_session)
+    monkeypatch.setattr(bench_cli, "run_factory_chain", _stop_after_registration)
 
     result = bench.main()
 
@@ -2064,38 +2208,38 @@ def test_main_default_max_failed_zero_does_not_early_stop(monkeypatch: Any, tmp_
     ]
 
     monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--work-dir", str(tmp_path)])
-    monkeypatch.setattr(bench, "load_projects", lambda: projects)
-    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "")
-    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "")
-    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-no-early-stop")
-    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "load_projects", lambda: projects)
+    monkeypatch.setattr(bench_cli, "_resolve_backend_url", lambda: "")
+    monkeypatch.setattr(bench_cli, "_resolve_backend_token", lambda: "")
+    monkeypatch.setattr(bench_cli, "_ensure_bench_session", lambda **_kwargs: "bench-no-early-stop")
+    monkeypatch.setattr(bench_cli, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench_cli, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_push_bench_complete_to_backend", lambda **_kwargs: True)
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_bench_backend_audit_context",
         lambda *_args, **_kwargs: {
             "backend_freshness": {"ok": True, "detail": "backend fresh"},
             "backend_metadata": {"backend_base_url": ""},
         },
     )
-    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
-    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
-    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(bench_cli, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
+    monkeypatch.setattr(bench_cli, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
+    monkeypatch.setattr(bench_cli, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench_cli, "resolve_expected_llm_bindings", lambda: {})
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_factory_audit_record",
         lambda **_kwargs: _successful_audit_record(),
     )
-    monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
+    monkeypatch.setattr(bench_cli, "load_run_ledger_projection", _ok_run_ledger_projection)
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_real_run_gate",
         lambda *_args, **_kwargs: {"ok": False, "summary": "real run failed"},
     )
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_llm_route_audit",
         lambda *_args, **_kwargs: {"ok": False, "summary": "LLM route audit failed"},
     )
@@ -2113,7 +2257,7 @@ def test_main_default_max_failed_zero_does_not_early_stop(monkeypatch: Any, tmp_
             },
         }
 
-    monkeypatch.setattr(bench, "run_factory_chain", _chain)
+    monkeypatch.setattr(bench_cli, "run_factory_chain", _chain)
 
     result = bench.main()
 
@@ -2136,9 +2280,53 @@ def _setup_run_factory_chain_mocks(
     workspace.mkdir()
     expected_workspace = str(workspace)
     _LAST_FACTORY_START_PAYLOAD.clear()
+    _LAST_FACTORY_RESUME_CALL.clear()
 
     def _fake_start_factory_run(_backend_url: str, _payload: dict[str, Any], token: str = "") -> dict[str, Any] | None:
         _LAST_FACTORY_START_PAYLOAD.update(_payload)
+        return start_response
+
+    def _fake_list_factory_runs(
+        _backend_url: str,
+        *,
+        token: str = "",
+        workspace: str = "",
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        del token, limit
+        assert workspace == expected_workspace
+        run_id = str((start_response or {}).get("run_id") or "run-director")
+        return {
+            "runs": [
+                {
+                    "run_id": run_id,
+                    "status": "failed",
+                    "current_stage": "director_dispatch",
+                    "last_successful_stage": "chief_engineer_review",
+                    "failure": {"stage": "director_dispatch"},
+                    "roles": {
+                        "pm": {"status": "completed"},
+                        "chief_engineer": {"status": "completed"},
+                        "director": {"status": "failed"},
+                    },
+                    "metadata": {},
+                }
+            ],
+            "total": 1,
+        }
+
+    def _fake_retry_factory_run_from_director(
+        _backend_url: str,
+        run_id: str,
+        *,
+        token: str = "",
+        workspace: str = "",
+        reason: str = "",
+    ) -> dict[str, Any] | None:
+        assert workspace == expected_workspace
+        _LAST_FACTORY_RESUME_CALL.update(
+            {"run_id": run_id, "token": token, "workspace": workspace, "reason": reason}
+        )
         return start_response
 
     def _fake_wait_run_until_terminal(
@@ -2177,10 +2365,12 @@ def _setup_run_factory_chain_mocks(
         assert workspace == expected_workspace
         return {"status": "cancelled"}
 
-    monkeypatch.setattr(bench, "start_factory_run", _fake_start_factory_run)
-    monkeypatch.setattr(bench, "wait_run_until_terminal", _fake_wait_run_until_terminal)
-    monkeypatch.setattr(bench, "get_audit_bundle", _fake_get_audit_bundle)
-    monkeypatch.setattr(bench, "cancel_factory_run", _fake_cancel_factory_run)
+    monkeypatch.setattr(bench_chain, "start_factory_run", _fake_start_factory_run)
+    monkeypatch.setattr(bench_chain, "list_factory_runs", _fake_list_factory_runs)
+    monkeypatch.setattr(bench_chain, "retry_factory_run_from_director", _fake_retry_factory_run_from_director)
+    monkeypatch.setattr(bench_chain, "wait_run_until_terminal", _fake_wait_run_until_terminal)
+    monkeypatch.setattr(bench_chain, "get_audit_bundle", _fake_get_audit_bundle)
+    monkeypatch.setattr(bench_chain, "cancel_factory_run", _fake_cancel_factory_run)
 
     return workspace
 
@@ -2310,12 +2500,11 @@ def test_run_factory_chain_director_resume_uses_existing_pm_ce_evidence(
     assert result["exit_code"] == 0
     assert result["start_from"] == "director_resume"
     assert result["factory_api_start_from"] == "director_resume"
-    assert _LAST_FACTORY_START_PAYLOAD["start_from"] == "director_resume"
-    assert _LAST_FACTORY_START_PAYLOAD["metadata"]["factory_bench_start_from"] == "director_resume"
-    assert _LAST_FACTORY_START_PAYLOAD["metadata"]["factory_bench_api_start_from"] == "director_resume"
-    assert _LAST_FACTORY_START_PAYLOAD["metadata"]["factory_bench_requested_project_id"] == "L2-07"
-    assert _LAST_FACTORY_START_PAYLOAD["metadata"]["factory_bench_canonical_project_id"] == "L2-07"
-    assert _LAST_FACTORY_START_PAYLOAD["metadata"]["backend_port"] == 49977
+    assert result["factory_resume_mode"] == "same_run_retry_phase"
+    assert _LAST_FACTORY_START_PAYLOAD == {}
+    assert _LAST_FACTORY_RESUME_CALL["run_id"] == "run-director"
+    assert _LAST_FACTORY_RESUME_CALL["workspace"] == str(workspace)
+    assert "preserve committed PM/CE checkpoints" in _LAST_FACTORY_RESUME_CALL["reason"]
     snapshot_manifest = workspace / ".polaris" / "factory_snapshots" / "pre_director" / "manifest.json"
     assert json.loads(snapshot_manifest.read_text(encoding="utf-8"))["snapshot_kind"] == "pre_director_workspace"
     reset_task = json.loads(task_path.read_text(encoding="utf-8"))
@@ -2324,6 +2513,98 @@ def test_run_factory_chain_director_resume_uses_existing_pm_ce_evidence(
     assert not session_path.exists()
     reset_evidence = task_path.parent / "director_resume_reset.json"
     assert json.loads(reset_evidence.read_text(encoding="utf-8"))["reset_statuses"] == "all_task_records"
+
+
+def test_director_resume_accepts_fact_authoritative_runtime_without_task_file_mirror(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    """Resume uses durable PM/CE evidence; Director rematerializes task rows."""
+
+    from polaris.kernelone.storage import resolve_runtime_path
+
+    workspace = _setup_run_factory_chain_mocks(
+        monkeypatch,
+        tmp_path,
+        start_response={"run_id": "run-director-fact-authority"},
+        terminal_status={"status": "completed", "phase": "qa_gate"},
+        audit_bundle={},
+    )
+    _bootstrap_test_fact_stream(workspace)
+    task_mirror = Path(resolve_runtime_path(str(workspace), "runtime/tasks/task_1.json"))
+    task_mirror.unlink(missing_ok=True)
+    plan_mirror = workspace / ".polaris" / "plans" / "latest.plan.json"
+    plan_mirror.parent.mkdir(parents=True, exist_ok=True)
+    plan_mirror.write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "goal": "Implement feature",
+                        "target_files": ["src/index.ts"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    blueprint = workspace / ".polaris" / "blueprints" / "latest.review.json"
+    blueprint.parent.mkdir(parents=True, exist_ok=True)
+    blueprint.write_text(
+        json.dumps(
+            {"generated_blueprints": 1, "blueprints": [{"task_id": "TASK-1"}]},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_factory_chain(
+        {"id": "L1-01", "title": "Resume", "brief": "Resume", "test_focus": "runtime"},
+        workspace,
+        backend_url="http://localhost:49977",
+        backend_token="",
+        timeout_s=30,
+        log_path=tmp_path / "L1-01.resume.chain.log",
+        start_from="director_resume",
+    )
+
+    assert result["exit_code"] == 0
+    assert _LAST_FACTORY_START_PAYLOAD == {}
+    assert _LAST_FACTORY_RESUME_CALL["run_id"] == "run-director-fact-authority"
+    runtime_plan = Path(resolve_runtime_path(str(workspace), "runtime/tasks/plan.json"))
+    assert runtime_plan.is_file()
+    assert not task_mirror.exists()
+
+
+def test_run_factory_chain_director_resume_without_same_run_checkpoint_fails_closed(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    workspace = _setup_run_factory_chain_mocks(
+        monkeypatch,
+        tmp_path,
+        start_response={"run_id": "must-not-start"},
+        terminal_status={"status": "completed", "phase": "qa_gate"},
+        audit_bundle={},
+    )
+    monkeypatch.setattr(bench_chain, "list_factory_runs", lambda *_args, **_kwargs: {"runs": [], "total": 0})
+
+    result = run_factory_chain(
+        {"id": "L2-07", "title": "Tetris", "brief": "Build Tetris", "test_focus": "runtime"},
+        workspace,
+        backend_url="http://localhost:49977",
+        backend_token="",
+        timeout_s=30,
+        log_path=tmp_path / "L2-07.missing-resume.chain.log",
+        start_from="director_resume",
+    )
+
+    assert result["exit_code"] == -1
+    assert result["error"] == "director_resume_run_missing"
+    assert _LAST_FACTORY_START_PAYLOAD == {}
+    assert _LAST_FACTORY_RESUME_CALL == {}
 
 
 def test_director_resume_rehydrates_taskboard_from_legacy_runtime(
@@ -2343,14 +2624,19 @@ def test_director_resume_rehydrates_taskboard_from_legacy_runtime(
     legacy_runtime = legacy_runtime_projects / "l1-01-222222222222" / "runtime"
     stale_runtime = legacy_runtime_projects / "l1-01-333333333333" / "runtime"
     monkeypatch.setattr(
-        bench,
+        bench_workspace,
         "resolve_storage_roots",
         lambda _workspace: SimpleNamespace(
             runtime_projects_root=str(current_runtime_projects),
             workspace_key="l1-01-111111111111",
         ),
     )
-    monkeypatch.setattr(bench, "_RUNTIME_PROJECT_BASES", (legacy_runtime_projects, current_runtime_projects))
+    monkeypatch.setattr(
+        bench_workspace,
+        "_RUNTIME_PROJECT_BASES",
+        (legacy_runtime_projects, current_runtime_projects),
+        raising=False,
+    )
 
     for runtime, task_count, blueprint_count in (
         (stale_runtime, 1, 0),
@@ -2648,38 +2934,38 @@ def test_main_run_id_shared_across_projects(monkeypatch: Any, tmp_path: Path) ->
     ]
 
     monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--work-dir", str(tmp_path)])
-    monkeypatch.setattr(bench, "load_projects", lambda: projects)
-    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "")
-    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "")
-    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-shared")
-    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "load_projects", lambda: projects)
+    monkeypatch.setattr(bench_cli, "_resolve_backend_url", lambda: "")
+    monkeypatch.setattr(bench_cli, "_resolve_backend_token", lambda: "")
+    monkeypatch.setattr(bench_cli, "_ensure_bench_session", lambda **_kwargs: "bench-shared")
+    monkeypatch.setattr(bench_cli, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench_cli, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_push_bench_complete_to_backend", lambda **_kwargs: True)
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_bench_backend_audit_context",
         lambda *_args, **_kwargs: {
             "backend_freshness": {"ok": True, "detail": "backend fresh"},
             "backend_metadata": {"backend_base_url": ""},
         },
     )
-    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
-    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
-    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(bench_cli, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
+    monkeypatch.setattr(bench_cli, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
+    monkeypatch.setattr(bench_cli, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench_cli, "resolve_expected_llm_bindings", lambda: {})
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_factory_audit_record",
         lambda **_kwargs: _successful_audit_record(),
     )
-    monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
+    monkeypatch.setattr(bench_cli, "load_run_ledger_projection", _ok_run_ledger_projection)
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_real_run_gate",
         lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
     )
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_llm_route_audit",
         lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
     )
@@ -2696,7 +2982,7 @@ def test_main_run_id_shared_across_projects(monkeypatch: Any, tmp_path: Path) ->
             },
         }
 
-    monkeypatch.setattr(bench, "run_factory_chain", _chain)
+    monkeypatch.setattr(bench_cli, "run_factory_chain", _chain)
 
     result = bench.main()
 
@@ -2737,20 +3023,20 @@ def test_main_default_launcher_mode_uses_isolated_project_backend(monkeypatch: A
             str(tmp_path),
         ],
     )
-    monkeypatch.setattr(bench, "load_projects", lambda: projects)
-    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
-    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "main-token")
+    monkeypatch.setattr(bench_cli, "load_projects", lambda: projects)
+    monkeypatch.setattr(bench_cli, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
+    monkeypatch.setattr(bench_cli, "_resolve_backend_token", lambda: "main-token")
 
     def _capture_session(**kwargs: Any) -> str:
         captured_session.update(kwargs)
         return "bench-isolated"
 
-    monkeypatch.setattr(bench, "_ensure_bench_session", _capture_session)
-    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_ensure_bench_session", _capture_session)
+    monkeypatch.setattr(bench_cli, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench_cli, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_push_bench_complete_to_backend", lambda **_kwargs: True)
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "_push_bench_workspace_to_backend",
         lambda **_kwargs: (_ for _ in ()).throw(AssertionError("isolated mode must not switch shared workspace")),
     )
@@ -2769,12 +3055,12 @@ def test_main_default_launcher_mode_uses_isolated_project_backend(monkeypatch: A
             "token": "isolated-token",
         }
 
-    monkeypatch.setattr(bench, "_start_isolated_bench_project_instance", _start_isolated)
+    monkeypatch.setattr(bench_cli, "_start_isolated_bench_project_instance", _start_isolated)
 
     def _backend_context(url: str, **_kwargs: Any) -> dict[str, Any]:
         backend_context_urls.append(url)
         workspace = str(_kwargs["workspace"])
-        source_fingerprint = bench.compute_source_fingerprint(bench._BACKEND_ROOT)
+        source_fingerprint = bench_session.compute_source_fingerprint(bench._BACKEND_ROOT)
         receipt = launch_receipts[-1] if launch_receipts else {}
         return {
             "backend_freshness": {
@@ -2792,25 +3078,25 @@ def test_main_default_launcher_mode_uses_isolated_project_backend(monkeypatch: A
             "backend_metadata": {"backend_base_url": url},
         }
 
-    monkeypatch.setattr(bench, "build_bench_backend_audit_context", _backend_context)
-    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
-    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
-    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(bench_cli, "build_bench_backend_audit_context", _backend_context)
+    monkeypatch.setattr(bench_cli, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
+    monkeypatch.setattr(bench_cli, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
+    monkeypatch.setattr(bench_cli, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench_cli, "resolve_expected_llm_bindings", lambda: {})
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_factory_audit_record",
         lambda **_kwargs: _successful_audit_record(),
     )
-    monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
-    monkeypatch.setattr(bench, "persist_real_run_gate_ledger", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(bench_cli, "load_run_ledger_projection", _ok_run_ledger_projection)
+    monkeypatch.setattr(bench_cli, "persist_real_run_gate_ledger", lambda *_args, **_kwargs: {"ok": True})
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_real_run_gate",
         lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
     )
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_llm_route_audit",
         lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
     )
@@ -2836,7 +3122,7 @@ def test_main_default_launcher_mode_uses_isolated_project_backend(monkeypatch: A
             },
         }
 
-    monkeypatch.setattr(bench, "run_factory_chain", _chain)
+    monkeypatch.setattr(bench_cli, "run_factory_chain", _chain)
 
     first_result = bench.main()
     second_result = bench.main()
@@ -2874,38 +3160,38 @@ def test_main_audit_path_points_to_conflict_when_same_id_reused(monkeypatch: Any
     ]
 
     monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--work-dir", str(tmp_path)])
-    monkeypatch.setattr(bench, "load_projects", lambda: projects)
-    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "")
-    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "")
-    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-conflict")
-    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "load_projects", lambda: projects)
+    monkeypatch.setattr(bench_cli, "_resolve_backend_url", lambda: "")
+    monkeypatch.setattr(bench_cli, "_resolve_backend_token", lambda: "")
+    monkeypatch.setattr(bench_cli, "_ensure_bench_session", lambda **_kwargs: "bench-conflict")
+    monkeypatch.setattr(bench_cli, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench_cli, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_push_bench_complete_to_backend", lambda **_kwargs: True)
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_bench_backend_audit_context",
         lambda *_args, **_kwargs: {
             "backend_freshness": {"ok": True, "detail": "backend fresh"},
             "backend_metadata": {"backend_base_url": ""},
         },
     )
-    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
-    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
-    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(bench_cli, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
+    monkeypatch.setattr(bench_cli, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
+    monkeypatch.setattr(bench_cli, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench_cli, "resolve_expected_llm_bindings", lambda: {})
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_factory_audit_record",
         lambda **_kwargs: _successful_audit_record(),
     )
-    monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
+    monkeypatch.setattr(bench_cli, "load_run_ledger_projection", _ok_run_ledger_projection)
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_real_run_gate",
         lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
     )
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_llm_route_audit",
         lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
     )
@@ -2922,7 +3208,7 @@ def test_main_audit_path_points_to_conflict_when_same_id_reused(monkeypatch: Any
             },
         }
 
-    monkeypatch.setattr(bench, "run_factory_chain", _chain)
+    monkeypatch.setattr(bench_cli, "run_factory_chain", _chain)
 
     result = bench.main()
 
@@ -3029,7 +3315,7 @@ def test_resolve_backend_url_falls_back_to_desktop_info(monkeypatch: Any, tmp_pa
     monkeypatch.delenv("KERNELONE_BACKEND_URL", raising=False)
     monkeypatch.delenv("FACTORY_BENCH_BACKEND_URL", raising=False)
     monkeypatch.setattr(
-        bench,
+        bench_session,
         "_read_desktop_backend_info",
         lambda env=None: {"backend": {"baseUrl": "http://10.0.0.1:5555", "token": "t"}},
     )
@@ -3046,7 +3332,7 @@ def test_resolve_backend_url_explicit_overrides_desktop(monkeypatch: Any, tmp_pa
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        bench,
+        bench_session,
         "_read_desktop_backend_info",
         lambda env=None: {"backend": {"baseUrl": "http://10.0.0.1:5555", "token": "t"}},
     )
@@ -3057,7 +3343,7 @@ def test_resolve_backend_url_explicit_overrides_desktop(monkeypatch: Any, tmp_pa
 def test_resolve_backend_url_env_overrides_desktop(monkeypatch: Any, tmp_path: Path) -> None:
     monkeypatch.setenv("KERNELONE_BACKEND_URL", "http://env-host:1111")
     monkeypatch.setattr(
-        bench,
+        bench_session,
         "_read_desktop_backend_info",
         lambda env=None: {"backend": {"baseUrl": "http://10.0.0.1:5555", "token": "t"}},
     )
@@ -3068,7 +3354,7 @@ def test_resolve_backend_url_env_overrides_desktop(monkeypatch: Any, tmp_path: P
 def test_resolve_backend_url_missing_desktop_json_returns_default(monkeypatch: Any) -> None:
     monkeypatch.delenv("KERNELONE_BACKEND_URL", raising=False)
     monkeypatch.delenv("FACTORY_BENCH_BACKEND_URL", raising=False)
-    monkeypatch.setattr(bench, "_read_desktop_backend_info", lambda env=None: {})
+    monkeypatch.setattr(bench_session, "_read_desktop_backend_info", lambda env=None: {})
     result = _resolve_backend_url()
     assert result == "http://127.0.0.1:49977"
 
@@ -3076,7 +3362,7 @@ def test_resolve_backend_url_missing_desktop_json_returns_default(monkeypatch: A
 def test_resolve_backend_url_malformed_desktop_json_returns_default(monkeypatch: Any) -> None:
     monkeypatch.delenv("KERNELONE_BACKEND_URL", raising=False)
     monkeypatch.delenv("FACTORY_BENCH_BACKEND_URL", raising=False)
-    monkeypatch.setattr(bench, "_read_desktop_backend_info", lambda env=None: {})
+    monkeypatch.setattr(bench_session, "_read_desktop_backend_info", lambda env=None: {})
     result = _resolve_backend_url()
     assert result == "http://127.0.0.1:49977"
 
@@ -3097,7 +3383,7 @@ def test_resolve_backend_token_falls_back_to_desktop_info(monkeypatch: Any) -> N
     monkeypatch.delenv("KERNELONE_TOKEN", raising=False)
     monkeypatch.delenv("KERNELONE_BACKEND_TOKEN", raising=False)
     monkeypatch.setattr(
-        bench,
+        bench_session,
         "_read_desktop_backend_info",
         lambda env=None: {"backend": {"baseUrl": "http://x", "token": "desktop-tok-abc"}},
     )
@@ -3107,7 +3393,7 @@ def test_resolve_backend_token_falls_back_to_desktop_info(monkeypatch: Any) -> N
 
 def test_resolve_backend_token_explicit_overrides_desktop(monkeypatch: Any) -> None:
     monkeypatch.setattr(
-        bench,
+        bench_session,
         "_read_desktop_backend_info",
         lambda env=None: {"backend": {"baseUrl": "http://x", "token": "desktop-tok-abc"}},
     )
@@ -3118,7 +3404,7 @@ def test_resolve_backend_token_explicit_overrides_desktop(monkeypatch: Any) -> N
 def test_resolve_backend_token_env_overrides_desktop(monkeypatch: Any) -> None:
     monkeypatch.setenv("FACTORY_BENCH_BACKEND_TOKEN", "env-tok")
     monkeypatch.setattr(
-        bench,
+        bench_session,
         "_read_desktop_backend_info",
         lambda env=None: {"backend": {"baseUrl": "http://x", "token": "desktop-tok-abc"}},
     )
@@ -3132,7 +3418,7 @@ def test_resolve_backend_token_missing_desktop_json_returns_local_dev_token(monk
     monkeypatch.delenv("KERNELONE_BACKEND_TOKEN", raising=False)
     monkeypatch.delenv("KERNELONE_BACKEND_URL", raising=False)
     monkeypatch.delenv("FACTORY_BENCH_BACKEND_URL", raising=False)
-    monkeypatch.setattr(bench, "_read_desktop_backend_info", lambda env=None: {})
+    monkeypatch.setattr(bench_session, "_read_desktop_backend_info", lambda env=None: {})
     result = _resolve_backend_token()
     assert result == "polaris-local-dev"
 
@@ -3143,7 +3429,7 @@ def test_resolve_backend_token_malformed_desktop_json_returns_local_dev_token(mo
     monkeypatch.delenv("KERNELONE_BACKEND_TOKEN", raising=False)
     monkeypatch.delenv("KERNELONE_BACKEND_URL", raising=False)
     monkeypatch.delenv("FACTORY_BENCH_BACKEND_URL", raising=False)
-    monkeypatch.setattr(bench, "_read_desktop_backend_info", lambda env=None: {})
+    monkeypatch.setattr(bench_session, "_read_desktop_backend_info", lambda env=None: {})
     result = _resolve_backend_token()
     assert result == "polaris-local-dev"
 
@@ -3153,7 +3439,7 @@ def test_resolve_backend_token_missing_remote_token_returns_empty(monkeypatch: A
     monkeypatch.delenv("KERNELONE_TOKEN", raising=False)
     monkeypatch.delenv("KERNELONE_BACKEND_TOKEN", raising=False)
     monkeypatch.setenv("KERNELONE_BACKEND_URL", "http://10.0.0.1:49977")
-    monkeypatch.setattr(bench, "_read_desktop_backend_info", lambda env=None: {})
+    monkeypatch.setattr(bench_session, "_read_desktop_backend_info", lambda env=None: {})
     result = _resolve_backend_token()
     assert result == ""
 
@@ -3361,7 +3647,7 @@ def test_factory_chain_catalog_contract_writes_metadata(tmp_path: Path) -> None:
         "checks": list(project.get("checks") or []),  # type: ignore[call-overload]
         "test_focus": str(project.get("test_focus") or "").strip(),
         "level": level,
-        "level_contract": bench.build_factory_bench_level_contract(level, project=project),
+        "level_contract": bench_gates.build_factory_bench_level_contract(level, project=project),
         "source_tree_mandate": "PM/CE/Director must create src/ with core source files, not just scaffolding",
     }
     catalog_path = workspace / ".polaris" / "catalog_contract.json"
@@ -3548,10 +3834,10 @@ def test_run_factory_chain_fallback_on_audit_bundle_timeout(monkeypatch: Any, tm
         del reason, token, workspace, return_errors
         return {"status": "cancelled"}
 
-    monkeypatch.setattr(bench, "start_factory_run", _fake_start_factory_run)
-    monkeypatch.setattr(bench, "wait_run_until_terminal", _fake_wait_run_until_terminal)
-    monkeypatch.setattr(bench, "get_audit_bundle", _fake_get_audit_bundle)
-    monkeypatch.setattr(bench, "cancel_factory_run", _fake_cancel_factory_run)
+    monkeypatch.setattr(bench_chain, "start_factory_run", _fake_start_factory_run)
+    monkeypatch.setattr(bench_chain, "wait_run_until_terminal", _fake_wait_run_until_terminal)
+    monkeypatch.setattr(bench_chain, "get_audit_bundle", _fake_get_audit_bundle)
+    monkeypatch.setattr(bench_chain, "cancel_factory_run", _fake_cancel_factory_run)
 
     result = run_factory_chain(
         {"id": "L2-fb", "title": "Fallback Test", "brief": "Test fallback", "test_focus": "runtime"},
@@ -3782,37 +4068,43 @@ def test_main_start_failed_chain_marks_audit_as_non_terminal(
 
     monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--project-ids", "L1-01", "--work-dir", str(tmp_path)])
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "load_projects",
         lambda: [{"id": "L1-01", "level": 1, "title": "Test", "brief": "Build something", "checks": []}],
     )
-    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
-    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "token")
-    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-non-terminal")
-    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
+    monkeypatch.setattr(bench_cli, "_resolve_backend_token", lambda: "token")
+    monkeypatch.setattr(bench_cli, "_ensure_bench_session", lambda **_kwargs: "bench-non-terminal")
+    monkeypatch.setattr(bench_cli, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench_cli, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_push_bench_complete_to_backend", lambda **_kwargs: True)
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_bench_backend_audit_context",
         lambda *_args, **_kwargs: {
             "backend_freshness": {"ok": True, "detail": "backend fresh"},
             "backend_metadata": {"backend_base_url": ""},
         },
     )
-    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
-    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
-    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
-    monkeypatch.setattr(bench, "build_factory_audit_record", _capture_build)
-    monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
+    monkeypatch.setattr(bench_cli, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
     monkeypatch.setattr(
-        bench,
+        bench_cli,
+        "discover_artifacts",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("pre-start failure must not reuse prior workspace artifacts")
+        ),
+    )
+    monkeypatch.setattr(bench_cli, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench_cli, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(bench_cli, "build_factory_audit_record", _capture_build)
+    monkeypatch.setattr(bench_cli, "load_run_ledger_projection", _ok_run_ledger_projection)
+    monkeypatch.setattr(
+        bench_cli,
         "build_real_run_gate",
         lambda *_args, **_kwargs: {"ok": False, "summary": "real run failed"},
     )
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_llm_route_audit",
         lambda *_args, **_kwargs: {"ok": False, "summary": "LLM route audit failed"},
     )
@@ -3820,13 +4112,17 @@ def test_main_start_failed_chain_marks_audit_as_non_terminal(
     def _start_failed_chain(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         return {"exit_code": -1, "duration_s": 0.0, "error": "start_failed"}
 
-    monkeypatch.setattr(bench, "run_factory_chain", _start_failed_chain)
+    monkeypatch.setattr(bench_cli, "run_factory_chain", _start_failed_chain)
 
     result = bench.main()
 
     assert result == 1
     assert len(captured_records) == 1
     assert captured_records[0]["chain_terminal"] is False
+    audit = json.loads((tmp_path / "factory_audits.json").read_text(encoding="utf-8"))["records"][0]
+    assert audit["chain_attempt_started"] is False
+    assert audit["chain_results"] == {}
+    assert audit["qa_invoked"] == {"invoked": False, "reason": "current_attempt_not_started"}
 
 
 def test_main_event_wait_timeout_marks_non_terminal_and_skips_real_run_gate(
@@ -3835,7 +4131,7 @@ def test_main_event_wait_timeout_marks_non_terminal_and_skips_real_run_gate(
 ) -> None:
     """When runtime.v2 never delivers a terminal event, main must not run
     build/test/start against a workspace the backend may still be mutating."""
-    monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
+    monkeypatch.setattr(bench_cli, "load_run_ledger_projection", _ok_run_ledger_projection)
     captured_records: list[dict[str, Any]] = []
     taxonomy_records: list[dict[str, Any]] = []
 
@@ -3873,41 +4169,41 @@ def test_main_event_wait_timeout_marks_non_terminal_and_skips_real_run_gate(
 
     monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--project-ids", "L1-01", "--work-dir", str(tmp_path)])
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "load_projects",
         lambda: [{"id": "L1-01", "level": 1, "title": "Test", "brief": "Build something", "checks": []}],
     )
-    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
-    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "token")
-    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-event-timeout")
-    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(bench, "_push_bench_workspace_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
+    monkeypatch.setattr(bench_cli, "_resolve_backend_token", lambda: "token")
+    monkeypatch.setattr(bench_cli, "_ensure_bench_session", lambda **_kwargs: "bench-event-timeout")
+    monkeypatch.setattr(bench_cli, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench_cli, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_push_bench_workspace_to_backend", lambda **_kwargs: True)
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_bench_backend_audit_context",
         lambda *_args, **_kwargs: {
             "backend_freshness": {"ok": True, "detail": "backend fresh"},
             "backend_metadata": {"backend_base_url": ""},
         },
     )
-    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
-    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
-    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
-    monkeypatch.setattr(bench, "build_factory_audit_record", _capture_build)
+    monkeypatch.setattr(bench_cli, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
+    monkeypatch.setattr(bench_cli, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
+    monkeypatch.setattr(bench_cli, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench_cli, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(bench_cli, "build_factory_audit_record", _capture_build)
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_real_run_gate",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("real run gate must be skipped")),
     )
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_llm_route_audit",
         lambda *_args, **_kwargs: {"ok": False, "summary": "LLM route audit failed"},
     )
-    monkeypatch.setattr(bench, "apply_factory_bench_failure_taxonomy", _capture_taxonomy)
+    monkeypatch.setattr(bench_cli, "apply_factory_bench_failure_taxonomy", _capture_taxonomy)
 
     def _event_wait_timeout(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         return {
@@ -3917,7 +4213,7 @@ def test_main_event_wait_timeout_marks_non_terminal_and_skips_real_run_gate(
             "error": "event_wait_timeout",
         }
 
-    monkeypatch.setattr(bench, "run_factory_chain", _event_wait_timeout)
+    monkeypatch.setattr(bench_cli, "run_factory_chain", _event_wait_timeout)
 
     result = bench.main()
 
@@ -3937,7 +4233,7 @@ def test_main_runner_exception_marks_audit_as_non_terminal(
 ) -> None:
     """When the runner raises an exception, the audit record must be
     marked as non_terminal."""
-    monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
+    monkeypatch.setattr(bench_cli, "load_run_ledger_projection", _ok_run_ledger_projection)
     captured_records: list[dict[str, Any]] = []
 
     def _capture_build(**kwargs: Any) -> dict[str, Any]:
@@ -3957,36 +4253,36 @@ def test_main_runner_exception_marks_audit_as_non_terminal(
 
     monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--project-ids", "L1-01", "--work-dir", str(tmp_path)])
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "load_projects",
         lambda: [{"id": "L1-01", "level": 1, "title": "Test", "brief": "Build something", "checks": []}],
     )
-    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
-    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "token")
-    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-runner-exc")
-    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
+    monkeypatch.setattr(bench_cli, "_resolve_backend_token", lambda: "token")
+    monkeypatch.setattr(bench_cli, "_ensure_bench_session", lambda **_kwargs: "bench-runner-exc")
+    monkeypatch.setattr(bench_cli, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench_cli, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_push_bench_complete_to_backend", lambda **_kwargs: True)
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_bench_backend_audit_context",
         lambda *_args, **_kwargs: {
             "backend_freshness": {"ok": True, "detail": "backend fresh"},
             "backend_metadata": {"backend_base_url": ""},
         },
     )
-    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
-    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
-    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
-    monkeypatch.setattr(bench, "build_factory_audit_record", _capture_build)
+    monkeypatch.setattr(bench_cli, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
+    monkeypatch.setattr(bench_cli, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
+    monkeypatch.setattr(bench_cli, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench_cli, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(bench_cli, "build_factory_audit_record", _capture_build)
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_real_run_gate",
         lambda *_args, **_kwargs: {"ok": False, "summary": "real run failed"},
     )
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_llm_route_audit",
         lambda *_args, **_kwargs: {"ok": False, "summary": "LLM route audit failed"},
     )
@@ -3994,7 +4290,7 @@ def test_main_runner_exception_marks_audit_as_non_terminal(
     def _runner_exception(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         raise RuntimeError("simulated runner crash")
 
-    monkeypatch.setattr(bench, "run_factory_chain", _runner_exception)
+    monkeypatch.setattr(bench_cli, "run_factory_chain", _runner_exception)
 
     result = bench.main()
 
@@ -4020,37 +4316,37 @@ def test_main_completed_chain_marks_audit_as_terminal(
 
     monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--project-ids", "L1-01", "--work-dir", str(tmp_path)])
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "load_projects",
         lambda: [{"id": "L1-01", "level": 1, "title": "Test", "brief": "Build something", "checks": []}],
     )
-    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "")
-    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "")
-    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-terminal")
-    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_resolve_backend_url", lambda: "")
+    monkeypatch.setattr(bench_cli, "_resolve_backend_token", lambda: "")
+    monkeypatch.setattr(bench_cli, "_ensure_bench_session", lambda **_kwargs: "bench-terminal")
+    monkeypatch.setattr(bench_cli, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench_cli, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_push_bench_complete_to_backend", lambda **_kwargs: True)
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_bench_backend_audit_context",
         lambda *_args, **_kwargs: {
             "backend_freshness": {"ok": True, "detail": "backend fresh"},
             "backend_metadata": {"backend_base_url": ""},
         },
     )
-    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
-    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
-    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
-    monkeypatch.setattr(bench, "build_factory_audit_record", _capture_build)
-    monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
+    monkeypatch.setattr(bench_cli, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
+    monkeypatch.setattr(bench_cli, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
+    monkeypatch.setattr(bench_cli, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench_cli, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(bench_cli, "build_factory_audit_record", _capture_build)
+    monkeypatch.setattr(bench_cli, "load_run_ledger_projection", _ok_run_ledger_projection)
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_real_run_gate",
         lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
     )
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_llm_route_audit",
         lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
     )
@@ -4067,7 +4363,7 @@ def test_main_completed_chain_marks_audit_as_terminal(
             },
         }
 
-    monkeypatch.setattr(bench, "run_factory_chain", _completed_chain)
+    monkeypatch.setattr(bench_cli, "run_factory_chain", _completed_chain)
 
     result = bench.main()
 
@@ -4293,38 +4589,38 @@ def test_runner_audit_includes_catalog_hash_and_schema_version(monkeypatch: Any,
     ]
 
     monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--work-dir", str(tmp_path)])
-    monkeypatch.setattr(bench, "load_projects", lambda: projects)
-    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "")
-    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "")
-    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-meta")
-    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "load_projects", lambda: projects)
+    monkeypatch.setattr(bench_cli, "_resolve_backend_url", lambda: "")
+    monkeypatch.setattr(bench_cli, "_resolve_backend_token", lambda: "")
+    monkeypatch.setattr(bench_cli, "_ensure_bench_session", lambda **_kwargs: "bench-meta")
+    monkeypatch.setattr(bench_cli, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench_cli, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench_cli, "_push_bench_complete_to_backend", lambda **_kwargs: True)
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_bench_backend_audit_context",
         lambda *_args, **_kwargs: {
             "backend_freshness": {"ok": True, "detail": "backend fresh"},
             "backend_metadata": {"backend_base_url": ""},
         },
     )
-    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
-    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
-    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(bench_cli, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
+    monkeypatch.setattr(bench_cli, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
+    monkeypatch.setattr(bench_cli, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench_cli, "resolve_expected_llm_bindings", lambda: {})
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_factory_audit_record",
         lambda **_kwargs: _successful_audit_record(),
     )
-    monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
+    monkeypatch.setattr(bench_cli, "load_run_ledger_projection", _ok_run_ledger_projection)
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_real_run_gate",
         lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
     )
     monkeypatch.setattr(
-        bench,
+        bench_cli,
         "build_llm_route_audit",
         lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
     )
@@ -4341,7 +4637,7 @@ def test_runner_audit_includes_catalog_hash_and_schema_version(monkeypatch: Any,
             },
         }
 
-    monkeypatch.setattr(bench, "run_factory_chain", _chain)
+    monkeypatch.setattr(bench_cli, "run_factory_chain", _chain)
 
     result = bench.main()
     assert result == 0

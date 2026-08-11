@@ -24,6 +24,65 @@ _pull_namespace(_gates)
 del _gates
 
 
+def _factory_role_completed(roles: Mapping[str, Any], role: str) -> bool:
+    role_raw = roles.get(role)
+    role_row = dict(role_raw) if isinstance(role_raw, Mapping) else {}
+    return str(role_row.get("status") or "").strip().lower() == "completed"
+
+
+def _select_director_resume_run(
+    runs_response: Mapping[str, Any] | None,
+    *,
+    project_id: str = "",
+) -> dict[str, Any] | None:
+    """Select one failed full-chain run whose PM/CE checkpoints are frozen."""
+
+    if not isinstance(runs_response, Mapping):
+        return None
+    raw_runs = runs_response.get("runs")
+    if not isinstance(raw_runs, list):
+        return None
+    expected_project_id = str(project_id or "").strip()
+    for raw_run in raw_runs:
+        if not isinstance(raw_run, Mapping):
+            continue
+        run = dict(raw_run)
+        if str(run.get("status") or "").strip().lower() != "failed":
+            continue
+        metadata_raw = run.get("metadata")
+        metadata = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
+        failure_raw = run.get("failure")
+        failure = dict(failure_raw) if isinstance(failure_raw, Mapping) else {}
+        failed_stage = str(
+            failure.get("stage")
+            or metadata.get("last_failed_stage")
+            or metadata.get("current_stage")
+            or run.get("current_stage")
+            or ""
+        ).strip()
+        if failed_stage != "director_dispatch":
+            continue
+        candidate_project_id = str(metadata.get("factory_bench_project_id") or "").strip()
+        if expected_project_id and candidate_project_id and candidate_project_id != expected_project_id:
+            continue
+        roles_raw = run.get("roles")
+        roles = dict(roles_raw) if isinstance(roles_raw, Mapping) else {}
+        last_successful_stage = str(
+            run.get("last_successful_stage") or metadata.get("last_successful_stage") or ""
+        ).strip()
+        if not _factory_role_completed(roles, "pm"):
+            continue
+        if not (
+            _factory_role_completed(roles, "chief_engineer")
+            or last_successful_stage == "chief_engineer_review"
+        ):
+            continue
+        if not str(run.get("run_id") or "").strip():
+            continue
+        return run
+    return None
+
+
 def run_factory_chain(
     project: dict[str, Any],
     workspace: Path,
@@ -38,14 +97,12 @@ def run_factory_chain(
     start_from: str = "pm",
     on_stage_change: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Start a /v2/factory/runs for the project workspace and wait for completion."""
+    """Start a full run, or resume the same failed run at its Director checkpoint."""
     normalized_start_from = str(start_from or "pm").strip().lower()
     if normalized_start_from not in {"pm", "director_resume"}:
         raise ValueError(f"unsupported factory bench start_from: {start_from!r}")
     requested_start_from = normalized_start_from
     api_start_from = "director_resume" if normalized_start_from == "director_resume" else normalized_start_from
-    if api_start_from == "director_resume":
-        _prepare_director_resume_workspace(workspace)
     workflow_mode = str(director_workflow_execution_mode or "parallel").strip().lower()
     if workflow_mode not in {"serial", "parallel"}:
         raise ValueError(f"unsupported director workflow execution mode: {director_workflow_execution_mode!r}")
@@ -149,7 +206,35 @@ def run_factory_chain(
             if on_stage_change is not None:
                 on_stage_change(str(status.get("status") or ""), status)
 
-        start_response = start_factory_run(backend_url, payload, token=backend_token)
+        resume_source_run_id = ""
+        if api_start_from == "director_resume":
+            runs_response = list_factory_runs(
+                backend_url,
+                token=backend_token,
+                workspace=str(workspace),
+            )
+            resume_source = _select_director_resume_run(
+                runs_response,
+                project_id=str(project.get("id") or "").strip(),
+            )
+            if resume_source is None:
+                return {
+                    "exit_code": -1,
+                    "duration_s": round(time.time() - started, 1),
+                    "error": "director_resume_run_missing",
+                    "workspace": str(workspace),
+                }
+            resume_source_run_id = str(resume_source["run_id"]).strip()
+            _prepare_director_resume_workspace(workspace)
+            start_response = retry_factory_run_from_director(
+                backend_url,
+                resume_source_run_id,
+                token=backend_token,
+                workspace=str(workspace),
+                reason="factory-bench local Director repair; preserve committed PM/CE checkpoints",
+            )
+        else:
+            start_response = start_factory_run(backend_url, payload, token=backend_token)
         if not isinstance(start_response, dict):
             return {"exit_code": -1, "duration_s": 0, "error": "start_failed"}
         if isinstance(start_response.get("_http_error"), dict):
@@ -167,6 +252,14 @@ def run_factory_chain(
                 "duration_s": round(time.time() - started, 1),
                 "error": "start_failed",
                 "start_response": start_response,
+            }
+        if resume_source_run_id and run_id != resume_source_run_id:
+            return {
+                "exit_code": -1,
+                "duration_s": round(time.time() - started, 1),
+                "error": "director_resume_run_identity_changed",
+                "expected_run_id": resume_source_run_id,
+                "actual_run_id": run_id,
             }
 
         terminal_status = wait_run_until_terminal(
@@ -244,6 +337,9 @@ def run_factory_chain(
     chain_results = map_factory_run_to_chain_results(terminal_status, audit_bundle)
     chain_results["factory_bench_start_from"] = requested_start_from
     chain_results["factory_api_start_from"] = api_start_from
+    chain_results["factory_resume_mode"] = (
+        "same_run_retry_phase" if api_start_from == "director_resume" else "new_full_run"
+    )
 
     # Read contract_goal from workspace tasks/plan.json if available
     plan_path = workspace / ".polaris" / "docs" / "product" / "plan.json"
@@ -260,6 +356,7 @@ def run_factory_chain(
         "run_id": run_id,
         "start_from": requested_start_from,
         "factory_api_start_from": api_start_from,
+        "factory_resume_mode": chain_results["factory_resume_mode"],
         "factory_terminal_status": terminal_status,
         "chain_results": chain_results,
         "audit_bundle": audit_bundle,

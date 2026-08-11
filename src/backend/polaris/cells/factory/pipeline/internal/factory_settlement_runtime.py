@@ -359,11 +359,17 @@ class FactoryRunServiceSettlementAdapter:
                 "Factory settlement workspace lease does not exist",
                 code="factory_workspace_run_lease_missing",
             )
-        if _canonical_workspace(lease.workspace) != workspace or lease.run_id != query.factory_run_id:
+        if _canonical_workspace(lease.workspace) != workspace:
             raise FactorySettlementFencedError(
-                "Factory settlement source authority belongs to another run",
+                "Factory settlement source authority belongs to another workspace",
                 code="factory_workspace_run_fenced",
             )
+        # Do not reject a durable source fact merely because a newer Factory
+        # run now owns the workspace lease. Returning the CURRENT fencing token
+        # lets the consumer compare it with the source token and durably
+        # dead-letter the stale fact instead of crashing application startup.
+        # Every mutating service call still repeats workspace + run + token
+        # validation in ``_assert_current_authority`` before it can settle.
         self._authority.set(
             _SettlementAuthority(
                 workspace=workspace,

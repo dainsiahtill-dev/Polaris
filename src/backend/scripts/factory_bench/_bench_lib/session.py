@@ -797,11 +797,15 @@ def _new_isolated_bench_launch_receipt(
     workspace_device = int(persisted_catalog["workspace_device"])
     workspace_inode = int(persisted_catalog["workspace_inode"])
     catalog_receipt_hash = _workspace_catalog_hash(persisted_catalog)
+    workspace_source_run_id = str(persisted_catalog.get("run_id") or "").strip()
+    if not workspace_source_run_id:
+        raise RuntimeError("Bench workspace catalog source run id is missing")
     return {
         "schema_version": "factory_bench.isolated_launch_receipt.v1",
         "launch_nonce": nonce,
         "launch_scope": f"{run_id}:{project_id}:{nonce}",
         "run_id": run_id,
+        "workspace_source_run_id": workspace_source_run_id,
         "bench_session_id": bench_session_id,
         "project_id": project_id,
         "requested_project_id": requested_project_id,
@@ -850,6 +854,7 @@ def _validate_isolated_bench_launch(
         "launch_scope",
         "launch_nonce",
         "run_id",
+        "workspace_source_run_id",
         "project_id",
         "requested_project_id",
         "canonical_project_id",
@@ -887,7 +892,7 @@ def _validate_isolated_bench_launch(
         errors.append("workspace_inode_mismatch")
     if current_catalog_hash != expected_catalog_hash:
         errors.append("workspace_catalog_hash_mismatch")
-    if catalog_payload.get("run_id") != receipt.get("run_id"):
+    if catalog_payload.get("run_id") != receipt.get("workspace_source_run_id"):
         errors.append("workspace_catalog_run_id_mismatch")
     if catalog_payload.get("project_id") != receipt.get("project_id"):
         errors.append("workspace_catalog_project_id_mismatch")
@@ -904,6 +909,7 @@ def _validate_isolated_bench_launch(
         "launch_scope",
         "launch_nonce",
         "run_id",
+        "workspace_source_run_id",
         "project_id",
         "requested_project_id",
         "canonical_project_id",
@@ -1029,7 +1035,47 @@ def _start_isolated_bench_project_instance(
             raise RuntimeError(
                 f"instance supervisor source root mismatch: runner={_BACKEND_ROOT} supervisor={supervisor_backend_root}"
             )
-        instance = InstanceSupervisor().start_instance(
+        supervisor = InstanceSupervisor()
+        stopped_predecessors: list[str] = []
+        source_run_id = str(receipt.get("workspace_source_run_id") or "").strip()
+        attempt_run_id = str(receipt.get("run_id") or "").strip()
+        if source_run_id and source_run_id != attempt_run_id:
+            # A resume intentionally reuses one inode-bound workspace. Stop
+            # only an older internal Bench instance proven to own the same
+            # workspace, Bench root, project, and source run. Never touch main
+            # or another Agent's unrelated project instance.
+            for prior in supervisor.list_instances():
+                if not isinstance(prior, Mapping):
+                    continue
+                prior_id = str(prior.get("instance_id") or "").strip()
+                if not prior_id or prior_id == str(receipt.get("instance_id") or ""):
+                    continue
+                if str(prior.get("kind") or "") != "bench_project":
+                    continue
+                if str(prior.get("workspace") or "") != str(receipt.get("workspace") or ""):
+                    continue
+                if str(prior.get("status") or "").strip().lower() in {"stopped", "failed"}:
+                    continue
+                prior_metadata = prior.get("metadata")
+                if not isinstance(prior_metadata, Mapping) or not bool(prior_metadata.get("internal_test_only")):
+                    continue
+                prior_receipt = prior_metadata.get("instance_launch_receipt")
+                if not isinstance(prior_receipt, Mapping):
+                    continue
+                prior_source_run_id = str(
+                    prior_receipt.get("workspace_source_run_id") or prior_receipt.get("run_id") or ""
+                ).strip()
+                if prior_source_run_id != source_run_id:
+                    continue
+                if str(prior_receipt.get("bench_workspace") or "") != str(receipt.get("bench_workspace") or ""):
+                    continue
+                if str(prior_receipt.get("project_id") or "") != str(receipt.get("project_id") or ""):
+                    continue
+                supervisor.stop_instance(prior_id)
+                stopped_predecessors.append(prior_id)
+        if stopped_predecessors:
+            receipt["resume_predecessor_instance_ids"] = stopped_predecessors
+        instance = supervisor.start_instance(
             {
                 "instance_id": str(receipt["instance_id"]),
                 "name": f"{project_id} {project_title}".strip(),
