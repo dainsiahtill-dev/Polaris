@@ -779,6 +779,18 @@ class TestChiefEngineerBlueprintPortfolio:
         test_row = next(row for row in obligations["verification"] if row["modality"] == "test")
         test_row["owner_task_id"] = "TASK-A"
         test_row["command_authority_hash"] = None
+        obligations["verification"].append(
+            {
+                "obligation_id": "verify-build",
+                "modality": "build",
+                "command_authority_hash": _command_authority(
+                    "TASK-A", "build", ("python", "-m", "compileall", "src")
+                ).authority_hash,
+                "applicability": "required",
+                "covers_obligation_ids": ["artifact-main", "entrypoint-web-advisory-only"],
+                "owner_task_id": "TASK-A",
+            }
+        )
 
         portfolio = build_chief_engineer_blueprint_portfolio(
             BuildChiefEngineerBlueprintPortfolioCommandV1(
@@ -800,6 +812,8 @@ class TestChiefEngineerBlueprintPortfolio:
         completion = portfolio.project_completion_contract
         assert completion is not None
         assert [item.obligation_id for item in completion.obligations.entrypoints] == ["entrypoint-cli"]
+        build_verifier = next(item for item in completion.obligations.verification if item.modality == "build")
+        assert "entrypoint-web-advisory-only" not in build_verifier.covers_obligation_ids
         test_verifier = next(item for item in completion.obligations.verification if item.modality == "test")
         assert test_verifier.owner_task_id == "TASK-C"
         assert test_verifier.command_authority_hash == _command_authority(

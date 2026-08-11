@@ -12,7 +12,7 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.director.tasking.public.execution_guidance import (
     apply_task_execution_strategy_overrides,
@@ -488,6 +488,38 @@ def _context_timeout_seconds_for_runtime_command(context: dict[str, Any]) -> int
     if timeout is None:
         return None
     return max(1, int(timeout))
+
+
+def _role_dialogue_watchdog_timeout_seconds(
+    context: dict[str, Any] | None,
+    *,
+    provider_timeout_seconds: float,
+) -> float:
+    """Return the outer transaction watchdog without expanding provider time.
+
+    ``request_timeout_seconds`` / ``timeout_seconds`` are the enclosing
+    TaskRuntime execution budget.  The narrower provider budget is projected
+    separately by ``_prepare_role_dialogue_context``.  Cancelling the whole
+    RoleRuntime transaction at provider-timeout + a fixed grace can discard a
+    DEO receipt that is already settling (L1-01 r42).  Preserve the enclosing
+    execution budget for receipt/session projection, while the Factory
+    execution deadline remains the absolute non-expanding ceiling.
+    """
+
+    provider_timeout = max(0.1, float(provider_timeout_seconds))
+    watchdog_timeout = provider_timeout + _ROLE_DIALOGUE_SETTLEMENT_GRACE_SECONDS
+    if isinstance(context, dict):
+        execution_budget_candidates = (
+            _coerce_positive_float(context.get("request_timeout_seconds")),
+            _coerce_positive_float(context.get("timeout_seconds")),
+        )
+        execution_budgets = [value for value in execution_budget_candidates if value is not None]
+        if execution_budgets:
+            watchdog_timeout = max(watchdog_timeout, max(execution_budgets))
+    return DirectorPatchExecutor.clamp_llm_call_timeout_to_factory_deadline(
+        context,
+        watchdog_timeout,
+    )
 
 
 def _join_limited_values(label: str, values: list[str]) -> str:
@@ -1963,10 +1995,18 @@ class DirectorAdapter(BaseRoleAdapter):
             timeout_seconds=timeout_seconds,
             stage_label=stage_label,
         )
+        watchdog_timeout = _role_dialogue_watchdog_timeout_seconds(
+            context,
+            provider_timeout_seconds=timeout,
+        )
+        timeout_budget = context_payload.get("director_role_call_timeout_budget")
+        if isinstance(timeout_budget, dict):
+            timeout_budget["transaction_watchdog_timeout_seconds"] = watchdog_timeout
+            timeout_budget["provider_timeout_is_not_transaction_timeout"] = True
         try:
             response = await asyncio.wait_for(
                 self._invoke_role_dialogue(message, context=context_payload),
-                timeout=timeout + _ROLE_DIALOGUE_SETTLEMENT_GRACE_SECONDS,
+                timeout=watchdog_timeout,
             )
             if isinstance(response, dict):
                 return response
@@ -2499,7 +2539,7 @@ class DirectorAdapter(BaseRoleAdapter):
             ),
             "",
             *(
-                dependency_artifact_snapshot.message_lines()
+                cast(TrustedDirectorDependencyArtifactSnapshotV2, dependency_artifact_snapshot).message_lines()
                 if type(dependency_artifact_snapshot) is TrustedDirectorDependencyArtifactSnapshotV2
                 else ()
             ),

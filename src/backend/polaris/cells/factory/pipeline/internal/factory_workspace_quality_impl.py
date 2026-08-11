@@ -534,6 +534,21 @@ async def _apply_workspace_quality_llm_repairs(
     ):
         if key in context:
             repair_context[key] = context[key]
+    # Quality repair is a child execution of the same Factory run, not an
+    # unbounded ad-hoc role call.  Preserve the parent deadline and TaskRuntime
+    # wall-clock budget so roles.adapters can keep the provider timeout narrow
+    # while allowing the already-started tool/DEO transaction to settle.  L1-01
+    # r42 dropped these fields, reported ``no_factory_deadline``, then marked a
+    # task failed even though its write receipt committed moments later.
+    for key in (
+        "factory_run_deadline_epoch_seconds",
+        "factory_run_deadline_source",
+        "factory_run_timeout_seconds",
+        "factory_director_execution_deadline_epoch_seconds",
+        "request_timeout_seconds",
+    ):
+        if key in context:
+            repair_context[key] = context[key]
     try:
         (
             repair_task_id,

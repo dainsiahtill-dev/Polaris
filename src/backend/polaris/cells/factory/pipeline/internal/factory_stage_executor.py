@@ -5839,6 +5839,7 @@ class OrchestrationStageExecutor:
             "major_issues": [],
             "warnings": [],
             "workspace_checks_artifact": workspace_checks_artifact,
+            "qa_invoked": False,
             "llm_invoked": False,
         }
         self._write_json_artifact("runtime/qa/report.json", payload)

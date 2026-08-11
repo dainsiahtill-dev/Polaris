@@ -340,8 +340,8 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         self.assertEqual(chain_results.get("authoritative"), False)
         self.assertEqual(result.get("exit_code"), 1)
 
-    def test_map_factory_run_to_chain_results_director_partial(self) -> None:
-        """Director-stage failures remain director_partial."""
+    def test_map_factory_run_to_chain_results_does_not_infer_director_or_qa_authority(self) -> None:
+        """Legacy audit prose cannot synthesize canonical Director/QA authority."""
         run_status = {"status": "failed", "phase": "director_dispatch"}
         audit_bundle = {
             "gates": [
@@ -351,9 +351,10 @@ class TestFactoryRunsIntegration(unittest.TestCase):
             "summary_json": {},
         }
         chain_results = map_factory_run_to_chain_results(run_status, audit_bundle)
-        self.assertEqual(chain_results["qa_ran"], True)
-        self.assertEqual(chain_results["qa_passed"], False)
-        self.assertEqual(chain_results["exit_class"], "director_partial")
+        self.assertIs(chain_results["qa_ran"], None)
+        self.assertIs(chain_results["qa_passed"], None)
+        self.assertEqual(chain_results["exit_class"], "legacy_unknown")
+        self.assertIs(chain_results["authoritative"], False)
 
     def test_map_factory_run_to_chain_results_pm_failed(self) -> None:
         run_status = {
@@ -363,8 +364,8 @@ class TestFactoryRunsIntegration(unittest.TestCase):
             "metadata": {"current_stage": "pm_planning", "last_failed_stage": "pm_planning"},
         }
         chain_results = map_factory_run_to_chain_results(run_status, {"gates": [], "events_tail": []})
-        self.assertEqual(chain_results["exit_class"], "pm_failed")
-        self.assertEqual(chain_results["factory_stage_hint"], "pm_planning")
+        self.assertEqual(chain_results["exit_class"], "legacy_unknown")
+        self.assertEqual(chain_results["factory_stage_hint"], "planning")
 
     def test_map_factory_run_to_chain_results_chief_engineer_failed(self) -> None:
         run_status = {
@@ -377,7 +378,8 @@ class TestFactoryRunsIntegration(unittest.TestCase):
             },
         }
         chain_results = map_factory_run_to_chain_results(run_status, {"gates": [], "events_tail": []})
-        self.assertEqual(chain_results["exit_class"], "chief_engineer_failed")
+        self.assertEqual(chain_results["exit_class"], "legacy_unknown")
+        self.assertEqual(chain_results["factory_stage_hint"], "implementation")
 
     def test_required_llm_roles_are_stage_aware(self) -> None:
         pm_chain = {"chain_results": {"exit_class": "pm_failed", "factory_stage_hint": "pm_planning"}}
@@ -468,14 +470,35 @@ class TestFactoryRunsIntegration(unittest.TestCase):
 
             self.assertIs(read_factory_qa_invocation_status(workspace, "factory-1"), False)
 
-    def test_map_factory_run_to_chain_results_hard_failed(self) -> None:
-        """When status is cancelled (not failed/completed), exit_class=hard_failed."""
+    def test_read_factory_qa_invocation_status_accepts_physical_verifier_report(self) -> None:
+        """Physical verifier QA is authoritative without an advisory QA LLM route."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            report = workspace / ".polaris" / "roles" / "qa" / "factory-2" / "report.json"
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "factory.qa_physical_verifier_report.v1",
+                        "source": "factory_physical_verifier",
+                        "verdict": "PASS",
+                        "llm_invoked": False,
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertIs(read_factory_qa_invocation_status(workspace, "factory-2"), False)
+
+    def test_map_factory_run_to_chain_results_cancelled_remains_non_authoritative(self) -> None:
+        """A legacy status payload cannot authoritatively classify cancellation."""
         run_status = {"status": "cancelled", "phase": "unknown"}
         audit_bundle: dict[str, Any] = {"gates": [], "events_tail": [], "summary_json": {}}
         chain_results = map_factory_run_to_chain_results(run_status, audit_bundle)
-        self.assertEqual(chain_results["qa_ran"], False)
-        self.assertEqual(chain_results["qa_passed"], False)
-        self.assertEqual(chain_results["exit_class"], "hard_failed")
+        self.assertIs(chain_results["qa_ran"], None)
+        self.assertIs(chain_results["qa_passed"], None)
+        self.assertEqual(chain_results["exit_class"], "legacy_unknown")
 
     def test_run_factory_chain_start_failure(self) -> None:
         """When the backend returns a non-2xx on start, run_factory_chain returns exit_code=-1."""
@@ -496,8 +519,8 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         ]
         self.assertEqual(len(audit_calls), 0, "no audit-bundle GET expected when start fails")
 
-    def test_map_factory_run_to_chain_results_completed_qa_failed(self) -> None:
-        """When status is completed but qa_passed=False, exit_class=qa_failed."""
+    def test_map_factory_run_to_chain_results_ignores_legacy_qa_failure_prose(self) -> None:
+        """QA authority comes from canonical facts, not a legacy gate artifact."""
         run_status = {"status": "completed", "phase": "qa_gate"}
         audit_bundle = {
             "gates": [
@@ -507,9 +530,9 @@ class TestFactoryRunsIntegration(unittest.TestCase):
             "summary_json": {},
         }
         chain_results = map_factory_run_to_chain_results(run_status, audit_bundle)
-        self.assertEqual(chain_results["qa_ran"], True)
-        self.assertEqual(chain_results["qa_passed"], False)
-        self.assertEqual(chain_results["exit_class"], "qa_failed")
+        self.assertIs(chain_results["qa_ran"], None)
+        self.assertIs(chain_results["qa_passed"], None)
+        self.assertEqual(chain_results["exit_class"], "legacy_unknown")
 
     def test_run_factory_chain_event_wait_timeout_non_terminal(self) -> None:
         """When runtime.v2 never delivers a terminal state, event waiting times out."""

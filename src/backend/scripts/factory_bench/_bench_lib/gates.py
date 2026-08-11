@@ -108,8 +108,16 @@ def read_factory_qa_invocation_status(workspace: Path, factory_run_id: str) -> b
             payload = json.loads(candidate.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
             continue
-        if isinstance(payload, Mapping) and isinstance(payload.get("qa_invoked"), bool):
+        if not isinstance(payload, Mapping):
+            continue
+        if isinstance(payload.get("qa_invoked"), bool):
             return bool(payload["qa_invoked"])
+        # ``factory.qa_physical_verifier_report.v1`` predates the generic
+        # ``qa_invoked`` projection and records the same physical-role fact as
+        # ``llm_invoked``.  Treat the explicit boolean as authoritative; an
+        # absent field remains unknown/fail-closed.
+        if isinstance(payload.get("llm_invoked"), bool):
+            return bool(payload["llm_invoked"])
     return None
 
 

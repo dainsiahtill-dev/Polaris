@@ -737,6 +737,7 @@ def _build_portfolio_completion_contract(
         # must not turn a valid application entrypoint into a portfolio-wide
         # failure.  Path/owner authority is still validated below.
         normalized_entrypoint_rows: list[Mapping[str, Any]] = []
+        dropped_unexecutable_entrypoint_ids: set[str] = set()
         for row in entrypoint_rows:
             if row["applicability"] == "not_applicable":
                 normalized_entrypoint_rows.append(row)
@@ -746,12 +747,28 @@ def _build_portfolio_completion_contract(
                 owner_task_id=str(row["owner_task_id"]) if row["owner_task_id"] is not None else None,
             )
             if row["command"] is None or not any(item.command == row["command"] for item in matching):
+                dropped_unexecutable_entrypoint_ids.add(str(row["obligation_id"]))
                 continue
             normalized_entrypoint_rows.append(row)
 
-        normalized_verification_rows: list[dict[str, Any]] = [
-            dict(row) for row in verification_rows if row["modality"] in {"build", "lint"}
-        ]
+        normalized_verification_rows: list[dict[str, Any]] = []
+        for row in verification_rows:
+            if row["modality"] not in {"build", "lint"}:
+                continue
+            normalized_row = dict(row)
+            # A commandless CE entrypoint is advisory-only and was deliberately
+            # removed above because it cannot bind to committed PM command
+            # authority.  Its verifier references must be removed in the same
+            # normalization transaction; otherwise Polaris creates its own
+            # dangling obligation id and rejects an otherwise valid portfolio.
+            # Truly unknown ids remain untouched and therefore still fail closed
+            # in ProjectCompletionContractV1.
+            normalized_row["covers_obligation_ids"] = [
+                obligation_id
+                for obligation_id in row["covers_obligation_ids"]
+                if str(obligation_id) not in dropped_unexecutable_entrypoint_ids
+            ]
+            normalized_verification_rows.append(normalized_row)
         used_verification_ids = {str(row["obligation_id"]) for row in normalized_verification_rows}
         required_test_seed_rows = [
             row for row in verification_rows if row["modality"] == "test" and row["applicability"] == "required"

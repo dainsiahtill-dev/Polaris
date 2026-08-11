@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 from pathlib import Path
@@ -6301,6 +6302,56 @@ class TestDirectorFailureClosure:
 
         assert result["success"] is False
         assert "kernel contract retry failed" in str(result.get("error") or "")
+
+    @pytest.mark.asyncio
+    async def test_role_dialogue_watchdog_preserves_task_execution_budget_for_receipt_settlement(
+        self,
+        tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The outer watchdog must not cancel a live canonical transaction.
+
+        Regression for L1-01 r42: the Director turn committed a write receipt while
+        the adapter watchdog was expiring, but the watchdog discarded the runtime
+        result and Factory settled the task failed.  The provider keeps the narrow
+        call budget; the outer watchdog must preserve the enclosing TaskRuntime
+        execution budget so DEO/tool receipts can finish projecting.
+        """
+
+        from polaris.cells.roles.adapters.internal.director import adapter as adapter_module
+
+        adapter = _make_adapter(tmp_path)
+        monkeypatch.setattr(adapter_module, "_ROLE_DIALOGUE_SETTLEMENT_GRACE_SECONDS", 0.01)
+
+        async def _commit_before_task_execution_deadline(
+            message: str,
+            context: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            del message, context
+            await asyncio.sleep(0.15)
+            return {
+                "content": "done",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool_name": "edit_file",
+                        "status": "success",
+                        "effect_receipt": {"receipt_outcome": "succeeded"},
+                    }
+                ],
+            }
+
+        adapter._invoke_role_dialogue = _commit_before_task_execution_deadline  # type: ignore[method-assign]
+
+        result = await adapter._invoke_role_dialogue_with_timeout(
+            "repair the failed verifier",
+            context={"request_timeout_seconds": 0.5},
+            timeout_seconds=0.1,
+            stage_label="quality_repair",
+        )
+
+        assert result["success"] is True
+        assert result["tool_results"][0]["effect_receipt"]["receipt_outcome"] == "succeeded"
 
     @pytest.mark.asyncio
     async def test_primary_write_call_projects_bounded_output_budget_to_runtime(self, tmp_path: Any) -> None:

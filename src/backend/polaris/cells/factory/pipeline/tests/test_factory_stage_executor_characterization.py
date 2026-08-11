@@ -6382,6 +6382,8 @@ class TestQualityGateDeadlineHandling:
             Path(resolve_logical_path(tmp_path, "runtime/qa/report.json")).read_text(encoding="utf-8")
         )
         assert report["verdict"] == "PASS"
+        assert report["qa_invoked"] is False
+        assert report["llm_invoked"] is False
 
     @pytest.mark.asyncio
     async def test_quality_gate_workspace_validation_failure_skips_advisory_qa_judgement(
@@ -8253,7 +8255,13 @@ class TestRunWorkspaceQualityChecks:
 
         _, summary = await executor._apply_workspace_quality_llm_repairs(
             run_id="factory-context",
-            context={},
+            context={
+                "factory_run_deadline_epoch_seconds": 4_102_444_800.0,
+                "factory_run_deadline_source": "unit_test",
+                "factory_run_timeout_seconds": 5400,
+                "factory_director_execution_deadline_epoch_seconds": 4_102_444_700.0,
+                "request_timeout_seconds": 600,
+            },
             artifact_quality_errors=["npm run build failed"],
             repair_attempt=1,
         )
@@ -8263,6 +8271,11 @@ class TestRunWorkspaceQualityChecks:
         assert repair_context["language"] == "javascript"
         assert repair_context["programming_language"] == "javascript"
         assert repair_context["project_type"] == "collaboration_toy"
+        assert repair_context["factory_run_deadline_epoch_seconds"] == 4_102_444_800.0
+        assert repair_context["factory_run_deadline_source"] == "unit_test"
+        assert repair_context["factory_run_timeout_seconds"] == 5400
+        assert repair_context["factory_director_execution_deadline_epoch_seconds"] == 4_102_444_700.0
+        assert repair_context["request_timeout_seconds"] == 600
         assert repair_context["ce_blueprint"]["artifact"] == "runtime/state/blueprints/factory-context.review.json"
         assert "Chief Engineer blueprint" in repair_context["chief_engineer_blueprint_evidence"]
         # The QA retry must preserve the original TaskRuntime owner contract.
