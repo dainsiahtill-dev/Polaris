@@ -34,7 +34,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 from polaris.cells.control_plane.run_ledger.public import (
-    FailureClassV1,
     ReadRunLedgerProjectionQueryV1,
     read_run_ledger_projection,
 )
@@ -234,6 +233,8 @@ def _make_executor(
     tool_runtime: Any | None = None,
     config: TransactionConfig | None = None,
     guard_calls: list[dict[str, Any]] | None = None,
+    capability_token: dict[str, Any] | None = None,
+    execution_envelope_hash: str = "",
 ) -> ToolBatchExecutor:
     def _emit(event: Any) -> None:
         if captured_events is not None:
@@ -250,6 +251,8 @@ def _make_executor(
         guard_assert_single_tool_batch=_guard,
         finalization_handler=AsyncMock(),
         handoff_handler=AsyncMock(),
+        capability_token=capability_token,
+        execution_envelope_hash=execution_envelope_hash,
     )
 
 
@@ -488,6 +491,70 @@ async def test_token_scoped_legacy_effect_receipt_is_observed_but_not_authoritat
 
 
 @pytest.mark.asyncio
+async def test_request_bound_job_token_records_gate_when_response_metadata_omits_authority(tmp_path) -> None:
+    """A real write must settle under immutable request authority, not model metadata."""
+    job_token = {
+        "source": "control_plane.job_token",
+        "token_id": "jt-request-bound",
+        "run_id": "factory-run",
+        "factory_run_id": "factory-run",
+        "project_id": "L1-01",
+        "stage": "director_mutation",
+        "contract_hash": "contract-request-bound",
+        "blueprint_hash": "blueprint-request-bound",
+        "execution_envelope_hash": "f" * 64,
+        "capability_audit": {"ok": True, "issues": []},
+        "allowed_write_paths": ["src/app.py"],
+    }
+    executor = _make_executor(
+        config=TransactionConfig(role_id="director", mutation_guard_mode="warn"),
+        capability_token=job_token,
+        execution_envelope_hash="f" * 64,
+    )
+    turn_id = "turn_request_bound_authority"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [
+            {
+                "call_id": "w",
+                "tool_name": "write_file",
+                "arguments": {"file": "src/app.py", "content": "value = 1\n"},
+                "execution_mode": "write_serial",
+                "effect_type": "write",
+            }
+        ],
+    )
+    decision["metadata"].update(
+        {
+            "workspace": str(tmp_path),
+            "run_id": "director-run",
+            "task_id": "TASK-1",
+        }
+    )
+
+    await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        TurnLedger(turn_id=turn_id),
+        [{"role": "user", "content": "write src/app.py"}],
+        stream=False,
+    )
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="factory-run")
+    ).projection
+    events = RunLedger(tmp_path, run_id="factory-run").read_events()
+    gate_event = next(event for event in events if event.get("event_type") == "gate_evaluated")
+
+    assert projection["projects"][0]["latest_token_id"] == "jt-request-bound"
+    assert gate_event["job_token"]["run_id"] == "factory-run"
+    assert gate_event["job_token"]["factory_run_id"] == "factory-run"
+    assert gate_event["job_token"]["project_id"] == "L1-01"
+    assert gate_event["physical_evidence"]["execution_envelope_hash"] == "f" * 64
+
+
+@pytest.mark.asyncio
 async def test_token_scoped_failed_tool_batch_appends_failed_run_ledger_event(tmp_path) -> None:
     """A JobToken-scoped failed batch must fail the platform Run Ledger projection."""
     job_token = {
@@ -547,12 +614,17 @@ async def test_token_scoped_failed_tool_batch_appends_failed_run_ledger_event(tm
         ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-tool-failure")
     ).projection
 
-    assert projection["ok"] is False
-    assert projection["failed"] == 1
+    # Ordinary Director tool failure is recoverable: preserve integrity while
+    # exposing the failed outcome for same-task repair instead of poisoning the
+    # whole project/control-plane projection.
+    assert projection["ok"] is True
+    assert projection["failed"] == 0
     assert projection["projects"][0]["latest_token_id"] == "jt-tool-failure"
     assert projection["projects"][0]["gate_count"] == 1
-    assert FailureClassV1.TOOL_RESULT_FAILED.value in projection["projects"][0]["failed_control_plane_events"]
-    assert "tool lifecycle failed" in projection["projects"][0]["detail"]
+    assert projection["projects"][0]["outcome_ok"] is False
+    assert projection["projects"][0]["tool_lifecycle"]["failed_count"] == 1
+    assert projection["run_projection"]["ok"] is False
+    assert "recoverable" in projection["projects"][0]["detail"]
     events = RunLedger(tmp_path, run_id="run-tool-failure").read_events()
     gate_event = next(event for event in events if event.get("event_type") == "gate_evaluated")
     assert gate_event["gate"]["ok"] is False

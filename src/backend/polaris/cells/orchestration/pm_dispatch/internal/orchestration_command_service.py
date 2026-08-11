@@ -110,7 +110,7 @@ def _task_id_from_payload(payload: dict[str, Any]) -> str:
 def _validated_chief_engineer_handoff(
     workspace: str,
     payload: dict[str, Any],
-) -> tuple[bool, str, dict[str, Any], dict[str, Any]]:
+) -> tuple[bool, str, dict[str, Any], dict[str, Any], dict[str, Any]]:
     validation = validate_director_handoff_from_payload(workspace, payload, require_strict=True)
     decision_payload_raw = validation.get("decision_payload")
     decision_payload: dict[str, Any] = decision_payload_raw if isinstance(decision_payload_raw, dict) else {}
@@ -118,11 +118,21 @@ def _validated_chief_engineer_handoff(
     task_completion_projection = (
         dict(task_completion_projection_raw) if isinstance(task_completion_projection_raw, dict) else {}
     )
+    job_token_raw = validation.get("job_token")
+    capability_token_raw = validation.get("capability_token")
+    job_token = dict(job_token_raw) if isinstance(job_token_raw, dict) else {}
+    capability_token = dict(capability_token_raw) if isinstance(capability_token_raw, dict) else {}
+    allowed = bool(validation.get("allowed"))
+    reason = str(validation.get("reason") or "")
+    if allowed and (not job_token or capability_token != job_token):
+        allowed = False
+        reason = "strict Chief Engineer handoff lacks one exact validated JobToken"
     return (
-        bool(validation.get("allowed")),
-        str(validation.get("reason") or ""),
+        allowed,
+        reason,
         decision_payload,
         task_completion_projection,
+        job_token,
     )
 
 
@@ -188,7 +198,7 @@ def _attach_chief_engineer_handoff_from_workspace(workspace: str, payload: dict[
     candidate_metadata.setdefault("blueprint_id", candidate_id)
     candidate_metadata.setdefault("chief_engineer_blueprint_id", candidate_id)
     candidate_payload["metadata"] = candidate_metadata
-    allowed, reason, decision_payload, _task_completion_projection = _validated_chief_engineer_handoff(
+    allowed, reason, decision_payload, _task_completion_projection, job_token = _validated_chief_engineer_handoff(
         workspace,
         candidate_payload,
     )
@@ -212,6 +222,9 @@ def _attach_chief_engineer_handoff_from_workspace(workspace: str, payload: dict[
     metadata.setdefault("handoff_ready", True)
     metadata.setdefault("handoff_source", "chief_engineer_blueprint_file")
     metadata.setdefault("handoff_decision", decision_payload)
+    metadata.setdefault("job_token", job_token)
+    metadata.setdefault("control_plane_job_token", job_token)
+    metadata.setdefault("capability_token", job_token)
     updated["metadata"] = metadata
     return updated
 
@@ -750,7 +763,7 @@ class OrchestrationCommandService:
                 for task_payload in selected_task_payloads:
                     handoff_payload = dict(task_payload)
                     handoff_payload.update(metadata_overrides)
-                    allowed, reason, _decision_payload, task_completion_projection = (
+                    allowed, reason, _decision_payload, task_completion_projection, job_token = (
                         _validated_chief_engineer_handoff(workspace, handoff_payload)
                     )
                     if not allowed:
@@ -758,6 +771,9 @@ class OrchestrationCommandService:
                         invalid_handoff_reasons.append(f"{task_label}: {reason}")
                     elif task_completion_projection:
                         task_payload["task_completion_projection"] = task_completion_projection
+                        task_payload["job_token"] = job_token
+                        task_payload["control_plane_job_token"] = job_token
+                        task_payload["capability_token"] = job_token
                 if invalid_handoff_reasons:
                     return CommandResult(
                         run_id=run_id,
@@ -790,9 +806,11 @@ class OrchestrationCommandService:
                         )
                     )
             else:
-                allowed, reason, _decision_payload, task_completion_projection = _validated_chief_engineer_handoff(
-                    workspace,
-                    metadata_overrides,
+                allowed, reason, _decision_payload, task_completion_projection, job_token = (
+                    _validated_chief_engineer_handoff(
+                        workspace,
+                        metadata_overrides,
+                    )
                 )
                 if not allowed:
                     return CommandResult(
@@ -807,6 +825,9 @@ class OrchestrationCommandService:
                     metadata_overrides = {
                         **metadata_overrides,
                         "task_completion_projection": task_completion_projection,
+                        "job_token": job_token,
+                        "control_plane_job_token": job_token,
+                        "capability_token": job_token,
                     }
                 # Build role entries
                 input_text = director_options.task_filter or "Execute ready tasks"

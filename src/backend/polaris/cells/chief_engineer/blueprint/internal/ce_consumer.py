@@ -215,8 +215,12 @@ def _control_plane_job_token(
     language: str,
 ) -> dict[str, Any]:
     run_id = str(payload.get("run_id") or "").strip()
+    completion_contract = _mapping(payload.get("project_completion_contract"))
+    if not completion_contract:
+        completion_contract = _mapping(_mapping(payload.get("context")).get("project_completion_contract"))
     project_id = (
         str(payload.get("project_id") or payload.get("plan_id") or "").strip()
+        or str(completion_contract.get("project_id") or "").strip()
         or str(payload.get("root_task_id") or "").strip()
         or task_id
     )

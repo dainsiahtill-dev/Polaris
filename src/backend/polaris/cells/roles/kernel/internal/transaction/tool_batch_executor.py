@@ -1235,6 +1235,7 @@ def _job_token_from_capability_token(token: dict[str, Any], *, run_id: str, stag
         "source": str(token.get("source") or "control_plane.job_token"),
         "token_id": str(token.get("token_id") or ""),
         "run_id": str(token.get("run_id") or run_id),
+        "factory_run_id": str(token.get("factory_run_id") or token.get("run_id") or run_id),
         "project_id": str(token.get("project_id") or ""),
         "stage": str(token.get("stage") or stage or "tool_batch"),
         "contract_hash": str(token.get("contract_hash") or ""),
@@ -1283,6 +1284,7 @@ def _normalize_capability_token(value: dict[str, Any]) -> dict[str, Any]:
         "source": str(value.get("source") or "control_plane.job_token"),
         "token_id": token_id,
         "run_id": str(value.get("run_id") or ""),
+        "factory_run_id": str(value.get("factory_run_id") or value.get("run_id") or ""),
         "project_id": str(value.get("project_id") or ""),
         "stage": str(value.get("stage") or ""),
         "contract_hash": str(value.get("contract_hash") or ""),
@@ -1330,16 +1332,18 @@ def _append_tool_batch_receipts_to_run_ledger(
     decoded_count = len(invocations or [])
     merged_receipt = _merge_batch_receipts(receipts)
     effect_receipts = _effect_receipts_from_batch_receipts(receipts) if merged_receipt else []
-    token = next(
-        (
-            candidate
-            for receipt in effect_receipts
-            if (candidate := _capability_token_from_effect_receipt(receipt)).get("token_id")
-        ),
-        {},
-    )
+    # Request-bound authority is immutable. Effect receipts may project it for
+    # audit, but must never override the JobToken committed before the LLM call.
+    token = _normalize_capability_token(capability_token or {})
     if not token:
-        token = _normalize_capability_token(capability_token or {})
+        token = next(
+            (
+                candidate
+                for receipt in effect_receipts
+                if (candidate := _capability_token_from_effect_receipt(receipt)).get("token_id")
+            ),
+            {},
+        )
     envelope_hash = str(execution_envelope_hash or token.get("execution_envelope_hash") or "").strip()
     if envelope_hash and token and not token.get("execution_envelope_hash"):
         token["execution_envelope_hash"] = envelope_hash
@@ -1449,6 +1453,8 @@ class ToolBatchExecutor:
         directed_effect_required: bool = False,
         directed_effect_execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
         directed_effect_execution_attempt_authority: TaskRuntimeExecutionAttemptAuthorityV1 | None = None,
+        capability_token: Mapping[str, Any] | None = None,
+        execution_envelope_hash: str = "",
     ) -> None:
         self.tool_runtime = tool_runtime
         self.config = config
@@ -1489,6 +1495,10 @@ class ToolBatchExecutor:
         self.directed_effect_required = bool(directed_effect_required)
         self.directed_effect_execution_attempt = directed_effect_execution_attempt
         self.directed_effect_execution_attempt_authority = directed_effect_execution_attempt_authority
+        self._capability_token = _normalize_capability_token(_mapping_value(capability_token))
+        self._execution_envelope_hash = str(
+            execution_envelope_hash or self._capability_token.get("execution_envelope_hash") or ""
+        ).strip()
         deferred_request_fence = DeferredRequestReplayFence()
         self._deferred_repair_synthesizer = DeferredRepairEffectSynthesizer(_replay_fence=deferred_request_fence)
         self._deferred_command_synthesizer = DeferredCommandEffectSynthesizer(_replay_fence=deferred_request_fence)
@@ -2885,8 +2895,10 @@ class ToolBatchExecutor:
                 turn_id=turn_id,
                 invocations=invocations,
                 receipts=[],
-                capability_token=_capability_token_from_metadata(metadata),
-                execution_envelope_hash=_execution_envelope_hash_from_metadata(metadata),
+                capability_token=self._capability_token or _capability_token_from_metadata(metadata),
+                execution_envelope_hash=(
+                    self._execution_envelope_hash or _execution_envelope_hash_from_metadata(metadata)
+                ),
                 provider_response_hash=str(metadata.get("provider_response_hash") or ""),
                 metadata=metadata,
             )
@@ -2919,8 +2931,8 @@ class ToolBatchExecutor:
             turn_id=turn_id,
             invocations=invocations,
             receipts=receipts_as_dicts,
-            capability_token=_capability_token_from_metadata(metadata),
-            execution_envelope_hash=_execution_envelope_hash_from_metadata(metadata),
+            capability_token=self._capability_token or _capability_token_from_metadata(metadata),
+            execution_envelope_hash=self._execution_envelope_hash or _execution_envelope_hash_from_metadata(metadata),
             provider_response_hash=str(metadata.get("provider_response_hash") or ""),
             metadata=metadata,
         )

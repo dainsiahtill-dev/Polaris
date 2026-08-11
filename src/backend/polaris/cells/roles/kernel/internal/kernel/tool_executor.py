@@ -45,6 +45,8 @@ _READ_ONLY_SCOPE_KEYS: tuple[str, ...] = (
 )
 
 _SCOPE_CONTAINER_KEYS: tuple[str, ...] = (
+    "metadata",
+    "task_metadata",
     "job_token",
     "control_plane_job_token",
     "capability_token",
@@ -59,6 +61,7 @@ _SCOPE_CONTAINER_KEYS: tuple[str, ...] = (
 
 _NO_AUTHORIZED_SCOPE_SENTINEL = "__polaris_no_authorized_paths__"
 _CAPABILITY_TOKEN_KEYS: tuple[str, ...] = ("job_token", "control_plane_job_token", "capability_token")
+_CAPABILITY_TOKEN_CONTAINER_KEYS: tuple[str, ...] = ("metadata", "task_metadata")
 _DIRECT_COMMAND_KEYS: tuple[str, ...] = ("allowed_commands", "authorized_commands", "commands")
 
 
@@ -187,17 +190,44 @@ def derive_role_turn_capability_scope(request: RoleTurnRequest) -> tuple[str, ..
     return tuple(normalized or (_NO_AUTHORIZED_SCOPE_SENTINEL,))
 
 
-def _first_capability_token_mapping(mapping: dict[str, Any]) -> dict[str, Any]:
+def _explicit_capability_token_mapping(mapping: dict[str, Any]) -> dict[str, Any]:
     for key in _CAPABILITY_TOKEN_KEYS:
         token = _mapping_from_value(mapping.get(key))
         if token is not None:
             return token
-    envelope_token = _execution_envelope_capability_token(mapping)
-    if envelope_token:
-        return envelope_token
     if any(str(mapping.get(key) or "").strip() for key in ("token_id", "contract_hash", "blueprint_hash")):
         return dict(mapping)
     return {}
+
+
+def _first_capability_token_mapping(mapping: dict[str, Any]) -> dict[str, Any]:
+    explicit_token = _explicit_capability_token_mapping(mapping)
+    if explicit_token:
+        return explicit_token
+    return _execution_envelope_capability_token(mapping)
+
+
+def _capability_authority_mappings(request: RoleTurnRequest) -> list[dict[str, Any]]:
+    """Return trusted turn containers, including TaskRuntime metadata wrappers.
+
+    Factory dispatch intentionally keeps the full committed JobToken inside
+    task metadata while projecting only a compact execution envelope at the
+    turn root.  Search the explicit metadata wrappers before falling back to
+    that lossy envelope projection.
+    """
+
+    roots: list[dict[str, Any]] = []
+    for container in (getattr(request, "metadata", None), getattr(request, "context_override", None)):
+        mapping = _mapping_from_value(container)
+        if mapping is not None:
+            roots.append(mapping)
+    nested: list[dict[str, Any]] = []
+    for mapping in roots:
+        for key in _CAPABILITY_TOKEN_CONTAINER_KEYS:
+            candidate = _mapping_from_value(mapping.get(key))
+            if candidate is not None:
+                nested.append(candidate)
+    return [*roots, *nested]
 
 
 def _hash_ref_value(value: Any) -> str:
@@ -275,17 +305,24 @@ def derive_role_turn_capability_token(
 ) -> dict[str, Any]:
     """Derive immutable Job Token evidence for tool receipts."""
 
-    for container in (getattr(request, "metadata", None), getattr(request, "context_override", None)):
-        mapping = _mapping_from_value(container)
-        if mapping is None:
-            continue
-        token = _first_capability_token_mapping(mapping)
+    authority_mappings = _capability_authority_mappings(request)
+    # A committed JobToken is authoritative.  The execution envelope contains
+    # only a capability reference and must never shadow the full token merely
+    # because it happens to live at a shallower context level.
+    for mapping in authority_mappings:
+        token = _explicit_capability_token_mapping(mapping)
         evidence = _job_token_evidence(token, capability_scope)
         if evidence:
             if not evidence.get("execution_envelope_hash"):
-                envelope_hash = str(mapping.get("execution_envelope_hash") or "").strip()
-                if envelope_hash:
-                    evidence["execution_envelope_hash"] = envelope_hash
+                for envelope_mapping in authority_mappings:
+                    envelope_hash = str(envelope_mapping.get("execution_envelope_hash") or "").strip()
+                    if envelope_hash:
+                        evidence["execution_envelope_hash"] = envelope_hash
+                        break
+            return evidence
+    for mapping in authority_mappings:
+        evidence = _job_token_evidence(_execution_envelope_capability_token(mapping), capability_scope)
+        if evidence:
             return evidence
     return {}
 

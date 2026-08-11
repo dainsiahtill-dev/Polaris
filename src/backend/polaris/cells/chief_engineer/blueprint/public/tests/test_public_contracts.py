@@ -1336,6 +1336,7 @@ class TestChiefEngineerBlueprintPortfolio:
         job_token = persisted["job_token"]
         assert job_token["token_id"].startswith("job-")
         assert job_token["run_id"] == "run-projection"
+        assert job_token["project_id"] == portfolio.project_completion_contract.project_id
         assert job_token["stage"] == "pending_exec"
         assert job_token["target_files"] == ["src/interface_projection.py", "tests/test_interface_projection.py"]
         assert job_token["allowed_write_paths"] == [
@@ -1351,7 +1352,9 @@ class TestChiefEngineerBlueprintPortfolio:
             {"task_id": task.task_id, "blueprint_id": result.blueprint_id},
             require_strict=True,
         )
-        assert handoff["allowed"] is True
+        assert handoff["allowed"] is True, handoff["reason"]
+        assert handoff["job_token"] == job_token
+        assert handoff["capability_token"] == job_token
         projection = handoff["task_completion_projection"]
         assert projection["schema_version"] == "polaris.task_completion_projection.v1"
         assert projection["task_id"] == task.task_id

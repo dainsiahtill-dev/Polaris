@@ -568,6 +568,42 @@ class TestTransactionKernelPrebuiltContextPassThrough:
         assert tk.config.domain == "code"
         assert tk.config.mutation_guard_mode == "warn"
 
+    def test_create_transaction_kernel_binds_nested_factory_job_token_to_tool_batch_ledger(self) -> None:
+        """Tool-batch receipts must use request authority, never LLM response metadata."""
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        profile = _MockProfile(role_id="director")
+        request = _MockRequest(
+            message="materialize the target project",
+            task_id="TASK-1",
+            run_id="director-run",
+            workspace=".",
+            context_override={
+                "execution_envelope_hash": "e" * 64,
+                "metadata": {
+                    "job_token": {
+                        "source": "control_plane.job_token",
+                        "token_id": "job-factory-1",
+                        "run_id": "factory-run",
+                        "factory_run_id": "factory-run",
+                        "project_id": "L1-01",
+                        "stage": "chief_engineer",
+                        "contract_hash": "contract-hash",
+                        "blueprint_hash": "blueprint-hash",
+                        "allowed_write_paths": ["src/main.ts"],
+                        "capability_audit": {"ok": True, "issues": []},
+                    }
+                },
+            },
+        )
+
+        tk = create_transaction_kernel(kernel, "director", profile, request)
+
+        assert tk._tool_batch_executor._capability_token["token_id"] == "job-factory-1"
+        assert tk._tool_batch_executor._capability_token["run_id"] == "factory-run"
+        assert tk._tool_batch_executor._capability_token["factory_run_id"] == "factory-run"
+        assert tk._tool_batch_executor._capability_token["project_id"] == "L1-01"
+        assert tk._tool_batch_executor._execution_envelope_hash == "e" * 64
+
     @pytest.mark.asyncio
     async def test_provider_preserves_explicit_empty_forced_tools_override(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")

@@ -11,6 +11,7 @@ from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_serv
     OrchestrationCommandService,
     _canonical_factory_stage_sequence,
     _select_pm_task_payloads,
+    _validated_chief_engineer_handoff,
 )
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts import (
     OrchestrationSnapshot,
@@ -66,6 +67,17 @@ def _allow_strict_handoff_for_orchestration_boundary(monkeypatch: pytest.MonkeyP
             or ""
         ).strip()
         allowed = bool(blueprint_id)
+        job_token = {
+            "schema_version": 1,
+            "token_id": f"job-{task_id or 'unknown'}",
+            "run_id": "run-test",
+            "factory_run_id": "run-test",
+            "project_id": "project-test",
+            "stage": "pending_exec",
+            "contract_hash": "a" * 64,
+            "blueprint_hash": "b" * 64,
+            "capability_audit": {"ok": True, "issues": []},
+        }
         return {
             "allowed": allowed,
             "reason": "handoff_ready" if allowed else "chief_engineer_blueprint_missing",
@@ -81,6 +93,8 @@ def _allow_strict_handoff_for_orchestration_boundary(monkeypatch: pytest.MonkeyP
                 "owned_entrypoints": [],
                 "owned_verification": [],
             },
+            "job_token": job_token,
+            "capability_token": job_token,
             "require_strict": require_strict,
         }
 
@@ -319,6 +333,34 @@ def test_factory_stage_sequence_forces_unique_full_chain() -> None:
     ]
 
 
+def test_strict_handoff_rejects_completion_projection_without_job_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service."
+        "validate_director_handoff_from_payload",
+        lambda _workspace, _payload, require_strict: {
+            "allowed": True,
+            "reason": "handoff_ready",
+            "decision_payload": {"allowed": True},
+            "task_completion_projection": {
+                "schema_version": "polaris.task_completion_projection.v1",
+                "task_id": "TASK-1",
+            },
+            "require_strict": require_strict,
+        },
+    )
+
+    allowed, reason, _decision, _completion, token = _validated_chief_engineer_handoff(
+        "/workspace",
+        {"task_id": "TASK-1", "blueprint_id": "ce_TASK-1"},
+    )
+
+    assert allowed is False
+    assert reason == "strict Chief Engineer handoff lacks one exact validated JobToken"
+    assert token == {}
+
+
 def test_select_pm_task_payloads_discovers_chief_engineer_blueprint_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -551,6 +593,17 @@ async def test_execute_director_run_materializes_pm_task_payloads(
         "owned_entrypoints": [],
         "owned_verification": [],
     }
+    job_token = {
+        "schema_version": 1,
+        "token_id": "job-task-t01-001",
+        "run_id": "run-test",
+        "factory_run_id": "run-test",
+        "project_id": "project-test",
+        "stage": "pending_exec",
+        "contract_hash": "a" * 64,
+        "blueprint_hash": "b" * 64,
+        "capability_audit": {"ok": True, "issues": []},
+    }
     monkeypatch.setattr(
         "polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service."
         "validate_director_handoff_from_payload",
@@ -559,6 +612,8 @@ async def test_execute_director_run_materializes_pm_task_payloads(
             "reason": "handoff_ready",
             "decision_payload": {"allowed": True},
             "task_completion_projection": task_completion_projection,
+            "job_token": job_token,
+            "capability_token": job_token,
             "require_strict": require_strict,
         },
     )
@@ -583,4 +638,6 @@ async def test_execute_director_run_materializes_pm_task_payloads(
     assert role_entry.metadata["scope_paths"] == ["src/config"]
     projected_completion = role_entry.metadata["task_completion_projection"]
     assert projected_completion == task_completion_projection
+    assert role_entry.metadata["job_token"] == job_token
+    assert role_entry.metadata["capability_token"] == job_token
     assert stub.request.metadata["pm_task_payloads"][0]["id"] == "T01-001"

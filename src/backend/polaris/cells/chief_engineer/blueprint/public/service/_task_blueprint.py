@@ -266,6 +266,7 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     blueprint_hash = _blueprint_hash(payload)
     payload["blueprint_hash"] = blueprint_hash
     if bool(payload.get("handoff_ready")):
+        completion_contract = _mapping(blueprint_portfolio_projection.get("project_completion_contract"))
         job_token = _control_plane_job_token(
             workspace=command.workspace,
             task_id=command.task_id,
@@ -274,7 +275,10 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
                 "run_id": command.run_id,
                 "factory_run_id": str(context.get("factory_run_id") or command.run_id).strip(),
                 "project_id": str(
-                    context.get("project_id") or context.get("factory_bench_project_id") or command.task_id
+                    completion_contract.get("project_id")
+                    or context.get("project_id")
+                    or context.get("factory_bench_project_id")
+                    or command.task_id
                 ).strip(),
             },
             blueprint_id=blueprint_id,

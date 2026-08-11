@@ -36,6 +36,8 @@ class TransactionKernel(TurnTransactionController):
         directed_effect_required: bool = False,
         directed_effect_execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
         directed_effect_execution_attempt_authority: TaskRuntimeExecutionAttemptAuthorityV1 | None = None,
+        capability_token: dict[str, Any] | None = None,
+        execution_envelope_hash: str = "",
     ) -> None:
         super().__init__(
             llm_provider=llm_provider,
@@ -47,6 +49,8 @@ class TransactionKernel(TurnTransactionController):
             directed_effect_required=directed_effect_required,
             directed_effect_execution_attempt=directed_effect_execution_attempt,
             directed_effect_execution_attempt_authority=directed_effect_execution_attempt_authority,
+            capability_token=capability_token,
+            execution_envelope_hash=execution_envelope_hash,
         )
 
     async def execute(

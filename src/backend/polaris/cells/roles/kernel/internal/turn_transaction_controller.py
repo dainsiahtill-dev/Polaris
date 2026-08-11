@@ -234,6 +234,8 @@ class TurnTransactionController:
         directed_effect_required: bool = False,
         directed_effect_execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
         directed_effect_execution_attempt_authority: TaskRuntimeExecutionAttemptAuthorityV1 | None = None,
+        capability_token: Mapping[str, Any] | None = None,
+        execution_envelope_hash: str = "",
     ) -> None:
         self._llm_provider = llm_provider
         self.tool_runtime = tool_runtime
@@ -307,6 +309,8 @@ class TurnTransactionController:
             directed_effect_required=self.directed_effect_required,
             directed_effect_execution_attempt=self.directed_effect_execution_attempt,
             directed_effect_execution_attempt_authority=self.directed_effect_execution_attempt_authority,
+            capability_token=capability_token,
+            execution_envelope_hash=execution_envelope_hash,
         )
 
         # RetryOrchestrator 使用动态代理，确保 monkeypatch 能穿透到子模块

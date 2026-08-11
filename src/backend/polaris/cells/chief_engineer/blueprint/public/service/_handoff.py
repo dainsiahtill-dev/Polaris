@@ -251,6 +251,7 @@ def _handoff_validation_result(
     base_handoff_decision: HandoffDecisionV1 | None = None,
     strict_decision: CeHandoffDecisionV1 | None = None,
     task_completion_projection: Mapping[str, Any] | None = None,
+    job_token: Mapping[str, Any] | None = None,
     require_strict: bool = False,
 ) -> dict[str, Any]:
     base_payload = base_handoff_decision.to_dict() if base_handoff_decision is not None else {}
@@ -270,6 +271,13 @@ def _handoff_validation_result(
         "task_completion_projection": (
             dict(task_completion_projection) if isinstance(task_completion_projection, Mapping) else {}
         ),
+        # The validated CE capability must travel with the task-local
+        # completion projection.  Director tool receipts commit this token to
+        # the factory Run Ledger before ProjectArtifactReceipt authority can
+        # be resolved; omitting it creates physical files under a token-less
+        # Director run and leaves the project completion ledger empty.
+        "job_token": dict(job_token) if isinstance(job_token, Mapping) else {},
+        "capability_token": dict(job_token) if isinstance(job_token, Mapping) else {},
     }
 
 
@@ -353,6 +361,59 @@ def _project_task_completion_contract(
     return {**seed, "projection_hash": stable_hash(seed)}
 
 
+def _project_validated_job_token(
+    blueprint: Mapping[str, Any],
+    *,
+    task_completion_projection: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return the exact CE JobToken after binding it to blueprint authority."""
+
+    raw_job_token = blueprint.get("job_token")
+    raw_capability_token = blueprint.get("capability_token")
+    if not isinstance(raw_job_token, Mapping) or not isinstance(raw_capability_token, Mapping):
+        raise ValueError("Chief Engineer blueprint JobToken authority is missing")
+    job_token = dict(raw_job_token)
+    if job_token != dict(raw_capability_token):
+        raise ValueError("Chief Engineer blueprint capability token differs from JobToken")
+
+    audit = job_token.get("capability_audit")
+    if not isinstance(audit, Mapping) or audit.get("ok") is not True or list(audit.get("issues") or []):
+        raise ValueError("Chief Engineer blueprint JobToken capability audit is not clean")
+
+    required = {
+        "token_id": str(job_token.get("token_id") or "").strip(),
+        "run_id": str(job_token.get("run_id") or "").strip(),
+        "factory_run_id": str(job_token.get("factory_run_id") or "").strip(),
+        "project_id": str(job_token.get("project_id") or "").strip(),
+        "contract_hash": str(job_token.get("contract_hash") or "").strip(),
+        "blueprint_hash": str(job_token.get("blueprint_hash") or "").strip(),
+    }
+    if any(not value for value in required.values()):
+        raise ValueError("Chief Engineer blueprint JobToken identity is incomplete")
+    if required["run_id"] != str(task_completion_projection.get("run_id") or "").strip():
+        raise ValueError("Chief Engineer blueprint JobToken run differs from completion projection")
+    if required["factory_run_id"] != required["run_id"]:
+        raise ValueError("Chief Engineer blueprint JobToken factory run identity is inconsistent")
+    if required["project_id"] != str(task_completion_projection.get("project_id") or "").strip():
+        raise ValueError("Chief Engineer blueprint JobToken project differs from completion projection")
+    if required["contract_hash"] != str(blueprint.get("contract_hash") or "").strip():
+        raise ValueError("Chief Engineer blueprint JobToken contract binding is invalid")
+    if required["blueprint_hash"] != str(blueprint.get("blueprint_hash") or "").strip():
+        raise ValueError("Chief Engineer blueprint JobToken blueprint binding is invalid")
+
+    owned_paths = {
+        str(item.get("path") or "").strip()
+        for item in task_completion_projection.get("owned_artifacts") or []
+        if isinstance(item, Mapping) and str(item.get("path") or "").strip()
+    }
+    allowed_write_paths = {
+        str(item or "").strip() for item in job_token.get("allowed_write_paths") or [] if str(item or "").strip()
+    }
+    if not owned_paths.issubset(allowed_write_paths):
+        raise ValueError("Chief Engineer blueprint JobToken does not cover task-owned artifacts")
+    return job_token
+
+
 def validate_director_handoff_from_payload(
     workspace: str,
     payload: dict[str, Any],
@@ -408,11 +469,16 @@ def validate_director_handoff_from_payload(
         )
 
     task_completion_projection: dict[str, Any] = {}
+    job_token: dict[str, Any] = {}
     if require_strict:
         try:
             task_completion_projection = _project_task_completion_contract(
                 blueprint,
                 task_id=task_id or blueprint_task_id,
+            )
+            job_token = _project_validated_job_token(
+                blueprint,
+                task_completion_projection=task_completion_projection,
             )
         except (TypeError, ValueError) as exc:
             return _handoff_validation_result(
@@ -470,6 +536,7 @@ def validate_director_handoff_from_payload(
         base_handoff_decision=base_handoff_decision,
         strict_decision=strict_decision,
         task_completion_projection=task_completion_projection,
+        job_token=job_token,
         require_strict=require_strict,
     )
 

@@ -37,6 +37,10 @@ from polaris.cells.roles.kernel.internal.directed_effect_policy_guard import (
 )
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
 from polaris.cells.roles.kernel.internal.kernel.llm_invoker_provider import get_llm_invoker
+from polaris.cells.roles.kernel.internal.kernel.tool_executor import (
+    derive_role_turn_capability_scope,
+    derive_role_turn_capability_token,
+)
 from polaris.cells.roles.kernel.internal.kernel.tool_runtime_executor import (
     execute_single_tool,
     reset_cached_tool_gateway_turn_boundary,
@@ -614,6 +618,9 @@ def create_transaction_kernel(
     durable_workspace = (
         _resolve_durable_workspace(request, kernel) if durable_commit_required else str(request.workspace or "").strip()
     )
+    capability_scope = derive_role_turn_capability_scope(request)
+    capability_token = derive_role_turn_capability_token(request, capability_scope)
+    execution_envelope_hash = str(capability_token.get("execution_envelope_hash") or "").strip()
 
     return TransactionKernel(
         llm_provider=llm_provider,
@@ -635,4 +642,6 @@ def create_transaction_kernel(
         directed_effect_required=resolved_deo_required,
         directed_effect_execution_attempt=resolved_execution_attempt,
         directed_effect_execution_attempt_authority=resolved_execution_authority,
+        capability_token=capability_token,
+        execution_envelope_hash=execution_envelope_hash,
     )

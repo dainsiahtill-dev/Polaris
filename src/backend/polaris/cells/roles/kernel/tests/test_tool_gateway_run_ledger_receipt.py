@@ -278,3 +278,48 @@ class TestRoleTurnCapabilityToken:
         assert capability_token["blueprint_hash"] == "blueprint-hash"
         assert capability_token["execution_envelope_hash"] == "env-hash"
         assert capability_token["allowed_commands"] == ["python --version"]
+
+    def test_prefers_committed_job_token_nested_in_task_metadata_over_envelope_projection(self) -> None:
+        """Factory TaskRuntime wraps CE authority under context metadata.
+
+        The execution envelope is useful scope evidence, but its compact
+        projection must not shadow the committed JobToken that owns the
+        Factory run and project receipt ledger.
+        """
+        request = RoleTurnRequest(
+            message="materialize the task",
+            context_override={
+                "director_execution_envelope": {
+                    "schema_version": "polaris.execution_envelope.v1",
+                    "run_id": "director-run",
+                    "workspace": "/workspace",
+                    "envelope_hash": "e" * 64,
+                    "authorization": {
+                        "capability_token_ref": "job-factory-1",
+                        "allowed_write_paths": ["src/main.ts"],
+                    },
+                },
+                "metadata": {
+                    "job_token": {
+                        "source": "control_plane.job_token",
+                        "token_id": "job-factory-1",
+                        "run_id": "factory-run",
+                        "project_id": "L1-01",
+                        "stage": "chief_engineer",
+                        "contract_hash": "contract-hash",
+                        "blueprint_hash": "blueprint-hash",
+                        "allowed_write_paths": ["src/main.ts"],
+                        "capability_audit": {"ok": True, "issues": []},
+                    },
+                },
+            },
+        )
+
+        capability_scope = derive_role_turn_capability_scope(request)
+        capability_token = derive_role_turn_capability_token(request, capability_scope)
+
+        assert capability_scope == ("src/main.ts",)
+        assert capability_token["token_id"] == "job-factory-1"
+        assert capability_token["run_id"] == "factory-run"
+        assert capability_token["project_id"] == "L1-01"
+        assert capability_token["capability_audit_ok"] is True
