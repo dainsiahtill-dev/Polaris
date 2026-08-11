@@ -251,7 +251,7 @@ async def test_execute_pm_run_propagates_metadata_to_role_entry_and_request(
         },
     )
 
-    assert result.status == "pending"
+    assert result.status == "pending", result
     assert stub.request is not None
     assert stub.request.role_entries[0].metadata["execution_backend"] == "projection_generate"
     assert stub.request.metadata["execution_backend"] == "projection_generate"
