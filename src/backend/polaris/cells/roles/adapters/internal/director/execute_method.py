@@ -37,6 +37,10 @@ from polaris.cells.director.runtime.public.service import (
     AttachDirectorRepairRevalidationEvidenceV1,
     project_director_repair_revalidation_evidence,
 )
+from polaris.cells.runtime.execution_broker.public import (
+    RecordProjectArtifactCommandV1,
+    record_project_artifact,
+)
 from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeExecutionAttemptAuthorityV1,
     TaskRuntimeExecutionAttemptIdentityV1,
@@ -1043,6 +1047,50 @@ def _attach_dependency_artifact_receipt_evidence(
     return adapter_result
 
 
+def _canonical_task_owner_identity(value: Any) -> str:
+    """Normalize the TaskRuntime integer alias without weakening task ownership.
+
+    TaskRuntime stores the local row as an integer (``1``) while the PM/CE
+    contract keeps the external owner id (``TASK-1``).  They are the same
+    claimed task.  Only that exact numeric alias is normalized; named or
+    compound task ids remain exact, so ``TASK-2`` can never authorize row 1.
+    """
+
+    token = str(value or "").strip()
+    if not token:
+        return ""
+    match = re.fullmatch(r"(?i:task[-_])?0*(\d+)", token)
+    if match is not None:
+        return str(int(match.group(1)))
+    return token
+
+
+def _task_completion_projection_from_context(
+    context: Mapping[str, Any] | None,
+    *,
+    target_task_id: str,
+) -> dict[str, Any] | None:
+    """Return the strict CE task-local completion projection from role context."""
+
+    if not isinstance(context, Mapping):
+        return None
+    metadata = context.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return None
+    projection = metadata.get("task_completion_projection")
+    if projection is None:
+        return None
+    if not isinstance(projection, Mapping):
+        # Keep extraction side-effect free.  Validation happens inside
+        # ``_finalize_claimed_execution`` so malformed authority still settles
+        # the claimed lease as failed instead of raising during argument
+        # evaluation and leaving TaskRuntime in_progress forever.
+        return {
+            "_projection_validation_error": "task completion projection must be a mapping",
+        }
+    return dict(projection)
+
+
 def _finalize_claimed_execution(
     adapter: Any,
     *,
@@ -1052,12 +1100,14 @@ def _finalize_claimed_execution(
     result_summary: str = "",
     error: str = "",
     metadata: dict[str, Any] | None = None,
+    task_completion_projection: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Finalize a runtime task and surface terminal-state conflicts as data."""
 
-    del adapter, target_task_id
     if authority is None:
         return {"success": False, "reason": "missing_execution_attempt_authority"}
+    settlement_metadata = dict(metadata or {})
+    project_artifact_receipt_failure = ""
     try:
         if outcome == "completed":
             settlement_outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1 = "completed"
@@ -1067,11 +1117,36 @@ def _finalize_claimed_execution(
             summary = error or "director_execution_failed"
         else:
             return {"success": False, "reason": "invalid_outcome", "outcome": outcome}
+        if task_completion_projection is not None:
+            try:
+                project_artifact_receipts, missing_owned_artifacts = _record_project_artifacts_before_settlement(
+                    adapter,
+                    target_task_id=target_task_id,
+                    task_completion_projection=task_completion_projection,
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                # Receipt authority failure must fail closed without leaking the
+                # claimed TaskRuntime lease.  The failed settlement is still the
+                # canonical terminal fact; returning before ``settle`` leaves an
+                # in-progress task that can block the whole Director cascade.
+                project_artifact_receipt_failure = "project_artifact_receipt_failed"
+                settlement_metadata["project_artifact_receipt_error"] = str(exc)
+                settlement_outcome = "failed"
+                summary = project_artifact_receipt_failure
+            else:
+                if project_artifact_receipts:
+                    settlement_metadata["project_artifact_receipts"] = project_artifact_receipts
+                if missing_owned_artifacts:
+                    settlement_metadata["missing_owned_artifacts"] = missing_owned_artifacts
+                    if outcome == "completed":
+                        project_artifact_receipt_failure = "project_artifact_receipt_incomplete"
+                        settlement_outcome = "failed"
+                        summary = project_artifact_receipt_failure
         verdict = authority.settle(
             outcome=settlement_outcome,
             summary=summary,
             lock_timeout_seconds=5.0,
-            metadata=dict(metadata or {}),
+            metadata=settlement_metadata,
         )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         return {
@@ -1095,6 +1170,13 @@ def _finalize_claimed_execution(
         result["task_runtime_verdict"] = task_runtime_verdict
     if verdict.code == "settlement_callback_exception":
         result["reason"] = "task_runtime_terminal_transition_failed"
+    if project_artifact_receipt_failure:
+        return {
+            **result,
+            "success": False,
+            "reason": project_artifact_receipt_failure,
+            "outcome": outcome,
+        }
     if verdict.success is not True:
         return {
             **result,
@@ -1103,6 +1185,122 @@ def _finalize_claimed_execution(
             "outcome": outcome,
         }
     return result
+
+
+def _record_project_artifacts_before_settlement(
+    adapter: Any,
+    *,
+    target_task_id: str,
+    task_completion_projection: Mapping[str, Any],
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Record final CE-owned artifact bytes before TaskRuntime settlement."""
+
+    projection = dict(task_completion_projection)
+    projection_error = str(projection.get("_projection_validation_error") or "").strip()
+    if projection_error:
+        raise TypeError(projection_error)
+    if projection.get("schema_version") != "polaris.task_completion_projection.v1":
+        raise ValueError("task completion projection schema is invalid")
+    projected_task_id = str(projection.get("task_id") or "").strip()
+    if _canonical_task_owner_identity(projected_task_id) != _canonical_task_owner_identity(target_task_id):
+        raise ValueError("task completion projection owner does not match claimed task")
+    project_id = str(projection.get("project_id") or "").strip()
+    run_id = str(projection.get("run_id") or "").strip()
+    contract_hash = str(projection.get("project_contract_hash") or "").strip()
+    if not project_id or not run_id or len(contract_hash) != 64:
+        raise ValueError("task completion projection lacks exact project/run/contract identity")
+    raw_artifacts = projection.get("owned_artifacts")
+    if raw_artifacts in (None, [], ()):
+        return [], []
+    if not isinstance(raw_artifacts, (list, tuple)):
+        raise TypeError("task completion projection owned_artifacts must be a sequence")
+
+    artifacts: list[dict[str, str]] = []
+    seen: dict[str, tuple[str, str]] = {}
+    for index, raw_artifact in enumerate(raw_artifacts):
+        if not isinstance(raw_artifact, Mapping):
+            raise TypeError(f"owned_artifacts[{index}] must be a mapping")
+        obligation_id = str(raw_artifact.get("obligation_id") or "").strip()
+        owner_task_id = str(raw_artifact.get("owner_task_id") or "").strip()
+        path = str(raw_artifact.get("path") or "").strip()
+        if (
+            not obligation_id
+            or _canonical_task_owner_identity(owner_task_id) != _canonical_task_owner_identity(projected_task_id)
+            or not path
+        ):
+            raise ValueError(f"owned_artifacts[{index}] lacks exact task-owned identity")
+        identity = (owner_task_id, path)
+        prior = seen.get(obligation_id)
+        if prior is not None:
+            if prior != identity:
+                raise ValueError(f"artifact obligation {obligation_id!r} has conflicting duplicate identity")
+            continue
+        seen[obligation_id] = identity
+        artifacts.append(
+            {
+                "obligation_id": obligation_id,
+                "owner_task_id": owner_task_id,
+                "path": path,
+            }
+        )
+
+    materialized_paths, missing_paths = _adapter_materialized_file_paths(
+        adapter,
+        [artifact["path"] for artifact in artifacts],
+    )
+    materialized = set(materialized_paths)
+    receipts: list[dict[str, str]] = []
+    missing: list[dict[str, str]] = []
+    for artifact in artifacts:
+        path = artifact["path"]
+        if path not in materialized:
+            missing.append(
+                {
+                    "obligation_id": artifact["obligation_id"],
+                    "path": path,
+                }
+            )
+            continue
+        receipt = record_project_artifact(
+            RecordProjectArtifactCommandV1(
+                workspace=str(getattr(adapter, "workspace", "") or ""),
+                project_id=project_id,
+                run_id=run_id,
+                completion_contract_hash=contract_hash,
+                obligation_id=artifact["obligation_id"],
+                owner_task_id=artifact["owner_task_id"],
+                path=path,
+            )
+        )
+        receipt_identity = (
+            str(getattr(receipt, "project_id", "")),
+            str(getattr(receipt, "run_id", "")),
+            str(getattr(receipt, "completion_contract_hash", "")),
+            str(getattr(receipt, "obligation_id", "")),
+            str(getattr(receipt, "owner_task_id", "")),
+            str(getattr(receipt, "path", "")),
+        )
+        if receipt_identity != (
+            project_id,
+            run_id,
+            contract_hash,
+            artifact["obligation_id"],
+            artifact["owner_task_id"],
+            path,
+        ):
+            raise ValueError("project artifact receipt identity differs from CE task projection")
+        receipts.append(
+            {
+                "obligation_id": artifact["obligation_id"],
+                "path": path,
+                "artifact_hash": str(getattr(receipt, "artifact_hash", "")),
+                "receipt_hash": str(getattr(receipt, "receipt_hash", "")),
+                "receipt_ref": str(getattr(receipt, "receipt_ref", "")),
+            }
+        )
+    if missing_paths and len(missing) != len(missing_paths):
+        raise RuntimeError("materialized artifact projection returned inconsistent missing paths")
+    return receipts, missing
 
 
 def _execution_attempt_authority_from_context(
@@ -1831,6 +2029,10 @@ async def execute_director_task(
                             authority=task_execution_attempt_authority,
                             result_summary=f"director_{'hybrid' if use_hybrid else 'sequential'}_completed",
                             metadata={"adapter_phase": "completed"},
+                            task_completion_projection=_task_completion_projection_from_context(
+                                context,
+                                target_task_id=target_task_id,
+                            ),
                         )
                         if finalize_result.get("success") is not True:
                             return _task_runtime_finalization_failed_result(
@@ -1847,6 +2049,10 @@ async def execute_director_task(
                             authority=task_execution_attempt_authority,
                             error=str(result.get("error") or "director_sequential_execution_failed"),
                             metadata={"adapter_phase": "failed"},
+                            task_completion_projection=_task_completion_projection_from_context(
+                                context,
+                                target_task_id=target_task_id,
+                            ),
                         )
                         if isinstance(result, dict):
                             result = _with_task_runtime_finalize_evidence(
@@ -1896,6 +2102,10 @@ async def execute_director_task(
                     authority=task_execution_attempt_authority,
                     error=error,
                     metadata={"adapter_phase": "failed", "exception_type": type(exc).__name__},
+                    task_completion_projection=_task_completion_projection_from_context(
+                        context,
+                        target_task_id=target_task_id,
+                    ),
                 )
             adapter._update_task_progress(target_task_id, "failed")
             result = {
@@ -2770,6 +2980,10 @@ def _phase_finalize_materialization(
                 authority=task_execution_attempt_authority,
                 error=error,
                 metadata=failure_metadata,
+                task_completion_projection=_task_completion_projection_from_context(
+                    context,
+                    target_task_id=target_task_id,
+                ),
             )
         adapter._update_task_progress(target_task_id, "failed")
         result = {
@@ -2870,6 +3084,10 @@ def _phase_finalize_materialization(
             authority=task_execution_attempt_authority,
             result_summary=f"changed_files={len(all_affected_files)}; tools_executed={len(tool_results)}",
             metadata=completion_metadata,
+            task_completion_projection=_task_completion_projection_from_context(
+                context,
+                target_task_id=target_task_id,
+            ),
         )
         if finalize_result.get("success") is not True:
             return _task_runtime_finalization_failed_result(
@@ -3117,6 +3335,10 @@ def _phase_existing_scope_preflight(
                     f"{len(preflight_existing_contract_evidence.get('existing_paths') or [])}"
                 ),
                 metadata=completion_metadata,
+                task_completion_projection=_task_completion_projection_from_context(
+                    context,
+                    target_task_id=target_task_id,
+                ),
             )
             if finalize_result.get("success") is not True:
                 return _task_runtime_finalization_failed_result(
@@ -3765,6 +3987,9 @@ async def _phase_quality_repair_loop(
     for repair_attempt in range(1, _QUALITY_REPAIR_ATTEMPT_HARD_CAP + 1):
         if not artifact_quality_errors:
             break
+        deterministic_before_files = dict(current_files)
+        deterministic_before_errors = list(artifact_quality_errors)
+        deterministic_before_missing_count = len(_missing_declared_target_files(task, _adapter_workspace))
         deterministic_quality_tool_results, deterministic_quality_summary = (
             _run_materialization_quality_public_boundary(
                 adapter,
@@ -3850,8 +4075,34 @@ async def _phase_quality_repair_loop(
                 _adapter_workspace,
             )
             _mark_quality_repair_summary_revalidated(deterministic_quality_summary, artifact_quality_errors)
+            deterministic_progress = _quality_repair_progress_evidence(
+                before_files=deterministic_before_files,
+                after_files=current_files,
+                before_errors=deterministic_before_errors,
+                after_errors=artifact_quality_errors,
+                before_missing_count=deterministic_before_missing_count,
+                after_missing_count=len(_missing_declared_target_files(task, _adapter_workspace)),
+                successful_write_paths=_extract_successful_write_paths(deterministic_quality_tool_results),
+            )
+            _annotate_quality_repair_progress(
+                deterministic_quality_summary,
+                evidence=deterministic_progress,
+                stagnant_attempts=0,
+                stopped=False,
+            )
             if not artifact_quality_errors:
                 break
+            # A deterministic repair can expose the next compiler/verifier
+            # layer (for example adding tsconfig reveals a missing TypeScript
+            # dependency).  When both the physical mutation and changed
+            # diagnostic signature are proven, run the bounded deterministic
+            # ladder again before spending a Provider call.  A no-op or equal
+            # diagnostic stays on the LLM fallback/stagnation path below.
+            if bool(deterministic_progress.get("workspace_mutation_evidenced")) and (
+                _artifact_quality_error_signature(deterministic_before_errors)
+                != _artifact_quality_error_signature(artifact_quality_errors)
+            ):
+                continue
         llm_before_files = dict(current_files)
         llm_before_errors = list(artifact_quality_errors)
         llm_before_missing_count = len(_missing_declared_target_files(task, _adapter_workspace))
@@ -4785,6 +5036,10 @@ def _phase_no_materialized_changes(
                 authority=task_execution_attempt_authority,
                 error=error,
                 metadata=completion_metadata,
+                task_completion_projection=_task_completion_projection_from_context(
+                    context,
+                    target_task_id=target_task_id,
+                ),
             )
         adapter._update_task_progress(target_task_id, "failed")
         result = {
@@ -4899,6 +5154,10 @@ def _phase_existing_scope_verified(
                     f"tools_executed={len(tool_results)}"
                 ),
                 metadata=completion_metadata,
+                task_completion_projection=_task_completion_projection_from_context(
+                    context,
+                    target_task_id=target_task_id,
+                ),
             )
             if finalize_result.get("success") is not True:
                 return _task_runtime_finalization_failed_result(
@@ -5011,6 +5270,10 @@ def _phase_missing_write_receipt(
                 authority=task_execution_attempt_authority,
                 error=error,
                 metadata=completion_metadata,
+                task_completion_projection=_task_completion_projection_from_context(
+                    context,
+                    target_task_id=target_task_id,
+                ),
             )
         adapter._update_task_progress(target_task_id, "failed")
         missing_receipt_signal = {
@@ -5236,6 +5499,10 @@ def _phase_quality_failed(
                 authority=task_execution_attempt_authority,
                 error=error,
                 metadata=completion_metadata,
+                task_completion_projection=_task_completion_projection_from_context(
+                    context,
+                    target_task_id=target_task_id,
+                ),
             )
         adapter._update_task_progress(target_task_id, "failed")
         quality_signal = {
@@ -5364,6 +5631,10 @@ def _phase_semantic_quality_failed(
                 authority=task_execution_attempt_authority,
                 error=error,
                 metadata=completion_metadata,
+                task_completion_projection=_task_completion_projection_from_context(
+                    context,
+                    target_task_id=target_task_id,
+                ),
             )
         adapter._update_task_progress(target_task_id, "failed")
         semantic_signal = {

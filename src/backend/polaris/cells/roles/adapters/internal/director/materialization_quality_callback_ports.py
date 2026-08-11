@@ -443,6 +443,27 @@ def _run_materialization_html_entrypoint(
     return results
 
 
+def _materialization_runtime_allowed_paths(
+    base_files: Mapping[str, str],
+    *,
+    source_tool: str,
+) -> tuple[str, ...]:
+    """Return bounded write authority, including rule-owned auxiliary creates.
+
+    Repair planning intentionally leaves absent files out of ``base_files`` so
+    create/delete semantics and before hashes stay truthful.  The dependency
+    repair can nevertheless produce the canonical TypeScript config alongside
+    ``package.json``.  Without explicit create authority, policy rejects the
+    whole multi-file effect plan and repeatedly replays already-resolved source
+    repairs while the dependency diagnostic remains red.
+    """
+
+    allowed = list(base_files.keys())
+    if source_tool == "deterministic_runtime_dependency_repair" and "package.json" in base_files:
+        allowed.append("tsconfig.json")
+    return tuple(dict.fromkeys(allowed))
+
+
 def _run_materialization_typescript_runtime_repair(
     adapter: Any,
     *,
@@ -472,7 +493,14 @@ def _run_materialization_typescript_runtime_repair(
         _add_bounded_workspace_materialization_base_files(
             base_files,
             workspace_path,
-            allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"),
+            # Coverage diagnostics produced from artifact-quality strings may
+            # legitimately have ``path=None`` even though the matched runtime
+            # rule owns an HTML entrypoint repair.  Keep physical HTML inputs
+            # in the bounded base-file set so an executable repair such as
+            # ``deterministic_html_typescript_module_script_repair`` can plan
+            # and edit the real entrypoint instead of falling through to an
+            # unnecessary LLM quality-repair turn.
+            allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".html", ".htm", ".json"),
             max_files=256,
         )
     quality_issues = tuple(dict(item) for item in artifact_quality_issues)
@@ -486,7 +514,7 @@ def _run_materialization_typescript_runtime_repair(
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         artifact_quality_issues=quality_issues,
-        allowed_paths=tuple(base_files.keys()),
+        allowed_paths=_materialization_runtime_allowed_paths(base_files, source_tool=source_tool),
         use_editor=True,
         convergence_verifier=convergence_verifier,
         execution_attempt=execution_attempt,
@@ -518,7 +546,7 @@ def _run_materialization_node_manifest(
         # R161: content-driven smoke may create tests/* that are not yet on disk
         # (and therefore not in base_files). Policy only allows listed paths —
         # without this, write_file(tests/verify.test.ts) is path-scope denied.
-        allowed = list(base_files.keys())
+        allowed = list(_materialization_runtime_allowed_paths(base_files, source_tool=source_tool))
         if "package.json" in base_files or any(path.endswith("package.json") for path in base_files):
             allowed.extend(
                 (

@@ -266,8 +266,18 @@ def tool_output_summary_payload(role: str, content: str) -> dict[str, Any] | Non
     elif _payload_indicates_failure(payload):
         status = "failed"
 
+    inferred_tool = _infer_tool_failure_tool(text)
+    if inferred_tool == "unknown":
+        file_value = _deep_get_text(payload, ("file", "path", "target_path"))
+        content_value = _deep_get_value(payload, ("content",))
+        if file_value and isinstance(content_value, str):
+            # Director read receipts commonly omit the redundant ``tool`` field
+            # and contain only {file, content}.  Calling those receipts unknown
+            # prevents ContextOS from applying read-result visibility policy.
+            inferred_tool = "read_file"
+
     summary: dict[str, Any] = {
-        "tool": _infer_tool_failure_tool(text),
+        "tool": inferred_tool,
         "status": status,
         "content_chars": len(text),
         "prompt_safe": True,

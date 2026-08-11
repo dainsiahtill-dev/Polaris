@@ -2814,7 +2814,7 @@ async def _run_materialization_quality_repair_retry(
             )
             repair_metadata["tool_contract"] = {
                 **dict(repair_metadata.get("tool_contract") or {}),
-                "required_tools": ["execute_command"],
+                "required_tools": ["edit_file"],
             }
             repair_context["director_quality_repair"]["edit_preferred_target_files"] = existing_repair_target_files[:12]
         if len(missing_repair_target_files) == 1 and not existing_repair_target_files:
@@ -3546,7 +3546,7 @@ _PYTHON_MODULE_NOT_FOUND_RE = re.compile(
     re.IGNORECASE,
 )
 _SEMANTIC_QUALITY_EXPLICIT_PATH_RE = re.compile(
-    r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:c|cc|cpp|cxx|go|h|hpp|html|java|js|jsx|json|md|py|rs|ts|tsx|css))(?=[:\s(]|$)",
+    r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:c|cc|cpp|cxx|go|h|hpp|html|java|js|jsx|json|md|py|rs|ts|tsx|css))(?=[:;\s(]|$)",
     re.IGNORECASE,
 )
 _RUST_COMPILE_PATH_RE = re.compile(
@@ -4533,6 +4533,8 @@ _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES: frozenset[str] = frozenset(
 )
 
 _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS: tuple[str, ...] = (
+    "html module script references typescript source",
+    "static entrypoints must load javascript",
     "assertionerror",
     "failed tests",
     "step verify failed",

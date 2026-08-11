@@ -5606,6 +5606,240 @@ class TestDeterministicRepairEvidence:
 class TestDirectorFailureClosure:
     """Runtime failures must fail the claimed task instead of leaving it running."""
 
+    def test_completion_projection_accepts_runtime_numeric_alias_for_external_task(self) -> None:
+        projection = execute_method_module._task_completion_projection_from_context(
+            {
+                "metadata": {
+                    "task_completion_projection": {
+                        "schema_version": "polaris.task_completion_projection.v1",
+                        "task_id": "TASK-1",
+                    }
+                }
+            },
+            target_task_id="1",
+        )
+
+        assert projection is not None
+        assert projection["task_id"] == "TASK-1"
+
+    def test_cross_task_completion_projection_settles_failed_without_leaking_lease(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        settled: list[Any] = []
+        execution_attempt = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=str(tmp_path),
+            task_id=1,
+            external_task_id="TASK-1",
+            session_id="session-1",
+            attempt=1,
+            role_id="director",
+            worker_id="director-worker",
+            run_id="director-run-1",
+            lease_expires_at="2030-01-01T00:00:00+00:00",
+        )
+
+        def settle(command: Any) -> TaskRuntimeExecutionAttemptSettlementVerdictV1:
+            settled.append(command)
+            return TaskRuntimeExecutionAttemptSettlementVerdictV1(
+                success=True,
+                code="settled",
+                workspace=command.workspace,
+                identity=command.identity,
+                outcome=command.outcome,
+            )
+
+        authority = create_task_runtime_execution_attempt_authority(execution_attempt, settle=settle)
+        projection = execute_method_module._task_completion_projection_from_context(
+            {
+                "metadata": {
+                    "task_completion_projection": {
+                        "schema_version": "polaris.task_completion_projection.v1",
+                        "project_id": "project-1",
+                        "run_id": "factory-run-1",
+                        "project_contract_hash": "c" * 64,
+                        "task_id": "TASK-2",
+                        "owned_artifacts": [],
+                    }
+                }
+            },
+            target_task_id="1",
+        )
+
+        result = _finalize_claimed_execution(
+            SimpleNamespace(workspace=str(tmp_path)),
+            target_task_id="1",
+            authority=authority,
+            outcome="completed",
+            result_summary="done",
+            task_completion_projection=projection,
+        )
+
+        assert result["success"] is False
+        assert result["reason"] == "project_artifact_receipt_failed"
+        assert len(settled) == 1
+        assert settled[0].outcome == "failed"
+        assert "owner does not match claimed task" in settled[0].metadata["project_artifact_receipt_error"]
+
+    def test_finalization_records_exact_project_artifact_before_task_runtime_settlement(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        artifact_path = tmp_path / "src" / "main.py"
+        artifact_path.parent.mkdir(parents=True)
+        artifact_path.write_text("print('ok')\n", encoding="utf-8")
+        events: list[str] = []
+        settled_metadata: dict[str, Any] = {}
+        execution_attempt = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=str(tmp_path),
+            task_id=1,
+            external_task_id="TASK-1",
+            session_id="session-1",
+            attempt=1,
+            role_id="director",
+            worker_id="director-worker",
+            run_id="director-run-1",
+            lease_expires_at="2030-01-01T00:00:00+00:00",
+        )
+
+        def record_project_artifact(command: Any) -> Any:
+            events.append("artifact_receipt")
+            assert command.workspace == str(tmp_path.resolve())
+            assert command.owner_task_id == "TASK-1"
+            assert command.path == "src/main.py"
+            return SimpleNamespace(
+                project_id=command.project_id,
+                run_id=command.run_id,
+                completion_contract_hash=command.completion_contract_hash,
+                obligation_id=command.obligation_id,
+                owner_task_id=command.owner_task_id,
+                path=command.path,
+                artifact_hash="a" * 64,
+                receipt_hash="b" * 64,
+                receipt_ref="execution-broker://project-verification/artifact/" + "b" * 64,
+            )
+
+        def settle(command: Any) -> TaskRuntimeExecutionAttemptSettlementVerdictV1:
+            events.append("task_runtime_settle")
+            settled_metadata.update(command.metadata)
+            return TaskRuntimeExecutionAttemptSettlementVerdictV1(
+                success=True,
+                code="settled",
+                workspace=command.workspace,
+                identity=command.identity,
+                outcome=command.outcome,
+            )
+
+        monkeypatch.setattr(
+            execute_method_module,
+            "record_project_artifact",
+            record_project_artifact,
+            raising=False,
+        )
+        authority = create_task_runtime_execution_attempt_authority(execution_attempt, settle=settle)
+
+        result = _finalize_claimed_execution(
+            SimpleNamespace(workspace=str(tmp_path)),
+            target_task_id="1",
+            authority=authority,
+            outcome="completed",
+            result_summary="done",
+            metadata={"adapter_phase": "completed"},
+            task_completion_projection={
+                "schema_version": "polaris.task_completion_projection.v1",
+                "project_id": "project-1",
+                "run_id": "factory-run-1",
+                "project_contract_hash": "c" * 64,
+                "task_id": "TASK-1",
+                "owned_artifacts": [
+                    {
+                        "obligation_id": "artifact-main",
+                        "owner_task_id": "TASK-1",
+                        "path": "src/main.py",
+                    }
+                ],
+            },
+        )
+
+        assert result["success"] is True
+        assert events == ["artifact_receipt", "task_runtime_settle"]
+        assert settled_metadata["project_artifact_receipts"] == [
+            {
+                "obligation_id": "artifact-main",
+                "path": "src/main.py",
+                "artifact_hash": "a" * 64,
+                "receipt_hash": "b" * 64,
+                "receipt_ref": "execution-broker://project-verification/artifact/" + "b" * 64,
+            }
+        ]
+
+    def test_artifact_receipt_failure_settles_task_failed_without_leaking_lease(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        artifact_path = tmp_path / "src" / "main.py"
+        artifact_path.parent.mkdir(parents=True)
+        artifact_path.write_text("print('ok')\n", encoding="utf-8")
+        settled: list[Any] = []
+        execution_attempt = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=str(tmp_path),
+            task_id=1,
+            external_task_id="TASK-1",
+            session_id="session-1",
+            attempt=1,
+            role_id="director",
+            worker_id="director-worker",
+            run_id="director-run-1",
+            lease_expires_at="2030-01-01T00:00:00+00:00",
+        )
+
+        monkeypatch.setattr(
+            execute_method_module,
+            "record_project_artifact",
+            MagicMock(side_effect=RuntimeError("receipt owner unavailable")),
+        )
+
+        def settle(command: Any) -> TaskRuntimeExecutionAttemptSettlementVerdictV1:
+            settled.append(command)
+            return TaskRuntimeExecutionAttemptSettlementVerdictV1(
+                success=True,
+                code="settled",
+                workspace=command.workspace,
+                identity=command.identity,
+                outcome=command.outcome,
+            )
+
+        authority = create_task_runtime_execution_attempt_authority(execution_attempt, settle=settle)
+        result = _finalize_claimed_execution(
+            SimpleNamespace(workspace=str(tmp_path)),
+            target_task_id="TASK-1",
+            authority=authority,
+            outcome="completed",
+            result_summary="done",
+            task_completion_projection={
+                "schema_version": "polaris.task_completion_projection.v1",
+                "project_id": "project-1",
+                "run_id": "factory-run-1",
+                "project_contract_hash": "c" * 64,
+                "task_id": "TASK-1",
+                "owned_artifacts": [
+                    {
+                        "obligation_id": "artifact-main",
+                        "owner_task_id": "TASK-1",
+                        "path": "src/main.py",
+                    }
+                ],
+            },
+        )
+
+        assert result["success"] is False
+        assert result["reason"] == "project_artifact_receipt_failed"
+        assert len(settled) == 1
+        assert settled[0].outcome == "failed"
+        assert settled[0].metadata["project_artifact_receipt_error"] == "receipt owner unavailable"
+
     def test_finalization_uses_renewed_identity_from_public_authority(self) -> None:
         initial = TaskRuntimeExecutionAttemptIdentityV1(
             workspace="/workspace",
@@ -11257,6 +11491,209 @@ class TestAcceptanceVerifyExistsExemption:
         )
         assert satisfied is False
         assert evidence["checked"] == 0
+
+
+def test_materialization_typescript_runtime_repair_loads_html_entrypoint_without_diagnostic_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Executable HTML repair must receive the physical entrypoint even when coverage path is absent."""
+
+    from polaris.cells.roles.adapters.internal.director import materialization_quality_callback_ports as ports
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "index.html").write_text(
+        '<script type="module" src="./src/web.ts"></script>\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions":{"outDir":"dist","rootDir":"src"}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "web.ts").write_text("export {};\n", encoding="utf-8")
+    captured: dict[str, Any] = {}
+
+    def _capture_runtime_repair(_adapter: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(ports, "run_runtime_repair_with_director_tools", _capture_runtime_repair)
+
+    ports._run_materialization_typescript_runtime_repair(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task={"target_files": ["src/web.ts"]},
+        task_id="TASK-2",
+        artifact_quality_errors=[
+            "Artifact quality scan failed: HTML module script references TypeScript source "
+            "'./src/web.ts' in index.html; static entrypoints must load JavaScript"
+        ],
+        source_tool="deterministic_html_typescript_module_script_repair",
+    )
+
+    assert "index.html" in captured["base_files"]
+    assert captured["base_files"]["index.html"] == (
+        '<script type="module" src="./src/web.ts"></script>\n'
+    )
+
+
+def test_runtime_dependency_repair_authorizes_missing_tsconfig_creation(tmp_path: Path) -> None:
+    from polaris.cells.roles.adapters.internal.director import materialization_quality_callback_ports as ports
+
+    (tmp_path / "package.json").write_text(
+        '{"name":"demo","dependencies":{"zod":"^3.23.8"}}\n',
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript node builtin import 'node:test' "
+        "requires '@types/node' in tests/verify.test.ts"
+    ]
+
+    base_files = ports._collect_materialization_runtime_base_files(
+        tmp_path,
+        artifact_quality_errors=errors,
+        source_tool="deterministic_runtime_dependency_repair",
+        allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"),
+        collect_unmatched_diagnostic_paths=True,
+        task={"target_files": ["src/model.ts"], "scope_paths": ["package.json"]},
+    )
+
+    assert base_files["package.json"]
+    assert "tsconfig.json" not in base_files
+    assert "tsconfig.json" in ports._materialization_runtime_allowed_paths(
+        base_files,
+        source_tool="deterministic_runtime_dependency_repair",
+    )
+
+
+def test_materialization_html_entrypoint_schedule_plans_physical_edit_without_llm(tmp_path: Path) -> None:
+    """The r35 HTML residual must close through runtime repair before any LLM fallback."""
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "index.html").write_text(
+        '<script type="module" src="./src/web.ts"></script>\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions":{"outDir":"dist","rootDir":"src"}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "web.ts").write_text("export {};\n", encoding="utf-8")
+    task_id = "TASK-2"
+    result = roles_adapters_public_service.run_director_materialization_quality_repair_schedule_result(
+        RunDirectorMaterializationQualityRepairScheduleCommandV1(
+            adapter_port=SimpleNamespace(workspace=str(tmp_path)),
+            task={"target_files": ["src/web.ts"]},
+            task_id=task_id,
+            artifact_quality_errors=(
+                "Artifact quality scan failed: HTML module script references TypeScript source "
+                "'./src/web.ts' in index.html; static entrypoints must load JavaScript",
+            ),
+            execution_attempt=_test_execution_attempt(tmp_path, task_id),
+        )
+    )
+
+    projected = _project_deferred_repair_results_for_test(
+        tmp_path,
+        [dict(item) for item in result.tool_results],
+    )
+
+    assert any(item.get("success") and item.get("result", {}).get("file") == "index.html" for item in projected)
+    assert './dist/web.js' in (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert './src/web.ts' not in (tmp_path / "index.html").read_text(encoding="utf-8")
+
+
+def test_html_module_script_quality_error_identifies_existing_entrypoint_fallback_target(tmp_path: Path) -> None:
+    """If deterministic commit cannot close, the LLM fallback must still be scoped to index.html."""
+
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _explicit_artifact_quality_repair_target_files,
+    )
+
+    (tmp_path / "index.html").write_text(
+        '<script type="module" src="./src/web.ts"></script>\n',
+        encoding="utf-8",
+    )
+    targets = _explicit_artifact_quality_repair_target_files(
+        artifact_quality_errors=[
+            "Artifact quality scan failed: HTML module script references TypeScript source "
+            "'./src/web.ts' in index.html; static entrypoints must load JavaScript"
+        ],
+        changed_files=["index.html"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert targets == ["index.html"]
+
+
+@pytest.mark.asyncio
+async def test_existing_html_quality_fallback_requires_edit_not_read_or_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A covered repair fallback may not become another read-only/command-only round."""
+
+    from polaris.cells.roles.adapters.internal.director import quality_gate
+
+    class _Execution:
+        @staticmethod
+        def extract_kernel_tool_results(_result: dict[str, Any]) -> list[dict[str, Any]]:
+            return []
+
+        @staticmethod
+        async def execute_tools(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+    class _Adapter:
+        workspace = str(tmp_path)
+        _execution = _Execution()
+        _update_task_progress = staticmethod(lambda *_args, **_kwargs: None)
+
+        def __init__(self) -> None:
+            self.repair_context: dict[str, Any] = {}
+
+        async def _invoke_role_dialogue_with_timeout(
+            self,
+            _message: str,
+            *,
+            context: dict[str, Any],
+            timeout_seconds: float,
+            stage_label: str,
+        ) -> dict[str, Any]:
+            del timeout_seconds, stage_label
+            self.repair_context = context
+            return {"content": ""}
+
+    (tmp_path / "index.html").write_text(
+        '<script type="module" src="./src/web.ts"></script>\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(quality_gate, "_run_materialization_quality_public_boundary", lambda *_args, **_kwargs: ([], {}))
+    adapter = _Adapter()
+
+    await quality_gate._run_materialization_quality_repair_retry(
+        adapter,
+        task={"target_files": ["index.html"]},
+        target_task_id="TASK-2",
+        run_id="run-r35-regression",
+        context={},
+        original_message="Repair the browser entrypoint.",
+        llm_call_timeout=30.0,
+        artifact_quality_errors=[
+            "Artifact quality scan failed: HTML module script references TypeScript source "
+            "'./src/web.ts' in index.html; static entrypoints must load JavaScript"
+        ],
+        changed_files=["index.html"],
+    )
+
+    repair = adapter.repair_context["director_quality_repair"]
+    assert repair["repair_target_files"] == ["index.html"]
+    forced_names = [
+        item["function"]["name"]
+        for item in adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
+    ]
+    assert "read_file" not in forced_names
+    assert set(forced_names) == {"edit_file", "write_file", "execute_command"}
+    assert adapter.repair_context["metadata"]["tool_contract"]["required_tools"] == ["edit_file"]
 
 
 class TestQualityRepairMissingTargetContract:

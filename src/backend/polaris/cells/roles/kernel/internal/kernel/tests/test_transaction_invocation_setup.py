@@ -138,6 +138,58 @@ async def test_stream_setup_skips_delivery_marker(monkeypatch: pytest.MonkeyPatc
     assert calls == ["platform"]
 
 
+@pytest.mark.asyncio
+async def test_transaction_setup_exposes_current_repair_request_to_kernel_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Transaction guards must see request.message before provider preparation."""
+    current_request = (
+        "[mode:materialize]\n"
+        "MATERIALIZATION QUALITY REPAIR MODE:\n"
+        "Edit index.html; do not read files first."
+    )
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr(
+        setup.ToolLoopController,
+        "from_request",
+        staticmethod(
+            lambda *, request, profile: SimpleNamespace(build_context_request=lambda: {"role": profile.role_id})
+        ),
+    )
+
+    import polaris.cells.roles.kernel.public.service as public_service
+
+    monkeypatch.setattr(public_service, "RoleContextGateway", lambda *_args, **_kwargs: _Gateway())
+    monkeypatch.setattr(
+        setup,
+        "plan_transaction_tool_surface",
+        lambda **kwargs: (
+            captured.update(kwargs)
+            or TransactionToolSurfacePlan(tool_definitions=[{"name": "edit_file"}], runtime_tool_policy_audit={})
+        ),
+    )
+
+    result = await setup.build_transaction_invocation_setup(
+        kernel=RoleExecutionKernel.create_default(workspace="."),
+        role="director",
+        profile=cast(RoleProfile, _Profile()),
+        request=cast(RoleTurnRequest, _Request(message=current_request)),
+        system_prompt="sys",
+        mode="stream",
+        restore_delivery_mode_marker=True,
+    )
+
+    projected_user_messages = [
+        str(message.get("content") or "")
+        for message in result.messages
+        if str(message.get("role") or "").strip().lower() == "user"
+    ]
+    assert projected_user_messages[-1].endswith("Edit index.html; do not read files first.")
+    assert "MATERIALIZATION QUALITY REPAIR MODE" in projected_user_messages[-1]
+    assert captured["messages"] == result.messages
+
+
 def test_explicit_analyze_only_context_restores_authoritative_marker() -> None:
     messages = [{"role": "user", "content": "Produce the implementation blueprint."}]
 

@@ -51,6 +51,35 @@ class TransactionInvocationSetup:
     tool_surface: TransactionToolSurfacePlan
 
 
+def _ensure_current_request_visible_to_transaction(
+    messages: list[dict[str, Any]],
+    request_message: Any,
+) -> list[dict[str, Any]]:
+    """Bind the current request before TransactionKernel prompt decisions.
+
+    The lower LLM request preparer also pins ``RoleTurnRequest.message`` as the
+    final provider user message.  TransactionKernel runs earlier, however, and
+    must see the same request when it derives delivery/quality-repair guards.
+    Otherwise it can synthesize a generic single-batch guard from stale history
+    and only later append a contradictory quality-repair instruction.
+    """
+
+    current = str(request_message or "")
+    if not current.strip():
+        return messages
+    latest_user = next(
+        (
+            str(message.get("content") or "")
+            for message in reversed(messages)
+            if str(message.get("role") or "").strip().lower() == "user"
+        ),
+        "",
+    )
+    if latest_user.strip() == current.strip():
+        return messages
+    return [*messages, {"role": "user", "content": current}]
+
+
 async def build_transaction_invocation_setup(
     *,
     kernel: RoleExecutionKernel,
@@ -88,6 +117,10 @@ async def build_transaction_invocation_setup(
     # second projection pass.
     context_result = await context_gateway.build_context(context_request, system_prompt=system_prompt)
     messages: list[dict[str, Any]] = list(context_result.messages)
+    messages = _ensure_current_request_visible_to_transaction(
+        messages,
+        getattr(request, "message", None),
+    )
     if restore_delivery_mode_marker:
         messages = _ensure_context_delivery_mode_marker(
             messages,

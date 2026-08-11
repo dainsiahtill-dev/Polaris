@@ -497,6 +497,45 @@ class TestProjectionEngineBuildTurns:
         assert turns[0]["receipt_refs"] == ["tool_evt_1"]
         assert receipt_store.get("tool_evt_1") == "x" * 1000
 
+    def test_recent_read_results_remain_visible_for_followup_edit(self) -> None:
+        """Current-turn file reads must survive projection so repair can edit next."""
+        engine = ProjectionEngine()
+        receipt_store = ReceiptStore()
+
+        class MockEvent:
+            def __init__(self, sequence: int, file_name: str) -> None:
+                self.sequence = sequence
+                self.route = "patch"
+                self.role = "tool"
+                self.content = repr(
+                    {
+                        "ok": True,
+                        "file": file_name,
+                        "content": f"// {file_name}\n" + ("const value = 1;\n" * 80),
+                    }
+                )
+                self.event_id = f"read_{sequence}"
+                self.metadata = ()
+                self.artifact_id = ""
+
+        events = [MockEvent(sequence, f"src/file_{sequence}.ts") for sequence in range(10, 14)]
+        turns = engine.build_turns(events, receipt_store)
+
+        assert len(turns) == 4
+        assert all("const value = 1" in turn["content"] for turn in turns)
+        assert all("[Large output stored in receipt" not in turn["content"] for turn in turns)
+        assert all("receipt_refs" not in turn for turn in turns)
+
+    def test_tool_output_summary_infers_read_file_from_file_content_shape(self) -> None:
+        """Read receipts without an explicit tool field must not become unknown."""
+        summary = prompt_safe_tool_output_summary(
+            "tool",
+            repr({"ok": True, "file": "src/main.ts", "content": "export const ok = true;"}),
+        )
+
+        assert summary is not None
+        assert '"tool": "read_file"' in summary
+
     def test_large_successful_tool_receipt_keeps_prompt_safe_summary(self) -> None:
         """Large successful tool receipts need key evidence without full raw output."""
         engine = ProjectionEngine()

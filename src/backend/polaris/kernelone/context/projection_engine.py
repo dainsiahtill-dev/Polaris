@@ -15,8 +15,9 @@ from polaris.kernelone.context.control_plane_noise import (
     strip_control_plane_markers,
 )
 from polaris.kernelone.context.prompt_safety import (
+    format_tool_output_summary,
     prompt_safe_tool_failure_summary,
-    prompt_safe_tool_output_summary,
+    tool_output_summary_payload,
 )
 
 if TYPE_CHECKING:
@@ -30,6 +31,22 @@ _RECEIPT_REF_SAFE_CHARS = re.compile(r"[^A-Za-z0-9_.-]+")
 # 'Current goal' plane. Cap the card's Goal line so it stays a short reminder rather than a
 # multi-thousand-token duplicate of the goal (see render_run_card).
 _RUN_CARD_GOAL_MAX_CHARS = 300
+
+# A repair turn cannot edit what the preceding read result hid behind a receipt
+# pointer.  Keep the current causal batch of targeted file reads inline while
+# retaining the small 500-char offload floor for old/noisy tool receipts.
+_RECENT_TOOL_SEQUENCE_WINDOW = 3
+_RECENT_READ_RESULT_INLINE_CHARS = 16_000
+_READ_RESULT_TOOLS = frozenset(
+    {
+        "read_file",
+        "repo_read_head",
+        "repo_read_slice",
+        "repo_read_tail",
+        "repo_read_around",
+        "repo_read_range",
+    }
+)
 
 
 def _text_attr(value: Any) -> str:
@@ -622,11 +639,24 @@ class ProjectionEngine:
                     )
                     content = f"{failure_summary}\n\n{stored_placeholder}"
                 else:
-                    output_summary = prompt_safe_tool_output_summary(role, content)
+                    output_summary_payload = tool_output_summary_payload(role, content)
+                    output_summary = (
+                        format_tool_output_summary(output_summary_payload) if output_summary_payload else None
+                    )
+                    tool_name = str((output_summary_payload or {}).get("tool") or "").strip()
+                    is_recent_tool_result = (
+                        int(getattr(event, "sequence", 0))
+                        >= latest_sequence - _RECENT_TOOL_SEQUENCE_WINDOW
+                    )
+                    inline_threshold = (
+                        _RECENT_READ_RESULT_INLINE_CHARS
+                        if is_recent_tool_result and tool_name in _READ_RESULT_TOOLS
+                        else 500
+                    )
                     stored_placeholder, receipt_refs = receipt_store.offload_content(
                         receipt_id,
                         content,
-                        threshold=500,
+                        threshold=inline_threshold,
                         placeholder=placeholder,
                     )
                     content = (
