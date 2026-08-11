@@ -342,7 +342,13 @@ def evaluate_builtin_proof(
             r"(?im)^\s*(\d+)\s+passing",
             r"(?im)^#\s*pass\s+(\d+)",
         )
-        return any(int(value) > 0 for pattern in patterns for value in re.findall(pattern, output))
+        counted = any(int(value) > 0 for pattern in patterns for value in re.findall(pattern, output))
+        deterministic_harness = (
+            "[fail]" not in output.casefold()
+            and "verify pass" in output.casefold()
+            and bool(re.search(r"(?im)^\s*\[pass\]\s+\S+", output))
+        )
+        return counted or deterministic_harness
     # A test receipt without a profile-specific parser is not authoritative.
     return False
 

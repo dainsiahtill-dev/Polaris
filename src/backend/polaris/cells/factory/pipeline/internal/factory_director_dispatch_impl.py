@@ -685,24 +685,18 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
     start_from_hint = str(context.get("factory_start_from") or start_metadata.get("factory_start_from") or "")
     director_only_resume = start_from_hint.strip().lower() == "director_resume"
     if director_only_resume:
-        try:
-            restore_payload = executor._restore_pre_director_snapshot()
-            snapshot_signals.append(
-                {
-                    "code": "director.pre_director_snapshot_restored",
-                    "severity": "info",
-                    "detail": "Restored workspace delivery files from pre-Director snapshot before resume",
-                    **restore_payload,
-                }
-            )
-        except RuntimeError as exc:
-            stage_signals.append(
-                {
-                    "code": "director.pre_director_snapshot_restore_failed",
-                    "severity": "error",
-                    "detail": str(exc),
-                }
-            )
+        preserved_state = executor._capture_workspace_delivery_state()
+        snapshot_signals.append(
+            {
+                "code": "director.resume_workspace_preserved",
+                "severity": "info",
+                "detail": (
+                    "Preserved current delivery files for Director-local recovery; "
+                    "completed task artifacts are not rolled back or regenerated"
+                ),
+                "preserved_delivery_file_count": len(preserved_state),
+            }
+        )
     else:
         try:
             snapshot_payload = executor._create_pre_director_snapshot(run_id=run.id)
@@ -928,9 +922,17 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
                     "timeout_seconds": base_options["llm_call_timeout_seconds"],
                 }
             )
-            round_requested_task_ids = executor._read_claimable_director_task_ids(
-                limit=max_workers,
-                factory_run_id=run.id,
+            claim_kwargs: dict[str, Any] = {
+                "limit": max_workers,
+                "factory_run_id": run.id,
+            }
+            if _call_accepts_keyword(executor._read_claimable_director_task_ids, "allowed_task_ids"):
+                claim_kwargs["allowed_task_ids"] = (
+                    dependency_schedule.waves[0] if dependency_schedule.valid and dependency_schedule.waves else ()
+                )
+            round_requested_task_ids = executor._read_claimable_director_task_ids(**claim_kwargs)
+            base_options["metadata"]["director_admitted_wave_task_ids"] = list(
+                dependency_schedule.waves[0] if dependency_schedule.valid and dependency_schedule.waves else ()
             )
             if not round_requested_task_ids and attempts:
                 inflight_run_id = str((last_command_result.run_id if last_command_result else "") or "").strip()
@@ -1022,6 +1024,7 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
                         limit=max_workers,
                         grace_seconds=executor._director_dependency_settle_grace_seconds(context),
                         factory_run_id=run.id,
+                        dependency_tasks=pm_tasks,
                     )
                     if claimable_after_settle:
                         stage_signals.append(
@@ -1058,6 +1061,7 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
                     limit=max_workers,
                     grace_seconds=executor._director_dependency_settle_grace_seconds(context),
                     factory_run_id=run.id,
+                    dependency_tasks=pm_tasks,
                 )
                 if claimable_after_grace:
                     stage_signals.append(
@@ -1088,7 +1092,33 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
                 )
                 break
             if not round_requested_task_ids:
-                round_requested_task_ids = list(requested_task_ids or [])
+                stage_signals.append(
+                    {
+                        "code": "director.no_claimable_task_in_admitted_wave",
+                        "severity": "warning",
+                        "authoritative": False,
+                        "detail": (
+                            "No TaskRuntime-ready task belongs to the PM dependency wave admitted for this round; "
+                            "refusing to bypass the DAG by dispatching the whole portfolio"
+                        ),
+                        "round": round_index,
+                        "admitted_wave_task_ids": list(
+                            dependency_schedule.waves[0]
+                            if dependency_schedule.valid and dependency_schedule.waves
+                            else ()
+                        ),
+                        "requested_task_ids": list(requested_task_ids or []),
+                        "failure_class": FailureClassV1.TASKBOARD_DEADLOCK.value,
+                        "responsible_layer": "execution_control_plane",
+                    }
+                )
+                final_result = CommandResult(
+                    run_id="",
+                    status="failed",
+                    message="No claimable Director task in admitted dependency wave",
+                    reason_code="DIRECTOR_ADMITTED_WAVE_NOT_CLAIMABLE",
+                )
+                break
             base_options["metadata"]["director_claimable_task_ids"] = list(round_requested_task_ids)
             execution_deadline_monotonic = _new_monotonic_deadline(director_execution_timeout_seconds)
             last_director_execution_deadline_monotonic = execution_deadline_monotonic

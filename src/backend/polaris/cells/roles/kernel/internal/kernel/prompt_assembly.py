@@ -24,6 +24,7 @@ def build_system_prompt_for_request(
     context_override = getattr(request, "context_override", None)
     request_message = str(getattr(request, "message", "") or "")
     prompt_layer_options = resolve_prompt_layer_options(context_override, message=request_message)
+    prompt_task_type = resolve_request_prompt_task_type(context_override, message=request_message)
     effective_prompt_appendix = append_prompt_profiles_for_request(
         profile=profile,
         request=request,
@@ -33,22 +34,28 @@ def build_system_prompt_for_request(
         workspace=workspace,
     )
     try:
+        prompt_kwargs: dict[str, Any] = {
+            "domain": domain,
+            "message": request_message,
+        }
+        if prompt_task_type != "default":
+            prompt_kwargs["task_type"] = prompt_task_type
         if prompt_layer_options:
             # Explicit kwargs prevent stray option keys from binding to the
             # prompt builder's positional parameters.
+            prompt_kwargs["include_working_memory_contract"] = prompt_layer_options.get(
+                "include_working_memory_contract", True
+            )
+            prompt_kwargs["include_tool_policy"] = prompt_layer_options.get("include_tool_policy", True)
             return prompt_builder.build_system_prompt(
                 profile,
                 effective_prompt_appendix,
-                domain=domain,
-                message=request_message,
-                include_working_memory_contract=prompt_layer_options.get("include_working_memory_contract", True),
-                include_tool_policy=prompt_layer_options.get("include_tool_policy", True),
+                **prompt_kwargs,
             )
         return prompt_builder.build_system_prompt(
             profile,
             effective_prompt_appendix,
-            domain=domain,
-            message=request_message,
+            **prompt_kwargs,
         )
     except TypeError:
         return prompt_builder.build_system_prompt(profile, effective_prompt_appendix)
@@ -156,6 +163,83 @@ def should_attach_prompt_profiles(context_override: Any, *, message: str) -> boo
     )
 
 
+def resolve_request_prompt_task_type(context_override: Any, *, message: str) -> str:
+    """Project runtime execution authority into a profession protocol.
+
+    Context payloads can contain quoted historical ``task_type`` values.  The
+    prompt core must consume the current execution contract, not regex-match
+    those assets.  A targeted quality-repair turn is always ``bug_fix`` even
+    when stale telemetry says ``readonly``.
+    """
+
+    lowered = str(message or "").lower()
+    if any(
+        marker in lowered
+        for marker in (
+            "materialization quality repair mode",
+            "[director_quality_repair:",
+            "artifact quality scan failed",
+            "workspace quality repair",
+        )
+    ):
+        return "bug_fix"
+
+    if not isinstance(context_override, dict):
+        return "default"
+    if any(
+        bool(context_override.get(key))
+        for key in (
+            "director_quality_repair",
+            "workspace_quality_repair",
+            "failed_gate_evidence",
+        )
+    ):
+        return "bug_fix"
+
+    candidates: list[Any] = [context_override.get("task_type")]
+    metadata = context_override.get("metadata")
+    if isinstance(metadata, dict):
+        candidates.append(metadata.get("task_type"))
+    for key in (
+        "director_execution_profile",
+        "task_execution_profile",
+        "director_execution_contract",
+        "task_execution_contract",
+    ):
+        payload = context_override.get(key)
+        if isinstance(payload, dict):
+            candidates.append(payload.get("task_type"))
+
+    aliases = {
+        "bug": "bug_fix",
+        "bugfix": "bug_fix",
+        "bug_fix": "bug_fix",
+        "fix": "bug_fix",
+        "repair": "bug_fix",
+        "quality_repair": "bug_fix",
+        "refactor": "refactor",
+        "review": "code_review",
+        "audit": "code_review",
+        "code_review": "code_review",
+        "verification": "code_review",
+        "verify": "code_review",
+        "test": "code_review",
+        "testing": "code_review",
+        "write_code": "new_code",
+        "new_code": "new_code",
+        "new_crate": "new_code",
+        "implement": "new_code",
+        "implementation": "new_code",
+        "materialize": "new_code",
+        "materialization": "new_code",
+    }
+    for candidate in candidates:
+        token = str(candidate or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if token in aliases:
+            return aliases[token]
+    return "default"
+
+
 def resolve_prompt_layer_options(context_override: Any, *, message: str | None = None) -> dict[str, bool]:
     """Resolve per-turn prompt layer switches from explicit runtime context."""
     if not isinstance(context_override, dict):
@@ -219,5 +303,6 @@ __all__ = [
     "append_prompt_profiles_for_request",
     "build_system_prompt_for_request",
     "resolve_prompt_layer_options",
+    "resolve_request_prompt_task_type",
     "should_attach_prompt_profiles",
 ]

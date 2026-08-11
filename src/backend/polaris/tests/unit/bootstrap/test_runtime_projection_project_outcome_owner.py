@@ -6,6 +6,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from polaris.cells.chief_engineer.blueprint.public import (
+    ArtifactObligationV1,
+    EntrypointObligationV1,
+    ProjectCompletionContractV1,
+    ProjectCompletionObligationsV1,
+    ProjectKindAuthorityV1,
+    QueryProjectCompletionContractV1,
+    VerificationCommandAuthorityV1,
+    VerificationObligationV1,
+)
 from polaris.cells.control_plane.run_ledger.public import RunLedgerProjectionResultV1
 from polaris.cells.runtime.projection.public import (
     DeliveryAxisV1,
@@ -18,11 +28,81 @@ from polaris.cells.runtime.projection.public import (
 )
 from polaris.cells.runtime.task_runtime.public import ObservableTaskRowsProjectionV1
 
-_CONTRACT_HASH = "a" * 64
+_PM_CONTRACT_HASH = "b" * 64
 _RUN_ID = "factory-run-1"
 _PROJECT_ID = "project-1"
 _TASK_ID = "TASK-1"
 _CHILD_RUN_ID = "director-run-1"
+
+
+def _completion_contract(*, pm_contract_hash: str = _PM_CONTRACT_HASH) -> ProjectCompletionContractV1:
+    test_authority = VerificationCommandAuthorityV1(
+        task_id=_TASK_ID,
+        modality="test",
+        argv=("python", "-m", "pytest", "-q"),
+    )
+    return ProjectCompletionContractV1(
+        project_id=_PROJECT_ID,
+        run_id=_RUN_ID,
+        project_kind="library",
+        project_kind_authority=ProjectKindAuthorityV1(
+            project_kind="library",
+            source_ref="catalog://project-1",
+            source_hash="d" * 64,
+            justification="Library fixture for owner projection tests",
+        ),
+        pm_contract_hash=pm_contract_hash,
+        covered_task_ids=(_TASK_ID,),
+        obligations=ProjectCompletionObligationsV1(
+            artifacts=(
+                ArtifactObligationV1(
+                    obligation_id="artifact-source",
+                    path="src/main.py",
+                    semantic_role="source",
+                    applicability="required",
+                    owner_task_id=_TASK_ID,
+                ),
+                ArtifactObligationV1(
+                    obligation_id="artifact-test",
+                    path="tests/test_main.py",
+                    semantic_role="test",
+                    applicability="required",
+                    owner_task_id=_TASK_ID,
+                ),
+            ),
+            entrypoints=(
+                EntrypointObligationV1(
+                    obligation_id="entrypoint-library",
+                    kind="library",
+                    applicability="not_applicable",
+                ),
+            ),
+            verification=(
+                VerificationObligationV1(
+                    obligation_id="verify-test",
+                    modality="test",
+                    command=test_authority.command,
+                    applicability="required",
+                    covers_obligation_ids=("artifact-source", "artifact-test"),
+                    owner_task_id=_TASK_ID,
+                    command_authority_hash=test_authority.authority_hash,
+                ),
+                VerificationObligationV1(
+                    obligation_id="prepare-environment",
+                    modality="environment_prep",
+                    command=None,
+                    applicability="not_applicable",
+                ),
+            ),
+        ),
+        completion_predicate_version="v1",
+        verifier_policy_hash="e" * 64,
+        verifier_policy_snapshot_hash="f" * 64,
+        verification_command_authority=(test_authority,),
+    )
+
+
+_CONTRACT_HASH = _completion_contract().contract_hash
 
 
 def _task_runtime_projection(
@@ -47,6 +127,7 @@ def _task_runtime_projection(
                 "execution_state": execution_state,
                 "fact_event_seq": 7,
                 "metadata": {
+                    "external_task_id": _TASK_ID,
                     "source": "task_runtime.execution_fact",
                     "status_source": "task_runtime.execution_fact",
                 },
@@ -87,7 +168,7 @@ def _boundary_verdict(*, ok: bool = True) -> dict[str, Any]:
 def _run_ledger_projection(
     workspace: Path,
     *,
-    contract_hash: str = _CONTRACT_HASH,
+    contract_hash: str = "c" * 64,
     missing_modalities: tuple[str, ...] = (),
     failed_modalities: tuple[str, ...] = (),
     include_entrypoint: bool = True,
@@ -190,7 +271,7 @@ def _run_ledger_projection(
             "issues": [],
             "latest_token_id": "job-token-1",
             "latest_contract_hash": contract_hash,
-            "latest_blueprint_hash": "b" * 64,
+            "latest_blueprint_hash": "d" * 64,
             "job_token_ids": ["job-token-1"],
         },
         "evidence_modalities": evidence_modalities,
@@ -251,11 +332,13 @@ def _install_owner_queries(
     *,
     task_runtime: ObservableTaskRowsProjectionV1,
     run_ledger: RunLedgerProjectionResultV1,
-) -> tuple[list[str], list[object]]:
+    completion_contract: ProjectCompletionContractV1 | None = None,
+) -> tuple[list[str], list[object], list[QueryProjectCompletionContractV1]]:
     from polaris.bootstrap import runtime_projection_project_outcome_owner as adapter_module
 
     task_queries: list[str] = []
     ledger_queries: list[object] = []
+    completion_queries: list[QueryProjectCompletionContractV1] = []
 
     def query_tasks(workspace: str) -> ObservableTaskRowsProjectionV1:
         task_queries.append(workspace)
@@ -265,9 +348,14 @@ def _install_owner_queries(
         ledger_queries.append(query)
         return run_ledger
 
+    def query_completion_contract(query: QueryProjectCompletionContractV1) -> ProjectCompletionContractV1:
+        completion_queries.append(query)
+        return completion_contract or _completion_contract()
+
     monkeypatch.setattr(adapter_module, "query_observable_task_rows", query_tasks)
     monkeypatch.setattr(adapter_module, "read_run_ledger_projection", query_ledger)
-    return task_queries, ledger_queries
+    monkeypatch.setattr(adapter_module, "query_project_completion_contract", query_completion_contract)
+    return task_queries, ledger_queries, completion_queries
 
 
 @pytest.mark.asyncio
@@ -277,7 +365,7 @@ async def test_adapter_returns_six_owner_bound_green_axes_for_exact_identity(
 ) -> None:
     from polaris.bootstrap import runtime_projection_project_outcome_owner as adapter_module
 
-    task_queries, ledger_queries = _install_owner_queries(
+    task_queries, ledger_queries, completion_queries = _install_owner_queries(
         monkeypatch,
         task_runtime=_task_runtime_projection(tmp_path),
         run_ledger=_run_ledger_projection(tmp_path),
@@ -311,6 +399,14 @@ async def test_adapter_returns_six_owner_bound_green_axes_for_exact_identity(
     for axis in ("delivery", "qa", "task_boundary", "task_runtime", "run_ledger"):
         assert getattr(observation.projection_hashes, axis) in getattr(observation.evidence_refs, axis)
     assert task_queries == [str(tmp_path.resolve())]
+    assert completion_queries == [
+        QueryProjectCompletionContractV1(
+            workspace=str(tmp_path.resolve()),
+            project_id=_PROJECT_ID,
+            run_id=_RUN_ID,
+            contract_hash=_CONTRACT_HASH,
+        )
+    ]
     assert len(ledger_queries) == 1
     ledger_query = ledger_queries[0]
     assert ledger_query.workspace == str(tmp_path.resolve())
@@ -359,13 +455,13 @@ async def test_adapter_rejects_degraded_or_empty_exact_task_runtime_rows(
 
 
 @pytest.mark.asyncio
-async def test_adapter_rejects_run_ledger_scope_or_contract_drift(
+async def test_adapter_rejects_run_ledger_scope_or_capability_drift(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from polaris.bootstrap import runtime_projection_project_outcome_owner as adapter_module
 
-    run_ledger = _run_ledger_projection(tmp_path, contract_hash="c" * 64)
+    run_ledger = _run_ledger_projection(tmp_path)
     run_ledger.projection["query_scope"]["project_id"] = "other-project"
     _install_owner_queries(
         monkeypatch,
@@ -384,7 +480,8 @@ async def test_adapter_rejects_run_ledger_scope_or_contract_drift(
     assert exc_info.value.error_code == "project_outcome_run_ledger_scope_mismatch"
 
     run_ledger.projection["query_scope"]["project_id"] = _PROJECT_ID
-    with pytest.raises(ProjectOutcomeOwnerObservationV1Error) as contract_exc:
+    run_ledger.projection["run_projection"]["capability"]["latest_contract_hash"] = "not-a-hash"
+    with pytest.raises(ProjectOutcomeOwnerObservationV1Error) as capability_exc:
         await adapter_module.ProjectOutcomeNonFactoryOwnerObservationAdapter().observe_project_outcome_non_factory(
             workspace=str(tmp_path),
             project_id=_PROJECT_ID,
@@ -392,7 +489,7 @@ async def test_adapter_rejects_run_ledger_scope_or_contract_drift(
             completion_contract_hash=_CONTRACT_HASH,
         )
 
-    assert contract_exc.value.error_code == "project_outcome_completion_contract_hash_mismatch"
+    assert capability_exc.value.error_code == "invalid_project_outcome_run_ledger_capability"
 
 
 @pytest.mark.asyncio

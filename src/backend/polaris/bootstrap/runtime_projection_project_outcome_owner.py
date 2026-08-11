@@ -1,8 +1,9 @@
 """Bootstrap adapter for authoritative non-Factory ProjectOutcome facts.
 
-This composition adapter joins only public TaskRuntime and Run Ledger read
-models.  It owns no execution state and creates no completion verdict; the
-``runtime.projection`` cell remains the sole reducer and authority binder.
+This composition adapter joins only public Chief Engineer, TaskRuntime, and
+Run Ledger read models.  It owns no execution state and creates no completion
+verdict; the ``runtime.projection`` cell remains the sole reducer and authority
+binder.
 """
 
 from __future__ import annotations
@@ -13,6 +14,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.chief_engineer.blueprint.public import (
+    ProjectCompletionContractV1,
+    QueryProjectCompletionContractV1,
+    query_project_completion_contract,
+)
 from polaris.cells.control_plane.run_ledger.public import (
     ReadRunLedgerProjectionQueryV1,
     RunLedgerProjectionResultV1,
@@ -72,6 +78,13 @@ def _tokens(value: object, *, error_code: str, field_name: str) -> tuple[str, ..
     return tuple(sorted(set(tokens)))
 
 
+def _sha256_token(value: object, *, error_code: str, field_name: str) -> str:
+    token = str(value or "").strip().lower()
+    if len(token) != 64 or any(character not in "0123456789abcdef" for character in token):
+        raise _fail(error_code, f"{field_name} must be a lowercase SHA-256 digest")
+    return token
+
+
 def _validate_task_runtime_rows(
     task_rows: tuple[dict[str, Any], ...],
     *,
@@ -99,6 +112,18 @@ def _validate_task_runtime_rows(
                 "and positive fact event sequences",
             )
         task_ids.add(task_id)
+
+
+def _owner_task_identity(row: Mapping[str, Any]) -> str:
+    metadata = row.get("metadata")
+    metadata_map = metadata if isinstance(metadata, Mapping) else {}
+    return str(
+        metadata_map.get("external_task_id")
+        or metadata_map.get("source_task_id")
+        or row.get("task_id")
+        or row.get("id")
+        or ""
+    ).strip()
 
 
 def _validate_run_ledger_commitments(
@@ -134,11 +159,27 @@ def _validate_run_ledger_commitments(
         field_name="run_ledger.run_projection.capability.job_token_ids",
     )
     latest_token_id = str(capability.get("latest_token_id") or "").strip()
-    if not job_token_ids or not latest_token_id or latest_token_id not in job_token_ids:
+    if (
+        capability.get("ok") is not True
+        or capability.get("issues") not in ([], ())
+        or not job_token_ids
+        or not latest_token_id
+        or latest_token_id not in job_token_ids
+    ):
         raise _fail(
             "project_outcome_run_ledger_gate_evidence_uncommitted",
             "Run Ledger capability must identify the committed JobToken set",
         )
+    _sha256_token(
+        capability.get("latest_contract_hash"),
+        error_code="invalid_project_outcome_run_ledger_capability",
+        field_name="run_ledger.run_projection.capability.latest_contract_hash",
+    )
+    _sha256_token(
+        capability.get("latest_blueprint_hash"),
+        error_code="invalid_project_outcome_run_ledger_capability",
+        field_name="run_ledger.run_projection.capability.latest_blueprint_hash",
+    )
     for gate in gates:
         content_id = str(gate.get("content_id") or "").strip()
         append_id = str(gate.get("append_id") or "").strip()
@@ -266,27 +307,22 @@ def _qa_gate_state(gates: list[dict[str, Any]]) -> tuple[bool, bool]:
 def _validate_task_boundary(
     *,
     task_boundary: Mapping[str, Any],
-    task_rows: tuple[dict[str, Any], ...],
+    expected_task_ids: tuple[str, ...],
 ) -> tuple[TaskBoundaryAxisV1, tuple[str, ...]]:
     reasons: list[str] = []
     latest_by_task = task_boundary.get("latest_by_task")
     latest = latest_by_task if isinstance(latest_by_task, Mapping) else {}
-    row_runs: dict[str, str] = {
-        str(row.get("task_id") or row.get("id") or "").strip(): str(
-            row.get("workflow_run_id") or row.get("run_id") or ""
-        ).strip()
-        for row in task_rows
-    }
-    if set(latest) != set(row_runs):
+    expected_tasks = set(expected_task_ids)
+    if set(latest) != expected_tasks:
         reasons.append("task_boundary_task_set_mismatch")
-    for task_id, workflow_run_id in row_runs.items():
+    for task_id in expected_task_ids:
         verdict = latest.get(task_id)
         if not isinstance(verdict, Mapping):
             continue
         if not bool(verdict.get("ok")) or str(verdict.get("status") or "").strip() != "completed_verified":
             reasons.append(f"task_boundary_not_completed_verified:{task_id}")
         verdict_run_id = str(verdict.get("run_id") or "").strip()
-        if not verdict_run_id or verdict_run_id != workflow_run_id:
+        if not verdict_run_id:
             reasons.append(f"task_boundary_run_identity_mismatch:{task_id}")
         for field_name in (
             "missing_target_files",
@@ -330,6 +366,29 @@ class ProjectOutcomeNonFactoryOwnerObservationAdapter:
             "run_id": run_id,
             "completion_contract_hash": completion_contract_hash,
         }
+
+        completion_contract = query_project_completion_contract(
+            QueryProjectCompletionContractV1(
+                workspace=canonical_workspace,
+                project_id=project_id,
+                run_id=run_id,
+                contract_hash=completion_contract_hash,
+            )
+        )
+        if type(completion_contract) is not ProjectCompletionContractV1:
+            raise _fail(
+                "invalid_project_outcome_completion_contract_type",
+                "Chief Engineer owner query must return an exact ProjectCompletionContractV1",
+            )
+        if (
+            completion_contract.project_id,
+            completion_contract.run_id,
+            completion_contract.contract_hash,
+        ) != (project_id, run_id, completion_contract_hash):
+            raise _fail(
+                "project_outcome_completion_contract_identity_mismatch",
+                "Chief Engineer completion contract does not match the requested authority identity",
+            )
 
         task_projection = query_observable_task_rows(canonical_workspace)
         if type(task_projection) is not ObservableTaskRowsProjectionV1:
@@ -417,23 +476,22 @@ class ProjectOutcomeNonFactoryOwnerObservationAdapter:
             error_code="invalid_project_outcome_run_ledger_capability",
             field_name="run_ledger.run_projection.capability",
         )
-        if str(capability.get("latest_contract_hash") or "").strip() != completion_contract_hash:
-            raise _fail(
-                "project_outcome_completion_contract_hash_mismatch",
-                "Run Ledger capability contract hash does not match the completion contract",
-            )
         consumed_run_ids = _tokens(
             ledger.get("consumed_run_ids"),
             error_code="invalid_project_outcome_consumed_run_ids",
             field_name="run_ledger.consumed_run_ids",
         )
-        expected_run_ids = {run_id} | {
-            str(row.get("workflow_run_id") or row.get("run_id") or "").strip() for row in task_rows
+        current_project_run_ids = {
+            str(row.get("workflow_run_id") or row.get("run_id") or "").strip()
+            for row in task_rows
+            if _owner_task_identity(row) in completion_contract.covered_task_ids
         }
-        if set(consumed_run_ids) != expected_run_ids:
+        current_project_run_ids.discard("")
+        current_project_run_ids.discard(run_id)
+        if run_id not in consumed_run_ids or not current_project_run_ids.issubset(consumed_run_ids):
             raise _fail(
                 "project_outcome_consumed_run_ids_mismatch",
-                "Run Ledger consumed run ids do not match the Factory parent and TaskRuntime children",
+                "Run Ledger must consume the Factory parent and every current Director child run",
             )
 
         evidence_policy = _mapping(
@@ -532,7 +590,7 @@ class ProjectOutcomeNonFactoryOwnerObservationAdapter:
         )
         task_boundary_axis, boundary_reasons = _validate_task_boundary(
             task_boundary=task_boundary,
-            task_rows=task_rows,
+            expected_task_ids=completion_contract.covered_task_ids,
         )
         reasons.extend(boundary_reasons)
 

@@ -435,6 +435,37 @@ def test_node_package_script_decision_binds_current_manifest_content(tmp_path: P
     assert first.policy_decision_hash != second.policy_decision_hash
 
 
+def test_node_package_script_binds_direct_runner_content(tmp_path: Path) -> None:
+    runner = tmp_path / "scripts" / "test.mjs"
+    runner.parent.mkdir(parents=True)
+    runner.write_text("console.log('[PASS] first\\nVERIFY PASS')\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"node scripts/test.mjs"}}\n',
+        encoding="utf-8",
+    )
+    query = _command_policy_query(tmp_path, modality="test", argv=("npm", "test"))
+
+    first = evaluate_verifier_command_policy(query)
+    runner.write_text("console.log('[PASS] second\\nVERIFY PASS')\n", encoding="utf-8")
+    second = evaluate_verifier_command_policy(query)
+
+    assert first.authorized is True
+    assert first.profile_id == "node.script_test"
+    assert second.authorized is True
+    assert first.policy_decision_hash != second.policy_decision_hash
+
+
+def test_node_package_script_rejects_missing_or_escaping_direct_runner(tmp_path: Path) -> None:
+    manifest = tmp_path / "package.json"
+    query = _command_policy_query(tmp_path, modality="test", argv=("npm", "test"))
+
+    manifest.write_text('{"scripts":{"test":"node missing.js"}}\n', encoding="utf-8")
+    assert evaluate_verifier_command_policy(query).error_code == "untrusted_package_script"
+
+    manifest.write_text('{"scripts":{"test":"node ../outside.js"}}\n', encoding="utf-8")
+    assert evaluate_verifier_command_policy(query).error_code == "untrusted_package_script"
+
+
 @pytest.mark.parametrize(
     ("profile_id", "output", "expected"),
     [
@@ -446,6 +477,8 @@ def test_node_package_script_decision_binds_current_manifest_content(tmp_path: P
         ("go.test", "ok\tpkg\t0.01s\n", True),
         ("node.script_test", "Test Files  1 passed (1)\nTests  2 passed (2)\n", True),
         ("node.script_test", "Tests  no tests\n", False),
+        ("node.script_test", "[PASS] syntax\n[PASS] rules\nVERIFY PASS\n", True),
+        ("node.script_test", "[PASS] rules\n[FAIL] syntax\nVERIFY FAIL\n", False),
     ],
 )
 def test_verifier_specific_proof_parser_requires_real_test_execution(

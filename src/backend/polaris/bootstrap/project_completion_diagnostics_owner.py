@@ -109,6 +109,46 @@ def _mapping(value: object, name: str) -> dict[str, Any]:
     return dict(value)
 
 
+def _sha256_token(value: object, *, error_code: str, field_name: str) -> str:
+    token = str(value or "").strip().lower()
+    if len(token) != 64 or any(character not in "0123456789abcdef" for character in token):
+        raise _fail(error_code, f"{field_name} must be a lowercase SHA-256 digest")
+    return token
+
+
+def _committed_job_token_set(
+    capability: Mapping[str, Any],
+    *,
+    error_code: str,
+    message: str,
+) -> tuple[tuple[str, ...], str]:
+    raw_token_ids = capability.get("job_token_ids")
+    token_ids = (
+        tuple(sorted({str(item).strip() for item in raw_token_ids if isinstance(item, str) and str(item).strip()}))
+        if isinstance(raw_token_ids, (list, tuple))
+        else ()
+    )
+    latest_token_id = str(capability.get("latest_token_id") or "").strip()
+    if (
+        capability.get("ok") is not True
+        or capability.get("issues") not in ([], ())
+        or not token_ids
+        or latest_token_id not in token_ids
+    ):
+        raise _fail(error_code, message)
+    _sha256_token(
+        capability.get("latest_contract_hash"),
+        error_code=error_code,
+        field_name="run_ledger.run_projection.capability.latest_contract_hash",
+    )
+    _sha256_token(
+        capability.get("latest_blueprint_hash"),
+        error_code=error_code,
+        field_name="run_ledger.run_projection.capability.latest_blueprint_hash",
+    )
+    return token_ids, latest_token_id
+
+
 def _owner_task_id(item: object) -> str:
     owner_task_id = str(getattr(item, "owner_task_id", None) or "").strip()
     if not owner_task_id:
@@ -210,6 +250,18 @@ def _row_identity(row: Mapping[str, Any]) -> tuple[str, str]:
         row.get("factory_run_id") or metadata_map.get("factory_run_id") or fact_map.get("factory_run_id") or ""
     ).strip()
     return workflow_run_id, factory_run_id
+
+
+def _owner_task_identity(row: Mapping[str, Any]) -> str:
+    metadata = row.get("metadata")
+    metadata_map = metadata if isinstance(metadata, Mapping) else {}
+    return str(
+        metadata_map.get("external_task_id")
+        or metadata_map.get("source_task_id")
+        or row.get("task_id")
+        or row.get("id")
+        or ""
+    ).strip()
 
 
 def _repair_coverage(
@@ -331,27 +383,11 @@ class ProjectCompletionOwnerObservationAdapter:
             raise _fail("project_verification_run_ledger_scope_mismatch", "Run Ledger scope is stale")
         run_projection = _mapping(ledger.get("run_projection"), "run_ledger.run_projection")
         capability = _mapping(run_projection.get("capability"), "run_ledger.run_projection.capability")
-        if (
-            capability.get("ok") is not True
-            or capability.get("issues") not in ([], ())
-            or str(capability.get("latest_contract_hash") or "") != query.completion_contract_hash
-        ):
-            raise _fail(
-                "project_verification_capability_not_authoritative",
-                "Run Ledger capability must be clean and bind the exact contract",
-            )
-        raw_token_ids = capability.get("job_token_ids")
-        token_ids = (
-            tuple(sorted({str(item).strip() for item in raw_token_ids if isinstance(item, str) and str(item).strip()}))
-            if isinstance(raw_token_ids, (list, tuple))
-            else ()
+        token_ids, latest_token_id = _committed_job_token_set(
+            capability,
+            error_code="project_verification_capability_not_authoritative",
+            message="Run Ledger capability must be clean and bind a committed JobToken set",
         )
-        latest_token_id = str(capability.get("latest_token_id") or "").strip()
-        if not token_ids or latest_token_id not in token_ids:
-            raise _fail(
-                "project_verification_job_token_uncommitted",
-                "Exact contract requires a committed current JobToken",
-            )
         evidence_policy = _mapping(
             run_projection.get("evidence_policy"),
             "run_ledger.run_projection.evidence_policy",
@@ -362,10 +398,17 @@ class ProjectCompletionOwnerObservationAdapter:
             if isinstance(raw_enabled, (list, tuple))
             else set()
         )
-        if intent.modality not in enabled_modalities:
+        # Run Ledger evidence modalities describe effect classes (the
+        # physical verifier is a ``command`` effect). CE modalities describe
+        # verifier purpose (build/test/entrypoint/environment_prep). Comparing
+        # those enums rejected valid committed commands whenever the latest
+        # gate exposed ``command`` instead of a CE purpose. Fine-grained
+        # purpose/argv/cwd authority remains enforced below by
+        # evaluate_verifier_command_policy.
+        if "command" not in enabled_modalities:
             raise _fail(
                 "project_verification_modality_not_permitted",
-                "Committed JobToken policy does not enable this verifier modality",
+                "Committed JobToken policy does not enable command evidence",
             )
         policy_payload = {
             "domain": "runtime.execution_broker.project_verification_policy.v1",
@@ -490,23 +533,17 @@ class ProjectCompletionOwnerObservationAdapter:
         ledger = _mapping(ledger_result.projection, "run_ledger")
         run_projection = _mapping(ledger.get("run_projection"), "run_ledger.run_projection")
         capability = _mapping(run_projection.get("capability"), "run_ledger.run_projection.capability")
-        if (
-            ledger.get("query_scope")
-            != {"run_id": query.run_id, "factory_run_id": query.run_id, "project_id": query.project_id}
-            or capability.get("ok") is not True
-            or capability.get("issues") not in ([], ())
-            or str(capability.get("latest_contract_hash") or "") != query.completion_contract_hash
-        ):
+        if ledger.get("query_scope") != {
+            "run_id": query.run_id,
+            "factory_run_id": query.run_id,
+            "project_id": query.project_id,
+        }:
             raise _fail("project_artifact_capability_not_authoritative", "Run Ledger capability is stale")
-        raw_ids = capability.get("job_token_ids")
-        token_ids = (
-            tuple(sorted({str(item).strip() for item in raw_ids if isinstance(item, str) and str(item).strip()}))
-            if isinstance(raw_ids, (list, tuple))
-            else ()
+        token_ids, latest_token_id = _committed_job_token_set(
+            capability,
+            error_code="project_artifact_capability_not_authoritative",
+            message="Artifact requires a clean committed JobToken set",
         )
-        latest_token_id = str(capability.get("latest_token_id") or "").strip()
-        if not token_ids or latest_token_id not in token_ids:
-            raise _fail("project_artifact_job_token_uncommitted", "Artifact requires a committed current JobToken")
         job_token_set_hash = _canonical_hash(
             {"domain": "control_plane.run_ledger.job_token_set.v1", "token_ids": list(token_ids)}
         )
@@ -846,12 +883,17 @@ class ProjectCompletionOwnerObservationAdapter:
                 "project_completion_task_runtime_not_authoritative", "TaskRuntime must be exact and authoritative"
             )
         task_rows = task_projection.rows_for_factory_run(run_id)
-        rows_by_id = {str(row.get("task_id") or row.get("id") or "").strip(): row for row in task_rows}
-        if (
-            len(rows_by_id) != len(task_rows)
-            or not set(contract.covered_task_ids).issubset(rows_by_id)
-            or "" in rows_by_id
-        ):
+        rows_by_id: dict[str, dict[str, Any]] = {}
+        for row in task_rows:
+            owner_task_id = _owner_task_identity(row)
+            if owner_task_id not in contract.covered_task_ids:
+                continue
+            previous = rows_by_id.get(owner_task_id)
+            previous_seq = int(previous.get("fact_event_seq") or 0) if previous is not None else 0
+            current_seq = int(row.get("fact_event_seq") or 0)
+            if previous is None or current_seq > previous_seq:
+                rows_by_id[owner_task_id] = row
+        if set(rows_by_id) != set(contract.covered_task_ids):
             raise _fail("project_completion_task_runtime_owner_tasks_missing", "TaskRuntime lacks covered owner tasks")
         for task_id, row in rows_by_id.items():
             workflow_run_id, factory_run_id = _row_identity(row)
@@ -882,20 +924,12 @@ class ProjectCompletionOwnerObservationAdapter:
             raise _fail("project_completion_run_ledger_scope_mismatch", "Run Ledger scope does not match query")
         run_projection = _mapping(ledger.get("run_projection"), "run_ledger.run_projection")
         capability = _mapping(run_projection.get("capability"), "run_ledger.run_projection.capability")
-        if str(capability.get("latest_contract_hash") or "") != completion_contract_hash:
-            raise _fail("project_completion_run_ledger_contract_mismatch", "Run Ledger contract hash is stale")
-        raw_job_token_ids = capability.get("job_token_ids")
-        job_token_ids = (
-            {str(item).strip() for item in raw_job_token_ids if str(item).strip()}
-            if isinstance(raw_job_token_ids, (list, tuple))
-            else set()
+        job_token_ids_tuple, latest_token_id = _committed_job_token_set(
+            capability,
+            error_code="project_completion_run_ledger_capability_uncommitted",
+            message="Run Ledger capability must bind a clean committed JobToken set",
         )
-        latest_token_id = str(capability.get("latest_token_id") or "").strip()
-        if not job_token_ids or latest_token_id not in job_token_ids:
-            raise _fail(
-                "project_completion_run_ledger_capability_uncommitted",
-                "Run Ledger capability must bind a committed JobToken set",
-            )
+        job_token_ids = set(job_token_ids_tuple)
         task_boundary = _mapping(ledger.get("task_boundary"), "run_ledger.task_boundary")
         latest = task_boundary.get("latest_by_task")
         latest_by_task = dict(latest) if isinstance(latest, Mapping) else {}
@@ -937,11 +971,16 @@ class ProjectCompletionOwnerObservationAdapter:
             boundary_raw = latest_by_task.get(owner_task_id)
             boundary = dict(boundary_raw) if isinstance(boundary_raw, Mapping) else None
             if boundary is not None:
-                workflow_run_id, _ = _row_identity(row)
                 boundary_refs = boundary.get("evidence_refs")
                 if (
                     str(boundary.get("task_id") or owner_task_id).strip() != owner_task_id
-                    or str(boundary.get("run_id") or "").strip() != workflow_run_id
+                    # TaskBoundary preserves the Director run that originally
+                    # settled this CE task. Same-task repair legitimately
+                    # advances TaskRuntime to a new workflow_run_id, so these
+                    # two lifecycle identities must not be equated. The
+                    # boundary still has to bind this owner task, one concrete
+                    # historical run, and non-empty evidence.
+                    or not str(boundary.get("run_id") or "").strip()
                     or not isinstance(boundary_refs, (list, tuple))
                     or not all(isinstance(item, str) and item.strip() for item in boundary_refs)
                     or not boundary_refs

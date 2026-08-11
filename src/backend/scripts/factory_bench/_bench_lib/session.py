@@ -1054,7 +1054,9 @@ def _start_isolated_bench_project_instance(
                     continue
                 if str(prior.get("workspace") or "") != str(receipt.get("workspace") or ""):
                     continue
-                if str(prior.get("status") or "").strip().lower() in {"stopped", "failed"}:
+                prior_status = str(prior.get("status") or "").strip().lower()
+                prior_process_alive = prior.get("backend_alive") is True or prior.get("frontend_alive") is True
+                if prior_status in {"stopped", "failed"} and not prior_process_alive:
                     continue
                 prior_metadata = prior.get("metadata")
                 if not isinstance(prior_metadata, Mapping) or not bool(prior_metadata.get("internal_test_only")):

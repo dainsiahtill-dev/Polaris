@@ -699,6 +699,38 @@ def test_director_resume_stops_only_owned_prior_bench_instance(
                     },
                 },
             },
+            {
+                "instance_id": "owned-prior-failed-backend-alive",
+                "kind": "bench_project",
+                "status": "failed",
+                "backend_alive": True,
+                "frontend_alive": False,
+                "workspace": str(workspace),
+                "metadata": {
+                    "internal_test_only": True,
+                    "instance_launch_receipt": {
+                        "run_id": "original-run",
+                        "bench_workspace": str(tmp_path),
+                        "project_id": "L1-01",
+                    },
+                },
+            },
+            {
+                "instance_id": "owned-prior-stopped",
+                "kind": "bench_project",
+                "status": "stopped",
+                "backend_alive": False,
+                "frontend_alive": False,
+                "workspace": str(workspace),
+                "metadata": {
+                    "internal_test_only": True,
+                    "instance_launch_receipt": {
+                        "run_id": "original-run",
+                        "bench_workspace": str(tmp_path),
+                        "project_id": "L1-01",
+                    },
+                },
+            },
         ],
     )
     monkeypatch.setattr(
@@ -733,8 +765,11 @@ def test_director_resume_stops_only_owned_prior_bench_instance(
     )
 
     assert result is not None and result["ok"] is True
-    assert stopped == ["owned-prior"]
-    assert captured["metadata"]["instance_launch_receipt"]["resume_predecessor_instance_ids"] == ["owned-prior"]
+    assert stopped == ["owned-prior", "owned-prior-failed-backend-alive"]
+    assert captured["metadata"]["instance_launch_receipt"]["resume_predecessor_instance_ids"] == [
+        "owned-prior",
+        "owned-prior-failed-backend-alive",
+    ]
 
 
 def test_isolated_launch_reports_registry_corruption_as_platform_failure(
@@ -1306,9 +1341,7 @@ def test_bench_reads_authoritative_task_boundary_without_appending(tmp_path: Pat
 
     verdict = bench._read_task_boundary_verdict_from_run_ledger_projection(projection)
 
-    event_count_after = int(
-        bench_cli.load_run_ledger_projection(workspace, run_id="run-task-boundary")["event_count"]
-    )
+    event_count_after = int(bench_cli.load_run_ledger_projection(workspace, run_id="run-task-boundary")["event_count"])
 
     assert verdict["ok"] is False
     assert verdict["failure_class"] == "DEPENDENCY_NOT_UNLOCKED"
@@ -2324,9 +2357,7 @@ def _setup_run_factory_chain_mocks(
         reason: str = "",
     ) -> dict[str, Any] | None:
         assert workspace == expected_workspace
-        _LAST_FACTORY_RESUME_CALL.update(
-            {"run_id": run_id, "token": token, "workspace": workspace, "reason": reason}
-        )
+        _LAST_FACTORY_RESUME_CALL.update({"run_id": run_id, "token": token, "workspace": workspace, "reason": reason})
         return start_response
 
     def _fake_wait_run_until_terminal(
@@ -2468,6 +2499,17 @@ def test_run_factory_chain_director_resume_uses_existing_pm_ce_evidence(
     )
     _bootstrap_test_fact_stream(workspace)
     _write_director_resume_evidence(workspace)
+    plan_path = Path(resolve_runtime_path(str(workspace), "runtime/tasks/plan.json"))
+    plan_payload = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan_payload["tasks"].append(
+        {
+            "id": "TASK-2",
+            "goal": "Preserve completed feature",
+            "target_files": ["src/completed.ts"],
+            "depends_on": ["TASK-1"],
+        }
+    )
+    plan_path.write_text(json.dumps(plan_payload, ensure_ascii=False), encoding="utf-8")
     task_path = Path(resolve_runtime_path(str(workspace), "runtime/tasks/task_1.json"))
     task_path.write_text(
         json.dumps(
@@ -2476,6 +2518,7 @@ def test_run_factory_chain_director_resume_uses_existing_pm_ce_evidence(
                 "status": "failed",
                 "subject": "Implement feature",
                 "metadata": {
+                    "external_task_id": "TASK-1",
                     "runtime_execution": {"status": "failed"},
                     "workflow_run_id": "director-old",
                 },
@@ -2486,6 +2529,22 @@ def test_run_factory_chain_director_resume_uses_existing_pm_ce_evidence(
     )
     session_path = Path(resolve_runtime_path(str(workspace), "runtime/tasks/task_1.session.json"))
     session_path.write_text(json.dumps({"status": "failed"}, ensure_ascii=False), encoding="utf-8")
+    completed_task_path = Path(resolve_runtime_path(str(workspace), "runtime/tasks/task_2.json"))
+    completed_task_path.write_text(
+        json.dumps(
+            {
+                "id": 2,
+                "status": "completed",
+                "subject": "Preserve completed feature",
+                "metadata": {
+                    "external_task_id": "TASK-2",
+                    "runtime_execution": {"status": "completed"},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
     result = run_factory_chain(
         {"id": "L2-07", "title": "Tetris", "brief": "Build Tetris", "test_focus": "runtime"},
@@ -2511,8 +2570,13 @@ def test_run_factory_chain_director_resume_uses_existing_pm_ce_evidence(
     assert reset_task["status"] == "pending"
     assert "runtime_execution" not in reset_task["metadata"]
     assert not session_path.exists()
+    preserved_task = json.loads(completed_task_path.read_text(encoding="utf-8"))
+    assert preserved_task["status"] == "completed"
+    assert preserved_task["metadata"]["runtime_execution"]["status"] == "completed"
     reset_evidence = task_path.parent / "director_resume_reset.json"
-    assert json.loads(reset_evidence.read_text(encoding="utf-8"))["reset_statuses"] == "all_task_records"
+    reset_payload = json.loads(reset_evidence.read_text(encoding="utf-8"))
+    assert reset_payload["reset_statuses"] == "unfinished_pm_task_records_only"
+    assert reset_payload["preserved_files"] == ["task_2.json"]
 
 
 def test_director_resume_accepts_fact_authoritative_runtime_without_task_file_mirror(

@@ -19,9 +19,108 @@ from polaris.cells.director.task_consumer.internal.director_consumer import (
     InterfaceContractRepairRequiredError,
     ScopeConflictDetector,
     UnrecoverableExecutionError,
+    _record_task_owned_artifact_receipts,
     _revalidate_qa_exact_verifier,
     _run_coroutine_sync,
 )
+
+
+def test_records_exact_task_owned_artifact_receipts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: list[Any] = []
+
+    def record(command: Any) -> Any:
+        captured.append(command)
+        return SimpleNamespace(
+            project_id=command.project_id,
+            run_id=command.run_id,
+            completion_contract_hash=command.completion_contract_hash,
+            obligation_id=command.obligation_id,
+            owner_task_id=command.owner_task_id,
+            path=command.path,
+            artifact_hash="a" * 64,
+            receipt_hash="b" * 64,
+            receipt_ref="execution-broker://project-verification/artifact/" + "b" * 64,
+        )
+
+    monkeypatch.setattr(director_consumer_module, "record_project_artifact", record)
+    receipts = _record_task_owned_artifact_receipts(
+        workspace=str(tmp_path),
+        task_id="TASK-1",
+        payload={
+            "task_completion_projection": {
+                "project_id": "project-1",
+                "run_id": "run-1",
+                "project_contract_hash": "c" * 64,
+                "task_id": "TASK-1",
+                "owned_artifacts": [
+                    {
+                        "obligation_id": "artifact-main",
+                        "owner_task_id": "TASK-1",
+                        "path": "src/main.py",
+                    },
+                    {
+                        "obligation_id": "artifact-main",
+                        "owner_task_id": "TASK-1",
+                        "path": "src/main.py",
+                    },
+                ],
+                "owned_entrypoints": [
+                    {
+                        "obligation_id": "entrypoint-cli",
+                        "owner_task_id": "TASK-1",
+                        "source_path": "src/main.py",
+                        "runtime_path": "dist/main.js",
+                    }
+                ],
+            }
+        },
+    )
+
+    assert len(captured) == 1
+    assert captured[0].obligation_id == "artifact-main"
+    assert captured[0].path == "src/main.py"
+    assert receipts == (
+        {
+            "obligation_id": "artifact-main",
+            "path": "src/main.py",
+            "artifact_hash": "a" * 64,
+            "receipt_hash": "b" * 64,
+            "receipt_ref": "execution-broker://project-verification/artifact/" + "b" * 64,
+        },
+    )
+
+
+def test_rejects_cross_task_artifact_projection_before_recording(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    record = MagicMock(side_effect=AssertionError("cross-task receipt must fail before owner call"))
+    monkeypatch.setattr(director_consumer_module, "record_project_artifact", record)
+
+    with pytest.raises(ValueError, match="task-owned identity"):
+        _record_task_owned_artifact_receipts(
+            workspace=str(tmp_path),
+            task_id="TASK-1",
+            payload={
+                "task_completion_projection": {
+                    "project_id": "project-1",
+                    "run_id": "run-1",
+                    "project_contract_hash": "c" * 64,
+                    "task_id": "TASK-1",
+                    "owned_artifacts": [
+                        {
+                            "obligation_id": "artifact-main",
+                            "owner_task_id": "TASK-2",
+                            "path": "src/main.py",
+                        }
+                    ],
+                }
+            },
+        )
+    record.assert_not_called()
 
 
 def test_exact_qa_verifier_revalidation_binds_prior_and_new_receipts(
@@ -514,18 +613,43 @@ class TestDirectorExecutionConsumerPollOnce:
         ack_result = MagicMock()
         ack_result.ok = True
         ack_result.status = "pending_qa"
+        artifact_recorded = False
+
+        def record_artifacts(**_kwargs: Any) -> tuple[dict[str, str], ...]:
+            nonlocal artifact_recorded
+            artifact_recorded = True
+            return (
+                {
+                    "obligation_id": "artifact-main",
+                    "path": "src/main.py",
+                    "artifact_hash": "a" * 64,
+                    "receipt_hash": "b" * 64,
+                    "receipt_ref": "execution-broker://project-verification/artifact/" + "b" * 64,
+                },
+            )
+
+        def acknowledge(command: Any) -> Any:
+            assert artifact_recorded is True
+            return ack_result
 
         # First call returns the claim, second call returns ok=False to break loop
         no_claim = MagicMock()
         no_claim.ok = False
         mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
-        mock_svc.acknowledge_task_stage.return_value = ack_result
+        mock_svc.acknowledge_task_stage.side_effect = acknowledge
 
         consumer = DirectorExecutionConsumer(workspace="/test", worker_id="d1")
-        with patch.object(
-            consumer,
-            "_execute_task",
-            return_value={"changed_files": ["src/main.py"], "duration": 1, "side_effects": []},
+        with (
+            patch.object(
+                consumer,
+                "_execute_task",
+                return_value={"changed_files": ["src/main.py"], "duration": 1, "side_effects": []},
+            ),
+            patch(
+                "polaris.cells.director.task_consumer.internal.director_consumer._consumer."
+                "_record_task_owned_artifact_receipts",
+                side_effect=record_artifacts,
+            ),
         ):
             results = consumer.poll_once()
 
@@ -542,6 +666,7 @@ class TestDirectorExecutionConsumerPollOnce:
         assert ack_call.metadata["contract_hash"] == "ch-001"
         assert ack_call.metadata["changed_files"] == ["src/main.py"]
         assert ack_call.metadata["director_evidence_status"] == "changed_files_reported"
+        assert ack_call.metadata["project_artifact_receipts"][0]["obligation_id"] == "artifact-main"
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_direct_route_without_blueprint_is_rejected(self, mock_get_svc: MagicMock) -> None:

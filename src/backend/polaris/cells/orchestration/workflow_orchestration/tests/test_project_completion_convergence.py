@@ -55,6 +55,7 @@ from polaris.cells.runtime.projection.public.contracts import (
     ProjectOutcomeEvidenceRefsV1,
     ProjectOutcomeNonFactoryEvidenceRefsV1,
     ProjectOutcomeNonFactoryOwnerProjectionHashesV1,
+    ProjectOutcomeOwnerObservationV1Error,
     ProjectOutcomeV1,
     QaAxisV1,
     RecommendedDispositionV1,
@@ -259,6 +260,15 @@ class MutableDiagnosticsPort:
         del identity
         self.calls += 1
         return self.diagnostics
+
+
+class FailingOutcomePort:
+    async def query_project_completion_outcome(self, identity: ProjectCompletionIdentityV1) -> object:
+        del identity
+        raise ProjectOutcomeOwnerObservationV1Error(
+            "project_outcome_pm_contract_hash_mismatch",
+            "Run Ledger capability is bound to a different PM contract",
+        )
 
 
 class MutableModelCeilingPort:
@@ -623,6 +633,23 @@ def _multiprocess_engine_worker(
         queue.put(("ok", asyncio.run(run())))
     except BaseException as exc:  # noqa: BLE001 -- child must report failures to parent
         queue.put(("error", f"{type(exc).__name__}:{exc}"))
+
+
+@pytest.mark.asyncio
+async def test_owner_query_failure_preserves_typed_error_code(tmp_path: Path) -> None:
+    identity = _identity(tmp_path)
+    result = await _engine(
+        SqliteRuntimeStore(str(tmp_path / "runtime.db"), workspace=str(tmp_path)),
+        FailingOutcomePort(),
+        MutableDiagnosticsPort(_diagnostics(identity)),
+    ).advance(AdvanceProjectCompletionCommandV1(identity=identity))
+
+    assert result.status == "control_plane_blocked"
+    assert result.reason_codes == (
+        "project_outcome_owner_query_failed",
+        "project_outcome_pm_contract_hash_mismatch",
+    )
+    assert result.terminal is False
 
 
 @pytest.mark.asyncio

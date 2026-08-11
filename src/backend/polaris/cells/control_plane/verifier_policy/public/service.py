@@ -167,7 +167,14 @@ def _node_script_name(argv: tuple[str, ...]) -> str:
 
 
 def _node_script_content_evidence(query: EvaluateVerifierCommandPolicyQueryV1) -> tuple[str, str]:
-    """Bind package-script authority to current manifest bytes and reject no-op scripts."""
+    """Bind package-script authority to current manifest/runner bytes.
+
+    A package script may invoke one direct Node program for an entrypoint or a
+    self-contained test harness. That target remains target-controlled, so its
+    current bytes are part of the policy decision hash and are re-evaluated by
+    ExecutionBroker before launch. Shell wrappers, eval, missing files and
+    escaping paths remain rejected.
+    """
 
     script_name = _node_script_name(query.argv)
     if not script_name:
@@ -193,9 +200,32 @@ def _node_script_content_evidence(query: EvaluateVerifierCommandPolicyQueryV1) -
         tokens = tuple(shlex.split(script, posix=True))
     except ValueError:
         return "", "non_proving_package_script"
+    direct_node_script_hash = ""
+    if tokens and Path(tokens[0].replace("\\", "/")).name.casefold() == "node":
+        if query.modality not in {"test", "entrypoint"} or len(tokens) != 2 or tokens[1].startswith("-"):
+            return "", "non_proving_package_script"
+        raw_target = tokens[1].replace("\\", "/")
+        target = Path(raw_target)
+        if target.is_absolute() or ".." in target.parts or target.suffix.casefold() not in {".js", ".mjs", ".cjs"}:
+            return "", "untrusted_package_script"
+        workspace = Path(query.workspace).expanduser().resolve()
+        cwd = workspace if query.cwd == "." else (workspace / query.cwd).resolve()
+        target_path = (cwd / target).resolve()
+        if not _is_within(target_path, workspace) or not target_path.is_file():
+            return "", "untrusted_package_script"
+        try:
+            direct_node_script_hash = hashlib.sha256(target_path.read_bytes()).hexdigest()
+        except OSError:
+            return "", "untrusted_package_script"
     if not _node_script_matches_proof_runner(query.modality, tokens):
         return "", "non_proving_package_script"
-    return hashlib.sha256(raw).hexdigest(), ""
+    return _stable_hash(
+        {
+            "domain": "control_plane.verifier_policy.node_package_script.v1",
+            "manifest_sha256": hashlib.sha256(raw).hexdigest(),
+            "direct_node_script_sha256": direct_node_script_hash,
+        }
+    ), ""
 
 
 def _node_script_matches_proof_runner(modality: str, tokens: tuple[str, ...]) -> bool:
@@ -205,6 +235,13 @@ def _node_script_matches_proof_runner(modality: str, tokens: tuple[str, ...]) ->
         return False
     executable = Path(tokens[0].replace("\\", "/")).name.casefold()
     arguments = tuple(item.casefold() for item in tokens[1:])
+    if executable == "node":
+        return (
+            modality in {"test", "entrypoint"}
+            and len(arguments) == 1
+            and not arguments[0].startswith("-")
+            and arguments[0].endswith((".js", ".mjs", ".cjs"))
+        )
     option_names = {item.split("=", 1)[0] for item in arguments if item.startswith("-")}
     if option_names.intersection(
         {"--collect-only", "--watch", "--watchall", "--fix", "--fix-dry-run", "--unsafe-fixes", "--no-run"}
@@ -697,7 +734,7 @@ def evaluate_verifier_command_policy(
     profile_id, error_code = resolve_builtin_profile(query.modality, query.argv)
     policy = read_verifier_policy(ReadVerifierPolicyQueryV1(workspace=query.workspace)).policy
     custom_content_hash = ""
-    package_manifest_hash, package_script_error = _node_script_content_evidence(query)
+    package_script_evidence_hash, package_script_error = _node_script_content_evidence(query)
     if profile_id and package_script_error:
         return _rejected_command_policy(
             query,
@@ -745,7 +782,7 @@ def evaluate_verifier_command_policy(
         "executable_realpath": executable_realpath,
         "executable_hash": executable_hash,
         "custom_content_hash": custom_content_hash,
-        "package_manifest_hash": package_manifest_hash,
+        "package_script_evidence_hash": package_script_evidence_hash,
         "persisted_policy_hash": _stable_hash(policy),
     }
     return VerifierCommandPolicyDecisionV1(

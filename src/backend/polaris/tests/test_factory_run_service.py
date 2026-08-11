@@ -8,11 +8,22 @@ from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from typing import Any
 
 import pytest
-from polaris.cells.chief_engineer.blueprint.public import BlueprintPersistence
+from polaris.cells.chief_engineer.blueprint.public import (
+    ArtifactObligationV1,
+    BlueprintPersistence,
+    EntrypointObligationV1,
+    ProjectCompletionObligationsV1,
+    VerificationCommandAuthorityV1,
+    VerificationObligationV1,
+    build_project_completion_contract,
+    derive_project_kind_authority_from_catalog_snapshot,
+    project_completion_catalog_snapshot_hash,
+    project_completion_verifier_policy_snapshot_hash,
+)
 from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
     bootstrap_fact_stream_workspace,
@@ -80,6 +91,18 @@ def _chief_engineer_portfolio_output(
 ) -> dict[str, Any]:
     """Return one valid project-level CE portfolio response for test runtimes."""
 
+    build_authority = VerificationCommandAuthorityV1(
+        task_id=task_id,
+        modality="build",
+        argv=("python", "-m", "compileall", "."),
+    )
+    test_authority = VerificationCommandAuthorityV1(
+        task_id=task_id,
+        modality="test",
+        argv=("pytest", "-q"),
+    )
+    test_path = f"tests/test_{Path(scope_path).stem}.py"
+
     return {
         "construction_plan": {
             "project_design_intent": "Keep domain behavior behind stable task-owned interfaces.",
@@ -97,6 +120,63 @@ def _chief_engineer_portfolio_output(
         },
         "scope_for_apply": [scope_path],
         "risk_flags": [],
+        "project_completion_contract": {
+            "obligations": {
+                "artifacts": [
+                    {
+                        "obligation_id": "artifact-task-1",
+                        "path": scope_path,
+                        "semantic_role": "source",
+                        "applicability": "required",
+                        "owner_task_id": task_id,
+                    },
+                    {
+                        "obligation_id": "artifact-task-1-test",
+                        "path": test_path,
+                        "semantic_role": "test",
+                        "applicability": "required",
+                        "owner_task_id": task_id,
+                    },
+                ],
+                "entrypoints": [
+                    {
+                        "obligation_id": "entrypoint-library-na",
+                        "kind": "library",
+                        "applicability": "not_applicable",
+                        "owner_task_id": None,
+                        "source_path": None,
+                        "runtime_path": None,
+                        "command": None,
+                    }
+                ],
+                "verification": [
+                    {
+                        "obligation_id": "verify-build",
+                        "modality": "build",
+                        "command_authority_hash": build_authority.authority_hash,
+                        "applicability": "required",
+                        "covers_obligation_ids": ["artifact-task-1"],
+                        "owner_task_id": task_id,
+                    },
+                    {
+                        "obligation_id": "verify-test",
+                        "modality": "test",
+                        "command_authority_hash": test_authority.authority_hash,
+                        "applicability": "required",
+                        "covers_obligation_ids": ["artifact-task-1-test"],
+                        "owner_task_id": task_id,
+                    },
+                    {
+                        "obligation_id": "verify-environment-na",
+                        "modality": "environment_prep",
+                        "command_authority_hash": None,
+                        "applicability": "not_applicable",
+                        "covers_obligation_ids": [],
+                        "owner_task_id": None,
+                    },
+                ],
+            }
+        },
     }
 
 
@@ -1607,6 +1687,191 @@ class _TestStageExecutor(OrchestrationStageExecutor):
         return True, []
 
 
+def _authorize_test_chief_engineer_portfolio(executor: OrchestrationStageExecutor) -> None:
+    """Supply exact committed-PM authority to tests that target later CE behavior."""
+
+    catalog_snapshot = {"project_kind": "library"}
+    catalog_snapshot_hash = project_completion_catalog_snapshot_hash(catalog_snapshot)
+    catalog_path = executor.workspace / ".polaris" / "catalog_contract.json"
+    catalog_path.parent.mkdir(parents=True, exist_ok=True)
+    catalog_path.write_text(json.dumps(catalog_snapshot), encoding="utf-8")
+
+    async def _load_authority(
+        self: OrchestrationStageExecutor,
+        *,
+        run: FactoryRun,
+        pm_tasks: list[dict[str, Any]],
+        portfolio_tasks: tuple[Any, ...],
+    ) -> Any:
+        del self, pm_tasks
+        task_ids = tuple(sorted(task.task_id for task in portfolio_tasks))
+        command_authority = tuple(
+            VerificationCommandAuthorityV1(task_id=task_id, modality=modality, argv=argv)
+            for task_id in task_ids
+            for modality, argv in (
+                ("build", ("python", "-m", "compileall", ".")),
+                ("test", ("pytest", "-q")),
+            )
+        )
+        verifier_policy = {
+            "schema_version": "evidence_policy.v1",
+            "policy_hash": "b" * 64,
+            "source": "control_plane.verifier_policy.evidence_policy_compiler",
+            "required_evidence_modalities": ["command"],
+        }
+        return factory_stage_module._ChiefEngineerPortfolioAuthorityV1(
+            project_id=run.config.name,
+            pm_stage_event_id=f"pm-stage-{run.id}",
+            pm_contract_hash="a" * 64,
+            pm_task_ids=task_ids,
+            catalog_snapshot=catalog_snapshot,
+            catalog_snapshot_hash=catalog_snapshot_hash,
+            project_kind_authority=derive_project_kind_authority_from_catalog_snapshot(
+                project_id=run.config.name,
+                run_id=run.id,
+                pm_contract_hash="a" * 64,
+                catalog_snapshot=catalog_snapshot,
+                catalog_snapshot_hash=catalog_snapshot_hash,
+            ),
+            verifier_policy_hash="b" * 64,
+            verifier_policy=verifier_policy,
+            verifier_policy_snapshot_hash=project_completion_verifier_policy_snapshot_hash(verifier_policy),
+            verification_command_authority=command_authority,
+        )
+
+    executor._load_chief_engineer_portfolio_authority = MethodType(  # type: ignore[method-assign]
+        _load_authority,
+        executor,
+    )
+
+
+def _test_project_completion_contract(
+    *,
+    run_id: str,
+    tasks: list[dict[str, Any]],
+) -> Any:
+    task_ids = tuple(
+        str(task.get("id") or task.get("task_id") or f"TASK-{index}").strip()
+        for index, task in enumerate(tasks, start=1)
+    )
+    artifacts: list[ArtifactObligationV1] = []
+    verification: list[VerificationObligationV1] = []
+    command_authority: list[VerificationCommandAuthorityV1] = []
+    for index, (task_id, task) in enumerate(zip(task_ids, tasks, strict=True), start=1):
+        raw_targets = task.get("target_files")
+        targets = (
+            [str(item).strip() for item in raw_targets if str(item).strip()] if isinstance(raw_targets, list) else []
+        )
+        if not targets:
+            targets = ["src/index.js"]
+        covered_ids: list[str] = []
+        for target_index, target in enumerate(targets, start=1):
+            obligation_id = f"artifact-{index}-{target_index}"
+            covered_ids.append(obligation_id)
+            artifacts.append(
+                ArtifactObligationV1(
+                    obligation_id=obligation_id,
+                    path=target,
+                    semantic_role="source",
+                    applicability="required",
+                    owner_task_id=task_id,
+                )
+            )
+        test_obligation_id = f"artifact-{index}-test"
+        artifacts.append(
+            ArtifactObligationV1(
+                obligation_id=test_obligation_id,
+                path=f"tests/test_task_{index}.py",
+                semantic_role="test",
+                applicability="required",
+                owner_task_id=task_id,
+            )
+        )
+        build_authority = VerificationCommandAuthorityV1(
+            task_id=task_id,
+            modality="build",
+            argv=("python", "-m", "compileall", "."),
+        )
+        test_authority = VerificationCommandAuthorityV1(
+            task_id=task_id,
+            modality="test",
+            argv=("pytest", "-q"),
+        )
+        command_authority.extend((build_authority, test_authority))
+        verification.append(
+            VerificationObligationV1(
+                obligation_id=f"verify-build-{index}",
+                modality="build",
+                command=build_authority.command,
+                applicability="required",
+                covers_obligation_ids=tuple(covered_ids),
+                owner_task_id=task_id,
+                command_authority_hash=build_authority.authority_hash,
+            )
+        )
+        verification.append(
+            VerificationObligationV1(
+                obligation_id=f"verify-environment-na-{index}",
+                modality="environment_prep",
+                command=None,
+                applicability="not_applicable",
+                covers_obligation_ids=(),
+                owner_task_id=None,
+                command_authority_hash=None,
+            )
+        )
+        verification.append(
+            VerificationObligationV1(
+                obligation_id=f"verify-test-{index}",
+                modality="test",
+                command=test_authority.command,
+                applicability="required",
+                covers_obligation_ids=(test_obligation_id,),
+                owner_task_id=task_id,
+                command_authority_hash=test_authority.authority_hash,
+            )
+        )
+
+    catalog_snapshot = {"project_kind": "library"}
+    catalog_hash = project_completion_catalog_snapshot_hash(catalog_snapshot)
+    verifier_policy = {
+        "schema_version": "evidence_policy.v1",
+        "policy_hash": "b" * 64,
+        "source": "control_plane.verifier_policy.evidence_policy_compiler",
+        "required_evidence_modalities": ["command"],
+    }
+    project_kind_authority = derive_project_kind_authority_from_catalog_snapshot(
+        project_id="test-project",
+        run_id=run_id,
+        pm_contract_hash="a" * 64,
+        catalog_snapshot=catalog_snapshot,
+        catalog_snapshot_hash=catalog_hash,
+    )
+    return build_project_completion_contract(
+        project_id="test-project",
+        run_id=run_id,
+        project_kind="library",
+        project_kind_authority=project_kind_authority,
+        pm_contract_hash="a" * 64,
+        covered_task_ids=task_ids,
+        obligations=ProjectCompletionObligationsV1(
+            artifacts=tuple(artifacts),
+            entrypoints=(
+                EntrypointObligationV1(
+                    obligation_id="entrypoint-library-na",
+                    kind="library",
+                    applicability="not_applicable",
+                ),
+            ),
+            verification=tuple(verification),
+        ),
+        completion_predicate_version="polaris.project_completion_predicate.v1",
+        verifier_policy_hash="b" * 64,
+        verifier_policy_snapshot_hash=project_completion_verifier_policy_snapshot_hash(verifier_policy),
+        verification_command_authority=tuple(command_authority),
+    )
+
+
 def _write_handoff_ready_review_for_tasks(
     executor: OrchestrationStageExecutor,
     *,
@@ -1615,6 +1880,7 @@ def _write_handoff_ready_review_for_tasks(
 ) -> None:
     rows: list[dict[str, str]] = []
     persistence = BlueprintPersistence(str(executor.workspace))
+    completion_contract = _test_project_completion_contract(run_id=run_id, tasks=tasks)
     for index, task in enumerate(tasks, start=1):
         task_id = str(task.get("id") or task.get("task_id") or f"TASK-{index}").strip()
         raw_targets = task.get("target_files")
@@ -1638,6 +1904,11 @@ def _write_handoff_ready_review_for_tasks(
                 "blueprint_hash": f"blueprint-hash-{task_id}",
                 "execution_profile_ref": f"runtime/execution-profiles/{task_id}.json",
                 "execution_profile_hash": f"profile-hash-{task_id}",
+                "project_completion_contract": completion_contract.to_dict(),
+                "project_completion_contract_hash": completion_contract.contract_hash,
+                "project_completion_contract_ref": (
+                    f"runtime/state/project-completion/{completion_contract.contract_id}.json"
+                ),
             },
         )
         rows.append(
@@ -1662,6 +1933,7 @@ class _WorkspaceValidationStageExecutor(_TestStageExecutor):
         super().__init__(workspace, command_service)
         self.exit_codes = list(exit_codes)
         self.commands_seen: list[list[str]] = []
+        self._workspace_quality.delivery_depth_contract_result = lambda _context: None  # type: ignore[method-assign]
 
     def _run_workspace_quality_command(self, command: list[str], timeout_seconds: float) -> dict[str, object]:
         del timeout_seconds
@@ -1679,6 +1951,19 @@ class _WorkspaceValidationStageExecutor(_TestStageExecutor):
 def _authorize_workspace_quality_checks(executor: OrchestrationStageExecutor) -> None:
     """Provide canonical completed TaskBoundary evidence to workspace-check tests."""
 
+    executor._write_json_artifact(
+        "tasks/plan.json",
+        {
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "goal": "Exercise workspace verification",
+                    "target_files": ["src/index.py"],
+                }
+            ]
+        },
+    )
+
     projection = {
         "source": "run_ledger",
         "integrity_ok": True,
@@ -1688,6 +1973,7 @@ def _authorize_workspace_quality_checks(executor: OrchestrationStageExecutor) ->
             "latest_by_task": {
                 "TASK-1": {
                     "task_id": "TASK-1",
+                    "run_id": "director-test-run",
                     "status": "completed_verified",
                     "ok": True,
                 }
@@ -1704,6 +1990,8 @@ def _authorize_workspace_quality_checks(executor: OrchestrationStageExecutor) ->
             "source": "task_runtime.execution_fact",
             "authoritative": True,
             "degraded": False,
+            "owner_scope": "pm_contract_tasks",
+            "owned_task_ids": ["TASK-1"],
             "row_count": 1,
             "rows": [
                 {
@@ -1719,6 +2007,44 @@ def _authorize_workspace_quality_checks(executor: OrchestrationStageExecutor) ->
         },
     }
     executor._canonical_factory_projection = lambda _run, _context: projection  # type: ignore[method-assign]
+
+
+def _isolate_qa_verdict_from_workspace_checks(executor: OrchestrationStageExecutor) -> None:
+    """Let QA-verdict unit tests start after the independently tested workspace gate."""
+
+    async def _workspace_checks(
+        self: OrchestrationStageExecutor,
+        run: FactoryRun,
+        context: dict[str, Any],
+    ) -> tuple[bool, str]:
+        del run, context
+        artifact = "runtime/qa/workspace-validation.json"
+        self._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "goal": "Exercise the QA verdict branch",
+                        "target_files": ["src/index.py"],
+                    }
+                ]
+            },
+        )
+        self._write_json_artifact(
+            artifact,
+            {
+                "schema_version": "factory.workspace_validation.v1",
+                "passed": True,
+                "commands": [],
+            },
+        )
+        return True, artifact
+
+    executor._run_workspace_quality_checks = MethodType(  # type: ignore[method-assign]
+        _workspace_checks,
+        executor,
+    )
 
 
 def _authorize_director_fact_projection(
@@ -2136,6 +2462,7 @@ class TestOrchestrationStageExecutor:
     async def test_chief_engineer_stage_generates_blueprint_artifacts(self, temp_workspace, monkeypatch):
         command_service = _CompletedCommandService()
         executor = _TestStageExecutor(temp_workspace, command_service)
+        _authorize_test_chief_engineer_portfolio(executor)
         run = FactoryRun(
             id="factory_test_ce_blueprints",
             config=FactoryConfig(name="test-run", stages=["chief_engineer_review"]),
@@ -2151,9 +2478,9 @@ class TestOrchestrationStageExecutor:
       "id": "TASK-1",
       "title": "实现账户实体",
       "goal": "完成账单核心实体与校验",
-      "scope": "src/account",
-      "scope_paths": ["src/account"],
-      "target_files": ["src/account"],
+      "scope": "src/account.py, tests/test_account.py",
+      "scope_paths": ["src/account.py", "tests/test_account.py"],
+      "target_files": ["src/account.py", "tests/test_account.py"],
       "steps": ["实现实体", "补充测试"],
       "execution_checklist": ["实现实体", "补充测试"],
       "acceptance": ["`pytest` 通过", "接口返回字段正确"],
@@ -2182,7 +2509,10 @@ class TestOrchestrationStageExecutor:
                     workspace=str(temp_workspace),
                     task_id=command.task_id,
                     run_id=command.run_id,
-                    output=json.dumps(_chief_engineer_portfolio_output(), ensure_ascii=False),
+                    output=json.dumps(
+                        _chief_engineer_portfolio_output(scope_path="src/account.py"),
+                        ensure_ascii=False,
+                    ),
                     metadata={
                         "provider": "test-provider",
                         "model": "test-model",
@@ -2207,7 +2537,7 @@ class TestOrchestrationStageExecutor:
             factory_stage_module.RoleRuntimeService = original_role_runtime_service
 
         # Verify the result
-        assert result.status == "success"
+        assert result.status == "success", result.output
         assert any(path.startswith("runtime/blueprints/ce_TASK-1_") for path in result.artifacts)
         assert f"runtime/state/blueprints/{run.id}.review.json" in result.artifacts
         assert f"workspace/roles/chief_engineer/{run.id}/review.json" in result.artifacts
@@ -2781,6 +3111,8 @@ class TestOrchestrationStageExecutor:
     async def test_quality_gate_uses_report_verdict(self, temp_workspace):
         command_service = _CompletedCommandService()
         executor = _TestStageExecutor(temp_workspace, command_service)
+        _authorize_workspace_quality_checks(executor)
+        _isolate_qa_verdict_from_workspace_checks(executor)
         run = FactoryRun(
             id="factory_test_quality_gate",
             config=FactoryConfig(name="test-run", stages=["quality_gate"]),
@@ -2813,6 +3145,8 @@ class TestOrchestrationStageExecutor:
     async def test_quality_gate_fails_when_report_passed_but_score_is_low(self, temp_workspace):
         command_service = _CompletedCommandService()
         executor = _TestStageExecutor(temp_workspace, command_service)
+        _authorize_workspace_quality_checks(executor)
+        _isolate_qa_verdict_from_workspace_checks(executor)
         run = FactoryRun(
             id="factory_test_quality_gate_low_score",
             config=FactoryConfig(name="test-run", stages=["quality_gate"]),
@@ -2838,7 +3172,6 @@ class TestOrchestrationStageExecutor:
         assert result.status == "failed"
         assert "qa_verdict_passed=False" in str(result.output)
         assert "report_consistent=False" in str(result.output)
-        assert "canonical_reason=task_runtime_tasks_missing" in str(result.output)
 
     @pytest.mark.asyncio
     async def test_quality_gate_offloads_report_read_off_event_loop(self, temp_workspace, monkeypatch):
@@ -2846,6 +3179,8 @@ class TestOrchestrationStageExecutor:
         # so we can assert the (blocking) report read is dispatched off the event loop.
         command_service = _CompletedCommandService()
         executor = _TestStageExecutor(temp_workspace, command_service)
+        _authorize_workspace_quality_checks(executor)
+        _isolate_qa_verdict_from_workspace_checks(executor)
         run = FactoryRun(
             id="factory_test_quality_gate_offload",
             config=FactoryConfig(name="test-run", stages=["quality_gate"]),
@@ -2884,6 +3219,8 @@ class TestOrchestrationStageExecutor:
     async def test_quality_gate_fails_when_llm_judgement_unavailable_by_default(self, temp_workspace):
         command_service = _CompletedCommandService()
         executor = _TestStageExecutor(temp_workspace, command_service)
+        _authorize_workspace_quality_checks(executor)
+        _isolate_qa_verdict_from_workspace_checks(executor)
         run = FactoryRun(
             id="factory_test_quality_gate_llm_unavailable",
             config=FactoryConfig(name="test-run", stages=["quality_gate"]),
@@ -2908,12 +3245,14 @@ class TestOrchestrationStageExecutor:
         result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
 
         assert result.status == "failed"
-        assert "canonical_reason=task_runtime_tasks_missing" in str(result.output)
+        assert "qa_verdict_passed=False" in str(result.output)
 
     @pytest.mark.asyncio
     async def test_quality_gate_fails_when_llm_judgement_unavailable_and_explicitly_required(self, temp_workspace):
         command_service = _CompletedCommandService()
         executor = _TestStageExecutor(temp_workspace, command_service)
+        _authorize_workspace_quality_checks(executor)
+        _isolate_qa_verdict_from_workspace_checks(executor)
         run = FactoryRun(
             id="factory_test_quality_gate_llm_required_unavailable",
             config=FactoryConfig(name="test-run", stages=["quality_gate"]),
@@ -2941,12 +3280,14 @@ class TestOrchestrationStageExecutor:
         )
 
         assert result.status == "failed"
-        assert "canonical_reason=task_runtime_tasks_missing" in str(result.output)
+        assert "qa_verdict_passed=False" in str(result.output)
 
     @pytest.mark.asyncio
     async def test_quality_gate_can_explicitly_allow_llm_judgement_fallback(self, temp_workspace):
         command_service = _CompletedCommandService()
         executor = _TestStageExecutor(temp_workspace, command_service)
+        _authorize_workspace_quality_checks(executor)
+        _isolate_qa_verdict_from_workspace_checks(executor)
         run = FactoryRun(
             id="factory_test_quality_gate_llm_fallback",
             config=FactoryConfig(name="test-run", stages=["quality_gate"]),
@@ -2974,7 +3315,7 @@ class TestOrchestrationStageExecutor:
         )
 
         assert result.status == "failed"
-        assert "canonical_reason=task_runtime_tasks_missing" in str(result.output)
+        assert "qa_verdict_passed=False" in str(result.output)
 
     @pytest.mark.asyncio
     async def test_quality_gate_runs_workspace_node_scripts(self, temp_workspace):
@@ -3002,7 +3343,13 @@ class TestOrchestrationStageExecutor:
         result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
 
         assert result.status == "failed"
-        assert "canonical_reason=qa_verdict_missing" in str(result.output)
+        validation_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/qa/workspace-validation.json"))
+        validation_payload = json.loads(validation_path.read_text(encoding="utf-8"))
+        assert "canonical_reason=qa_verdict_missing" in str(result.output), json.dumps(
+            validation_payload,
+            ensure_ascii=False,
+            indent=2,
+        )
         assert command_service.observed_bindings[-1] is executor._test_role_evidence_port.bindings[-1]
         assert command_service.observed_bindings[-1].role == "qa"
         assert get_factory_role_evidence_authority_binding() is None
@@ -3141,8 +3488,15 @@ class TestOrchestrationStageExecutor:
         )
         captured: dict[str, Any] = {}
 
-        def _capture_repair(adapter: Any, *, task: dict[str, Any], task_id: str, artifact_quality_errors: list[str]):
-            del adapter, task_id, artifact_quality_errors
+        def _capture_repair(
+            adapter: Any,
+            *,
+            task: dict[str, Any],
+            task_id: str,
+            artifact_quality_errors: list[str],
+            execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
+        ):
+            del adapter, task_id, artifact_quality_errors, execution_attempt
             captured["task"] = task
             return [], {"attempted": False}
 
@@ -3257,7 +3611,7 @@ class TestOrchestrationStageExecutor:
         result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
 
         assert result.status == "failed"
-        assert "workspace_checks_diagnostic=False" in str(result.output)
+        assert "factory_quality_gate_workspace_validation_failed" in str(result.output)
         validation_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/qa/workspace-validation.json"))
         payload = json.loads(validation_path.read_text(encoding="utf-8"))
         assert payload["passed"] is False
@@ -3604,9 +3958,9 @@ class TestCEProviderModelPropagationR15A:
                             "id": task_id,
                             "title": "Implement feature",
                             "goal": "Complete the feature",
-                            "scope": "src/feature",
-                            "scope_paths": ["src/feature"],
-                            "target_files": ["src/feature"],
+                            "scope": "src/feature.py, tests/test_feature.py",
+                            "scope_paths": ["src/feature.py", "tests/test_feature.py"],
+                            "target_files": ["src/feature.py", "tests/test_feature.py"],
                             "steps": ["implement", "test"],
                             "execution_checklist": ["implement", "test"],
                             "acceptance": ["tests pass"],
@@ -3629,6 +3983,7 @@ class TestCEProviderModelPropagationR15A:
 
         self._write_plan(temp_workspace)
         executor = _TestStageExecutor(temp_workspace, _CompletedCommandService())
+        _authorize_test_chief_engineer_portfolio(executor)
         run = FactoryRun(
             id="factory_test_r15a_kimi_success",
             config=FactoryConfig(name="test-run", stages=["chief_engineer_review"]),
@@ -3646,7 +4001,7 @@ class TestCEProviderModelPropagationR15A:
                     task_id="TASK-1",
                     run_id="factory_test_r15a_kimi_success",
                     output=json.dumps(
-                        _chief_engineer_portfolio_output(scope_path="src/feature"),
+                        _chief_engineer_portfolio_output(scope_path="src/feature.py"),
                         ensure_ascii=False,
                     ),
                     usage={},
@@ -3700,6 +4055,7 @@ class TestCEProviderModelPropagationR15A:
 
         self._write_plan(temp_workspace)
         executor = _TestStageExecutor(temp_workspace, _CompletedCommandService())
+        _authorize_test_chief_engineer_portfolio(executor)
         run = FactoryRun(
             id="factory_test_ce_schema_recoverable",
             config=FactoryConfig(name="test-run", stages=["chief_engineer_review"]),
@@ -3776,6 +4132,7 @@ class TestCEProviderModelPropagationR15A:
 
         self._write_plan(temp_workspace)
         executor = _TestStageExecutor(temp_workspace, _CompletedCommandService())
+        _authorize_test_chief_engineer_portfolio(executor)
         run = FactoryRun(
             id="factory_test_r15a_failed_preserves",
             config=FactoryConfig(name="test-run", stages=["chief_engineer_review"]),
@@ -3836,6 +4193,7 @@ class TestCEProviderModelPropagationR15A:
 
         self._write_plan(temp_workspace)
         executor = _TestStageExecutor(temp_workspace, _CompletedCommandService())
+        _authorize_test_chief_engineer_portfolio(executor)
         run = FactoryRun(
             id="factory_test_ce_empty_projection",
             config=FactoryConfig(name="test-run", stages=["chief_engineer_review"]),
@@ -3907,6 +4265,7 @@ class TestCEProviderModelPropagationR15A:
 
         self._write_plan(temp_workspace)
         executor = _TestStageExecutor(temp_workspace, _CompletedCommandService())
+        _authorize_test_chief_engineer_portfolio(executor)
         run = FactoryRun(
             id="factory_test_r15a_unknown_flag",
             config=FactoryConfig(name="test-run", stages=["chief_engineer_review"]),

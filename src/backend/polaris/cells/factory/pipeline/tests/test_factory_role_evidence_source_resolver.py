@@ -676,19 +676,58 @@ def test_dynamic_nested_content_identity_drift_fails_closed(tmp_path: Path) -> N
     assert exc_info.value.code == "factory_role_evidence_dynamic_content_identity_invalid"
 
 
-def test_dynamic_cross_factory_job_token_fails_closed(tmp_path: Path) -> None:
+def test_dynamic_cross_factory_gate_is_validated_but_not_selected(tmp_path: Path) -> None:
+    run = _run()
+    foreign_record = deepcopy(
+        _control_plane_record(
+            tmp_path,
+            seq=1,
+            factory_run_id=run.id,
+            stage="workspace_validation",
+            ok=False,
+            physical_evidence={"command_count": 1},
+        )
+    )
+    event = dict(foreign_record["payload"]["event"])
+    event["job_token"] = {**event["job_token"], "factory_run_id": "factory-run-2"}
+    event.pop("content_id", None)
+    event.pop("append_id", None)
+    foreign_record["payload"]["event"] = RunLedger(tmp_path, run_id="child-run-1").prepare_idempotent_event(event)
+    foreign_record["integrity_digest"] = EventEnvelope.integrity_digest_for_record(foreign_record)
+    current_record = _control_plane_record(
+        tmp_path,
+        seq=2,
+        factory_run_id=run.id,
+        stage="qa",
+        ok=True,
+        physical_evidence={"command_count": 1},
+    )
+
+    slots = _dynamic_resolver(tmp_path, run, (foreign_record, current_record))._capture_dynamic_slots(
+        factory_run_id=run.id
+    )
+
+    assert slots["failure_feedback"].state == "absent_at_request_time"
+    assert slots["workspace_quality"].state == "absent_at_request_time"
+    assert tuple(item.source_fact_sequence for item in slots["verifier_receipts"].items) == (2,)
+    assert {
+        (slot.source_head.source_head_fact_id, slot.source_head.source_head_sequence) for slot in slots.values()
+    } == {("fact-2", 2)}
+
+
+def test_dynamic_foreign_gate_with_invalid_binding_still_fails_closed(tmp_path: Path) -> None:
     run = _run()
     record = deepcopy(
         _control_plane_record(
             tmp_path,
             seq=1,
-            factory_run_id=run.id,
+            factory_run_id="factory-run-2",
             stage="qa",
             ok=True,
         )
     )
     event = dict(record["payload"]["event"])
-    event["job_token"] = {**event["job_token"], "factory_run_id": "factory-run-2"}
+    event["job_token"] = {**event["job_token"], "stage": "workspace_validation"}
     event.pop("content_id", None)
     event.pop("append_id", None)
     record["payload"]["event"] = RunLedger(tmp_path, run_id="child-run-1").prepare_idempotent_event(event)

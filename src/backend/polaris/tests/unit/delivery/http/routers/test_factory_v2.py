@@ -299,6 +299,7 @@ def test_director_resume_evidence_resets_current_dirty_taskboard(
                 "id": 1,
                 "status": "failed",
                 "metadata": {
+                    "external_task_id": "TASK-1",
                     "runtime_execution": {"status": "failed"},
                     "workflow_run_id": "director-old",
                 },
@@ -332,7 +333,7 @@ def test_director_resume_evidence_resets_current_dirty_taskboard(
     assert task_1["status"] == "pending"
     assert "runtime_execution" not in task_1["metadata"]
     evidence = json.loads((task_dir / "director_resume_reset.json").read_text(encoding="utf-8"))
-    assert evidence["reset_statuses"] == "all_task_records"
+    assert evidence["reset_statuses"] == "unfinished_pm_task_records_only"
     events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
     assert any(event.get("event_type") == "reexecution_reset" for event in events)
 

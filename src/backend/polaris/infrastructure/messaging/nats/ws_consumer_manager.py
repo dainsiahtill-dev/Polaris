@@ -51,6 +51,35 @@ def _channel_matches_filter(channel_filter: str, envelope_channel: str) -> bool:
     return ":" not in token and channel.startswith(f"{token}:")
 
 
+def _subject_matches_workspace_scope(
+    *,
+    workspace_key: str,
+    subject: str,
+    envelope: RuntimeEventEnvelope,
+) -> bool:
+    """Reject cross-workspace runtime events before WebSocket projection.
+
+    The pull consumer intentionally binds ``hp.runtime.>`` because bench and
+    role-chat channels are workspace-agnostic.  Channel matching alone is not
+    sufficient: ``event.factory:<run_id>`` from another workspace has the same
+    channel family and would otherwise leak into the current project UI.
+    """
+
+    normalized_subject = str(subject or "").strip()
+    normalized_channel = str(envelope.channel or "").strip()
+    if normalized_channel == "event.bench" or normalized_channel.startswith("event.bench:"):
+        return normalized_subject.startswith("hp.runtime.bench.")
+    if normalized_channel == "chat" or normalized_channel.startswith("chat:"):
+        return normalized_subject.startswith("hp.runtime.chat.")
+
+    expected_workspace = str(workspace_key or "").strip()
+    return bool(
+        expected_workspace
+        and str(envelope.workspace_key or "").strip() == expected_workspace
+        and normalized_subject.startswith(f"hp.runtime.{expected_workspace}.")
+    )
+
+
 def _normalize_durable_token(value: str) -> str:
     """Return a NATS durable-name-safe token with a deterministic fallback."""
     normalized = _DURABLE_TOKEN_PATTERN.sub("_", str(value or "").strip()).strip("_-")
@@ -349,6 +378,15 @@ class JetStreamConsumerManager:
                         cursor = int(envelope.cursor or 0)
                         if cursor > 0:
                             self._pending_acks[cursor] = msg
+
+                        if not _subject_matches_workspace_scope(
+                            workspace_key=self.workspace_key,
+                            subject=str(getattr(msg, "subject", "") or ""),
+                            envelope=envelope,
+                        ):
+                            await msg.ack()
+                            self._pending_acks.pop(cursor, None)
+                            continue
 
                         # Channel filtering (same logic as before)
                         if self.channels and not any(

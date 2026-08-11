@@ -14,8 +14,10 @@ from pathlib import Path
 from typing import Any, Callable, Coroutine
 
 from polaris.cells.director.task_consumer.public.project_verification import (
+    ProjectArtifactReceiptV1,
     ProjectVerificationReceiptV1,
     QueryProjectVerificationReceiptV1,
+    RecordProjectArtifactCommandV1,
     ResolveProjectVerificationAuthorityQueryV1,
 )
 
@@ -143,6 +145,98 @@ def _attach_handoff_validation_payload(payload: dict[str, Any], validation: dict
     validation_audit = dict(validation)
     validation_audit.pop("task_completion_projection", None)
     payload["director_handoff_validation"] = validation_audit
+
+
+def _record_task_owned_artifact_receipts(
+    *,
+    workspace: str,
+    task_id: str,
+    payload: Mapping[str, Any],
+) -> tuple[dict[str, str], ...]:
+    """Record exact CE-owned artifact bytes before advancing to QA.
+
+    The task-local completion projection is the only ownership source.  This
+    bridge never infers obligations from ``changed_files`` and deliberately
+    excludes entrypoints: entrypoint obligations require their exact verifier
+    command receipt, not an artifact-exists receipt.
+    """
+
+    raw_projection = payload.get("task_completion_projection")
+    if raw_projection is None:
+        return ()
+    if not isinstance(raw_projection, Mapping):
+        raise TypeError("task completion projection must be a mapping")
+    projection = dict(raw_projection)
+    projection_task_id = str(projection.get("task_id") or "").strip()
+    if projection_task_id != task_id:
+        raise ValueError("task completion projection owner does not match claimed task")
+    raw_artifacts = projection.get("owned_artifacts")
+    if raw_artifacts is None or raw_artifacts == [] or raw_artifacts == ():
+        return ()
+    if not isinstance(raw_artifacts, (list, tuple)):
+        raise TypeError("task completion projection owned_artifacts must be a sequence")
+    project_id = str(projection.get("project_id") or "").strip()
+    run_id = str(projection.get("run_id") or "").strip()
+    contract_hash = str(projection.get("project_contract_hash") or "").strip()
+    if not project_id or not run_id or len(contract_hash) != 64:
+        raise ValueError("task completion projection lacks exact project/run/contract identity")
+
+    recorded: list[dict[str, str]] = []
+    seen: dict[str, tuple[str, str]] = {}
+    for index, raw_artifact in enumerate(raw_artifacts):
+        if not isinstance(raw_artifact, Mapping):
+            raise TypeError(f"owned_artifacts[{index}] must be a mapping")
+        obligation_id = str(raw_artifact.get("obligation_id") or "").strip()
+        owner_task_id = str(raw_artifact.get("owner_task_id") or "").strip()
+        path = str(raw_artifact.get("path") or "").strip()
+        if not obligation_id or owner_task_id != task_id or not path:
+            raise ValueError(f"owned_artifacts[{index}] lacks exact task-owned identity")
+        prior = seen.get(obligation_id)
+        identity = (owner_task_id, path)
+        if prior is not None:
+            if prior != identity:
+                raise ValueError(f"artifact obligation {obligation_id!r} has conflicting duplicate identity")
+            continue
+        seen[obligation_id] = identity
+        receipt = _package().record_project_artifact(
+            RecordProjectArtifactCommandV1(
+                workspace=workspace,
+                project_id=project_id,
+                run_id=run_id,
+                completion_contract_hash=contract_hash,
+                obligation_id=obligation_id,
+                owner_task_id=owner_task_id,
+                path=path,
+            )
+        )
+        if not isinstance(receipt, ProjectArtifactReceiptV1):
+            raise TypeError("project artifact owner returned a lookalike receipt")
+        if (
+            receipt.project_id,
+            receipt.run_id,
+            receipt.completion_contract_hash,
+            receipt.obligation_id,
+            receipt.owner_task_id,
+            receipt.path,
+        ) != (
+            project_id,
+            run_id,
+            contract_hash,
+            obligation_id,
+            owner_task_id,
+            path,
+        ):
+            raise ValueError("project artifact receipt identity differs from CE task projection")
+        recorded.append(
+            {
+                "obligation_id": obligation_id,
+                "path": path,
+                "artifact_hash": str(receipt.artifact_hash),
+                "receipt_hash": str(receipt.receipt_hash),
+                "receipt_ref": str(receipt.receipt_ref),
+            }
+        )
+    return tuple(recorded)
 
 
 def _job_token_from_payload(payload: dict[str, Any]) -> dict[str, Any]:

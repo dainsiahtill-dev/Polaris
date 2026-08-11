@@ -3297,6 +3297,25 @@ def test_typescript_duplicate_object_property_rule_plans_precise_line_delete() -
     assert composition.patches[0].content_after.count("[Phase.Quarter]:") == 1
 
 
+def test_typescript_duplicate_object_property_diagnostic_is_executable_coverage() -> None:
+    diagnostic = (
+        "src/models/types.ts(28,3): error TS1117: "
+        "An object literal cannot have multiple properties with the same name."
+    )
+
+    coverage = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,))
+    )
+
+    assert coverage.covered_diagnostic_count == 1
+    assert coverage.executable_runtime_plan_diagnostic_count == 1
+    assert coverage.uncovered_diagnostic_count == 0
+    assert coverage.items[0].matched_rule_ids == ("typescript.duplicate_object_property",)
+    assert coverage.items[0].matched_source_tools == (
+        "deterministic_typescript_duplicate_object_property_repair",
+    )
+
+
 def test_typescript_duplicate_object_property_runtime_plans_composition_inside_kernel() -> None:
     content = "const config = {\n  name: 'first',\n  mode: 'fast',\n  name: 'second',\n};\n"
 

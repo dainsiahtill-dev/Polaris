@@ -122,7 +122,12 @@ def test_build_system_prompt_for_quality_repair_suppresses_working_memory_only(m
             "Do not read files first. Do not list directories. Emit exactly one write_file tool call."
         ),
         history=[],
-        context_override={"delivery_mode": "materialize_changes"},
+        context_override={
+            "delivery_mode": "materialize_changes",
+            # Historical payload metadata must not downgrade a physical repair
+            # turn to a read-only profession protocol.
+            "task_type": "readonly",
+        },
     )
     captured: dict[str, object] = {}
 
@@ -147,6 +152,71 @@ def test_build_system_prompt_for_quality_repair_suppresses_working_memory_only(m
     assert "[POLARIS PROMPT PROFILE]" in str(captured["appendix"])
     assert captured["include_working_memory_contract"] is False
     assert captured["include_tool_policy"] is True
+    assert captured["task_type"] == "bug_fix"
+
+
+def test_prompt_task_type_ignores_payload_phase_and_readonly_metadata() -> None:
+    profile = SimpleNamespace(
+        role_id="director",
+        model="gpt-5",
+        version="1.0.0",
+        tool_policy=SimpleNamespace(policy_id="director-policy-v1", whitelist=["write_file"]),
+        prompt_policy=SimpleNamespace(core_template_id="director", tpl_version="1.0"),
+    )
+    kernel = RoleExecutionKernel(workspace=".", registry=_StubRegistry(profile))  # type: ignore[arg-type]
+    prompt_builder = get_prompt_builder(kernel)
+
+    result = prompt_builder._resolve_prompt_task_type(
+        task_type="default",
+        message="MATERIALIZATION QUALITY REPAIR MODE: fix the failing TypeScript verifier.",
+        prompt_appendix=(
+            "historical_payload: {'task_type': 'readonly', 'phase': 'requirements'}\n"
+            "selection=language:typescript; task:review; stage:requirements"
+        ),
+    )
+
+    assert result == "bug_fix"
+
+
+def test_prompt_task_type_maps_authoritative_write_code_to_new_code(monkeypatch) -> None:
+    profile = SimpleNamespace(
+        role_id="director",
+        model="gpt-5",
+        version="1.0.0",
+        tool_policy=SimpleNamespace(policy_id="director-policy-v1", whitelist=["write_file"]),
+        prompt_policy=SimpleNamespace(core_template_id="director", tpl_version="1.0"),
+    )
+    kernel = RoleExecutionKernel(workspace=".", registry=_StubRegistry(profile))  # type: ignore[arg-type]
+    request = RoleTurnRequest(
+        mode=RoleExecutionMode.CHAT,
+        workspace=".",
+        message="Implement the declared target files.",
+        history=[],
+        context_override={
+            "task_type": "readonly",
+            "director_execution_profile": {"task_type": "write_code"},
+        },
+    )
+    captured: dict[str, object] = {}
+
+    def _fake_build_system_prompt(_profile, prompt_appendix, **kwargs: object) -> str:
+        captured["appendix"] = str(prompt_appendix or "")
+        captured.update(kwargs)
+        return "system-prompt"
+
+    prompt_builder = get_prompt_builder(kernel)
+    monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
+
+    result = build_system_prompt_for_request(
+        prompt_builder=prompt_builder,
+        profile=profile,  # type: ignore[arg-type]
+        request=request,
+        prompt_appendix="",
+        workspace=kernel.workspace,
+    )
+
+    assert result == "system-prompt"
+    assert captured["task_type"] == "new_code"
 
 
 def test_build_system_prompt_for_factory_contract_suppresses_working_memory_only(monkeypatch) -> None:

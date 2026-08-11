@@ -507,4 +507,9 @@ async def test_execute_director_run_materializes_pm_task_payloads(
     assert role_entry.metadata["blueprint_id"] == blueprint_id
     assert role_entry.metadata["target_files"] == ["package.json", "src/index.ts"]
     assert role_entry.metadata["scope_paths"] == ["src/config"]
+    task_completion_projection = role_entry.metadata["task_completion_projection"]
+    assert task_completion_projection["schema_version"] == "polaris.task_completion_projection.v1"
+    assert task_completion_projection["task_id"] == "T01-001"
+    assert task_completion_projection["project_contract_hash"]
+    assert task_completion_projection["projection_hash"]
     assert stub.request.metadata["pm_task_payloads"][0]["id"] == "T01-001"

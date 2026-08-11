@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from polaris.cells.control_plane.run_ledger.public import stable_hash
+from polaris.cells.roles.adapters.internal.director import adapter as director_adapter_module
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 from polaris.cells.runtime.task_runtime.public import TaskRuntimeExecutionAttemptIdentityV1
@@ -196,6 +197,38 @@ async def test_director_timeout_boundary_projects_execution_authority_to_caller_
     assert result["success"] is True
     assert caller_context["director_execution_envelope"] == envelope
     assert caller_context["execution_envelope_hash"] == "a" * 64
+
+
+@pytest.mark.asyncio
+async def test_director_timeout_boundary_reserves_settlement_grace_without_extending_provider_budget(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = DirectorAdapter(workspace=str(tmp_path))
+    observed: dict[str, Any] = {}
+
+    async def fake_dialogue(_message: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        assert isinstance(context, dict)
+        observed["provider_timeout"] = context["director_role_call_timeout_budget"]["timeout_seconds"]
+        return {"content": "done", "success": True, "tool_results": [{"tool": "write_file"}]}
+
+    async def capture_wait_for(awaitable: Any, timeout: float) -> Any:
+        observed["watchdog_timeout"] = timeout
+        return await awaitable
+
+    monkeypatch.setattr(adapter, "_invoke_role_dialogue", fake_dialogue)
+    monkeypatch.setattr(director_adapter_module.asyncio, "wait_for", capture_wait_for)
+
+    result = await adapter._invoke_role_dialogue_with_timeout(
+        "repair",
+        context={},
+        timeout_seconds=30,
+        stage_label="quality_repair",
+    )
+
+    assert result["success"] is True
+    assert observed["provider_timeout"] == 30.0
+    assert observed["watchdog_timeout"] == 45.0
 
 
 @pytest.mark.asyncio

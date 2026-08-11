@@ -184,13 +184,14 @@ def _ledger(contract: ProjectCompletionContractV1) -> RunLedgerProjectionResultV
                 "capability": {
                     "ok": True,
                     "issues": [],
-                    "latest_contract_hash": contract.contract_hash,
+                    "latest_contract_hash": "c" * 64,
+                    "latest_blueprint_hash": "d" * 64,
                     "job_token_ids": ["job-token-1"],
                     "latest_token_id": "job-token-1",
                 },
                 "evidence_policy": {
-                    "enabled_modalities": ["environment_prep", "lint", "test", "entrypoint"],
-                    "required_modalities": ["environment_prep", "test", "entrypoint"],
+                    "enabled_modalities": ["command"],
+                    "required_modalities": ["command"],
                 },
                 "gates": gates,
             },
@@ -395,6 +396,44 @@ def test_empty_workspace_and_arbitrary_owner_refs_cannot_satisfy_delivery(
     assert observation.contract.to_seed_dict() == contract.to_seed_dict()
     assert observation.evidence == ()
     assert observation.repair_coverage == ()
+
+
+def test_same_task_repair_run_does_not_invalidate_historical_task_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = _patch_owners(monkeypatch, tmp_path)
+    original = _task_projection(tmp_path)
+    repaired_rows = tuple(
+        {
+            **row,
+            "workflow_run_id": "director-repair-task-1",
+            "fact_event_seq": 99,
+        }
+        if row["task_id"] == "task-1"
+        else row
+        for row in original.rows
+    )
+    monkeypatch.setattr(
+        adapter_module,
+        "query_observable_task_rows",
+        lambda requested_workspace: ObservableTaskRowsProjectionV1(
+            workspace=str(tmp_path.resolve()),
+            source="task_runtime.execution_fact",
+            authoritative=True,
+            degraded=False,
+            rows=repaired_rows,
+        ),
+    )
+
+    observation = adapter_module.PROJECT_COMPLETION_OWNER_OBSERVATION_ADAPTER.observe_project_completion(
+        workspace=str(tmp_path),
+        project_id=contract.project_id,
+        run_id=contract.run_id,
+        completion_contract_hash=contract.contract_hash,
+    )
+
+    assert observation.contract.contract_hash == contract.contract_hash
 
 
 def test_bootstrap_adapter_rejects_degraded_task_runtime(

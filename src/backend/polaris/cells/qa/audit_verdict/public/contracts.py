@@ -143,9 +143,10 @@ class RunQaAuditCommandV1:
 
 @dataclass(frozen=True)
 class CommitQaRoleVerdictCommandV1:
-    """Commit one completed QA role report through the canonical QA owner.
+    """Commit one completed QA evidence report through the canonical QA owner.
 
-    The role report is evidence, not authority.  ``qa.audit_verdict`` still
+    The report may come from a QA role or deterministic physical verifiers;
+    either form is evidence, not authority. ``qa.audit_verdict`` still
     rebuilds the verdict envelope from the Run Ledger barrier and artifact
     evidence before it commits the final ``qa_verdict`` gate.
     """

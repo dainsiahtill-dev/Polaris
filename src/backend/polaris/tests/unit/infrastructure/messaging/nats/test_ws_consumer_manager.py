@@ -85,9 +85,16 @@ class _FakeMetadata:
 
 
 class _FakeMessage:
-    def __init__(self, payload: dict[str, Any], *, stream_seq: int) -> None:
+    def __init__(
+        self,
+        payload: dict[str, Any],
+        *,
+        stream_seq: int,
+        subject: str = "hp.runtime.workspace.llm",
+    ) -> None:
         self.data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.metadata = _FakeMetadata(stream=stream_seq)
+        self.subject = subject
         self.ack_calls = 0
         self.nak_calls = 0
         self.acked = asyncio.Event()
@@ -276,6 +283,72 @@ def test_channel_filter_matches_runtime_channel_families() -> None:
     assert matches("event.bench:bench-1", "event.bench:bench-2") is False
     assert matches("event.bench", "event.factory:run-1") is False
     assert matches("llm", "event.bench:bench-1") is False
+
+
+def test_subject_scope_rejects_cross_workspace_factory_event() -> None:
+    envelope = ws_consumer_manager.RuntimeEventEnvelope(
+        workspace_key="other-workspace",
+        channel="event.factory:factory-other",
+        kind="failed",
+        payload={"run_id": "factory-other"},
+    )
+
+    assert (
+        ws_consumer_manager._subject_matches_workspace_scope(
+            workspace_key="workspace",
+            subject="hp.runtime.other-workspace.event.factory.factory-other",
+            envelope=envelope,
+        )
+        is False
+    )
+
+
+def test_subject_scope_keeps_explicit_workspace_agnostic_channels() -> None:
+    envelope = ws_consumer_manager.RuntimeEventEnvelope(
+        workspace_key="bench",
+        channel="event.bench:bench-1",
+        kind="project.completed",
+        payload={"session_id": "bench-1"},
+    )
+
+    assert (
+        ws_consumer_manager._subject_matches_workspace_scope(
+            workspace_key="workspace",
+            subject="hp.runtime.bench.bench-1",
+            envelope=envelope,
+        )
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_cross_workspace_factory_event_is_acked_and_never_queued() -> None:
+    manager = JetStreamConsumerManager(
+        workspace_key="workspace",
+        client_id="client-1",
+        channels=["event.factory"],
+    )
+    msg = _FakeMessage(
+        payload=_runtime_event_payload(
+            workspace_key="other-workspace",
+            run_id="factory-other",
+            channel="event.factory:factory-other",
+            kind="failed",
+        ),
+        stream_seq=42,
+        subject="hp.runtime.other-workspace.event.factory.factory-other",
+    )
+    manager._subscription = _OneShotSubscription(msg)
+    manager._closed = False
+
+    manager._consumer_task = asyncio.create_task(manager._consume_messages_loop())
+    try:
+        await asyncio.wait_for(msg.acked.wait(), timeout=1.0)
+        assert msg.ack_calls == 1
+        assert manager._message_queue.empty() is True
+        assert manager._pending_acks == {}
+    finally:
+        await manager.disconnect()
 
 
 @pytest.mark.asyncio

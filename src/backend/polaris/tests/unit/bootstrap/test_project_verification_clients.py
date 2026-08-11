@@ -9,6 +9,7 @@ import polaris.bootstrap.project_verification_clients as clients_module
 from polaris.cells.director.task_consumer.public.project_verification import (
     ProjectVerificationClientPortV1 as DirectorProjectVerificationClientPortV1,
     QueryProjectVerificationReceiptV1,
+    RecordProjectArtifactCommandV1,
     ResolveProjectVerificationAuthorityQueryV1,
 )
 from polaris.cells.qa.audit_verdict.public.project_verification import (
@@ -17,6 +18,7 @@ from polaris.cells.qa.audit_verdict.public.project_verification import (
 from polaris.cells.runtime.execution_broker.public import (
     ProjectVerificationArtifactInputV1,
     QueryProjectVerificationReceiptV1 as OwnerQueryProjectVerificationReceiptV1,
+    RecordProjectArtifactCommandV1 as OwnerRecordProjectArtifactCommandV1,
     ResolveProjectVerificationAuthorityQueryV1 as OwnerResolveProjectVerificationAuthorityQueryV1,
 )
 
@@ -38,6 +40,11 @@ def test_adapter_maps_consumer_queries_to_execution_owner_contracts(
     workspace.mkdir()
     captured_authority: list[OwnerResolveProjectVerificationAuthorityQueryV1] = []
     captured_receipt: list[OwnerQueryProjectVerificationReceiptV1] = []
+    captured_artifact: list[OwnerRecordProjectArtifactCommandV1] = []
+
+    def record_artifact(command: OwnerRecordProjectArtifactCommandV1) -> object:
+        captured_artifact.append(command)
+        return object()
 
     def authorize(query: OwnerResolveProjectVerificationAuthorityQueryV1) -> object:
         captured_authority.append(query)
@@ -49,6 +56,7 @@ def test_adapter_maps_consumer_queries_to_execution_owner_contracts(
 
     monkeypatch.setattr(clients_module, "authorize_project_verification_command", authorize)
     monkeypatch.setattr(clients_module, "query_project_verification_receipt", query_receipt)
+    monkeypatch.setattr(clients_module, "record_project_artifact", record_artifact)
 
     contract_hash = _hash("contract")
     authority_query = ResolveProjectVerificationAuthorityQueryV1(
@@ -59,6 +67,17 @@ def test_adapter_maps_consumer_queries_to_execution_owner_contracts(
         obligation_id="build-1",
     )
     clients_module._CLIENT.authorize_project_verification_command(authority_query)
+    clients_module._CLIENT.record_project_artifact(
+        RecordProjectArtifactCommandV1(
+            workspace=str(workspace),
+            project_id="project-1",
+            run_id="run-1",
+            completion_contract_hash=contract_hash,
+            obligation_id="source-1",
+            owner_task_id="task-1",
+            path="src/main.py",
+        )
+    )
 
     executable = str(Path(sys.executable).resolve())
     receipt_query = QueryProjectVerificationReceiptV1(
@@ -93,6 +112,17 @@ def test_adapter_maps_consumer_queries_to_execution_owner_contracts(
             run_id="run-1",
             completion_contract_hash=contract_hash,
             obligation_id="build-1",
+        )
+    ]
+    assert captured_artifact == [
+        OwnerRecordProjectArtifactCommandV1(
+            workspace=str(workspace),
+            project_id="project-1",
+            run_id="run-1",
+            completion_contract_hash=contract_hash,
+            obligation_id="source-1",
+            owner_task_id="task-1",
+            path="src/main.py",
         )
     ]
     assert len(captured_receipt) == 1

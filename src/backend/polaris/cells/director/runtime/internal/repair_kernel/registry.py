@@ -3184,14 +3184,14 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 phase="quality_repair",
                 archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
                 priority=1,
-                diagnostic_codes=("typescript_ts1117", "typescript_ts2300"),
-                message_terms=("object literal", "multiple properties", "duplicate identifier"),
+                diagnostic_codes=("typescript_ts1117",),
                 risk_level="low",
                 description=(
-                    "Removes later duplicate single-line TypeScript object-literal (TS1117) or "
-                    "interface/type member (TS2300) properties, keeping the first occurrence."
+                    "Removes later duplicate single-line TypeScript object-literal (TS1117) "
+                    "properties, keeping the first occurrence."
                 ),
                 runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="typescript_duplicate_property_line_delete"),
             ),
             RepairRuleDefinition(
                 rule_id="typescript.enum_member_separator",

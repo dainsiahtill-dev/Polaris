@@ -360,7 +360,15 @@ class CanonicalFactoryRoleEvidenceSourceAuthority:
         envelope: EventEnvelope,
         event: Mapping[str, object],
         factory_run_id: str,
-    ) -> None:
+    ) -> bool:
+        """Validate one gate and report whether it belongs to this Factory run.
+
+        ``execution.control_plane`` is workspace-scoped and intentionally keeps
+        historical gates from multiple Factory runs.  Foreign gates still have
+        to be structurally valid, but they are not evidence for the current
+        final request and must therefore be ignored rather than treated as
+        binding drift.
+        """
         if envelope.event_type != "gate_evaluated":
             raise self._fail("factory_role_evidence_dynamic_envelope_invalid")
         payload = envelope.payload
@@ -369,10 +377,13 @@ class CanonicalFactoryRoleEvidenceSourceAuthority:
             raise self._fail("factory_role_evidence_dynamic_job_token_invalid")
         event_stage = event.get("stage")
         job_stage = job_token.get("stage")
+        gate_factory_run_id = job_token.get("factory_run_id")
         if (
             event.get("event_type") != "gate_evaluated"
             or payload.get("run_id") != job_token.get("run_id")
-            or job_token.get("factory_run_id") != factory_run_id
+            or type(gate_factory_run_id) is not str
+            or not gate_factory_run_id
+            or gate_factory_run_id != gate_factory_run_id.strip()
             or type(event_stage) is not str
             or not event_stage
             or event_stage != event_stage.strip()
@@ -380,6 +391,7 @@ class CanonicalFactoryRoleEvidenceSourceAuthority:
             or event_stage != job_stage
         ):
             raise self._fail("factory_role_evidence_dynamic_binding_invalid")
+        return gate_factory_run_id == factory_run_id
 
     def _capture_dynamic_slots(
         self,
@@ -437,12 +449,13 @@ class CanonicalFactoryRoleEvidenceSourceAuthority:
             digest = str(record["integrity_digest"])
             stream_validated.append((envelope, digest))
             if envelope.event_type == "gate_evaluated":
-                self._validate_dynamic_gate_binding(
+                belongs_to_factory_run = self._validate_dynamic_gate_binding(
                     envelope=envelope,
                     event=event,
                     factory_run_id=factory_run_id,
                 )
-                gate_validated.append((envelope, event, content_id, digest))
+                if belongs_to_factory_run:
+                    gate_validated.append((envelope, event, content_id, digest))
 
         if stream_validated:
             final_envelope, final_digest = stream_validated[-1]

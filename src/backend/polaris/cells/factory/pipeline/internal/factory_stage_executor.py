@@ -2031,10 +2031,29 @@ class OrchestrationStageExecutor:
             logger.warning("Factory rejected TaskRuntime projection: %s", failure)
         return rows
 
-    def _read_claimable_director_task_ids(self, *, limit: int, factory_run_id: str = "") -> list[str]:
-        """Return TaskBoard PM/external ids that can be claimed in this round."""
+    def _read_claimable_director_task_ids(
+        self,
+        *,
+        limit: int,
+        factory_run_id: str = "",
+        allowed_task_ids: Iterable[str] | None = None,
+    ) -> list[str]:
+        """Return claimable PM ids confined to the admitted dependency wave.
+
+        TaskRuntime readiness is the execution-state authority, while the
+        immutable PM contract owns the dependency DAG.  ``blocked_by`` on
+        legacy task rows is not a substitute for that contract: older rows may
+        only carry ``depends_on`` in metadata.  The caller therefore supplies
+        the currently admitted wave and this projection intersects both facts
+        before any Director provider request can start.
+        """
         if limit <= 0:
             return []
+        allowed: set[str] | None = None
+        if allowed_task_ids is not None:
+            allowed = {str(item or "").strip() for item in allowed_task_ids if str(item or "").strip()}
+            if not allowed:
+                return []
         rows = self._read_observable_task_rows(factory_run_id=factory_run_id)
 
         ids: list[str] = []
@@ -2053,6 +2072,8 @@ class OrchestrationStageExecutor:
                 continue
             task_id = self._task_projection_external_id(row)
             if not task_id or task_id in seen:
+                continue
+            if allowed is not None and task_id not in allowed:
                 continue
             seen.add(task_id)
             ids.append(task_id)
@@ -2101,6 +2122,7 @@ class OrchestrationStageExecutor:
         limit: int,
         grace_seconds: float,
         factory_run_id: str = "",
+        dependency_tasks: list[dict[str, Any]] | None = None,
     ) -> tuple[list[str], dict[str, int]]:
         """Wait briefly for completion-triggered dependency facts to settle.
 
@@ -2117,10 +2139,20 @@ class OrchestrationStageExecutor:
         deadline = loop.time() + max(0.0, grace_seconds)
         latest_stats = self._read_taskboard_stats()
         while True:
-            task_ids = self._read_claimable_director_task_ids(
-                limit=limit,
-                factory_run_id=factory_run_id,
-            )
+            allowed_task_ids: Iterable[str] | None = None
+            if dependency_tasks is not None:
+                schedule = self._director_dependency_schedule(
+                    dependency_tasks,
+                    factory_run_id=factory_run_id,
+                )
+                allowed_task_ids = schedule.waves[0] if schedule.valid and schedule.waves else ()
+            claim_kwargs: dict[str, Any] = {
+                "limit": limit,
+                "factory_run_id": factory_run_id,
+            }
+            if _call_accepts_keyword(self._read_claimable_director_task_ids, "allowed_task_ids"):
+                claim_kwargs["allowed_task_ids"] = allowed_task_ids
+            task_ids = self._read_claimable_director_task_ids(**claim_kwargs)
             latest_stats = self._read_taskboard_stats()
             if task_ids or self._is_taskboard_converged(latest_stats):
                 return task_ids, latest_stats
@@ -5737,6 +5769,81 @@ class OrchestrationStageExecutor:
         capped = max(1, int(remaining_seconds - _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS))
         return max(1, min(configured, capped))
 
+    @staticmethod
+    def _quality_gate_requires_llm_judgement(context: dict[str, Any]) -> bool:
+        """Return whether QA needs non-physical semantic judgement.
+
+        Build/test/lint/entrypoint receipts are authoritative physical
+        evidence. Repeating them through a general QA LLM adds latency and
+        failure surface without adding authority. LLM QA is opt-in for
+        modalities that genuinely require semantic or visual judgement.
+        """
+
+        sources = [context]
+        qa_input = context.get("qa_input")
+        if isinstance(qa_input, Mapping):
+            sources.append(dict(qa_input))
+
+        explicit_keys = (
+            "qa_llm_required",
+            "qa_requires_llm_judgement",
+            "qa_semantic_review_required",
+            "qa_security_review_required",
+            "qa_visual_required",
+            "requires_visual_evidence",
+        )
+        if any(bool(source.get(key)) for source in sources for key in explicit_keys):
+            return True
+
+        modes = {
+            str(source.get(key) or "").strip().lower()
+            for source in sources
+            for key in ("qa_mode", "qa_judgement_mode", "qa_review_mode")
+        }
+        if modes.intersection({"llm", "llm_required", "semantic", "visual", "security"}):
+            return True
+
+        required_modalities: set[str] = set()
+        for source in sources:
+            for key in ("required_evidence_modalities", "qa_required_modalities"):
+                raw = source.get(key)
+                if isinstance(raw, str):
+                    required_modalities.update(item.strip().lower() for item in raw.split(",") if item.strip())
+                elif isinstance(raw, (list, tuple, set)):
+                    required_modalities.update(
+                        str(item or "").strip().lower() for item in raw if str(item or "").strip()
+                    )
+        return bool(
+            required_modalities.intersection(
+                {"visual", "image", "semantic", "semantic_review", "security", "security_review"}
+            )
+        )
+
+    def _write_physical_verifier_qa_report(
+        self,
+        *,
+        run: FactoryRun,
+        workspace_checks_artifact: str,
+    ) -> dict[str, Any]:
+        """Persist deterministic QA evidence after physical checks pass."""
+
+        payload: dict[str, Any] = {
+            "schema_version": "factory.qa_physical_verifier_report.v1",
+            "source": "factory_physical_verifier",
+            "factory_run_id": run.id,
+            "passed": True,
+            "verdict": "PASS",
+            "score": 100.0,
+            "critical_issue_count": 0,
+            "critical_issues": [],
+            "major_issues": [],
+            "warnings": [],
+            "workspace_checks_artifact": workspace_checks_artifact,
+            "llm_invoked": False,
+        }
+        self._write_json_artifact("runtime/qa/report.json", payload)
+        return payload
+
     def _build_qa_execution_metadata(
         self,
         *,
@@ -5969,7 +6076,7 @@ class OrchestrationStageExecutor:
                     report_content_hash=report_content_hash,
                     job_token=job_token,
                     metadata={
-                        "source": "factory_stage_executor.quality_gate",
+                        "source": str(qa_payload.get("source") or "factory_stage_executor.quality_gate"),
                         "factory_run_id": run.id,
                     },
                 ),
@@ -6156,6 +6263,13 @@ class OrchestrationStageExecutor:
             workspace_checks_artifact,
             run_id=run.id,
         )
+        physical_qa_task_id, physical_qa_run_id = self._canonical_qa_commit_identity(run=run, context=context)
+        physical_verifier_qa = bool(
+            workspace_checks_artifact
+            and physical_qa_task_id
+            and physical_qa_run_id
+            and not self._quality_gate_requires_llm_judgement(context)
+        )
 
         abort_reason = await self._quality_gate_abort_reason(abort_checker)
         if abort_reason:
@@ -6170,7 +6284,11 @@ class OrchestrationStageExecutor:
             )
 
         remaining_seconds = self._factory_deadline_remaining_seconds(context)
-        if remaining_seconds is not None and remaining_seconds < _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS:
+        if (
+            not physical_verifier_qa
+            and remaining_seconds is not None
+            and remaining_seconds < _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS
+        ):
             return self._build_quality_gate_failure_stage(
                 run,
                 reason_code="factory_quality_gate_deadline_insufficient_before_qa",
@@ -6183,34 +6301,46 @@ class OrchestrationStageExecutor:
                 workspace_checks_passed=workspace_checks_passed,
             )
 
-        service = self._build_orchestration_service(context)
-        qa_request_metadata, qa_wait_timeout_seconds = self._build_qa_execution_metadata(
-            run_id=run.id,
-            workspace_checks_artifact=workspace_checks_artifact,
-            context=context,
-        )
-        command_result = cast(
-            CommandResult,
-            await self._call_with_factory_role_evidence_authority(
-                authority_port,
-                "qa",
-                lambda: service.execute_qa_run(
-                    workspace=str(self.workspace),
-                    target=context.get("qa_target", "Quality gate"),
-                    options={
-                        "input": qa_input,
-                        "metadata": qa_request_metadata,
-                    },
+        qa_invoked = not physical_verifier_qa
+        if physical_verifier_qa:
+            self._write_physical_verifier_qa_report(
+                run=run,
+                workspace_checks_artifact=workspace_checks_artifact,
+            )
+            final_result = CommandResult(
+                run_id=run.id,
+                status="completed",
+                message="physical verifier evidence passed; advisory QA LLM not required",
+            )
+        else:
+            service = self._build_orchestration_service(context)
+            qa_request_metadata, qa_wait_timeout_seconds = self._build_qa_execution_metadata(
+                run_id=run.id,
+                workspace_checks_artifact=workspace_checks_artifact,
+                context=context,
+            )
+            command_result = cast(
+                CommandResult,
+                await self._call_with_factory_role_evidence_authority(
+                    authority_port,
+                    "qa",
+                    lambda: service.execute_qa_run(
+                        workspace=str(self.workspace),
+                        target=context.get("qa_target", "Quality gate"),
+                        options={
+                            "input": qa_input,
+                            "metadata": qa_request_metadata,
+                        },
+                    ),
                 ),
-            ),
-        )
-        final_result = await self._wait_run_completion(
-            service,
-            command_result,
-            timeout_seconds=qa_wait_timeout_seconds,
-            cancel_event=self._resolve_cancel_event(context),
-            abort_checker=abort_checker,
-        )
+            )
+            final_result = await self._wait_run_completion(
+                service,
+                command_result,
+                timeout_seconds=qa_wait_timeout_seconds,
+                cancel_event=self._resolve_cancel_event(context),
+                abort_checker=abort_checker,
+            )
         final_status = str(final_result.status or "").strip().lower()
         if final_status == "cancelled":
             return self._build_quality_gate_failure_stage(
@@ -6221,7 +6351,7 @@ class OrchestrationStageExecutor:
                 workspace_checks_artifact=workspace_checks_artifact,
                 workspace_checks_passed=workspace_checks_passed,
                 status="cancelled",
-                qa_invoked=True,
+                qa_invoked=qa_invoked,
             )
         if final_status == "timeout":
             return self._build_quality_gate_failure_stage(
@@ -6231,7 +6361,7 @@ class OrchestrationStageExecutor:
                 context=context,
                 workspace_checks_artifact=workspace_checks_artifact,
                 workspace_checks_passed=workspace_checks_passed,
-                qa_invoked=True,
+                qa_invoked=qa_invoked,
             )
 
         qa_report_path = self._artifact_path("runtime/qa/report.json")

@@ -53,6 +53,7 @@ from ._helpers import (
     _OwnerHandoffRoutingRequiredError,
     _pre_state_punch_list,
     _read_consumed_interfaces,
+    _record_task_owned_artifact_receipts,
     _repair_prior_target_size,
     _repair_shrink_error,
     _resolve_qa_local_repair_authority,
@@ -401,6 +402,51 @@ class DirectorExecutionConsumer:
                     "requeue_stage": requeue_stage,
                 }
             try:
+                artifact_receipts = _record_task_owned_artifact_receipts(
+                    workspace=self._workspace,
+                    task_id=task_id,
+                    payload=payload,
+                )
+            except OSError as exc:
+                self._svc.fail_task_stage(
+                    FailTaskStageCommandV1(
+                        workspace=self._workspace,
+                        task_id=task_id,
+                        lease_token=lease_token,
+                        error_code="PROJECT_ARTIFACT_RECEIPT_WRITE_FAILED",
+                        error_message=str(exc),
+                        requeue_stage="pending_exec",
+                        failure_disposition="same_task_local_retry",
+                        metadata={
+                            "reason": "project_artifact_receipt_write_failed",
+                            "automatic_upstream_replan": False,
+                            "automatic_escalation": False,
+                        },
+                    )
+                )
+                return {"task_id": task_id, "ok": False, "reason": "project_artifact_receipt_write_failed"}
+            except (RuntimeError, TypeError, ValueError) as exc:
+                self._svc.fail_task_stage(
+                    FailTaskStageCommandV1(
+                        workspace=self._workspace,
+                        task_id=task_id,
+                        lease_token=lease_token,
+                        error_code="PROJECT_ARTIFACT_RECEIPT_AUTHORITY_FAILED",
+                        error_message=str(exc),
+                        failure_disposition="isolated_contract_blocker",
+                        metadata={
+                            "reason": "project_artifact_receipt_authority_failed",
+                            "automatic_upstream_replan": False,
+                            "automatic_escalation": False,
+                        },
+                    )
+                )
+                return {
+                    "task_id": task_id,
+                    "ok": False,
+                    "reason": "project_artifact_receipt_authority_failed",
+                }
+            try:
                 qa_exact_revalidation = _revalidate_qa_exact_verifier(
                     workspace=self._workspace,
                     task_id=task_id,
@@ -481,6 +527,7 @@ class DirectorExecutionConsumer:
                         "changed_files": changed_files,
                         "director_evidence_status": _director_evidence_status(changed_files, exec_result),
                         "director_files_changed_count": len(changed_files),
+                        "project_artifact_receipts": list(artifact_receipts),
                         "exec_duration_seconds": exec_result.get("duration", 0),
                         "director_adapter": adapter_summary,
                         **(

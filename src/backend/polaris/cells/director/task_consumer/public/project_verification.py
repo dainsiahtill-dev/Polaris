@@ -17,6 +17,19 @@ class ResolveProjectVerificationAuthorityQueryV1:
 
 
 @dataclass(frozen=True, slots=True)
+class RecordProjectArtifactCommandV1:
+    """Record one exact CE-owned artifact from current workspace bytes."""
+
+    workspace: str
+    project_id: str
+    run_id: str
+    completion_contract_hash: str
+    obligation_id: str
+    owner_task_id: str
+    path: str
+
+
+@dataclass(frozen=True, slots=True)
 class QueryProjectVerificationReceiptV1:
     workspace: str
     project_id: str
@@ -62,7 +75,25 @@ class ProjectVerificationReceiptV1(Protocol):
 
 
 @runtime_checkable
+class ProjectArtifactReceiptV1(Protocol):
+    project_id: str
+    run_id: str
+    completion_contract_hash: str
+    obligation_id: str
+    owner_task_id: str
+    path: str
+    artifact_hash: str
+    receipt_hash: str
+    receipt_ref: str
+
+
+@runtime_checkable
 class ProjectVerificationClientPortV1(Protocol):
+    def record_project_artifact(
+        self,
+        command: RecordProjectArtifactCommandV1,
+    ) -> ProjectArtifactReceiptV1: ...
+
     def authorize_project_verification_command(
         self,
         query: ResolveProjectVerificationAuthorityQueryV1,
@@ -103,6 +134,10 @@ def authorize_project_verification_command(query: ResolveProjectVerificationAuth
     return _client_port().authorize_project_verification_command(query)
 
 
+def record_project_artifact(command: RecordProjectArtifactCommandV1) -> ProjectArtifactReceiptV1:
+    return _client_port().record_project_artifact(command)
+
+
 def query_project_verification_receipt(
     query: QueryProjectVerificationReceiptV1,
 ) -> ProjectVerificationReceiptV1 | None:
@@ -114,11 +149,14 @@ def run_project_verification(command: Any) -> Any:
 
 
 __all__ = [
+    "ProjectArtifactReceiptV1",
     "ProjectVerificationClientPortV1",
     "ProjectVerificationReceiptV1",
     "QueryProjectVerificationReceiptV1",
+    "RecordProjectArtifactCommandV1",
     "ResolveProjectVerificationAuthorityQueryV1",
     "authorize_project_verification_command",
     "query_project_verification_receipt",
+    "record_project_artifact",
     "run_project_verification",
 ]

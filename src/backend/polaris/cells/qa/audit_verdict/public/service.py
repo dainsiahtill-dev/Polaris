@@ -334,7 +334,7 @@ def run_qa_audit(command: RunQaAuditCommandV1) -> QaAuditResultV1:
 
 
 def commit_qa_role_verdict(command: CommitQaRoleVerdictCommandV1) -> QaAuditResultV1:
-    """Commit a role-produced QA report without granting the role authority.
+    """Commit a QA evidence report without granting its producer authority.
 
     The report first becomes a non-authoritative evidence fact.  The QA verdict
     engine then re-reads the canonical Run Ledger behind that evidence barrier,
@@ -346,6 +346,7 @@ def commit_qa_role_verdict(command: CommitQaRoleVerdictCommandV1) -> QaAuditResu
     if not isinstance(command, CommitQaRoleVerdictCommandV1):
         raise TypeError("command must be CommitQaRoleVerdictCommandV1")
 
+    report_source = str(command.metadata.get("source") or "qa_role_report").strip() or "qa_role_report"
     failure_class = "" if command.passed else FailureClassV1.IMPLEMENTATION_DEFECT.value
     audit_payload: dict[str, Any] = {
         "schema_version": "qa.role_report_evidence.v1",
@@ -359,6 +360,7 @@ def commit_qa_role_verdict(command: CommitQaRoleVerdictCommandV1) -> QaAuditResu
         "report_ref": command.report_ref,
         "report_content_hash": command.report_content_hash,
         "metadata": dict(command.metadata),
+        "source": report_source,
         "evidence_authoritative": False,
     }
     barrier_receipt = commit_qa_evidence(
@@ -409,7 +411,7 @@ def commit_qa_role_verdict(command: CommitQaRoleVerdictCommandV1) -> QaAuditResu
         findings=command.findings,
         suggestions=(),
         metadata={
-            "source": "qa_role_report",
+            "source": report_source,
             "report_ref": command.report_ref,
             "report_content_hash": command.report_content_hash,
             "observed_verdict": command.verdict,

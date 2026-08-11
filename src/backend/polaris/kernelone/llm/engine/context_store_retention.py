@@ -37,7 +37,9 @@ import json
 import logging
 import os
 import re
+import threading
 import time
+import weakref
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -56,6 +58,27 @@ logger = logging.getLogger(__name__)
 SWEEP_STATE_FILENAME = ".sweep_state.json"
 _PROVIDER_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _AUDIT_LOCK_LOGICAL_PATH = "runtime/contexts/context_snapshot_audit.control"
+_AUDIT_PROCESS_LOCKS_GUARD = threading.Lock()
+_AUDIT_PROCESS_LOCKS: weakref.WeakValueDictionary[str, Any] = weakref.WeakValueDictionary()
+
+
+def _audit_process_lock(storage_identity_token: str) -> threading.RLock:
+    """Serialize same-runtime audit writers before taking the physical lock.
+
+    Each provider call constructs a repository instance.  Without a shared
+    process mutex, concurrent calls from the same backend race for the same
+    2-second ``flock`` and can fail before reaching the Provider.  The weak
+    registry keeps one re-entrant mutex while repositories use it and releases
+    idle workspace entries automatically.
+    """
+
+    token = str(storage_identity_token or "").strip()
+    with _AUDIT_PROCESS_LOCKS_GUARD:
+        lock = _AUDIT_PROCESS_LOCKS.get(token)
+        if lock is None:
+            lock = threading.RLock()
+            _AUDIT_PROCESS_LOCKS[token] = lock
+        return lock
 
 
 class ContextSnapshotAuditPinError(RuntimeError):
@@ -79,6 +102,7 @@ class ContextSnapshotAuditPinRepository:
         self.contexts_root = os.path.join(self.runtime_root, "contexts")
         self._lock_logical_path = _AUDIT_LOCK_LOGICAL_PATH
         self._platform_lock_root = default_platform_lock_root()
+        self._process_lock = _audit_process_lock(self.storage_identity_token)
 
     @property
     def lock_logical_path(self) -> str:
@@ -280,27 +304,28 @@ class ContextSnapshotAuditPinRepository:
     def _exclusive_lock(self) -> Iterator[None]:
         """Hold the registered KernelOne lock authority for all pin state I/O."""
 
-        try:
-            LockedRegularFileSetV1.provision_authority(
-                platform_lock_root=self._platform_lock_root,
-                storage_identity_token=self.storage_identity_token,
-                runtime_root=self.runtime_root,
-            )
-            LockedRegularFileSetV1.enroll_stream_lock_keys(
-                platform_lock_root=self._platform_lock_root,
-                storage_identity_token=self.storage_identity_token,
-                runtime_root=self.runtime_root,
-                logical_paths=(self._lock_logical_path,),
-            )
-            with LockedRegularFileSetV1.acquire(
-                runtime_root=self.runtime_root,
-                storage_identity_token=self.storage_identity_token,
-                logical_paths=(self._lock_logical_path,),
-                platform_lock_root=self._platform_lock_root,
-            ):
-                yield
-        except LockedRegularFileError as exc:
-            raise ContextSnapshotAuditPinError(f"context snapshot audit lock unavailable: {exc.code}") from exc
+        with self._process_lock:
+            try:
+                LockedRegularFileSetV1.provision_authority(
+                    platform_lock_root=self._platform_lock_root,
+                    storage_identity_token=self.storage_identity_token,
+                    runtime_root=self.runtime_root,
+                )
+                LockedRegularFileSetV1.enroll_stream_lock_keys(
+                    platform_lock_root=self._platform_lock_root,
+                    storage_identity_token=self.storage_identity_token,
+                    runtime_root=self.runtime_root,
+                    logical_paths=(self._lock_logical_path,),
+                )
+                with LockedRegularFileSetV1.acquire(
+                    runtime_root=self.runtime_root,
+                    storage_identity_token=self.storage_identity_token,
+                    logical_paths=(self._lock_logical_path,),
+                    platform_lock_root=self._platform_lock_root,
+                ):
+                    yield
+            except LockedRegularFileError as exc:
+                raise ContextSnapshotAuditPinError(f"context snapshot audit lock unavailable: {exc.code}") from exc
 
     def _assert_current_identity(self) -> None:
         current = resolve_workspace_runtime_identity(self.workspace_abs)

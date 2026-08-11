@@ -245,6 +245,7 @@ class PromptBuilder:
         persona_id: str | None = None,
         include_working_memory_contract: bool = True,
         include_tool_policy: bool = True,
+        task_type: str = "default",
     ) -> str:
         """构建完整系统提示词（支持分层缓存）
 
@@ -264,6 +265,7 @@ class PromptBuilder:
             persona_id: 可选，覆盖 profile 中的 persona_id
             include_working_memory_contract: 是否注入 ADR-0080 SESSION_PATCH 工作记忆契约
             include_tool_policy: 是否注入工具策略提示
+            task_type: 权威运行时任务类型；未知值必须降级为 ``default``
         """
         effective_include_working_memory_contract = (
             include_working_memory_contract
@@ -282,7 +284,11 @@ class PromptBuilder:
                     prompt_appendix=prompt_appendix,
                     domain=domain,
                     message=message,
-                    task_type=getattr(profile.prompt_policy, "task_type", "default") or "default",
+                    task_type=(
+                        task_type
+                        if str(task_type or "").strip() != "default"
+                        else getattr(profile.prompt_policy, "task_type", "default") or "default"
+                    ),
                     include_working_memory_contract=effective_include_working_memory_contract,
                     include_tool_policy=include_tool_policy,
                 )
@@ -498,29 +504,48 @@ class PromptBuilder:
 
     @staticmethod
     def _resolve_prompt_task_type(*, task_type: str, message: str, prompt_appendix: str) -> str:
+        """Resolve only executable profession protocols from request evidence.
+
+        The appendix contains quoted contracts, source code and historical
+        telemetry.  Treating an arbitrary ``phase:``/``stage:`` token in that
+        payload as control authority allowed stale ``task_type: readonly`` to
+        replace a Director quality-repair protocol even though the final tool
+        schema exposed write tools.  Only known profession protocols are
+        accepted here; repair intent wins over quoted payload metadata.
+        """
+
+        supported = {"new_code", "refactor", "code_review", "bug_fix"}
         explicit = str(task_type or "").strip()
         if explicit and explicit != "default":
-            return PromptBuilder._normalize_prompt_task_type(explicit)
+            normalized = PromptBuilder._normalize_prompt_task_type(explicit)
+            if normalized in supported:
+                return normalized
 
         haystack = f"{message}\n{prompt_appendix}"
-        for key in ("task_type", "phase", "stage"):
-            match = re.search(rf"['\"]?{key}['\"]?\s*[:=]\s*['\"]?([A-Za-z0-9_-]+)", haystack, flags=re.IGNORECASE)
-            if match:
-                token = PromptBuilder._normalize_prompt_task_type(match.group(1))
-                if token != "default":
-                    return token
         lowered = haystack.lower()
         for token, keywords in (
-            (
-                "verification",
-                ("verification", "verify", "testing", "tests", "go test", "pytest", "unittest", "验收", "测试"),
-            ),
-            ("code_review", ("code_review", "review", "audit", "审查", "评审")),
-            ("bug_fix", ("bugfix", "bug_fix", "repair", "fix bug", "修 bug", "修复")),
+            ("bug_fix", ("bugfix", "bug_fix", "quality repair", "repair mode", "fix bug", "修 bug", "修复")),
             ("refactor", ("refactor", "重构")),
-            ("implement", ("implement", "implementation", "materialize", "实现", "落地")),
+            ("code_review", ("code_review", "review", "audit", "verification", "verify", "testing", "tests", "验收", "测试", "审查", "评审")),
+            (
+                "new_code",
+                ("write_code", "new_code", "implement", "implementation", "materialize", "实现", "落地"),
+            ),
         ):
             if any(keyword in lowered for keyword in keywords):
+                return token
+
+        # Structured task_type is useful only after semantic repair markers
+        # have had priority.  Do not inspect phase/stage: those describe a
+        # workflow position, not a profession protocol.
+        match = re.search(
+            r"['\"]?task_type['\"]?\s*[:=]\s*['\"]?([A-Za-z0-9_-]+)",
+            haystack,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            token = PromptBuilder._normalize_prompt_task_type(match.group(1))
+            if token in supported:
                 return token
         return "default"
 
@@ -533,13 +558,17 @@ class PromptBuilder:
             "fix": "bug_fix",
             "repair": "bug_fix",
             "quality_repair": "bug_fix",
-            "implementation": "implement",
-            "materialization": "implement",
-            "materialize": "implement",
-            "testing": "verification",
-            "tests": "verification",
-            "test": "verification",
-            "verify": "verification",
+            "write_code": "new_code",
+            "implementation": "new_code",
+            "implement": "new_code",
+            "materialization": "new_code",
+            "materialize": "new_code",
+            "new_crate": "new_code",
+            "testing": "code_review",
+            "tests": "code_review",
+            "test": "code_review",
+            "verify": "code_review",
+            "verification": "code_review",
             "audit": "code_review",
             "review": "code_review",
         }.get(token, token or "default")

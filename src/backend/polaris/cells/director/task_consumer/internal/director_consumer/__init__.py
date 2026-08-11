@@ -22,11 +22,14 @@ from typing import Any, Callable, Coroutine
 
 from polaris.cells.chief_engineer.blueprint.public import validate_director_handoff_from_payload
 from polaris.cells.director.task_consumer.public.project_verification import (
+    ProjectArtifactReceiptV1,
     ProjectVerificationReceiptV1,
     QueryProjectVerificationReceiptV1,
+    RecordProjectArtifactCommandV1,
     ResolveProjectVerificationAuthorityQueryV1,
     authorize_project_verification_command,
     query_project_verification_receipt,
+    record_project_artifact,
     run_project_verification,
 )
 from polaris.cells.runtime.task_market.public.contracts import (
@@ -102,6 +105,7 @@ from ._helpers import (
     _QaLocalRepairAuthority,
     _read_consumed_interfaces,
     _read_target_file_content,
+    _record_task_owned_artifact_receipts,
     _repair_prior_target_size,
     _repair_shrink_error,
     _repair_shrink_guard_ratio,

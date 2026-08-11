@@ -12,14 +12,27 @@ from polaris.cells.qa.audit_verdict.public.project_verification_bootstrap import
 )
 from polaris.cells.runtime.execution_broker.public import (
     QueryProjectVerificationReceiptV1,
+    RecordProjectArtifactCommandV1,
     ResolveProjectVerificationAuthorityQueryV1,
     authorize_project_verification_command,
     query_project_verification_receipt,
+    record_project_artifact,
     run_project_verification,
 )
 
 
 class _ExecutionBrokerProjectVerificationClientV1:
+    @staticmethod
+    def record_project_artifact(command: Any) -> Any:
+        return record_project_artifact(
+            RecordProjectArtifactCommandV1(
+                **{
+                    name: getattr(command, name)
+                    for name in RecordProjectArtifactCommandV1.__dataclass_fields__
+                }
+            )
+        )
+
     @staticmethod
     def authorize_project_verification_command(query: Any) -> Any:
         return authorize_project_verification_command(

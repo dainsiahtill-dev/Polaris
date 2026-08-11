@@ -229,13 +229,15 @@ def _reset_current_director_resume_taskboard(
     *,
     target_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Reset existing Director task rows to a clean pre-Director claimable state."""
+    """Reopen only unfinished PM tasks while preserving verified work."""
     task_dir = target_dir or Path(resolve_runtime_path(workspace, "runtime/tasks"))
     if not _director_resume_task_files(task_dir):
         return {}
 
     prepare_result = TaskRuntimeService(workspace).reset_task_rows_for_reexecution(
-        source="factory.director_resume.reset"
+        source="factory.director_resume.reset",
+        preserve_completed=True,
+        eligible_external_task_ids=_pm_plan_task_ids(workspace),
     )
     if not bool(prepare_result.get("success")):
         _raise_director_resume_task_runtime_failure(prepare_result)
@@ -246,10 +248,12 @@ def _reset_current_director_resume_taskboard(
         "workspace": workspace,
         "target_task_dir": str(task_dir),
         "reset_files": prepare_result.get("reset_files", []),
+        "preserved_files": prepare_result.get("preserved_files", []),
+        "excluded_files": prepare_result.get("excluded_files", []),
         "skipped_files": prepare_result.get("skipped_files", []),
         "deleted_session_files": prepare_result.get("deleted_session_files", []),
         "task_runtime_prepare_result": prepare_result,
-        "reset_statuses": "all_task_records",
+        "reset_statuses": "unfinished_pm_task_records_only",
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
     task_dir.mkdir(parents=True, exist_ok=True)

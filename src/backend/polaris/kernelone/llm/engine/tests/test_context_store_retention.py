@@ -11,11 +11,13 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
 import time
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from polaris.kernelone.fs import LockedRegularFileSetV1
 from polaris.kernelone.llm.engine.context_store_retention import (
     SWEEP_STATE_FILENAME,
     ContextSnapshotAuditPinError,
@@ -523,6 +525,71 @@ class TestPinnedContextSnapshotRetention:
         assert producer.lock_logical_path == retention.pin_repository.lock_logical_path
         assert producer.runtime_root == retention.pin_repository.runtime_root
         assert producer.storage_identity_token == retention.pin_repository.storage_identity_token
+
+    def test_same_process_concurrent_pins_serialize_before_physical_lock(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Concurrent role calls must queue, not self-timeout on the audit flock."""
+
+        active = 0
+        active_guard = threading.Lock()
+        start = threading.Barrier(2)
+        errors: list[BaseException] = []
+
+        class _Lease:
+            def __enter__(self) -> _Lease:
+                nonlocal active
+                with active_guard:
+                    active += 1
+                    if active > 1:
+                        raise AssertionError("same-process audit writers overlapped")
+                # Keep the fake physical lease occupied long enough for the
+                # other worker to contend when no process mutex exists.
+                time.sleep(0.05)
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                nonlocal active
+                with active_guard:
+                    active -= 1
+
+        monkeypatch.setattr(
+            LockedRegularFileSetV1,
+            "provision_authority",
+            classmethod(lambda _cls, **_kwargs: None),
+        )
+        monkeypatch.setattr(
+            LockedRegularFileSetV1,
+            "enroll_stream_lock_keys",
+            classmethod(lambda _cls, **_kwargs: None),
+        )
+        monkeypatch.setattr(
+            LockedRegularFileSetV1,
+            "acquire",
+            classmethod(lambda _cls, **_kwargs: _Lease()),
+        )
+
+        repositories = (self._repository(tmp_path), self._repository(tmp_path))
+
+        def _worker(index: int) -> None:
+            try:
+                start.wait()
+                self._persist(repositories[index], provider_request_id=f"req-{index}")
+            except Exception as exc:  # noqa: BLE001 - preserve thread failure for assertion
+                errors.append(exc)
+
+        workers = [threading.Thread(target=_worker, args=(index,)) for index in range(2)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=5)
+
+        assert not errors
+        assert all(not worker.is_alive() for worker in workers)
+        pins = repositories[0].query_snapshot_pins(self._persist(repositories[0]).context_snapshot_ref)
+        assert {pin.provider_request_id for pin in pins} == {"req-0", "req-1"}
 
     def test_pinned_snapshot_survives_ttl_while_unpinned_snapshot_is_removed(self, tmp_path: Path) -> None:
         repository = self._repository(tmp_path)

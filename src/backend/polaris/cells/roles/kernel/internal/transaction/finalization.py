@@ -165,25 +165,25 @@ class FinalizationHandler:
                 "continuation_forbidden": True,
             },
         }
-        # BUG-07 fix: Shield the FINALIZATION LLM call from upstream
-        # task cancellation.  When the evaluator's suite-level timeout
-        # fires via asyncio.wait_for(), it cancels the current task.
-        # Without shielding, the CancelledError propagates into this
-        # LLM call, aborting the summarization step.  asyncio.shield()
-        # decouples the inner coroutine's lifetime from the parent
-        # cancellation scope, allowing the finalization to complete
-        # even when the outer task is being torn down.
+        # Finalization is advisory after tool effects have settled.  Keep its
+        # provider task inside the caller's lifetime: shielding it creates an
+        # orphan request when the role run is cancelled, and that request can
+        # outlive Factory's evidence-authority cutoff.  r33 reproduced the
+        # resulting late ``factory_role_evidence_authority_closed`` error.
+        # Cancellation therefore drains the provider task before returning a
+        # deterministic fallback built from the already-authoritative receipts.
         _finalization_logger = logging.getLogger(__name__)
+        provider_task = asyncio.ensure_future(self.llm_provider(request_payload))
         try:
-            response = await asyncio.shield(self.llm_provider(request_payload))
+            response = await provider_task
         except asyncio.CancelledError:
+            provider_task.cancel()
+            await asyncio.gather(provider_task, return_exceptions=True)
             _finalization_logger.warning(
-                "finalization_llm_call_shielded_cancel: turn_id=%s "
-                "upstream cancellation intercepted, retrying without shield",
+                "finalization_llm_call_cancelled_and_drained: turn_id=%s "
+                "using_receipt_backed_fallback",
                 decision.get("turn_id"),
             )
-            # If shield itself is cancelled (double-cancel), fall through
-            # with a graceful degradation: use tool results as final answer
             response = {
                 "content": "[Finalization call was cancelled. Tool execution results are the final output.]",
                 "thinking": None,

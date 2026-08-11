@@ -178,6 +178,17 @@ def _string_list_payload(value: Any, *, limit: int = 8) -> list[str]:
 # the local names below are kept as compatibility aliases for this module.
 _ROLE_CALL_TIMEOUT_CEILING_KEYS = TIMEOUT_CEILING_CONTEXT_KEYS
 _ROLE_CALL_TIMEOUT_KEYS = TIMEOUT_OVERRIDE_CONTEXT_KEYS
+
+# The runtime command owns the actual provider/tool execution timeout.  The
+# adapter's outer watchdog must outlive that budget briefly so roles.runtime can
+# project the already-finished tool batch, DEO receipt, and terminal session
+# result.  Using the exact same timeout at both layers created a race: a write
+# completed near the deadline, then the outer ``wait_for`` cancelled receipt
+# projection and reported ``tool_results=[]``.  Factory subsequently treated a
+# real mutation as a no-op and validated stale diagnostics.  This grace is
+# settlement-only; it is not copied into the provider request and cannot buy a
+# second LLM attempt.
+_ROLE_DIALOGUE_SETTLEMENT_GRACE_SECONDS = 15.0
 _FORCED_WRITE_STAGE_MARKERS = FORCED_WRITE_STAGE_MARKERS
 _FORCED_WRITE_CONTEXT_KEYS = FORCED_WRITE_CONTEXT_KEYS
 _OUTPUT_BUDGET_CONTEXT_KEYS = OUTPUT_BUDGET_CONTEXT_KEYS
@@ -1955,7 +1966,7 @@ class DirectorAdapter(BaseRoleAdapter):
         try:
             response = await asyncio.wait_for(
                 self._invoke_role_dialogue(message, context=context_payload),
-                timeout=timeout,
+                timeout=timeout + _ROLE_DIALOGUE_SETTLEMENT_GRACE_SECONDS,
             )
             if isinstance(response, dict):
                 return response

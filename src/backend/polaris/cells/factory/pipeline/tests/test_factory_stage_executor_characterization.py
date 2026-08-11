@@ -1139,6 +1139,53 @@ def test_read_claimable_director_task_ids_uses_observable_rows(
     assert claimable == ["TASK-1", "TASK-2"]
 
 
+def test_read_claimable_director_task_ids_confines_parallel_claims_to_admitted_wave(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Parallel capacity must not bypass the PM dependency wave."""
+
+    monkeypatch.setattr(
+        TaskRuntimeService,
+        "query_observable_task_rows_projection",
+        lambda runtime: _authoritative_task_projection(
+            Path(runtime.workspace),
+            rows=[
+                {"id": 1, "status": "pending", "metadata": {"external_task_id": "TASK-1"}},
+                {
+                    "id": 2,
+                    "status": "pending",
+                    "metadata": {
+                        "external_task_id": "TASK-2",
+                        "depends_on": ["TASK-1"],
+                    },
+                },
+                {
+                    "id": 3,
+                    "status": "ready",
+                    "metadata": {
+                        "external_task_id": "TASK-3",
+                        "depends_on": ["TASK-2"],
+                    },
+                },
+            ],
+        ),
+    )
+
+    executor = _executor(tmp_path)
+    first_wave = executor._read_claimable_director_task_ids(
+        limit=3,
+        allowed_task_ids=("TASK-1",),
+    )
+    second_wave = executor._read_claimable_director_task_ids(
+        limit=3,
+        allowed_task_ids=("TASK-2",),
+    )
+
+    assert first_wave == ["TASK-1"]
+    assert second_wave == ["TASK-2"]
+
+
 def test_read_claimable_director_task_ids_excludes_trusted_internal_ce_rows(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1552,11 +1599,7 @@ def test_workspace_quality_repair_transports_nested_command_diagnostics_without_
     assert any("ERR_MODULE_NOT_FOUND" in error for error in repair_errors)
     assert coverage["uncovered_diagnostic_count"] == 0
     assert probe["status"] != "coverage_gap_uncovered_diagnostics"
-    matched_tools = {
-        source_tool
-        for item in coverage["items"]
-        for source_tool in item["matched_source_tools"]
-    }
+    matched_tools = {source_tool for item in coverage["items"] for source_tool in item["matched_source_tools"]}
     assert "deterministic_typescript_argument_shape_adapter_repair" in matched_tools
     assert "deterministic_typescript_local_js_import_repair" in matched_tools
 
@@ -1862,9 +1905,7 @@ def _generate_domain_blueprint(
                                 "modality": "build",
                                 "command_authority_hash": build_authority.authority_hash,
                                 "applicability": "required",
-                                "covers_obligation_ids": [
-                                    item["obligation_id"] for item in artifact_obligations
-                                ],
+                                "covers_obligation_ids": [item["obligation_id"] for item in artifact_obligations],
                                 "owner_task_id": task_id,
                             },
                             {
@@ -6269,6 +6310,80 @@ class TestQualityGateDeadlineHandling:
         assert Path(resolve_logical_path(tmp_path, "workspace/qa/latest.report.json")).exists() is False
 
     @pytest.mark.asyncio
+    async def test_quality_gate_physical_pass_commits_without_qa_llm(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="run-physical-qa",
+            config=FactoryConfig(name="physical-qa-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-11T00:00:00+00:00",
+        )
+
+        async def fake_workspace_checks(_run: FactoryRun, _context: dict[str, Any]) -> tuple[bool, str]:
+            executor._write_json_artifact("runtime/qa/workspace-validation.json", {"passed": True})
+            return True, "runtime/qa/workspace-validation.json"
+
+        committed_payloads: list[dict[str, Any]] = []
+
+        async def fake_commit(**kwargs: Any) -> dict[str, Any]:
+            committed_payloads.append(dict(kwargs["qa_payload"]))
+            return {"success": True, "task_id": "TASK-1", "run_id": "director-1"}
+
+        authority = SimpleNamespace(
+            quality_stage_authorized=True,
+            task_boundary_completed_verified=True,
+            qa_verdict_present=True,
+            qa_verdict_passed=True,
+            sequence_barrier_satisfied=True,
+            evidence_policy_passed=True,
+            recovered_runtime_task_ids=(),
+            reason_code="completed_verified",
+        )
+
+        async def fake_wait_for_authority(*_args: Any, **_kwargs: Any) -> SimpleNamespace:
+            return authority
+
+        monkeypatch.setattr(executor, "_run_workspace_quality_checks", fake_workspace_checks)
+        monkeypatch.setattr(executor, "_canonical_qa_commit_identity", lambda **_kwargs: ("TASK-1", "director-1"))
+        monkeypatch.setattr(executor, "_commit_qa_role_report_authority", fake_commit)
+        monkeypatch.setattr(
+            executor,
+            "_build_orchestration_service",
+            lambda _context: pytest.fail("physical QA must not start an LLM role run"),
+        )
+        monkeypatch.setattr(
+            executor,
+            "_canonical_factory_projection",
+            lambda _run, _context: {"task_boundary": {"latest_by_task": {}}},
+        )
+        monkeypatch.setattr(
+            stage_executor_module.helpers,
+            "evaluate_canonical_factory_authority",
+            lambda _projection: SimpleNamespace(qa_verdict_present=False),
+        )
+        monkeypatch.setattr(executor, "_wait_for_canonical_quality_authority", fake_wait_for_authority)
+        monkeypatch.setattr(
+            executor,
+            "_reconcile_verified_runtime_delivery",
+            lambda **_kwargs: {"success": True, "reconciled_task_ids": []},
+        )
+
+        result = await executor._execute_quality_gate(run, _factory_stage_context({"qa_target": "Quality gate"}))
+
+        assert result.status == "success"
+        assert committed_payloads[0]["source"] == "factory_physical_verifier"
+        assert committed_payloads[0]["llm_invoked"] is False
+        assert "advisory QA LLM not required" in result.output
+        report = json.loads(
+            Path(resolve_logical_path(tmp_path, "runtime/qa/report.json")).read_text(encoding="utf-8")
+        )
+        assert report["verdict"] == "PASS"
+
+    @pytest.mark.asyncio
     async def test_quality_gate_workspace_validation_failure_skips_advisory_qa_judgement(
         self,
         tmp_path: Path,
@@ -6378,9 +6493,7 @@ class TestQualityGateDeadlineHandling:
 
         assert result.status == "failed"
         assert "without an authoritative evidence artifact" in result.output
-        report = json.loads(
-            Path(resolve_logical_path(tmp_path, "runtime/qa/report.json")).read_text(encoding="utf-8")
-        )
+        report = json.loads(Path(resolve_logical_path(tmp_path, "runtime/qa/report.json")).read_text(encoding="utf-8"))
         assert report["passed"] is False
         assert report["workspace_checks_passed"] is False
 
@@ -7862,30 +7975,42 @@ class TestRunWorkspaceQualityChecks:
     def test_workspace_quality_repair_effect_requires_post_repair_verifier_progress(self) -> None:
         classify = OrchestrationStageExecutor._workspace_quality_repair_effect
 
-        assert classify(
-            before_signature=("ts7015:a",),
-            after_signature=(),
-            verifier_passed=True,
-            write_tool_evidence=True,
-        ) == "resolved"
-        assert classify(
-            before_signature=("ts7015:a",),
-            after_signature=("ts2551:b",),
-            verifier_passed=False,
-            write_tool_evidence=True,
-        ) == "equal_count_swap"
-        assert classify(
-            before_signature=("ts7015:a",),
-            after_signature=("ts7015:a", "ts2339:b"),
-            verifier_passed=False,
-            write_tool_evidence=True,
-        ) == "regression"
-        assert classify(
-            before_signature=("ts7015:a",),
-            after_signature=("ts7015:a",),
-            verifier_passed=False,
-            write_tool_evidence=False,
-        ) == "no_op"
+        assert (
+            classify(
+                before_signature=("ts7015:a",),
+                after_signature=(),
+                verifier_passed=True,
+                write_tool_evidence=True,
+            )
+            == "resolved"
+        )
+        assert (
+            classify(
+                before_signature=("ts7015:a",),
+                after_signature=("ts2551:b",),
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "equal_count_swap"
+        )
+        assert (
+            classify(
+                before_signature=("ts7015:a",),
+                after_signature=("ts7015:a", "ts2339:b"),
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "regression"
+        )
+        assert (
+            classify(
+                before_signature=("ts7015:a",),
+                after_signature=("ts7015:a",),
+                verifier_passed=False,
+                write_tool_evidence=False,
+            )
+            == "no_op"
+        )
 
     @pytest.mark.asyncio
     async def test_workspace_quality_stops_after_two_equal_count_diagnostic_swaps(
@@ -11469,9 +11594,7 @@ class TestDirectorDispatchLoop:
         assert OrchestrationStageExecutor._taskboard_has_active_execution(
             {"in_progress": 1, "completed": 2, "blocked": 1}
         )
-        assert OrchestrationStageExecutor._taskboard_has_active_execution(
-            {"in_execution": 1, "completed": 2}
-        )
+        assert OrchestrationStageExecutor._taskboard_has_active_execution({"in_execution": 1, "completed": 2})
         assert not OrchestrationStageExecutor._taskboard_has_active_execution(
             {"in_progress": 0, "in_execution": 0, "completed": 3, "blocked": 1}
         )

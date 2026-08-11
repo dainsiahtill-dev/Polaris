@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, cast
@@ -1872,6 +1873,62 @@ class TestExecuteTransactionKernelTurn:
 
 
 class TestFinalizationMaterializationGate:
+    @pytest.mark.asyncio
+    async def test_llm_once_cancellation_drains_provider_before_receipt_fallback(self) -> None:
+        provider_started = asyncio.Event()
+        provider_finished = asyncio.Event()
+
+        async def _llm_provider(_payload: dict[str, Any]) -> dict[str, Any]:
+            provider_started.set()
+            try:
+                await asyncio.Future()
+            finally:
+                provider_finished.set()
+
+        handler = FinalizationHandler(
+            llm_provider=_llm_provider,
+            decoder=SimpleNamespace(
+                decode_for_finalization=lambda *_args, **_kwargs: {
+                    "kind": TurnDecisionKind.FINAL_ANSWER,
+                }
+            ),
+            emit_event=lambda _event: None,
+            guard_assert_no_finalization_tool_calls=lambda **_kwargs: None,
+        )
+        ledger = TurnLedger(turn_id="turn_cancelled_finalization")
+        state_machine = TurnStateMachine(turn_id="turn_cancelled_finalization")
+        for state in (
+            TurnState.CONTEXT_BUILT,
+            TurnState.DECISION_REQUESTED,
+            TurnState.DECISION_RECEIVED,
+            TurnState.DECISION_DECODED,
+            TurnState.TOOL_BATCH_EXECUTING,
+            TurnState.TOOL_BATCH_EXECUTED,
+        ):
+            state_machine.transition_to(state)
+
+        finalization = asyncio.create_task(
+            handler.execute_llm_once(
+                {
+                    "turn_id": "turn_cancelled_finalization",
+                    "kind": TurnDecisionKind.TOOL_BATCH,
+                    "finalize_mode": FinalizeMode.LLM_ONCE,
+                },
+                [{"results": [{"tool_name": "read_file", "status": "success", "result": "content"}]}],
+                state_machine,
+                ledger,
+                [{"role": "user", "content": "总结已完成的检查"}],
+            )
+        )
+        await asyncio.wait_for(provider_started.wait(), timeout=1.0)
+
+        finalization.cancel()
+        result = await asyncio.wait_for(finalization, timeout=1.0)
+
+        assert provider_finished.is_set()
+        assert result["visible_content"].startswith("[Finalization call was cancelled.")
+        assert result["kind"] == "tool_batch_with_receipt"
+
     @pytest.mark.asyncio
     async def test_llm_once_blocks_materialize_without_write_receipt(self) -> None:
         async def _llm_provider(_payload: dict[str, Any]) -> dict[str, Any]:
