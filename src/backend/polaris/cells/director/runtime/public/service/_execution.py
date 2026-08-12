@@ -24,7 +24,6 @@ from polaris.cells.director.runtime.internal.repair_kernel.registry import (
 from polaris.cells.director.runtime.internal.repair_kernel.runtime_dispatch import (
     plan_runtime_repair,
     run_runtime_repair,
-    run_runtime_repair_convergence,
     runtime_repair_bindings,
     runtime_repair_source_tools,
 )
@@ -1584,7 +1583,13 @@ def run_director_repair_convergence(
         )
 
     try:
-        internal_result = run_runtime_repair_convergence(
+        # Resolve via the package namespace so test monkeypatching of
+        # ``runtime_public_service.run_runtime_repair_convergence`` (the package
+        # __init__ re-export) is honored. Direct module-level import would bind
+        # the unpatched implementation and bypass the patch.
+        from polaris.cells.director.runtime.public import service as _public_service
+        _run_runtime_repair_convergence = _public_service.run_runtime_repair_convergence
+        internal_result = _run_runtime_repair_convergence(
             source_tools=command.source_tools,
             workspace=command.workspace,
             base_files=command.base_files,
