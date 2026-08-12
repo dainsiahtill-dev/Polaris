@@ -41,9 +41,11 @@ _REQUIRED_DOMAIN_MODULES = (
     "members.py",
     "config_scaffold.py",
     "html_dom.py",
-    "type_shapes.py",
     "text_repairs.py",
 )
+# type_shapes is itself a >2000-line module, so it is split into its own
+# sub-package (type_shapes/) rather than a single type_shapes.py file.
+_REQUIRED_SUBPACKAGE_DIRS = ("type_shapes",)
 _REQUIRED_COMMON_MODULES = (
     "arg_shape_ops.py",
     "import_text_ops.py",
@@ -74,6 +76,12 @@ def test_typescript_syntax_is_package_not_monolith_module() -> None:
     common_files = sorted(p.name for p in common_dir.glob("*.py") if p.name != "__init__.py")
     for name in _REQUIRED_COMMON_MODULES:
         assert name in common_files, f"missing common domain module {name}"
+
+    # Sub-packages (type_shapes was its own >2000-line module -> own package).
+    for sub in _REQUIRED_SUBPACKAGE_DIRS:
+        sub_dir = _PACKAGE_DIR / sub
+        assert sub_dir.is_dir(), f"missing sub-package {sub}/"
+        assert (sub_dir / "__init__.py").is_file(), f"missing {sub}/__init__.py"
 
     # Facade stays thin; rule bodies live in domain modules.
     init_lines = sum(1 for _ in (_PACKAGE_DIR / "__init__.py").open(encoding="utf-8"))
