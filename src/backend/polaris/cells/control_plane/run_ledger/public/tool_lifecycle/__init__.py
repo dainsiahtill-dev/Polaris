@@ -109,7 +109,6 @@ __all__ = [
     "build_tool_dispatch_dropped_lifecycle_from_anomaly_flags",
     "build_tool_dispatch_dropped_lifecycle_from_observed_calls",
     "build_tool_lifecycle_requirement_run_ledger_event",
-    "build_verified_existing_artifact_lifecycle_receipt",
     "effect_receipts_from_batch_receipts",
     "empty_tool_lifecycle_summary",
     "failure_evidence_from_lifecycle_receipt",
