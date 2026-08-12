@@ -61,6 +61,35 @@ _NS["__package__"] = __package__
 
 exec(compile(_SOURCE, str(_SOURCE_PATH), "exec"), _NS)
 
+# The .source file imports fact-stream helpers (query_fact_events,
+# read_guarded_fact_snapshot, append_fact_event, append_if_guarded_snapshot,
+# enroll_fact_stream_streams) directly, which binds the un-wrapped callables
+# into the exec namespace. Tests monkeypatch these names on the PACKAGE module
+# (e.g. monkeypatch.setattr(directed_effect_operation, "query_fact_events", ...));
+# class methods resolve free names through the exec-namespace globals, so the
+# direct bindings would bypass the patch. Re-inject _pkg_lookup-routed wrappers
+# so class-method calls honor the package-level monkeypatch.
+
+
+def _make_pkg_lookup_wrapper(name: str):
+    def _wrapper(*args, **kwargs):
+        return _pkg_lookup(name)(*args, **kwargs)
+
+    _wrapper.__name__ = name
+    return _wrapper
+
+
+for _patchable in (
+    "query_fact_events",
+    "read_guarded_fact_snapshot",
+    "append_fact_event",
+    "append_if_guarded_snapshot",
+    "enroll_fact_stream_streams",
+):
+    _NS[_patchable] = _make_pkg_lookup_wrapper(_patchable)
+del _patchable
+
+
 DirectedEffectOperationRepository = _NS["DirectedEffectOperationRepository"]
 # Point class at package module so getsource(class) uses package __file__ (surface).
 DirectedEffectOperationRepository.__module__ = __package__  # type: ignore[misc]
