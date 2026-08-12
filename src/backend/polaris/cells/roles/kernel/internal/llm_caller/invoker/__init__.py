@@ -125,11 +125,4 @@ logger.debug("LLMInvoker module loaded: __name__=%s", __name__)
 
 __all__ = [
     "LLMInvoker",
-    "_clear_context_snapshot_context",
-    "_invoke_executor_with_factory_dispatch",
-    "_physical_dispatch_port_for_request",
-    "_profile_lacks_forced_tool_choice",
-    "_recover_text_tool_calls_from_response_text",
-    "_required_tool_not_called_error",
-    "_store_active_request_context_snapshot",
-]
+    ]
