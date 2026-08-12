@@ -302,15 +302,9 @@ def _build_typescript_unique_export_import_plan(
     diagnostics: Sequence[RepairDiagnostic],
     mode: str,
 ) -> RepairPlan | None:
-    # R164: type Flower + value Flower in one import block (TS2300/TS1361) before
-    # barrel re-export uniqueness rewrites.
-    conflict_plan = _build_typescript_import_type_value_conflict_plan(
-        base_files=base_files,
-        diagnostics=diagnostics,
-        mode=mode,
-    )
-    if conflict_plan is not None:
-        return conflict_plan
+    # Resolve structurally-proven duplicate export/import bindings before the
+    # broader type/value candidate. Both can share TS2300, but the duplicate
+    # branch has stronger source evidence and must not be pre-empted.
     duplicate_plan = _build_typescript_duplicate_export_import_binding_plan(
         base_files=base_files,
         diagnostics=diagnostics,
@@ -318,6 +312,13 @@ def _build_typescript_unique_export_import_plan(
     )
     if duplicate_plan is not None:
         return duplicate_plan
+    conflict_plan = _build_typescript_import_type_value_conflict_plan(
+        base_files=base_files,
+        diagnostics=diagnostics,
+        mode=mode,
+    )
+    if conflict_plan is not None:
+        return conflict_plan
     return _build_relative_import_plan(
         base_files=base_files,
         diagnostics=diagnostics,
@@ -937,30 +938,14 @@ def _build_typescript_missing_export_declaration(
 ) -> tuple[str, str]:
     if not _TS_IDENTIFIER_RE.fullmatch(symbol):
         return "", ""
-    corpus = importer_text
-    if base_files:
-        # R180: scan whole workspace so field-assigned constructors (this.scene = new X)
-        # and cross-file method usage enrich the stub class.
-        corpus = "\n".join(str(text or "") for text in base_files.values())
-    if _typescript_symbol_is_constructed(importer_text, symbol) or _typescript_symbol_is_constructed(corpus, symbol):
-        if not (
-            _typescript_symbol_has_named_constructor_binding(importer_text, symbol)
-            or _typescript_symbol_has_named_constructor_binding(corpus, symbol)
-            or _typescript_symbol_has_field_constructor_binding(corpus, symbol)
-        ):
-            # Still invent a class when constructed; field assignment counts as binding.
-            if not _typescript_symbol_is_constructed(corpus, symbol):
-                return "", ""
-        return "class", _build_typescript_missing_export_class_declaration(
-            symbol=symbol,
-            importer_text=importer_text,
-            base_files=base_files,
-        )
-    if _typescript_symbol_is_called(importer_text, symbol) or _typescript_symbol_is_called(corpus, symbol):
-        return "function", f"export function {symbol}(..._args: unknown[]): any {{\n  return undefined;\n}}"
-    if symbol[:1].isupper():
-        return "type", f"export type {symbol} = any;"
-    return "const", f"export const {symbol}: unknown = undefined;"
+    # Usage proves shape demand, not implementation authority. Inventing a
+    # class/function/type/const here made compilation green by fabricating
+    # domain behavior. Existing declarations, unique reexports, and explicit
+    # compiler suggestions are handled before this fallback; without one of
+    # those sources, remain covered-but-unplannable and let the same Director
+    # task perform an evidence-backed edit.
+    del importer_text, base_files
+    return "", ""
 
 def _build_typescript_suggested_export_alias_declaration(
     *,

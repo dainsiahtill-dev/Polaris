@@ -89,8 +89,10 @@ def _build_typescript_member_alias_plan(
 ) -> RepairPlan | None:
     """Rewrite missing member access to existing API surface (R160 class getters/methods).
 
-    Multi-diagnostic rewrites on one file are accumulated into a single write_file
-    so PatchComposer does not fight overlapping line spans / before hashes.
+    Multi-diagnostic rewrites on one file are accumulated per source line and
+    emitted as non-overlapping ``text_replace`` operations. PatchComposer can
+    merge those precise edits into one patch without granting whole-file write
+    authority to a local member repair.
     """
 
     aliases: list[dict[str, str]] = []
@@ -188,19 +190,28 @@ def _build_typescript_member_alias_plan(
         repaired = "".join(lines)
         if repaired == base_content:
             continue
-        operations.append(
-            RepairOperation(
-                kind="write_file",
-                path=path,
-                content=repaired,
-                before_hash=sha256_text(base_content),
-                metadata={
-                    "repair_kind": "typescript_member_alias",
-                    "write_file_reason": "accumulated_member_alias_rewrites",
-                    "edit_strategy": "write_file_replace",
-                },
-            )
-        )
+        original_lines = base_content.splitlines(keepends=True)
+        offset = 0
+        for line_index, original_line in enumerate(original_lines):
+            repaired_line = lines[line_index] if line_index < len(lines) else ""
+            if repaired_line != original_line:
+                operations.append(
+                    RepairOperation(
+                        kind="text_replace",
+                        path=path,
+                        span_start=offset,
+                        span_end=offset + len(original_line),
+                        expected=original_line,
+                        replacement=repaired_line,
+                        before_hash=sha256_text(base_content),
+                        metadata={
+                            "repair_kind": "typescript_member_alias",
+                            "edit_strategy": "line_text_replace",
+                            "line": line_index + 1,
+                        },
+                    )
+                )
+            offset += len(original_line)
     return _repair_plan_or_none(
         rule_id="typescript.member_alias",
         source_tool=TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,

@@ -41,6 +41,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("polaris.delivery.http.routers.factory")
 
+_STATUS_METADATA_VALUE_MAX_BYTES = 64 * 1024
+_STATUS_METADATA_TOTAL_MAX_BYTES = 256 * 1024
+
 _TASK_IDENTIFIER_KEYS = (
     "task_id",
     "pm_task_id",
@@ -244,6 +247,24 @@ def _resolve_retry_stage(run: FactoryRun, target_phase: RunPhase | None) -> str:
         )
 
     configured_stages = [str(stage).strip() for stage in run.config.stages if str(stage).strip()]
+    # A public phase can contain multiple executable stages.  Planning owns
+    # both PM and Chief Engineer, so blindly choosing the first configured
+    # stage restarts PM after a CE-only failure and discards a valid PM
+    # contract.  Prefer the concrete failed/current stage when it belongs to
+    # the requested phase; retain the historical phase default only when the
+    # run has no stage-local failure evidence.
+    failed_stage_candidates = (
+        run.metadata.get("last_failed_stage"),
+        run.metadata.get("current_stage"),
+        *(reversed(run.stages_failed)),
+    )
+    for raw_stage in failed_stage_candidates:
+        failed_stage = str(raw_stage or "").strip()
+        if (
+            failed_stage in configured_stages
+            and STAGE_TO_PHASE.get(failed_stage) == target_phase
+        ):
+            return failed_stage
     for candidate in PHASE_TO_RETRY_STAGES.get(target_phase, ()):
         if candidate in configured_stages:
             return candidate
@@ -506,18 +527,36 @@ def _build_failure(run: FactoryRun, phase: RunPhase) -> FailureInfo | None:
 
 
 def _json_safe_metadata(value: Any) -> dict[str, Any]:
-    try:
-        payload = json.loads(json.dumps(value, ensure_ascii=False, default=str))
-    except (TypeError, ValueError):
-        return {}
-    if not isinstance(payload, dict):
+    if not isinstance(value, Mapping):
         return {}
 
-    payload.pop("summary_md", None)
-    payload.pop("summary_json", None)
-    failure = payload.get("failure")
-    if isinstance(failure, dict):
-        failure.pop("traceback", None)
+    payload: dict[str, Any] = {}
+    projected_bytes = 2
+    for raw_key, raw_value in value.items():
+        key = str(raw_key)
+        if key in {"summary_md", "summary_json"}:
+            continue
+        try:
+            safe_value = json.loads(json.dumps(raw_value, ensure_ascii=False, default=str))
+        except (TypeError, ValueError):
+            continue
+        if key == "failure" and isinstance(safe_value, dict):
+            safe_value.pop("traceback", None)
+        encoded = json.dumps(safe_value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        value_bytes = len(encoded)
+        if (
+            value_bytes > _STATUS_METADATA_VALUE_MAX_BYTES
+            or projected_bytes + value_bytes > _STATUS_METADATA_TOTAL_MAX_BYTES
+        ):
+            safe_value = {
+                "elided": True,
+                "json_bytes": value_bytes,
+                "reason": "factory_status_metadata_size_limit",
+                "durable_evidence": "factory_run_audit_bundle",
+            }
+            encoded = json.dumps(safe_value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        payload[key] = safe_value
+        projected_bytes += len(key.encode("utf-8")) + len(encoded) + 4
     return payload
 
 

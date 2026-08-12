@@ -2271,6 +2271,132 @@ def test_append_tool_call_lifecycle_event_public_service_projects_event(tmp_path
     assert projection["tool_lifecycle"]["failure_evidence"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
 
 
+def test_task_execution_capability_ignores_later_qa_token() -> None:
+    director_token = {
+        "token_id": "director-task-2-token",
+        "stage": "pending_exec",
+        "contract_hash": "c" * 64,
+        "blueprint_hash": "b" * 64,
+        "project_id": "P1",
+        "capability_audit": {"ok": True, "issues": []},
+    }
+    qa_token = {
+        "token_id": "qa-task-2-token",
+        "task_id": "TASK-2",
+        "stage": "quality_gate",
+        "contract_hash": "d" * 64,
+        "blueprint_hash": "e" * 64,
+        "project_id": "P1",
+        "capability_audit": {"ok": True, "issues": []},
+    }
+    projection = build_run_ledger_projection(
+        [
+            {
+                "event_type": "gate_evaluated",
+                "stage": "real_run_gate",
+                "gate": {"name": "real_run_gate", "ok": True, "summary": "baseline passed"},
+                "job_token": {
+                    "token_id": "prerequisite-token",
+                    "stage": "real_run_gate",
+                    "contract_hash": "a" * 64,
+                    "blueprint_hash": "a" * 64,
+                    "project_id": "P1",
+                    "capability_audit": {"ok": True, "issues": []},
+                },
+                "physical_evidence": {},
+            },
+            {
+                "event_type": "gate_evaluated",
+                "stage": "pending_exec",
+                "gate": {"name": "tool_receipt", "ok": True, "summary": "Director tools settled"},
+                "job_token": director_token,
+                "physical_evidence": {"metadata": {"task_id": "TASK-2"}},
+            },
+            _successful_tool_lifecycle_event(task_id="TASK-2"),
+            {
+                "event_type": "gate_evaluated",
+                "stage": "quality_gate",
+                "gate": {"name": "qa_role_evidence", "ok": True, "summary": "QA passed"},
+                "job_token": qa_token,
+                "physical_evidence": {},
+            },
+        ]
+    )
+
+    assert projection["capability"]["latest_token_id"] == "qa-task-2-token"
+    assert projection["execution_capability_by_task"] == {
+        "TASK-2": {
+            "ok": True,
+            "issues": [],
+            "latest_token_id": "director-task-2-token",
+            "latest_contract_hash": "c" * 64,
+            "latest_blueprint_hash": "b" * 64,
+            "job_token_ids": ["prerequisite-token", "director-task-2-token"],
+            "stage": "pending_exec",
+            "task_id": "TASK-2",
+        }
+    }
+
+
+def test_qa_verdict_effective_only_for_latest_task_boundary_epoch() -> None:
+    def boundary(run_id: str) -> dict[str, Any]:
+        return {
+            "event_type": "task_boundary_verdict",
+            "task_id": "TASK-2",
+            "run_id": run_id,
+            "task_boundary_verdict": {
+                "schema_version": "polaris.task_boundary_verdict.v1",
+                "task_id": "TASK-2",
+                "run_id": run_id,
+                "status": "completed_verified",
+                "ok": True,
+                "failure_class": "PASSED",
+                "responsible_layer": "execution_control_plane",
+            },
+        }
+
+    def qa_verdict(run_id: str, *, ok: bool) -> dict[str, Any]:
+        return {
+            "event_type": "gate_evaluated",
+            "stage": "qa",
+            "task_id": "TASK-2",
+            "run_id": run_id,
+            "gate": {
+                "name": "qa_verdict",
+                "ok": ok,
+                "summary": "Canonical QA verdict",
+            },
+            "job_token": {
+                "token_id": f"qa-{run_id}",
+                "run_id": run_id,
+                "project_id": "P1",
+                "capability_audit": {"ok": True, "issues": []},
+                "gate_policy": {},
+            },
+            "physical_evidence": {"task_id": "TASK-2", "run_id": run_id},
+        }
+
+    events = [
+        boundary("director-old"),
+        qa_verdict("director-old", ok=False),
+        boundary("director-new"),
+    ]
+    before_fresh_qa = build_run_ledger_projection(events)
+
+    assert before_fresh_qa["gates"][0]["effective"] is False
+    assert before_fresh_qa["gates"][0]["task_id"] == "TASK-2"
+    assert before_fresh_qa["gates"][0]["run_id"] == "director-old"
+    assert before_fresh_qa["effective_gates"] == []
+    assert before_fresh_qa["historical_failed_gate_count"] == 1
+
+    after_fresh_qa = build_run_ledger_projection([*events, qa_verdict("director-new", ok=True)])
+
+    assert len(after_fresh_qa["gates"]) == 2
+    assert after_fresh_qa["historical_failed_gate_count"] == 1
+    assert [gate["run_id"] for gate in after_fresh_qa["effective_gates"]] == ["director-new"]
+    assert after_fresh_qa["failed_gates"] == []
+
+
 def test_required_evidence_distinguishes_missing_from_failed() -> None:
     base_event = {
         "event_type": "gate_evaluated",
@@ -2340,9 +2466,7 @@ def test_repaired_gate_revision_supersedes_historical_failure_for_current_outcom
             "capability_audit": {"ok": True, "issues": []},
             "gate_policy": {"required_evidence_modalities": ["command"]},
         },
-        "physical_evidence": {
-            "modalities": {"command": {"present": True, "ok": False, "detail": "npm test failed"}}
-        },
+        "physical_evidence": {"modalities": {"command": {"present": True, "ok": False, "detail": "npm test failed"}}},
     }
     repaired = {
         **failed,
@@ -2350,9 +2474,7 @@ def test_repaired_gate_revision_supersedes_historical_failure_for_current_outcom
         "supersedes_content_id": "a" * 64,
         "content_id": "b" * 64,
         "gate": {"name": "workspace_validation", "ok": True, "summary": "npm test passed after repair"},
-        "physical_evidence": {
-            "modalities": {"command": {"present": True, "ok": True, "detail": "npm test passed"}}
-        },
+        "physical_evidence": {"modalities": {"command": {"present": True, "ok": True, "detail": "npm test passed"}}},
     }
 
     projection = build_run_ledger_projection([failed, repaired, _successful_tool_lifecycle_event()])
@@ -2454,9 +2576,7 @@ def test_latest_failed_gate_revision_supersedes_historical_success() -> None:
             "capability_audit": {"ok": True, "issues": []},
             "gate_policy": {"required_evidence_modalities": ["command"]},
         },
-        "physical_evidence": {
-            "modalities": {"command": {"present": True, "ok": True, "detail": "npm test passed"}}
-        },
+        "physical_evidence": {"modalities": {"command": {"present": True, "ok": True, "detail": "npm test passed"}}},
     }
     regressed = {
         **passed,
@@ -2497,9 +2617,7 @@ def test_repaired_gate_revision_cannot_shrink_required_evidence_contract() -> No
             "capability_audit": {"ok": True, "issues": []},
             "gate_policy": {"required_evidence_modalities": ["command"]},
         },
-        "physical_evidence": {
-            "modalities": {"command": {"present": True, "ok": False, "detail": "npm test failed"}}
-        },
+        "physical_evidence": {"modalities": {"command": {"present": True, "ok": False, "detail": "npm test failed"}}},
     }
     invalid_repair = {
         **failed,
@@ -3595,6 +3713,54 @@ def test_append_run_ledger_event_publishes_control_plane_projection_event(tmp_pa
     assert projection["projects"][0]["project_id"] == "P1"
 
 
+def test_projection_transport_does_not_embed_full_durable_ledger_event(tmp_path: Path, monkeypatch) -> None:
+    class FakePublisher:
+        def __init__(self) -> None:
+            self.payload: dict[str, object] = {}
+
+        def publish(self, *, subject: str, payload: dict[str, object]) -> bool:
+            del subject
+            self.payload = payload
+            return True
+
+    publisher = FakePublisher()
+    monkeypatch.setenv("KERNELONE_JETSTREAM_PUBLISH", "1")
+    monkeypatch.setattr(run_ledger_service, "get_log_jetstream_publisher", lambda: publisher)
+    monkeypatch.setattr(
+        run_ledger_service,
+        "resolve_storage_roots",
+        lambda workspace: SimpleNamespace(workspace_key="workspace-key"),
+    )
+    huge_repair = {
+        "full_evidence_ref": "runtime/qa/workspace-validation.json",
+        "full_evidence_sha256": "a" * 64,
+        "nested": "x" * 2_000_000,
+    }
+
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-large-event",
+            event={
+                "event_type": "gate_evaluated",
+                "stage": "workspace_validation",
+                "gate": {"name": "workspace_validation", "ok": False, "summary": "repair pending"},
+                "job_token": {"token_id": "token-large", "run_id": "run-large-event", "project_id": "P1"},
+                "physical_evidence": {"repair_result": huge_repair},
+            },
+        )
+    )
+
+    encoded = json.dumps(publisher.payload, ensure_ascii=False).encode("utf-8")
+    event_payload = publisher.payload["payload"]
+    assert isinstance(event_payload, dict)
+    ledger_event = event_payload["ledger_event"]
+    assert isinstance(ledger_event, dict)
+    assert "physical_evidence" not in ledger_event
+    assert ledger_event["physical_evidence_summary"]["repair_evidence_ref"] == ("runtime/qa/workspace-validation.json")
+    assert len(encoded) < 64_000
+
+
 def test_append_run_ledger_event_publish_failure_is_visible_and_retry_is_idempotent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3843,6 +4009,7 @@ def test_read_run_provenance_bundle_exposes_missing_authority_hashes(tmp_path: P
     assert bundle["handoff_decision_hash"] == "missing:handoff_decision_hash"
     assert bundle["execution_envelope_hash"] == "missing:execution_envelope_hash"
 
+
 def test_summarize_run_ledger_projection_tool_result_failed_is_recoverable_not_integrity() -> None:
     """M08 (caller side): summarize_run_ledger_projection must respect failure_status.failed.
     A recoverable TOOL_RESULT_FAILED (tool ran, ok=False) is product-quality, not integrity.
@@ -3852,15 +4019,36 @@ def test_summarize_run_ledger_projection_tool_result_failed_is_recoverable_not_i
     from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import build_tool_call_lifecycle_receipt
 
     receipt = build_tool_call_lifecycle_receipt(
-        run_id="run-1", task_id="TASK-1", turn_id="turn-1", role="director",
-        native_tool_calls_count=1, decoded_tool_calls_count=1, dispatched_tool_calls_count=1,
-        receipts=[{"batch_id": "batch-1", "failure_count": 1, "results": [{"tool_name": "write_file", "status": "failed", "reason": "deo_director_policy_denied"}]}],
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[
+            {
+                "batch_id": "batch-1",
+                "failure_count": 1,
+                "results": [{"tool_name": "write_file", "status": "failed", "reason": "deo_director_policy_denied"}],
+            }
+        ],
         reason="deo_director_policy_denied",
     ).to_dict()
     projection = build_run_ledger_projection(
         [
-            {"event_type": "gate_evaluated", "stage": "director", "gate": {"name": "director", "ok": True, "summary": "started"},
-             "job_token": {"token_id": "token-1", "project_id": "P1", "capability_audit": {"ok": True, "issues": []}, "gate_policy": {}}, "physical_evidence": {}},
+            {
+                "event_type": "gate_evaluated",
+                "stage": "director",
+                "gate": {"name": "director", "ok": True, "summary": "started"},
+                "job_token": {
+                    "token_id": "token-1",
+                    "project_id": "P1",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+                "physical_evidence": {},
+            },
             {"event_type": "tool_call_lifecycle", "tool_call_lifecycle_receipt": receipt},
         ]
     )

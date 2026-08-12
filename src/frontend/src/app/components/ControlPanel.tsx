@@ -368,7 +368,6 @@ export function ControlPanel({
           </div>
           <div>
             <h1 className="font-heading font-bold text-xl text-text-main tracking-tight">Polaris</h1>
-            <p className="text-[10px] text-text-dim font-mono tracking-wider uppercase">贞观法度 · 枢密中台</p>
           </div>
         </div>
       </div>

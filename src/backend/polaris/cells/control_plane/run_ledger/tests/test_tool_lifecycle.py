@@ -30,6 +30,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
     build_tool_dispatch_dropped_lifecycle_from_observed_calls,
     build_tool_lifecycle_requirement_run_ledger_event,
+    build_verified_existing_artifact_lifecycle_receipt,
     effect_receipts_from_batch_receipts,
     empty_tool_lifecycle_summary,
     failure_evidence_from_lifecycle_receipt,
@@ -1449,6 +1450,45 @@ def test_empty_tool_lifecycle_requires_explicit_not_required_declaration() -> No
     assert summary["requirement_status"] == "not_required"
     assert summary["event_count"] == 0
     assert project_tool_lifecycle_failure_status(summary)["failed"] is False
+
+
+def test_verified_existing_artifact_lifecycle_satisfies_claimed_task_without_fake_dispatch() -> None:
+    receipt = build_verified_existing_artifact_lifecycle_receipt(
+        run_id="director-retry-1",
+        task_id="TASK-2",
+        artifact_receipt_refs=("receipt://one", "receipt://two"),
+    )
+    summary = summarize_tool_lifecycle_events(
+        [project_tool_lifecycle_event(receipt)],
+        requirement=True,
+        requirement_projection={
+            "required": True,
+            "required_task_keys": ["TASK-2"],
+            "obligations": [{"task_key": "TASK-2", "task_id": "TASK-2"}],
+        },
+    )
+
+    assert receipt.ok is True
+    assert receipt.dispatch_status == "verified_existing_artifacts"
+    assert receipt.dispatched_tool_calls_count == 0
+    assert summary["ok"] is True
+    assert summary["missing_required_task_keys"] == []
+    assert summary["latest_by_task"]["TASK-2"]["effect_receipt_count"] == 2
+
+
+def test_verified_existing_artifact_lifecycle_rejects_missing_or_duplicate_refs() -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        build_verified_existing_artifact_lifecycle_receipt(
+            run_id="director-retry-1",
+            task_id="TASK-2",
+            artifact_receipt_refs=(),
+        )
+    with pytest.raises(ValueError, match="unique"):
+        build_verified_existing_artifact_lifecycle_receipt(
+            run_id="director-retry-1",
+            task_id="TASK-2",
+            artifact_receipt_refs=("receipt://same", "receipt://same"),
+        )
 
 
 def test_empty_tool_lifecycle_fails_closed_when_requirement_is_explicit() -> None:

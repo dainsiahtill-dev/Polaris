@@ -72,6 +72,7 @@ class ChiefEngineerPortfolioTaskV1:
     target_files: tuple[str, ...]
     scope_paths: tuple[str, ...] = field(default_factory=tuple)
     dependencies: tuple[str, ...] = field(default_factory=tuple)
+    entrypoint_targets: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         task_id = _require_non_empty("task_id", self.task_id)
@@ -88,6 +89,11 @@ class ChiefEngineerPortfolioTaskV1:
         )
         object.__setattr__(self, "scope_paths", _relative_path_tuple("scope_paths", self.scope_paths))
         object.__setattr__(self, "dependencies", dependencies)
+        entrypoint_targets = _relative_path_tuple("entrypoint_targets", self.entrypoint_targets)
+        unknown_entrypoint_targets = sorted(set(entrypoint_targets) - set(self.target_files))
+        if unknown_entrypoint_targets:
+            raise ValueError(f"entrypoint_targets must be exact PM target_files; unknown={unknown_entrypoint_targets}")
+        object.__setattr__(self, "entrypoint_targets", entrypoint_targets)
 
     def to_dict(self) -> dict[str, Any]:
         """Return the normalized PM-authoritative task projection."""
@@ -98,6 +104,7 @@ class ChiefEngineerPortfolioTaskV1:
             "target_files": list(self.target_files),
             "scope_paths": list(self.scope_paths),
             "dependencies": list(self.dependencies),
+            "entrypoint_targets": list(self.entrypoint_targets),
         }
 
 

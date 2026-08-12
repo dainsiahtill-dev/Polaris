@@ -3666,6 +3666,17 @@ def _canonical_execution_verdict(
         reason_code = "task_runtime_projection_not_authoritative"
         failure_class = "TASK_RUNTIME_PROJECTION_NOT_AUTHORITATIVE"
         responsible_layer = "execution_control_plane"
+    elif bool(qa.get("authoritative")) and not bool(qa.get("ok")):
+        # A failed QA verdict commonly terminal-fails its TaskRuntime helper.
+        # Preserve the causal verifier failure instead of masking it behind the
+        # derived ``task_runtime_not_completed`` state.
+        reason_code = "qa_verdict_failed"
+        failure_class = "QA_VERDICT_FAILED"
+        responsible_layer = "qa"
+    elif evidence_integrity_ok and not evidence_outcome_ok:
+        reason_code = "required_evidence_failed"
+        failure_class = "EXECUTION_EVIDENCE_FAILED"
+        responsible_layer = "control_plane"
     elif not bool(runtime.get("completed")):
         reason_code = "task_runtime_not_completed"
         failure_class = "TASK_RUNTIME_NOT_COMPLETED"
@@ -3674,17 +3685,9 @@ def _canonical_execution_verdict(
         reason_code = "required_evidence_missing"
         failure_class = "EXECUTION_EVIDENCE_MISSING"
         responsible_layer = "control_plane"
-    elif not evidence_outcome_ok:
-        reason_code = "required_evidence_failed"
-        failure_class = "EXECUTION_EVIDENCE_FAILED"
-        responsible_layer = "control_plane"
     elif not bool(qa.get("authoritative")):
         reason_code = "qa_verdict_missing"
         failure_class = "EXECUTION_EVIDENCE_MISSING"
-        responsible_layer = "qa"
-    elif not bool(qa.get("ok")):
-        reason_code = "qa_verdict_failed"
-        failure_class = "QA_VERDICT_FAILED"
         responsible_layer = "qa"
     else:
         return {

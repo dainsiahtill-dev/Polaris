@@ -34,6 +34,105 @@ _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS = FACTORY_LLM_STAGE_MIN_START_BUDGET_S
 _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS = 5.0
 _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 3
 _WORKSPACE_QUALITY_REPAIR_MIN_LLM_START_BUDGET_SECONDS = FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
+_WORKSPACE_QUALITY_REPAIR_LEASE_TTL_SECONDS = 300
+_WORKSPACE_QUALITY_REPAIR_HEARTBEAT_INTERVAL_SECONDS = 30.0
+
+
+async def _run_workspace_quality_repair_heartbeat(
+    authority: Any,
+    *,
+    stop: asyncio.Event,
+    failures: list[dict[str, Any]],
+    context_summary: str,
+) -> None:
+    """Keep a claimed repair task alive while planning/provider work runs.
+
+    Ordinary Director execution owns a background TaskRuntime heartbeat.  The
+    Factory quality-repair continuation used the same 300-second claim but did
+    not start that heartbeat, so long deterministic/LLM repair work could only
+    reach DEO after its lease had expired.  The physical write then failed
+    closed with ``deo_execution_attempt_heartbeat_failed`` and settlement
+    failed again with ``session_lease_expired``.
+
+    ``authority_operation_in_progress`` is a transient overlap with DEO's own
+    atomic heartbeat/settlement operation.  DEO remains authoritative and
+    fail-closed; the keeper simply retries on the next interval.
+    """
+
+    while True:
+        try:
+            await asyncio.wait_for(
+                stop.wait(),
+                timeout=_WORKSPACE_QUALITY_REPAIR_HEARTBEAT_INTERVAL_SECONDS,
+            )
+            return
+        except asyncio.TimeoutError:
+            pass
+        try:
+            verdict = await asyncio.to_thread(
+                authority.heartbeat,
+                lease_ttl_seconds=_WORKSPACE_QUALITY_REPAIR_LEASE_TTL_SECONDS,
+                lock_timeout_seconds=5.0,
+                context_summary=context_summary,
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            failures.append(
+                {
+                    "code": "heartbeat_exception",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+            )
+            return
+        if bool(getattr(verdict, "success", False)):
+            continue
+        code = str(getattr(verdict, "code", "") or "heartbeat_rejected")
+        if code == "authority_operation_in_progress":
+            continue
+        failures.append({"code": code})
+        return
+
+
+async def _stop_workspace_quality_repair_heartbeat(
+    heartbeat_task: asyncio.Task[None],
+    stop: asyncio.Event,
+) -> None:
+    stop.set()
+    await heartbeat_task
+
+
+def _is_deferred_declared_test_entrypoint_issue(
+    issue: Any,
+    *,
+    declared_targets: set[str],
+) -> bool:
+    """Ignore only test paths that a later PM task is contracted to create.
+
+    Workspace quality repair runs after Director materialization but before all
+    downstream tasks necessarily settle.  A manifest task may therefore create
+    ``"test": "node --test tests/"`` before the test-owner task creates
+    ``tests/product.test.js``.  Treating that discovery path as a missing
+    *entrypoint* sends repair planning down an unrelated deterministic rule and
+    hides the real verifier failure.
+
+    This is not a final-quality waiver: the real test command still runs and
+    remains authoritative.  Unowned/mistyped paths remain errors.
+    """
+
+    if str(getattr(issue, "code", "") or "").strip() != "npm_script_missing_local_entrypoint":
+        return False
+    metadata = getattr(issue, "metadata", None)
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    script_name = str(metadata.get("script_name") or "").strip().lower()
+    if script_name != "test" and not script_name.startswith("test:"):
+        return False
+    entrypoint = str(metadata.get("entrypoint") or "").strip().replace("\\", "/")
+    while entrypoint.startswith("./"):
+        entrypoint = entrypoint[2:]
+    if not entrypoint:
+        return False
+    prefix = entrypoint.rstrip("/") + "/"
+    return any(target == entrypoint or target.startswith(prefix) for target in declared_targets)
 
 
 def _workspace_quality_repair_errors(executor, results: list[dict[str, Any]]) -> list[str]:
@@ -41,16 +140,24 @@ def _workspace_quality_repair_errors(executor, results: list[dict[str, Any]]) ->
     for result in results:
         if bool(result.get("passed")):
             continue
-        output_parts = [
+        error_text = str(result.get("error") or "").strip()
+        diagnostic_excerpt = str(result.get("diagnostic_excerpt") or "").strip()
+        stream_output = "\n".join(
             str(result.get(key) or "").strip()
-            for key in ("error", "stdout_tail", "stderr_tail")
+            for key in ("stdout_tail", "stderr_tail")
             if str(result.get(key) or "").strip()
-        ]
-        if not output_parts:
+        )
+        # ``diagnostic_excerpt`` is already the bounded, marker-aware projection
+        # of stdout+stderr. Feeding it together with both tails duplicates the
+        # same failure block up to three times and multiplies repair coverage.
+        # Prefer it as the sole diagnostic input; command/error provenance stays
+        # in the durable workspace-validation command row.
+        diagnostic_input = diagnostic_excerpt or stream_output or error_text
+        if not diagnostic_input:
             continue
         command = result.get("command")
         command_text = " ".join(str(part) for part in command) if isinstance(command, list) else str(command or "")
-        output = executor._trim_command_output("\n".join(output_parts))
+        output = executor._trim_command_output(diagnostic_input)
         # The command row is durable verifier evidence, but its wrapper is
         # not itself a repair diagnostic.  Feeding the entire wrapper into
         # Director Runtime makes the actionable nested compiler/runtime
@@ -79,16 +186,32 @@ def _workspace_quality_repair_errors(executor, results: list[dict[str, Any]]) ->
                 if str(diagnostic.metadata.get("raw") or diagnostic.message or "").strip()
             )
         else:
+            fallback_output = executor._trim_command_output(
+                "\n".join(part for part in (error_text, output) if part)
+            )
             errors.append(
                 "Artifact quality scan failed: workspace validation command failed"
-                f" ({command_text or 'unknown command'}): {output}"
+                f" ({command_text or 'unknown command'}): {fallback_output}"
             )
 
     try:
         from polaris.kernelone.quality import scan_workspace_artifact_quality_evidence
 
         evidence = scan_workspace_artifact_quality_evidence(str(executor.workspace))
-        errors.extend(evidence.errors)
+        declared_targets = {
+            str(path or "").strip().replace("\\", "/")
+            for path in executor._workspace_quality_repair_target_files()
+            if str(path or "").strip()
+        }
+        deferred_error_messages = {
+            str((getattr(issue, "metadata", None) or {}).get("raw") or "").strip()
+            for issue in evidence.issues
+            if _is_deferred_declared_test_entrypoint_issue(
+                issue,
+                declared_targets=declared_targets,
+            )
+        }
+        errors.extend(error for error in evidence.errors if str(error or "").strip() not in deferred_error_messages)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         errors.append(f"Artifact quality scan failed: workspace quality repair scan failed: {exc}")
 
@@ -223,7 +346,7 @@ def _claim_workspace_quality_repair_attempt(
         worker_id="director",
         role_id="director",
         run_id=run_id,
-        lease_ttl_seconds=300,
+        lease_ttl_seconds=_WORKSPACE_QUALITY_REPAIR_LEASE_TTL_SECONDS,
         selection_source="factory_stage_executor.workspace_quality_repair",
         external_task_id=external_task_id,
         context_summary="director_workspace_quality_repair",
@@ -251,6 +374,7 @@ def _apply_workspace_quality_repairs(
     artifact_quality_errors: list[str],
     task_id: str | None = None,
     execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
+    repair_task: Mapping[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     from polaris.cells.roles.adapters.public.service import (
         run_director_materialization_quality_repair_schedule,
@@ -274,7 +398,14 @@ def _apply_workspace_quality_repairs(
         ) -> None:
             del task_id, phase, current_file, event_code, event_status, event_reason, event_detail, event_refs
 
-    target_files = executor._workspace_quality_repair_target_files()
+    task_payload = dict(repair_task) if isinstance(repair_task, Mapping) else {}
+    task_metadata = task_payload.get("metadata")
+    task_metadata = dict(task_metadata) if isinstance(task_metadata, Mapping) else {}
+    raw_owned_targets = task_payload.get("target_files") or task_metadata.get("target_files") or ()
+    owned_targets = _dedupe_workspace_repair_paths(
+        [raw_owned_targets] if isinstance(raw_owned_targets, str) else list(raw_owned_targets)
+    )
+    target_files = owned_targets or executor._workspace_quality_repair_target_files()
     if not target_files:
         target_files = executor._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors)
     if not target_files:
@@ -282,17 +413,19 @@ def _apply_workspace_quality_repairs(
     if "package.json" not in target_files and (executor.workspace / "package.json").is_file():
         target_files = [*target_files, "package.json"]
     metadata: dict[str, Any] = {
+        **task_metadata,
         "target_files": target_files,
         "delivery_mode": "materialize_changes",
     }
     blueprint_artifact, blueprint_text = executor._workspace_quality_repair_blueprint_evidence(run_id=run_id)
-    # Always mark factory workspace-quality authority so multi-file smoke/tsc
-    # plans are not strangled by per-task write scope (M06 settle + quality_gate).
-    metadata["factory_workspace_quality_repair"] = {
-        "ce_blueprint_artifact": blueprint_artifact,
-        "target_files": target_files,
-        "run_id": run_id,
-    }
+    if not task_payload:
+        # Compatibility-only workspace invocation. Canonical Factory retries
+        # pass ``repair_task`` and remain constrained to that exact PM/CE owner.
+        metadata["factory_workspace_quality_repair"] = {
+            "ce_blueprint_artifact": blueprint_artifact,
+            "target_files": target_files,
+            "run_id": run_id,
+        }
     if blueprint_text:
         blueprint_payload = {
             "schema_version": "factory.workspace_quality_repair.ce_blueprint_context.v1",
@@ -303,9 +436,14 @@ def _apply_workspace_quality_repairs(
         metadata["chief_engineer_blueprint"] = blueprint_payload
         metadata["chief_engineer_blueprint_evidence"] = blueprint_text
     resolved_task_id = str(task_id or "").strip() or f"factory-quality-gate:{run_id}"
+    if task_payload:
+        task_payload["target_files"] = target_files
+        task_payload["metadata"] = metadata
+    else:
+        task_payload = {"target_files": target_files, "metadata": metadata}
     return run_director_materialization_quality_repair_schedule(
         _QualityRepairAdapter(executor.workspace),
-        task={"target_files": target_files, "metadata": metadata},
+        task=task_payload,
         task_id=resolved_task_id,
         artifact_quality_errors=artifact_quality_errors,
         execution_attempt=execution_attempt,
@@ -342,7 +480,7 @@ async def _apply_workspace_quality_deterministic_repairs(
     run_id = str(run.id or "").strip() or "workspace-quality-repair"
     target_files = executor._director_stage_materialization_settle_target_files(diagnostics=artifact_quality_errors)
     try:
-        task_id, task_row_id, execution_attempt, _repair_task = executor._claim_workspace_quality_repair_attempt(
+        task_id, task_row_id, execution_attempt, repair_task = executor._claim_workspace_quality_repair_attempt(
             run_id=run_id,
             repair_attempt=repair_attempt,
             target_files=target_files,
@@ -362,6 +500,16 @@ async def _apply_workspace_quality_deterministic_repairs(
     results: list[dict[str, Any]] = []
     summary: dict[str, Any] = {}
     receipts: list[dict[str, Any]] = []
+    heartbeat_stop = asyncio.Event()
+    heartbeat_failures: list[dict[str, Any]] = []
+    heartbeat_task = asyncio.create_task(
+        _run_workspace_quality_repair_heartbeat(
+            authority,
+            stop=heartbeat_stop,
+            failures=heartbeat_failures,
+            context_summary="director_workspace_quality_deterministic_repair",
+        )
+    )
     try:
         results, raw_summary = await asyncio.to_thread(
             executor._apply_workspace_quality_repairs,
@@ -369,6 +517,7 @@ async def _apply_workspace_quality_deterministic_repairs(
             artifact_quality_errors=artifact_quality_errors,
             task_id=task_id,
             execution_attempt=execution_attempt,
+            repair_task=repair_task,
         )
         summary = dict(raw_summary)
         deferred_candidates = [
@@ -406,6 +555,15 @@ async def _apply_workspace_quality_deterministic_repairs(
             "repair_mode": "director_deterministic",
             "error": f"workspace_quality_deterministic_commit_failed:{type(exc).__name__}:{exc}",
         }
+    finally:
+        await _stop_workspace_quality_repair_heartbeat(heartbeat_task, heartbeat_stop)
+
+    if heartbeat_failures:
+        summary["execution_attempt_heartbeat_failures"] = heartbeat_failures
+        summary.setdefault(
+            "error",
+            f"workspace_quality_repair_lease_heartbeat_failed:{heartbeat_failures[0]['code']}",
+        )
 
     successful_receipts = [
         item for item in receipts if executor._director_stage_materialization_receipt_succeeded(item)
@@ -413,7 +571,10 @@ async def _apply_workspace_quality_deterministic_repairs(
     failed_receipts = [
         item for item in receipts if not executor._director_stage_materialization_receipt_succeeded(item)
     ]
-    mutation_committed = bool(successful_receipts)
+    # Lease liveness is part of the write authority.  A physical receipt that
+    # lands after heartbeat rejection/expiry cannot complete the task because
+    # this Director no longer proves exclusive ownership of the attempt.
+    mutation_committed = bool(successful_receipts) and not heartbeat_failures
     settle_result = executor._settle_director_stage_materialization_attempt(
         task_row_id=task_row_id,
         execution_attempt=execution_attempt,
@@ -586,6 +747,16 @@ async def _apply_workspace_quality_llm_repairs(
     repair_metadata["task_id"] = repair_task_id
     repair_metadata["task_runtime_session_id"] = execution_attempt.session_id
     repair_metadata["workspace_quality_repair"] = True
+    heartbeat_stop = asyncio.Event()
+    heartbeat_failures: list[dict[str, Any]] = []
+    heartbeat_task = asyncio.create_task(
+        _run_workspace_quality_repair_heartbeat(
+            execution_attempt_authority,
+            stop=heartbeat_stop,
+            failures=heartbeat_failures,
+            context_summary="director_workspace_quality_llm_repair",
+        )
+    )
     try:
         from polaris.cells.roles.adapters.public.service import run_director_materialization_quality_repair
 
@@ -614,7 +785,15 @@ async def _apply_workspace_quality_llm_repairs(
             "source_tools": ["director_materialization_quality_repair_error"],
             "tool_results": 0,
         }
+    finally:
+        await _stop_workspace_quality_repair_heartbeat(heartbeat_task, heartbeat_stop)
     normalized_summary = dict(summary)
+    if heartbeat_failures:
+        normalized_summary["execution_attempt_heartbeat_failures"] = heartbeat_failures
+        normalized_summary.setdefault(
+            "error",
+            f"workspace_quality_repair_lease_heartbeat_failed:{heartbeat_failures[0]['code']}",
+        )
     normalized_summary["repair_mode"] = "director_llm"
     raw_source_tools = normalized_summary.get("source_tools")
     source_tool_items = raw_source_tools if isinstance(raw_source_tools, list | tuple | set) else []
@@ -624,7 +803,7 @@ async def _apply_workspace_quality_llm_repairs(
     normalized_summary["source_tools"] = source_tools
     normalized_summary.setdefault("tool_results", len(results))
     normalized_summary.setdefault("attempted", True)
-    mutation_committed = any(
+    mutation_committed = not heartbeat_failures and any(
         executor._workspace_quality_repair_result_has_mutation(dict(item))
         for item in results
         if isinstance(item, Mapping)
@@ -940,8 +1119,14 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 not round_requires_task_boundary_triage
                 and round_repair_results
                 and not round_write_tool_evidence
-                and not round_repair_evidence
             ):
+                # Logs, coverage notes, or failed/no-op tool rows are evidence
+                # of an attempt, not evidence of repair progress. Only an
+                # authoritative workspace mutation may suppress the same-task
+                # LLM edit fallback. r46 returned a deterministic source_tool
+                # plus evidence but mutated nothing; this old condition skipped
+                # the LLM twice and tripped stagnation with the failing source
+                # untouched.
                 deterministic_noop_summary = dict(round_summary)
                 deadline_detail = workspace_repair_deadline_blocker(f"before_llm_repair_round_{round_index + 1}")
                 if deadline_detail:

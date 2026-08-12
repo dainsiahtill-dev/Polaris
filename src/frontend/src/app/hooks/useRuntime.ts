@@ -1267,6 +1267,13 @@ function parseProcessStreamLine(channel: string, line: string): LogEntry | null 
     const summary = Parsing.firstDisplayString(parsed.summary, parsed.message, parsed.text);
     const dataObj = parsed.data && typeof parsed.data === 'object' ? (parsed.data as Record<string, unknown>) : null;
     const rawObj = parsed.raw && typeof parsed.raw === 'object' ? (parsed.raw as Record<string, unknown>) : null;
+    const resultObj = parsed.result && typeof parsed.result === 'object'
+      ? (parsed.result as Record<string, unknown>)
+      : dataObj?.result && typeof dataObj.result === 'object'
+        ? (dataObj.result as Record<string, unknown>)
+        : rawObj?.result && typeof rawObj.result === 'object'
+          ? (rawObj.result as Record<string, unknown>)
+          : null;
     const dataMsg = dataObj ? Parsing.firstDisplayString(dataObj.message, dataObj.summary) : '';
     const rawMsg = rawObj ? Parsing.firstDisplayString(rawObj.message, rawObj.summary) : '';
     streamEvent = (
@@ -1303,8 +1310,30 @@ function parseProcessStreamLine(channel: string, line: string): LogEntry | null 
 
       level = Parsing.mapSeverityToLevel(Parsing.firstDisplayString(parsed.severity), level);
       if (level === 'info') {
+        // Formal Factory events carry an authoritative StageResult. Consume it
+        // before text heuristics: successful summaries intentionally include
+        // `error_code=none`, which used to match `/error/` and made PM/CE
+        // stage_completed events appear under ContextOS "异常闭环".
+        const structuredStatus = Parsing.firstDisplayString(
+          resultObj?.status,
+          parsed.status,
+          dataObj?.status,
+          rawObj?.status,
+        ).toLowerCase();
+        const structuredFailure =
+          parsed.ok === false ||
+          dataObj?.ok === false ||
+          rawObj?.ok === false ||
+          ['failed', 'error', 'cancelled', 'blocked'].includes(structuredStatus);
+        const structuredSuccess =
+          parsed.ok === true ||
+          dataObj?.ok === true ||
+          rawObj?.ok === true ||
+          ['success', 'completed', 'passed'].includes(structuredStatus);
         const token = `${eventName} ${summary} ${dataMsg} ${rawMsg}`.toLowerCase();
-        if (/error|failed|exception|traceback|timeout/.test(token)) level = 'error';
+        if (structuredFailure) level = 'error';
+        else if (structuredSuccess) level = 'success';
+        else if (/error|failed|exception|traceback|timeout/.test(token)) level = 'error';
         else if (/warn|retry|blocked/.test(token)) level = 'warning';
         else if (/tool|invoke|llm|thinking|prompt/.test(token)) level = 'thinking';
         else if (/success|completed|done|passed/.test(token)) level = 'success';

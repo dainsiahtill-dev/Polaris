@@ -312,6 +312,34 @@ def test_bench_completed_verified_boundary_does_not_override_active_runtime() ->
     assert projection["execution"]["reason_code"] == "task_runtime_not_completed"
 
 
+def test_failed_qa_verdict_is_not_masked_by_failed_task_runtime_helper() -> None:
+    ledger = _canonical_run_ledger_projection()
+    ledger["gates"][0] = {
+        **ledger["gates"][0],
+        "ok": False,
+        "summary": "npm test failed",
+    }
+    runtime = _canonical_task_runtime_projection()
+    runtime["rows"][0] = {
+        **runtime["rows"][0],
+        "status": "failed",
+        "execution_state": "failed",
+    }
+
+    projection = bench_gates.build_canonical_bench_projection(
+        {
+            "run_ledger_projection": ledger,
+            "task_runtime_projection": runtime,
+        }
+    )
+
+    assert projection["runtime"]["completed"] is False
+    assert projection["qa"]["authoritative"] is True
+    assert projection["qa"]["ok"] is False
+    assert projection["execution"]["reason_code"] == "qa_verdict_failed"
+    assert projection["execution"]["responsible_layer"] == "qa"
+
+
 def test_r181_bench_failed_runtime_without_boundary_still_incomplete() -> None:
     """Without completed_verified boundary, failed runtime stays incomplete."""
 

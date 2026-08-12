@@ -66,6 +66,8 @@
   Cell Evolution 从设计说明推进到治理落地的执行清单
 - `docs/governance/POLARIS_SKEPTICAL_ARCHITECTURE_REVIEW.md`
   Polaris 执行架构的反证式验收清单：用于判断 fresh isolated 项目是否真的通过同一条事实链进入 `COMPLETED_VERIFIED`
+- `docs/governance/UNATTENDED_COMPLETION_FIRST_PROOF_20260812.md`
+  fresh isolated L1-01/L1-02 顺序项目证明、深层控制面缺陷、强制动态调试顺序、delivery-epoch QA 权威、持久证据 hash 与下一项目证明边界
 - `docs/governance/POLARIS_EXECUTION_CONTROL_PLANE_RECONSTRUCTION_PROMPT.md`
   给基座重构 Agent 的执行控制面重构提示词与验收口径：验收标准不是更多单测，而是 fresh isolated 新项目跨多轮 Director、工具批次、取消边界和 QA 后稳定进入 `COMPLETED_VERIFIED`
 - `docs/migration/ledger.yaml`

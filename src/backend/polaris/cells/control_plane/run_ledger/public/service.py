@@ -1142,6 +1142,7 @@ def _publish_run_ledger_projection_update(
         ).projection
         now = datetime.now(timezone.utc)
         event_id = str(event.get("event_id") or event.get("append_id") or int(now.timestamp() * 1000)).strip()
+        transport_event = _project_run_ledger_event_for_transport(event)
         envelope = {
             "schema_version": "runtime.v2",
             "event_id": f"control-plane-ledger-{event_id}",
@@ -1154,7 +1155,7 @@ def _publish_run_ledger_projection_update(
             "trace_id": str(event.get("trace_id") or ""),
             "payload": {
                 "projection": projection,
-                "ledger_event": event,
+                "ledger_event": transport_event,
                 "run_id": str(run_id or event.get("run_id") or ""),
             },
             "meta": {"source": "control_plane.run_ledger"},
@@ -1166,6 +1167,56 @@ def _publish_run_ledger_projection_update(
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         logger.debug("Run Ledger projection JetStream publish failed: %s", exc)
         return False
+
+
+def _project_run_ledger_event_for_transport(event: dict[str, Any]) -> dict[str, Any]:
+    """Build a bounded notification; durable Ledger remains full authority."""
+
+    gate = event.get("gate")
+    gate = gate if isinstance(gate, dict) else {}
+    job_token = event.get("job_token")
+    job_token = job_token if isinstance(job_token, dict) else {}
+    physical = event.get("physical_evidence")
+    physical = physical if isinstance(physical, dict) else {}
+    modalities = physical.get("modalities")
+    modalities = modalities if isinstance(modalities, dict) else {}
+    return {
+        "schema_version": event.get("schema_version"),
+        "event_id": str(event.get("event_id") or ""),
+        "append_id": str(event.get("append_id") or ""),
+        "content_id": str(event.get("content_id") or ""),
+        "event_type": str(event.get("event_type") or ""),
+        "stage": str(event.get("stage") or ""),
+        "recorded_at": str(event.get("recorded_at") or event.get("timestamp") or ""),
+        "gate": {
+            "name": str(gate.get("name") or ""),
+            "ok": bool(gate.get("ok")),
+            "summary": str(gate.get("summary") or "")[:1024],
+            "failing_requirements": list(gate.get("failing_requirements") or [])[:32],
+        },
+        "job_token": {
+            key: job_token.get(key)
+            for key in ("token_id", "run_id", "project_id", "stage")
+            if job_token.get(key) not in (None, "")
+        },
+        "physical_evidence_summary": {
+            "command_count": int(physical.get("command_count") or 0),
+            "sampled_command_count": int(physical.get("sampled_command_count") or 0),
+            "commands_truncated": bool(physical.get("commands_truncated")),
+            "modalities": modalities,
+            "repair_evidence_ref": str(
+                (physical.get("repair_result") or {}).get("full_evidence_ref")
+                if isinstance(physical.get("repair_result"), dict)
+                else ""
+            ),
+            "repair_evidence_sha256": str(
+                (physical.get("repair_result") or {}).get("full_evidence_sha256")
+                if isinstance(physical.get("repair_result"), dict)
+                else ""
+            ),
+        },
+        "durable_event_available": True,
+    }
 
 
 def append_run_ledger_event(command: AppendRunLedgerEventCommandV1) -> RunLedgerAppendResultV1:

@@ -2468,6 +2468,32 @@ class FactoryRunService:
                 )
 
             timestamp = self._now()
+            # Frozen TaskRuntime authority belongs to one Director execution
+            # epoch. Re-executing Director (or any earlier stage) will create
+            # newer TaskRuntime facts, so retaining the old snapshot would let
+            # terminal drain reuse stale rows forever. QA-only retry preserves
+            # the snapshot because no execution authority is regenerated.
+            if "director_dispatch" in stages_to_rerun:
+                from polaris.cells.factory.pipeline.public.contracts import (
+                    FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
+                )
+
+                invalidated_snapshot = run.metadata.pop(
+                    FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
+                    None,
+                )
+                if isinstance(invalidated_snapshot, Mapping):
+                    run.metadata["factory_terminal_task_runtime_projection_invalidation"] = {
+                        "schema_version": "factory.terminal-task-runtime-projection-invalidation.v1",
+                        "invalidated_at": timestamp,
+                        "requested_stage": requested_stage or None,
+                        "retry_execution_stage": retry_execution_stage,
+                        "prior_captured_at": str(
+                            invalidated_snapshot.get("captured_at") or ""
+                        ).strip()
+                        or None,
+                        "reason": "director_execution_epoch_reopened",
+                    }
             previous_status = run.status.value
             previous_failure = run.metadata.get("failure")
             run.recovery_point = retry_stage

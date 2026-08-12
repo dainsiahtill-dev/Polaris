@@ -652,6 +652,15 @@ def _build_portfolio_completion_contract(
             for row in artifact_rows
             if row["applicability"] != "not_applicable" and row["owner_task_id"] is not None
         }
+        entrypoint_artifact_owner_by_path = {
+            str(row["path"]): str(row["owner_task_id"])
+            for row in artifact_rows
+            if row["applicability"] != "not_applicable"
+            and row["semantic_role"] == "entrypoint"
+            and row["owner_task_id"] is not None
+        }
+        pm_entrypoint_owner_by_path = {path: task.task_id for task in command.tasks for path in task.entrypoint_targets}
+        explicit_pm_entrypoint_owners = {task.task_id for task in command.tasks if task.entrypoint_targets}
 
         def authorities_for(*, modality: str, owner_task_id: str | None = None) -> tuple[Any, ...]:
             return tuple(
@@ -731,11 +740,17 @@ def _build_portfolio_completion_contract(
             )
 
         # Entrypoints are semantic CE suggestions but executable commands are
-        # PM-owned authority.  Keep only active suggestions that can be bound
-        # exactly to a committed PM entrypoint command.  Non-executable extras
-        # (for example a library facade or browser asset without a command)
-        # must not turn a valid application entrypoint into a portfolio-wide
-        # failure.  Path/owner authority is still validated below.
+        # PM-owned authority.  An exact command match is accepted directly. If
+        # the CE describes a PM-owned source path but phrases the invocation
+        # differently, one unambiguous owner-scoped PM authority normalizes the
+        # command instead of deleting the application's sole entrypoint.  This
+        # does not widen authority: the source must either carry explicit PM
+        # entrypoint-target authority, or use the legacy CE entrypoint artifact
+        # marker when no explicit PM target was committed. Exact PM target/scope
+        # ownership is still validated below. Live L1-02 committed
+        # ``src/index.js`` plus ``npm start`` but labelled the artifact as
+        # generic source; requiring a second model-authored semantic label
+        # silently deleted that valid entrypoint.
         normalized_entrypoint_rows: list[Mapping[str, Any]] = []
         dropped_unexecutable_entrypoint_ids: set[str] = set()
         for row in entrypoint_rows:
@@ -746,10 +761,30 @@ def _build_portfolio_completion_contract(
                 modality="entrypoint",
                 owner_task_id=str(row["owner_task_id"]) if row["owner_task_id"] is not None else None,
             )
-            if row["command"] is None or not any(item.command == row["command"] for item in matching):
-                dropped_unexecutable_entrypoint_ids.add(str(row["obligation_id"]))
+            exact_matches = tuple(item for item in matching if item.command == row["command"])
+            if len(exact_matches) == 1:
+                normalized_entrypoint_rows.append(row)
                 continue
-            normalized_entrypoint_rows.append(row)
+            source_path = str(row["source_path"]) if row["source_path"] is not None else None
+            owner_task_id = str(row["owner_task_id"]) if row["owner_task_id"] is not None else None
+            if (
+                len(matching) == 1
+                and source_path is not None
+                and (
+                    pm_entrypoint_owner_by_path.get(source_path) == owner_task_id
+                    or (
+                        owner_task_id not in explicit_pm_entrypoint_owners
+                        and entrypoint_artifact_owner_by_path.get(source_path) == owner_task_id
+                    )
+                )
+            ):
+                normalized_row = dict(row)
+                normalized_row["command"] = matching[0].command
+                normalized_entrypoint_rows.append(normalized_row)
+                continue
+            if row["applicability"] != "not_applicable":
+                dropped_unexecutable_entrypoint_ids.add(str(row["obligation_id"]))
+            continue
 
         normalized_verification_rows: list[dict[str, Any]] = []
         for row in verification_rows:

@@ -1,20 +1,22 @@
+# Split-module migration intentionally consumes private helpers/constants from
+# the runtime-owned TypeScript kernel facade.  Keep wildcard compatibility
+# local to this private module until the generated facade is fully explicit.
+# ruff: noqa: F403, F405
+
+"""TypeScript syntax repair module: modules."""
+
 from __future__ import annotations
 
 import json
 import posixpath
 import re
 from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
-from pathlib import PurePosixPath
 from typing import Any
 
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from ..javascript_syntax import repair_javascript_export_contract_placeholders
-from ..path_files import normalize_base_files_strict, normalize_repair_path_strict
-from .constants import *  # noqa: F403
-from .common import *  # noqa: F403
+from .common import *
+from .constants import *
 
-"""TypeScript syntax repair module: modules."""
 
 def build_typescript_json_as_source_plan(
     *,
@@ -25,9 +27,10 @@ def build_typescript_json_as_source_plan(
     """Rewrite package-manifest JSON written into ``.ts``/``.tsx`` paths (R159).
 
     Live L1-01 r159: ``src/verify.ts`` held a full package.json body (name/scripts/...),
-    so ``tsc`` reported mass TS1005 and four-pillar build failed. Also create a
-    minimal Node smoke test when package.json ``scripts.test`` points at
-    ``tests/*.test.ts`` (or similar) but no test files exist.
+    so ``tsc`` reported mass TS1005 and four-pillar build failed.  This repair
+    only replaces proven misplaced JSON.  Missing tests belong to their PM/CE
+    owner task; inventing a placeholder test here creates false delivery
+    evidence and crosses the exact Director task boundary.
     """
 
     normalized_base_files = {
@@ -38,7 +41,6 @@ def build_typescript_json_as_source_plan(
     operations: list[RepairOperation] = []
     matched_diagnostics: list[RepairDiagnostic] = []
     repaired_json_paths: list[str] = []
-    created_tests: list[str] = []
 
     for path, original in sorted(normalized_base_files.items()):
         if not path.endswith((".ts", ".tsx")):
@@ -69,38 +71,6 @@ def build_typescript_json_as_source_plan(
             diagnostic for diagnostic in diagnostics if _diagnostic_targets_path(diagnostic, path)
         )
 
-    package_json_text = str(normalized_base_files.get("package.json") or "")
-    for target in _missing_package_script_test_targets(normalized_base_files):
-        if target in normalized_base_files:
-            continue
-        content = _typescript_node_smoke_test_content(package_json_text=package_json_text)
-        if not content.endswith("\n"):
-            content = f"{content}\n"
-        operations.append(
-            RepairOperation(
-                kind="write_file",
-                path=target,
-                content=content,
-                before_hash=sha256_text(""),
-                metadata={
-                    "repair_kind": "typescript_missing_smoke_test",
-                    "write_file_reason": "package_json_test_script_missing_target",
-                    "edit_strategy": "write_file_new",
-                },
-            )
-        )
-        created_tests.append(target)
-
-    # R169: when smoke is created for a build-only scripts.test, rewrite test/verify
-    # so delivery_depth and real_run can execute the smoke file (not just leave it orphan).
-    if created_tests and package_json_text:
-        script_op = _package_json_enable_node_test_script_operation(
-            package_json_text=package_json_text,
-            smoke_paths=tuple(created_tests),
-        )
-        if script_op is not None:
-            operations.append(script_op)
-
     return _repair_plan_or_none(
         rule_id="typescript.json_as_source",
         source_tool=TYPESCRIPT_JSON_AS_SOURCE_SOURCE_TOOL,
@@ -109,7 +79,6 @@ def build_typescript_json_as_source_plan(
         mode=mode,
         metadata={
             "json_as_source_paths": repaired_json_paths,
-            "created_smoke_tests": created_tests,
         },
     )
 
@@ -393,10 +362,7 @@ def _build_typescript_relative_module_stub_content(*, module_ref: str, importer_
     symbols = _dedupe_preserve_order([s for s in symbols if _TS_IDENTIFIER_RE.fullmatch(s)])
     if not symbols:
         # Prefer a common smoke export for dynamic verify modules.
-        if "verify" in module_ref.lower():
-            symbols = ["runVerification"]
-        else:
-            symbols = ["defaultExport"]
+        symbols = ["runVerification"] if "verify" in module_ref.lower() else ["defaultExport"]
     lines = [
         "/** Auto-generated relative module stub (M10/TS2307). */",
         "",
@@ -528,89 +494,6 @@ def _typescript_smoke_verify_module_content(*, path: str) -> str:
         "}\n"
     )
 
-def _typescript_node_smoke_test_content(*, package_json_text: str = "") -> str:
-    """Minimal smoke test for package.json scripts.test that lack targets.
-
-    Uses vitest when scripts.test mentions vitest (R161 live package.json),
-    otherwise node:test so ``node --test`` scripts stay runnable.
-    """
-
-    test_script = ""
-    payload = _json_object(package_json_text)
-    scripts = payload.get("scripts")
-    if isinstance(scripts, Mapping):
-        test_script = str(scripts.get("test") or "")
-    if re.search(r"\bvitest\b", test_script, re.IGNORECASE):
-        return (
-            'import { describe, it, expect } from "vitest";\n'
-            'import { existsSync, readFileSync } from "node:fs";\n'
-            "\n"
-            'describe("project smoke", () => {\n'
-            '  it("has package.json and src tree", () => {\n'
-            '    expect(existsSync("package.json")).toBe(true);\n'
-            '    expect(existsSync("src")).toBe(true);\n'
-            '    const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { name?: string };\n'
-            '    expect(typeof pkg.name).toBe("string");\n'
-            "  });\n"
-            "});\n"
-        )
-    return (
-        'import { describe, it } from "node:test";\n'
-        'import assert from "node:assert/strict";\n'
-        'import { existsSync, readFileSync } from "node:fs";\n'
-        "\n"
-        'describe("project smoke", () => {\n'
-        '  it("has package.json and src tree", () => {\n'
-        '    assert.equal(existsSync("package.json"), true);\n'
-        '    assert.equal(existsSync("src"), true);\n'
-        '    const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { name?: string };\n'
-        '    assert.equal(typeof pkg.name, "string");\n'
-        "  });\n"
-        "});\n"
-    )
-
-def _missing_package_script_test_targets(base_files: Mapping[str, str]) -> tuple[str, ...]:
-    """Return concrete missing test paths declared by package.json scripts.test."""
-
-    package_payload = _json_object(str(base_files.get("package.json") or ""))
-    scripts = package_payload.get("scripts")
-    if not isinstance(scripts, Mapping):
-        return ()
-    test_script = str(scripts.get("test") or "").strip()
-    if not test_script:
-        return ()
-    existing_tests = tuple(
-        path
-        for path in base_files
-        if path.startswith("tests/") and path.endswith((".ts", ".tsx", ".js", ".mjs", ".cjs"))
-    )
-    if existing_tests:
-        return ()
-    declared: list[str] = []
-    for match in _PACKAGE_SCRIPT_TEST_PATH_RE.finditer(test_script):
-        candidate = _normalize_repair_path(match.group(1))
-        if candidate and "*" not in candidate and candidate not in base_files:
-            declared.append(candidate)
-    if declared:
-        return tuple(sorted(set(declared)))
-    if _PACKAGE_SCRIPT_TEST_GLOB_RE.search(test_script) or re.search(r"\btests/", test_script):
-        return ("tests/verify.test.ts",)
-    # R161: package.json often has bare ``vitest run`` / ``jest`` without a path;
-    # still require a smoke file so delivery_depth min_test_files can pass.
-    if re.search(r"\b(?:vitest|jest|mocha|node\s+--test)\b", test_script):
-        return ("tests/verify.test.ts",)
-    # R169: scripts.test that only re-run build/tsc leave test_files=0 on L1 delivery.
-    # Any TS/JS package with a test script and zero on-disk tests still needs smoke.
-    has_ts_sources = any(
-        path.endswith((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"))
-        and not path.endswith(".d.ts")
-        and not path.startswith("tests/")
-        for path in base_files
-    )
-    if has_ts_sources and test_script:
-        return ("tests/verify.test.ts",)
-    return ()
-
 def _typescript_commonjs_package_type_signal(diagnostics: Sequence[RepairDiagnostic]) -> bool:
     text = _diagnostic_text(diagnostics).lower()
     return "commonjs" in text and "type" in text and "module" in text
@@ -663,23 +546,21 @@ def _build_typescript_entrypoint_aggregator(*, modules: Sequence[str], entrypoin
     return "\n".join([*imports, "", *exports, ""]) if imports else "export {};\n"
 
 __all__ = (
-    "build_typescript_json_as_source_plan",
     "_build_typescript_commonjs_package_type_plan",
+    "_build_typescript_entrypoint_aggregator",
     "_build_typescript_entrypoint_plan",
-    "_build_typescript_missing_relative_module_plan",
     "_build_typescript_invalid_module_augmentation_plan",
-    "_parse_typescript_missing_relative_module_errors",
-    "_parse_typescript_invalid_module_augmentation_errors",
-    "_relative_module_stub_path",
+    "_build_typescript_missing_relative_module_plan",
     "_build_typescript_relative_module_stub_content",
-    "_remove_typescript_declare_module_block_operation",
+    "_detect_typescript_entrypoint_from_package",
     "_is_package_manifest_json_content",
-    "_typescript_smoke_verify_module_content",
-    "_typescript_node_smoke_test_content",
-    "_missing_package_script_test_targets",
+    "_parse_typescript_invalid_module_augmentation_errors",
+    "_parse_typescript_missing_relative_module_errors",
+    "_relative_module_stub_path",
+    "_remove_typescript_declare_module_block_operation",
     "_typescript_commonjs_package_type_signal",
     "_typescript_entrypoint_signal",
-    "_detect_typescript_entrypoint_from_package",
+    "_typescript_smoke_verify_module_content",
     "_typescript_source_entrypoint_for_compiled_path",
-    "_build_typescript_entrypoint_aggregator",
+    "build_typescript_json_as_source_plan",
 )

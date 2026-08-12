@@ -30,6 +30,8 @@ _MAX_MODULES: Final[int] = 32
 _MAX_FILE_BYTES: Final[int] = 64 * 1024
 _MAX_TOTAL_BYTES: Final[int] = 256 * 1024
 
+ProjectArtifactReceiptLookup = Callable[[Mapping[str, str]], Mapping[str, Any] | None]
+
 
 class DirectorDependencyArtifactEvidenceError(RuntimeError):
     """Typed fail-closed dependency evidence projection error."""
@@ -254,6 +256,195 @@ def _validated_receipt_by_path(
     return receipts, missing_paths
 
 
+def _completion_artifact_queries(
+    *,
+    parent: Mapping[str, Any],
+    parent_task_id: str,
+    workspace: str,
+) -> list[dict[str, str]]:
+    """Project exact owned-artifact queries from the sealed CE completion projection."""
+
+    metadata = _mapping(parent.get("metadata"))
+    projection = _mapping(metadata.get("task_completion_projection"))
+    if not projection:
+        projection = _mapping(parent.get("task_completion_projection"))
+    if not projection:
+        return []
+    external_task_id = _parent_identity(parent)[1]
+    projection_task_id = str(projection.get("task_id") or "").strip()
+    if not external_task_id or projection_task_id not in {parent_task_id, external_task_id}:
+        raise _fail(
+            "dependency_artifact_completion_identity_mismatch",
+            "parent completion projection does not match the declared dependency",
+            parent_task_id=parent_task_id,
+            external_task_id=external_task_id,
+            projection_task_id=projection_task_id,
+        )
+    project_id = str(projection.get("project_id") or "").strip()
+    run_id = str(projection.get("run_id") or "").strip()
+    contract_hash = _hash64(projection.get("project_contract_hash"))
+    if not project_id or not run_id or not contract_hash:
+        raise _fail(
+            "dependency_artifact_completion_authority_invalid",
+            "parent completion projection lacks exact project receipt authority",
+            parent_task_id=parent_task_id,
+        )
+    queries: list[dict[str, str]] = []
+    for artifact in _list_of_mappings(projection.get("owned_artifacts")):
+        if str(artifact.get("applicability") or "required").strip().lower() != "required":
+            continue
+        owner_task_id = str(artifact.get("owner_task_id") or "").strip()
+        obligation_id = str(artifact.get("obligation_id") or "").strip()
+        path = _normalized_relative_path(artifact.get("path"))
+        if owner_task_id != external_task_id or not obligation_id or not path:
+            raise _fail(
+                "dependency_artifact_completion_obligation_invalid",
+                "parent completion projection contains an invalid owned artifact",
+                parent_task_id=parent_task_id,
+                owner_task_id=owner_task_id,
+                obligation_id=obligation_id,
+                path=str(artifact.get("path") or ""),
+            )
+        queries.append(
+            {
+                "workspace": workspace,
+                "project_id": project_id,
+                "run_id": run_id,
+                "completion_contract_hash": contract_hash,
+                "obligation_id": obligation_id,
+                "owner_task_id": owner_task_id,
+                "path": path,
+            }
+        )
+    return queries
+
+
+def _project_receipts_by_path(
+    *,
+    parent: Mapping[str, Any],
+    parent_task_id: str,
+    workspace: str,
+    lookup: ProjectArtifactReceiptLookup | None,
+) -> tuple[dict[str, dict[str, str]], tuple[str, ...]]:
+    """Read current, execution-broker-sealed project artifact receipts."""
+
+    queries = _completion_artifact_queries(
+        parent=parent,
+        parent_task_id=parent_task_id,
+        workspace=workspace,
+    )
+    if not queries:
+        return {}, ()
+    receipts: dict[str, dict[str, str]] = {}
+    if lookup is not None:
+        for query in queries:
+            receipt = lookup(query)
+            if not isinstance(receipt, Mapping):
+                continue
+            artifact_hash = _hash64(receipt.get("artifact_hash"))
+            receipt_hash = _hash64(receipt.get("receipt_hash"))
+            authority_revision = _hash64(receipt.get("authority_revision"))
+            receipt_ref = str(receipt.get("receipt_ref") or "").strip()
+            identity_matches = all(str(receipt.get(key) or "").strip() == value for key, value in query.items())
+            if not (identity_matches and artifact_hash and receipt_hash and authority_revision and receipt_ref):
+                continue
+            receipts[query["path"]] = {
+                "receipt_id": receipt_ref,
+                "receipt_hash": receipt_hash,
+                "receipt_binding_hash": authority_revision,
+                "physical_result_hash": artifact_hash,
+                "target_state_hash": artifact_hash,
+                "artifact_hash": artifact_hash,
+                "authority_source": "runtime.execution_broker.project_artifact_receipt.v1",
+            }
+    missing_paths = tuple(query["path"] for query in queries if query["path"] not in receipts)
+    return receipts, missing_paths
+
+
+def query_project_artifact_receipt_payload(query_payload: Mapping[str, str]) -> Mapping[str, Any] | None:
+    """Read one exact execution-broker receipt without weakening fail-closed callers."""
+
+    from polaris.cells.runtime.execution_broker.public import (
+        ProjectArtifactReceiptV1,
+        QueryProjectArtifactReceiptV1,
+        query_project_artifact_receipt,
+    )
+
+    try:
+        receipt = query_project_artifact_receipt(QueryProjectArtifactReceiptV1(**dict(query_payload)))
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+    if type(receipt) is not ProjectArtifactReceiptV1:
+        return None
+    return {
+        "workspace": receipt.workspace,
+        "project_id": receipt.project_id,
+        "run_id": receipt.run_id,
+        "completion_contract_hash": receipt.completion_contract_hash,
+        "obligation_id": receipt.obligation_id,
+        "owner_task_id": receipt.owner_task_id,
+        "path": receipt.path,
+        "artifact_hash": receipt.artifact_hash,
+        "authority_revision": receipt.authority_revision,
+        "receipt_hash": receipt.receipt_hash,
+        "receipt_ref": receipt.receipt_ref,
+    }
+
+
+def build_current_task_project_artifact_receipt_evidence(
+    *,
+    task: Mapping[str, Any],
+    task_id: str,
+    workspace: str,
+    lookup: ProjectArtifactReceiptLookup | None = query_project_artifact_receipt_payload,
+) -> dict[str, Any]:
+    """Prove a retry's owned artifacts are already committed and byte-current.
+
+    This is stronger than workspace existence.  It requires the sealed CE
+    completion projection, exact project/run/contract/task/path authority, and
+    execution-broker receipts whose artifact hashes still match guarded files.
+    """
+
+    queries = _completion_artifact_queries(
+        parent=task,
+        parent_task_id=task_id,
+        workspace=workspace,
+    )
+    receipts, missing_paths = _project_receipts_by_path(
+        parent=task,
+        parent_task_id=task_id,
+        workspace=workspace,
+        lookup=lookup,
+    )
+    stale_paths: list[str] = []
+    for path, receipt in receipts.items():
+        try:
+            snapshot = read_guarded_regular_file_snapshot(workspace, path, _MAX_FILE_BYTES)
+        except (GuardedRegularFileSnapshotError, OSError, ValueError):
+            stale_paths.append(path)
+            continue
+        if hashlib.sha256(snapshot.content).hexdigest() != receipt.get("artifact_hash"):
+            stale_paths.append(path)
+    receipt_paths = sorted(path for path in receipts if path not in stale_paths)
+    receipt_refs = sorted(
+        str(receipts[path].get("receipt_id") or "").strip()
+        for path in receipt_paths
+        if str(receipts[path].get("receipt_id") or "").strip()
+    )
+    missing = sorted(set(missing_paths).union(stale_paths))
+    return {
+        "schema_version": "polaris.current_task_project_artifact_receipt_evidence.v1",
+        "authority": "runtime.execution_broker.project_artifact_receipt.v1",
+        "task_id": task_id,
+        "required_artifact_count": len(queries),
+        "receipt_count": len(receipt_paths),
+        "receipt_paths": receipt_paths,
+        "receipt_refs": receipt_refs,
+        "missing_or_stale_paths": missing,
+        "ok": bool(queries) and not missing and len(receipt_paths) == len(queries),
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class TrustedDirectorDependencyArtifactSnapshotV2:
     """Internal exact-type token coupling one payload to one rendered message."""
@@ -276,6 +467,7 @@ def build_director_dependency_artifact_snapshot(
     workspace: str,
     child_task: Mapping[str, Any],
     get_task: Callable[[str], dict[str, Any] | None],
+    get_project_artifact_receipt: ProjectArtifactReceiptLookup | None = None,
 ) -> TrustedDirectorDependencyArtifactSnapshotV2 | None:
     """Build exactly one bounded snapshot from declared parent execution facts."""
 
@@ -312,10 +504,32 @@ def build_director_dependency_artifact_snapshot(
             )
         metadata = _mapping(parent.get("metadata"))
         adapter_result = _mapping(metadata.get("adapter_result"))
-        receipts, missing_paths = _validated_receipt_by_path(
+        receipts: dict[str, dict[str, str]] = {}
+        effect_missing_paths: tuple[str, ...] = ()
+        if adapter_result.get("write_tool_evidence") is True and (
+            _text_list(adapter_result.get("new_files")) or _text_list(adapter_result.get("modified_files"))
+        ):
+            receipts, effect_missing_paths = _validated_receipt_by_path(
+                parent_task_id=dependency_id,
+                adapter_result=adapter_result,
+            )
+        project_receipts, project_missing_paths = _project_receipts_by_path(
+            parent=parent,
             parent_task_id=dependency_id,
-            adapter_result=adapter_result,
+            workspace=workspace,
+            lookup=get_project_artifact_receipt,
         )
+        for path, receipt in project_receipts.items():
+            receipts.setdefault(path, receipt)
+        candidate_missing_paths = tuple(dict.fromkeys((*effect_missing_paths, *project_missing_paths)))
+        missing_paths = tuple(path for path in candidate_missing_paths if path not in receipts)
+        if not receipts:
+            raise _fail(
+                "dependency_artifact_receipt_missing",
+                "parent task has no artifact bound to a committed receipt",
+                parent_task_id=dependency_id,
+                missing_paths=missing_paths,
+            )
         uncovered_artifacts.extend(
             {
                 "parent_task_id": dependency_id,
@@ -364,11 +578,24 @@ def build_director_dependency_artifact_snapshot(
                     maximum=_MAX_TOTAL_BYTES,
                 )
             receipt = receipts[path]
+            content_hash = hashlib.sha256(snapshot.content).hexdigest()
+            expected_artifact_hash = receipt.get("artifact_hash", "")
+            if expected_artifact_hash and expected_artifact_hash != content_hash:
+                raise _fail(
+                    "dependency_artifact_project_receipt_hash_mismatch",
+                    "guarded parent artifact bytes do not match the project artifact receipt",
+                    parent_task_id=dependency_id,
+                    path=path,
+                )
             source_fact = {
                 "parent_task_id": dependency_id,
                 "parent_runtime_task_id": runtime_id,
                 "parent_external_task_id": external_id,
                 "path": path,
+                "receipt_authority_source": receipt.get(
+                    "authority_source",
+                    "roles.adapters.director_physical_effect_receipt.v2",
+                ),
                 **receipt,
             }
             modules.append(
@@ -383,8 +610,12 @@ def build_director_dependency_artifact_snapshot(
                     "effect_receipt_binding_hash": receipt["receipt_binding_hash"],
                     "physical_result_hash": receipt["physical_result_hash"],
                     "target_state_hash": receipt["target_state_hash"],
+                    "receipt_authority_source": receipt.get(
+                        "authority_source",
+                        "roles.adapters.director_physical_effect_receipt.v2",
+                    ),
                     "path": path,
-                    "sha256": hashlib.sha256(snapshot.content).hexdigest(),
+                    "sha256": content_hash,
                     "byte_count": snapshot.size,
                     "body": body,
                     "guarded_snapshot": {
@@ -436,9 +667,7 @@ def build_director_dependency_artifact_snapshot(
                 "Receipt coverage is partial: only the exact bodies above are authoritative.",
                 (
                     "Do not guess or import uncovered parent artifacts: "
-                    + ", ".join(
-                        f"{item['parent_task_id']}:{item['path']}" for item in uncovered_artifacts
-                    )
+                    + ", ".join(f"{item['parent_task_id']}:{item['path']}" for item in uncovered_artifacts)
                 ),
             ]
         )

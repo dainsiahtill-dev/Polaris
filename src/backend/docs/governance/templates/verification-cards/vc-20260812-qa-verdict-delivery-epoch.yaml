@@ -1,0 +1,78 @@
+card_id: "vc-20260812-qa-verdict-delivery-epoch"
+bug_summary: >
+  Director-only retry can produce a new completed_verified TaskBoundary while an older
+  QA FAIL remains projected as current. Factory then skips fresh QA commit and falsely
+  fails the new delivery epoch.
+classification: structural
+
+bug_path:
+  file: "polaris/cells/control_plane/run_ledger/public/projection.py"
+  method: "build_run_ledger_projection / evaluate_canonical_factory_authority"
+  symptom: "old qa_verdict from Director epoch A blocks completed Director epoch B"
+
+assumptions:
+  - id: A1
+    statement: "The failed QA verdict and latest TaskBoundary belong to different Director run_ids."
+    status: verified_true
+    evidence: >
+      L1-02 r48 old QA gate binds director-6a7ee46c866f; latest successful TaskBoundary
+      binds director-421e2fad985b for TASK-2.
+  - id: A2
+    statement: "Physical verifier evidence for the new delivery passed."
+    status: verified_true
+    evidence: >
+      Factory quality output reports physical verifier evidence passed, report_ready=True,
+      task_boundary_completed_verified=True; failure is qa_verdict_failed.
+  - id: A3
+    statement: "The new Director retry reused all owned artifacts without Provider or tool mutation."
+    status: verified_true
+    evidence: >
+      director-421e2fad985b completed TASK-1 with 8/8 and TASK-2 with 3/3 artifact receipts,
+      mode preflight_verified_existing_workspace_scope, zero Provider/tool calls.
+  - id: A4
+    statement: "Historical gates must remain append-only but cannot stay effective across delivery epochs."
+    status: verified_true
+    evidence: >
+      ADR-0097/0100 require append-only facts and canonical projection; QA evidence already
+      carries task_id and run_id needed for epoch comparison.
+
+pre_mortem:
+  failure_point: >
+    Filtering every old gate, or comparing only timestamps, could erase unrelated obligations
+    or let a QA verdict authorize the wrong task.
+  risk_zone:
+    - "polaris/cells/control_plane/run_ledger/public/projection.py"
+    - "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    - "polaris/cells/factory/pipeline/internal/factory_stage_executor.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/control_plane/run_ledger/tests/test_public_service.py"
+      description: "stale same-task QA epoch is historical; fresh epoch verdict becomes effective"
+      expected: "old FAIL excluded; new PASS effective; historical evidence retained"
+      status: passed
+      evidence: "test_public_service.py: 129 passed"
+    - file: "polaris/cells/factory/pipeline/tests/test_factory_execution_control_plane_ssot.py"
+      description: "Factory consumes effective gates only"
+      expected: "stale raw QA gate cannot block or authorize current TaskBoundary"
+      status: passed
+      evidence: "test_factory_execution_control_plane_ssot.py: 38 passed"
+  integration_tests:
+    - description: "L1-02 r48 quality-only retry"
+      command: "Factory retry_phase targeting quality/verification on existing isolated run"
+      expected: "no PM/CE/Director rerun; fresh QA verdict; completed verified or new precise residual"
+      status: passed
+      evidence: >
+        L1-02 r48 factory_0dcb1e13baa7 completed after qa_gate-only retry. The fresh
+        QA PASS and completed_verified TaskBoundary both bind TASK-2 / director-421e2fad985b;
+        canonical_authorized=true. PM, CE, and Director stayed completed.
+
+final_status: passed
+regression_total: "210 passed (Run Ledger 129 + Factory 38 + QA contracts 43)"
+physical_verification:
+  build: "npm run build; exit_code=0"
+  test: "npm test; exit_code=0; 22/22 Node tests passed"
+  entrypoint: "npm run start; exit_code=0; real CLI report emitted"
+  platform_acceptance: "python unittest discovery; exit_code=0; 16/16 passed"
+  delivery_depth: "exit_code=0; prod_files=7; prod_lines=274; test_files=2"
+evidence_archive: "~/.polaris/audit_archives/unattended-completion-20260812/r48/"

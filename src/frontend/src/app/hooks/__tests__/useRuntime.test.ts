@@ -411,6 +411,78 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(result.current.processStreamEvents[0]?.meta?.streamEvent).toBe('stage_started');
   });
 
+  it('does not classify successful Factory stages containing error_code=none as errors', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'EVENT',
+      protocol: 'runtime.v2',
+      event: {
+        schema_version: 'runtime.v2',
+        event_id: 'factory-stage-success-1',
+        workspace_key: 'test-workspace',
+        run_id: 'factory-run-1',
+        channel: 'event.factory:factory-run-1',
+        kind: 'stage_completed',
+        ts: '2026-08-11T23:14:16.530472+00:00',
+        payload: {
+          type: 'stage_completed',
+          run_id: 'factory-run-1',
+          stage: 'chief_engineer_review',
+          message: 'Chief Engineer portfolio review generated 2/2 blueprints; error_code=none; root_cause_hint=none',
+          result: {
+            stage: 'chief_engineer_review',
+            status: 'success',
+          },
+        },
+      },
+    });
+
+    expect(result.current.processStreamEvents).toHaveLength(1);
+    expect(result.current.processStreamEvents[0]?.level).toBe('success');
+    const telemetry = buildTelemetryFromStream([], [], result.current.processStreamEvents);
+    expect(telemetry.events[0]?.category).not.toBe('error');
+    expect(telemetry.errorCount).toBe(0);
+  });
+
+  it('keeps failed Factory stage results classified as errors', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'EVENT',
+      protocol: 'runtime.v2',
+      event: {
+        schema_version: 'runtime.v2',
+        event_id: 'factory-stage-failed-1',
+        workspace_key: 'test-workspace',
+        run_id: 'factory-run-1',
+        channel: 'event.factory:factory-run-1',
+        kind: 'stage_completed',
+        ts: '2026-08-11T23:14:16.530472+00:00',
+        payload: {
+          type: 'stage_completed',
+          run_id: 'factory-run-1',
+          stage: 'director_dispatch',
+          message: 'Director dispatch stopped',
+          result: {
+            stage: 'director_dispatch',
+            status: 'failed',
+          },
+        },
+      },
+    });
+
+    expect(result.current.processStreamEvents).toHaveLength(1);
+    expect(result.current.processStreamEvents[0]?.level).toBe('error');
+    const telemetry = buildTelemetryFromStream([], [], result.current.processStreamEvents);
+    expect(telemetry.events[0]?.category).toBe('error');
+    expect(telemetry.errorCount).toBe(1);
+  });
+
   it('merges runtime.v2 status.resident envelopes into snapshot.resident', () => {
     const { result } = renderHook(() =>
       useRuntime({ autoConnect: false, workspace: '/test/workspace' })

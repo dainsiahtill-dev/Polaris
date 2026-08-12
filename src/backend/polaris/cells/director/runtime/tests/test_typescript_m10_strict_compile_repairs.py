@@ -426,7 +426,7 @@ def test_ts2345_argument_shape_adapter_maps_intensity_to_glow() -> None:
     assert "renderFirefly(flash.value)" not in after
 
 
-def test_json_as_source_smoke_for_build_only_test_script() -> None:
+def test_json_as_source_does_not_invent_smoke_for_build_only_test_script() -> None:
     base = {
         "package.json": (
             "{\n"
@@ -446,20 +446,8 @@ def test_json_as_source_smoke_for_build_only_test_script() -> None:
             mode="commit",
         )
     )
-    assert result.ok is True
-    assert result.planned is True
-    paths = {
-        patch.get("path")
-        for patch in (result.to_dict().get("composition_summary") or {}).get("patches") or []
-        if patch.get("changed")
-    }
-    assert "tests/verify.test.ts" in paths
-    assert "package.json" in paths
-    pkg = ""
-    for patch in (result.to_dict().get("composition_summary") or {}).get("patches") or []:
-        if patch.get("path") == "package.json":
-            pkg = str(patch.get("content_after") or "")
-    assert "node --test" in pkg
+    assert result.ok is False
+    assert result.planned is False
 
 
 def test_public_plan_and_coverage_match_new_m10_rules() -> None:
@@ -768,8 +756,8 @@ def test_r180_ts2300_duplicate_interface_member_keeps_first() -> None:
     assert "fillRect" in after
 
 
-def test_r180_ts2305_missing_export_class_infers_field_methods() -> None:
-    """GardenScene stub includes methods used via this.field / optional calls."""
+def test_r180_ts2305_missing_export_class_does_not_invent_domain_stub() -> None:
+    """Missing domain classes require owner/LLM repair, never an M10 stub."""
 
     from polaris.cells.director.runtime.internal.repair_kernel.typescript_syntax import (
         TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
@@ -812,12 +800,7 @@ def test_r180_ts2305_missing_export_class_infers_field_methods() -> None:
         diagnostics=diags,
         mode="commit",
     )
-    assert plan is not None
-    op = plan.operations[0]
-    after = base["src/models/index.ts"][: op.span_start] + op.replacement + base["src/models/index.ts"][op.span_end :]
-    assert "export class GardenScene" in after
-    assert "snapshot(" in after
-    assert "publishForRegistry(" in after
+    assert plan is None
 
 
 def test_r180_ts2307_missing_relative_module_stub() -> None:

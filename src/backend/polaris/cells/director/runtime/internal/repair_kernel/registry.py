@@ -745,6 +745,7 @@ class RepairRuleDefinition:
     depends_on: tuple[str, ...] = ()
     diagnostic_codes: tuple[str, ...] = ()
     message_terms: tuple[str, ...] = ()
+    message_any_terms: tuple[str, ...] = ()
     raw_terms: tuple[str, ...] = ()
     metadata_terms: Mapping[str, str] = field(default_factory=dict)
     excluded_message_terms: tuple[str, ...] = ()
@@ -763,6 +764,7 @@ class RepairRuleDefinition:
         object.__setattr__(self, "depends_on", _tuple_str(self.depends_on))
         object.__setattr__(self, "diagnostic_codes", tuple(code.lower() for code in _tuple_str(self.diagnostic_codes)))
         object.__setattr__(self, "message_terms", tuple(term.lower() for term in _tuple_str(self.message_terms)))
+        object.__setattr__(self, "message_any_terms", tuple(term.lower() for term in _tuple_str(self.message_any_terms)))
         object.__setattr__(self, "raw_terms", tuple(term.lower() for term in _tuple_str(self.raw_terms)))
         object.__setattr__(
             self,
@@ -806,6 +808,10 @@ class RepairRuleDefinition:
             haystack = (diagnostic.message or diagnostic.raw).lower()
             if not all(term in haystack for term in self.message_terms):
                 return False
+        if self.message_any_terms:
+            haystack = (diagnostic.message or diagnostic.raw).lower()
+            if not any(term in haystack for term in self.message_any_terms):
+                return False
         if self.raw_terms:
             raw_haystack = (diagnostic.raw or "").lower()
             if not all(term in raw_haystack for term in self.raw_terms):
@@ -823,7 +829,13 @@ class RepairRuleDefinition:
             raw_haystack = (diagnostic.raw or "").lower()
             if any(term in raw_haystack for term in self.excluded_raw_terms):
                 return False
-        return bool(self.diagnostic_codes or self.message_terms or self.raw_terms or self.metadata_terms)
+        return bool(
+            self.diagnostic_codes
+            or self.message_terms
+            or self.message_any_terms
+            or self.raw_terms
+            or self.metadata_terms
+        )
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -836,6 +848,7 @@ class RepairRuleDefinition:
             "depends_on": list(self.depends_on),
             "diagnostic_codes": list(self.diagnostic_codes),
             "message_terms": list(self.message_terms),
+            "message_any_terms": list(self.message_any_terms),
             "raw_terms": list(self.raw_terms),
             "excluded_message_terms": list(self.excluded_message_terms),
             "excluded_raw_terms": list(self.excluded_raw_terms),
@@ -2059,22 +2072,6 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 ),
                 runtime_plan_available=True,
                 metadata=_executable_runtime_metadata(scope="missing_export_unresolved_import_symbol"),
-            ),
-            RepairRuleDefinition(
-                rule_id="javascript.export_contract_assertion",
-                source_tool=JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL,
-                language="javascript",
-                phase="quality_repair",
-                archetype=RepairArchetype.WRONG_IMPORT_PATH,
-                priority=1,
-                raw_terms=("assertionerror", "npm test"),
-                risk_level="low",
-                description=(
-                    "Routes JavaScript assertion-based import/export contract drift through "
-                    "the missing-export runtime planner."
-                ),
-                runtime_plan_available=True,
-                metadata=_executable_runtime_metadata(scope="javascript_export_contract_assertion"),
             ),
             RepairRuleDefinition(
                 rule_id="javascript.dom_global_runtime_guard",
@@ -3441,9 +3438,8 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 diagnostic_codes=("typescript_json_as_source",),
                 risk_level="low",
                 description=(
-                    "Rewrites package-manifest JSON written into .ts/.tsx paths (R159) and "
-                    "creates a minimal Node smoke test when package.json scripts.test "
-                    "targets are missing."
+                    "Rewrites package-manifest JSON written into .ts/.tsx paths (R159) "
+                    "without inventing missing test artifacts."
                 ),
                 runtime_plan_available=True,
                 metadata=_executable_runtime_metadata(scope="typescript_json_as_source_write_file"),
@@ -3475,6 +3471,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 priority=1,
                 diagnostic_codes=("typescript_ts2353",),
                 message_terms=("object literal", "known properties"),
+                message_any_terms=("'fireflies'", "'flowers'", "'humidity'", "'mooncycle'", "'cycleseconds'"),
                 risk_level="low",
                 description=(
                     "Renames common excess init object keys (fireflies→fireflyCount) when "
@@ -3492,6 +3489,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 priority=1,
                 diagnostic_codes=("typescript_ts2345",),
                 message_terms=("argument of type", "not assignable to parameter of type"),
+                excluded_message_terms=("=>",),
                 risk_level="low",
                 description=(
                     "Rewrites wrong-domain callees when argument type mismatches the parameter "

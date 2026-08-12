@@ -37,6 +37,10 @@ nats = SimpleNamespace(connect=None)
 NATSTimeoutError = TimeoutError
 
 
+class NATSPayloadTooLargeError(RuntimeError):
+    """Deterministic transport contract violation; retry cannot change it."""
+
+
 def _sanitize_server_url(raw: Any) -> str:
     text = str(raw or "").strip()
     if not text:
@@ -384,7 +388,9 @@ class NATSClient:
                     max_payload,
                     subject,
                 )
-                raise RuntimeError(f"Payload size {len(data)} bytes exceeds NATS max_payload {max_payload} bytes")
+                raise NATSPayloadTooLargeError(
+                    f"Payload size {len(data)} bytes exceeds NATS max_payload {max_payload} bytes"
+                )
 
             if self._js:
                 return await self._publish_runtime_aware_jetstream(
@@ -399,6 +405,8 @@ class NATSClient:
             logger.debug(f"Published to {subject}: {payload}")
             return True
 
+        except NATSPayloadTooLargeError:
+            raise
         except NATSTimeoutError:
             logger.error(f"Timeout publishing to {subject}")
             raise RuntimeError(f"Publish timeout: {subject}") from None
@@ -806,6 +814,7 @@ __all__ = [
     "ConnectionState",
     "NATSClient",
     "NATSConfig",
+    "NATSPayloadTooLargeError",
     "close_default_client",
     "create_nats_client",
     "get_default_client",

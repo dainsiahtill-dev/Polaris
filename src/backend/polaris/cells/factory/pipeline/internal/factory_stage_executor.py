@@ -2983,7 +2983,13 @@ class OrchestrationStageExecutor:
         portfolio_tasks: list[ChiefEngineerPortfolioTaskV1] = []
         for index, task in enumerate(pm_tasks, start=1):
             target_files = tuple(self._task_string_list(task, "target_files"))
+            target_file_set = set(target_files)
             scope_paths = tuple(self._task_string_list(task, "scope_paths")) or target_files
+            entrypoint_targets = tuple(
+                path
+                for path in self._task_string_list(task, "project_declared_entrypoint_targets")
+                if path in target_file_set
+            )
             portfolio_tasks.append(
                 ChiefEngineerPortfolioTaskV1(
                     task_id=self._task_id(task, index),
@@ -2991,6 +2997,7 @@ class OrchestrationStageExecutor:
                     target_files=target_files,
                     scope_paths=scope_paths,
                     dependencies=tuple(self._task_string_list(task, "depends_on", "dependencies")),
+                    entrypoint_targets=entrypoint_targets,
                 )
             )
         return tuple(portfolio_tasks)
@@ -3037,6 +3044,10 @@ class OrchestrationStageExecutor:
                     "target_files": task_targets,
                     "scope_paths": task_scope,
                     "depends_on": self._task_string_list(task, "depends_on", "dependencies"),
+                    "project_declared_entrypoint_targets": self._task_string_list(
+                        task,
+                        "project_declared_entrypoint_targets",
+                    ),
                     "acceptance_criteria": self._task_string_list(
                         task,
                         "acceptance",
@@ -4779,16 +4790,6 @@ class OrchestrationStageExecutor:
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning("Canonical Factory projection unavailable for run %s: %s", run.id, exc)
             return {}
-        try:
-            task_runtime_projection = TaskRuntimeService(str(self.workspace)).query_observable_task_rows_projection()
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            logger.warning(
-                "Canonical TaskRuntime projection unavailable for run %s: %s",
-                run.id,
-                exc,
-            )
-            return projection
-        task_runtime_authority = task_runtime_projection.to_authority_dict(factory_run_id=run.id)
         # Factory portfolios also create internal settlement / verification
         # TaskRuntime rows under the same factory_run_id. Director completion
         # authority owns only the immutable, committed PM contract tasks.
@@ -4806,16 +4807,119 @@ class OrchestrationStageExecutor:
                 if helpers._canonical_task_id_token(task_id)
             ]
         expected_task_ids = set(contract_task_ids)
-        authority_rows = task_runtime_authority.get("rows")
-        scoped_rows = (
-            [
-                row
-                for row in authority_rows
-                if isinstance(row, dict) and helpers._canonical_task_id_token(row.get("task_id")) in expected_task_ids
+
+        def _latest_contract_rows(authority: Mapping[str, Any]) -> list[dict[str, Any]]:
+            authority_rows = authority.get("rows")
+            scoped_candidates = (
+                [
+                    dict(row)
+                    for row in authority_rows
+                    if isinstance(row, Mapping)
+                    and helpers._runtime_row_contract_task_id(row) in expected_task_ids
+                ]
+                if isinstance(authority_rows, list)
+                else []
+            )
+            # Stage-local retries create fresh numeric TaskRuntime rows for the
+            # same immutable PM task. Keep only the newest fact for each external
+            # contract identity; old failed/removed attempts remain audit facts but
+            # cannot collide with or override current completion authority.
+            latest_scoped_rows: dict[str, dict[str, Any]] = {}
+            for row in scoped_candidates:
+                contract_task_id = helpers._runtime_row_contract_task_id(row)
+                previous = latest_scoped_rows.get(contract_task_id)
+                current_seq = row.get("fact_event_seq")
+                previous_seq = previous.get("fact_event_seq") if previous is not None else None
+                if previous is None or (
+                    isinstance(current_seq, int)
+                    and (not isinstance(previous_seq, int) or current_seq > previous_seq)
+                ):
+                    latest_scoped_rows[contract_task_id] = row
+            return [
+                latest_scoped_rows[task_id]
+                for task_id in contract_task_ids
+                if task_id in latest_scoped_rows
             ]
-            if isinstance(authority_rows, list)
-            else []
+
+        try:
+            task_runtime_projection = TaskRuntimeService(
+                str(self.workspace)
+            ).query_observable_task_rows_projection()
+            task_runtime_authority = task_runtime_projection.to_authority_dict(
+                factory_run_id=run.id,
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Canonical live TaskRuntime projection unavailable for run %s: %s",
+                run.id,
+                exc,
+            )
+            task_runtime_authority = {}
+        scoped_rows = _latest_contract_rows(task_runtime_authority)
+
+        # Terminal Factory settlement deliberately drains TaskRuntime files and
+        # leaves ``removed`` tombstones. QA retries still need the exact frozen
+        # authority captured immediately before that destructive reset. This is
+        # a read model of TaskRuntime's facts, not a second state owner. A
+        # Director-stage retry invalidates the old epoch snapshot in
+        # ``FactoryRunService.retry_run_from_stage`` before new execution.
+        live_scope_is_current = (
+            bool(expected_task_ids)
+            and {helpers._runtime_row_contract_task_id(row) for row in scoped_rows}
+            == expected_task_ids
+            and all(
+                str(row.get("execution_state") or row.get("status") or "").strip().lower()
+                != "removed"
+                for row in scoped_rows
+            )
         )
+        if not live_scope_is_current:
+            from polaris.cells.factory.pipeline.public.contracts import (
+                FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
+                FactoryTerminalTaskRuntimeProjectionV1,
+            )
+
+            frozen_payload = run.metadata.get(
+                FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
+            )
+            if isinstance(frozen_payload, Mapping):
+                try:
+                    frozen = FactoryTerminalTaskRuntimeProjectionV1.from_dict(
+                        frozen_payload,
+                    )
+                except (OSError, TypeError, ValueError) as exc:
+                    logger.warning(
+                        "Canonical frozen TaskRuntime projection invalid for run %s: %s",
+                        run.id,
+                        exc,
+                    )
+                else:
+                    if frozen.factory_run_id == run.id:
+                        frozen_authority = deepcopy(dict(frozen.projection))
+                        frozen_scoped_rows = _latest_contract_rows(frozen_authority)
+                        frozen_scope_exact = (
+                            bool(expected_task_ids)
+                            and {
+                                helpers._runtime_row_contract_task_id(row)
+                                for row in frozen_scoped_rows
+                            }
+                            == expected_task_ids
+                            and all(
+                                str(
+                                    row.get("execution_state")
+                                    or row.get("status")
+                                    or ""
+                                ).strip().lower()
+                                != "removed"
+                                for row in frozen_scoped_rows
+                            )
+                        )
+                        if frozen_scope_exact:
+                            task_runtime_authority = frozen_authority
+                            scoped_rows = frozen_scoped_rows
+                            task_runtime_authority["authority_epoch_source"] = (
+                                "factory_terminal_task_runtime_projection"
+                            )
         task_runtime_authority["rows"] = scoped_rows
         task_runtime_authority["row_count"] = len(scoped_rows)
         task_runtime_authority["owner_scope"] = (
@@ -5121,7 +5225,19 @@ class OrchestrationStageExecutor:
             elif isinstance(value, list | tuple | set):
                 raw_paths.extend(value)
         candidate_paths = {str(path or "").strip().replace("\\", "/") for path in raw_paths if str(path or "").strip()}
-        overlap = len(normalized_targets.intersection(candidate_paths))
+        overlaps = normalized_targets.intersection(candidate_paths)
+        source_overlap = sum(
+            1
+            for path in overlaps
+            if not path.startswith(("tests/", "test/", "__tests__/"))
+            and "/__tests__/" not in path
+            and not path.endswith((".test.js", ".test.ts", ".test.tsx", ".spec.js", ".spec.ts", ".spec.tsx"))
+        )
+        # A verifier diagnostic often yields both the failing test path and
+        # its imported implementation source. Prefer the implementation owner
+        # when each task overlaps one target; otherwise TaskRuntime row order
+        # can select the test task and make the real source edit out of scope.
+        overlap = len(overlaps) + source_overlap
         status = str(candidate.get("status") or candidate.get("raw_status") or "").strip().lower()
         rework_priority = 1 if status in {"pending", "ready", "blocked", "failed"} else 0
         return (overlap, rework_priority)
@@ -5269,6 +5385,7 @@ class OrchestrationStageExecutor:
         artifact_quality_errors: list[str],
         task_id: str | None = None,
         execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
+        repair_task: Mapping[str, Any] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         return workspace_quality_impl._apply_workspace_quality_repairs(
             self,
@@ -5276,6 +5393,7 @@ class OrchestrationStageExecutor:
             artifact_quality_errors=artifact_quality_errors,
             task_id=task_id,
             execution_attempt=execution_attempt,
+            repair_task=repair_task,
         )
 
     async def _apply_workspace_quality_deterministic_repairs(
@@ -5326,6 +5444,14 @@ class OrchestrationStageExecutor:
         diagnostics = normalize_director_repair_diagnostics([str(item) for item in artifact_quality_errors or []])
         for diagnostic in diagnostics:
             path = str(diagnostic.path or "").strip().replace("\\", "/")
+            diagnostic_path = Path(path.removeprefix("file://"))
+            if path and diagnostic_path.is_absolute():
+                try:
+                    path = diagnostic_path.resolve().relative_to(workspace_root).as_posix()
+                except (OSError, ValueError):
+                    # A verifier may mention framework/toolchain files outside
+                    # the project. Never turn those into Director write scope.
+                    path = ""
             if path and _is_workspace_quality_repair_path(path):
                 candidates.append(path)
         joined_errors = "\n".join(str(item or "") for item in artifact_quality_errors).lower()
@@ -5596,6 +5722,12 @@ class OrchestrationStageExecutor:
         scope_paths = self._merge_string_list(
             context.get("scope_paths") or structured_authority.get("scope_paths") or target_files
         )
+        raw_repair = payload.get("repair")
+        full_repair: dict[str, Any] = dict(raw_repair) if isinstance(raw_repair, dict) else {}
+        repair_ledger_projection = wq_evidence.workspace_quality_repair_ledger_projection(
+            full_repair,
+            full_evidence_ref="runtime/qa/workspace-validation.json",
+        )
         record = {
             "id": str(context.get("project_id") or context.get("requested_project_id") or run.id),
             "project_id": str(context.get("project_id") or context.get("requested_project_id") or run.id),
@@ -5611,9 +5743,7 @@ class OrchestrationStageExecutor:
             "required_evidence_modalities": ["command"] if commands else [],
             "enabled_evidence_modalities": ["command"] if commands else [],
             "chain": {"run_id": run.id},
-            "factory_workspace_quality_repair": payload.get("repair")
-            if isinstance(payload.get("repair"), dict)
-            else {},
+            "factory_workspace_quality_repair": repair_ledger_projection,
         }
         gate = {
             "ok": passed,
@@ -5624,7 +5754,7 @@ class OrchestrationStageExecutor:
             "command_count_total": len(commands),
             "commands": commands,
             "requirements": {"workspace_validation": {"ok": passed, "detail": detail}},
-            "repair_result": payload.get("repair") if isinstance(payload.get("repair"), dict) else {},
+            "repair_result": repair_ledger_projection,
         }
         try:
             from .run_ledger import persist_real_run_gate_ledger

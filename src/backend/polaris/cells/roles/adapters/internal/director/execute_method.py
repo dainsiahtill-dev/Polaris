@@ -20,12 +20,16 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import (
+    AppendRunLedgerEventCommandV1,
     AppendToolCallLifecycleEventCommandV1,
     FailureClassV1,
     FailureEvidenceV1,
     append_failure_evidence_to_metadata,
+    append_run_ledger_event,
     append_tool_call_lifecycle_event,
     build_claimed_materialization_without_tool_lifecycle_receipt,
+    build_verified_existing_artifact_lifecycle_receipt,
+    evaluate_task_boundary_verdict,
     is_failure_class,
     project_tool_lifecycle_event,
     project_tool_lifecycle_failure_status,
@@ -60,6 +64,10 @@ from polaris.kernelone.quality import (
 from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
 from .contract_verify import resolve_contract_step_verify_command
+from .dependency_artifact_evidence import (
+    DirectorDependencyArtifactEvidenceError,
+    build_current_task_project_artifact_receipt_evidence,
+)
 from .helpers import (
     _DEFAULT_TASK_LEASE_TTL_SECONDS,
     _TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS,
@@ -75,6 +83,160 @@ from .repair_convergence_verifier import (
 from .repair_profile_projection import summarize_deterministic_repair_source_tools
 
 logger = logging.getLogger(__name__)
+
+
+def _attach_current_task_project_receipt_evidence(
+    adapter: Any,
+    *,
+    task: dict[str, Any],
+    target_task_id: str,
+    context: dict[str, Any],
+    existing_contract_evidence: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """Attach exact retry-delivery proof; never equate bare files with delivery."""
+
+    candidate_task = dict(task)
+    raw_metadata = task.get("metadata")
+    metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+    if not isinstance(metadata.get("task_completion_projection"), dict):
+        projection = context.get("task_completion_projection")
+        if not isinstance(projection, dict):
+            context_metadata = context.get("metadata")
+            projection = (
+                context_metadata.get("task_completion_projection") if isinstance(context_metadata, dict) else None
+            )
+        if isinstance(projection, dict):
+            metadata["task_completion_projection"] = dict(projection)
+    candidate_task["metadata"] = metadata
+    try:
+        receipt_evidence = build_current_task_project_artifact_receipt_evidence(
+            task=candidate_task,
+            task_id=target_task_id,
+            workspace=str(getattr(adapter, "workspace", "") or ""),
+        )
+    except DirectorDependencyArtifactEvidenceError as exc:
+        receipt_evidence = {
+            "schema_version": "polaris.current_task_project_artifact_receipt_evidence.v1",
+            "ok": False,
+            "error_code": exc.code,
+            "error_details": dict(exc.details),
+        }
+    combined = dict(existing_contract_evidence)
+    combined["project_artifact_receipt_evidence"] = receipt_evidence
+    return combined, receipt_evidence.get("ok") is True
+
+
+def _append_receipt_bound_preflight_task_boundary(
+    adapter: Any,
+    *,
+    context: Mapping[str, Any],
+    target_task_id: str,
+    run_id: str,
+    finalize_result: Mapping[str, Any],
+    receipt_evidence: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Commit the successful boundary fact for a no-write, receipt-bound retry.
+
+    Provider turns append their own TaskBoundary verdict.  A Director retry
+    that completes entirely in existing-scope preflight has no provider turn,
+    so without this projection an older ``mutation_bypass_blocked`` verdict
+    remains latest even after TaskRuntime settles completed.  Only exact,
+    byte-current ProjectArtifactReceiptV1 evidence may close that gap.
+    """
+
+    if (
+        receipt_evidence.get("ok") is not True
+        or receipt_evidence.get("schema_version")
+        != "polaris.current_task_project_artifact_receipt_evidence.v1"
+        or receipt_evidence.get("authority") != "runtime.execution_broker.project_artifact_receipt.v1"
+    ):
+        raise ValueError("receipt-bound preflight lacks current project artifact evidence")
+    identity = finalize_result.get("identity")
+    if not isinstance(identity, Mapping):
+        raise ValueError("receipt-bound preflight lacks settled TaskRuntime identity")
+    external_task_id = str(identity.get("external_task_id") or "").strip()
+    if not external_task_id:
+        raise ValueError("receipt-bound preflight lacks external task identity")
+    projection = _task_completion_projection_from_context(
+        context,
+        target_task_id=target_task_id,
+    )
+    if not isinstance(projection, Mapping):
+        raise ValueError("receipt-bound preflight lacks task completion projection")
+    if _canonical_task_owner_identity(projection.get("task_id")) != _canonical_task_owner_identity(
+        external_task_id
+    ):
+        raise ValueError("receipt-bound preflight projection owner does not match settled task")
+    target_files = [
+        str(artifact.get("path") or "").strip()
+        for artifact in projection.get("owned_artifacts", ())
+        if isinstance(artifact, Mapping)
+        and str(artifact.get("applicability") or "required").strip().lower() == "required"
+        and str(artifact.get("path") or "").strip()
+    ]
+    receipt_paths = [str(path or "").strip() for path in receipt_evidence.get("receipt_paths", ())]
+    receipt_refs = [str(ref or "").strip() for ref in receipt_evidence.get("receipt_refs", ())]
+    if (
+        not target_files
+        or sorted(set(target_files)) != sorted(set(receipt_paths))
+        or len(set(receipt_refs)) != len(set(target_files))
+        or int(receipt_evidence.get("receipt_count") or 0) != len(set(target_files))
+        or int(receipt_evidence.get("required_artifact_count") or 0) != len(set(target_files))
+    ):
+        raise ValueError("receipt-bound preflight evidence does not cover exact owned artifacts")
+    verdict = evaluate_task_boundary_verdict(
+        workspace=str(getattr(adapter, "workspace", "") or ""),
+        task_id=external_task_id,
+        run_id=run_id,
+        target_files=target_files,
+        completed_artifacts=target_files,
+        evidence_refs=receipt_refs,
+    )
+    if verdict.ok is not True or verdict.status != "completed_verified":
+        raise RuntimeError(f"receipt-bound task boundary remained incomplete: {verdict.status}")
+    project_id = str(projection.get("project_id") or "").strip()
+    if not project_id:
+        raise ValueError("receipt-bound preflight lacks project identity")
+    lifecycle_receipt = build_verified_existing_artifact_lifecycle_receipt(
+        run_id=run_id,
+        task_id=external_task_id,
+        artifact_receipt_refs=receipt_refs,
+    )
+    append_tool_call_lifecycle_event(
+        AppendToolCallLifecycleEventCommandV1(
+            workspace=str(getattr(adapter, "workspace", "") or ""),
+            run_id=run_id,
+            task_id=external_task_id,
+            turn_id="",
+            role="director",
+            lifecycle_receipt=lifecycle_receipt.to_dict(),
+            stage="director_receipt_bound_preflight",
+            project_id=project_id,
+            ok=True,
+        )
+    )
+    payload = verdict.to_dict()
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(getattr(adapter, "workspace", "") or ""),
+            run_id=run_id,
+            event={
+                "event_type": "task_boundary_verdict",
+                "stage": "task_boundary",
+                "task_id": external_task_id,
+                "run_id": run_id,
+                "task_boundary_verdict": payload,
+                "job_token": {
+                    "run_id": run_id,
+                    "task_id": external_task_id,
+                    "project_id": project_id,
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+            },
+        )
+    )
+    return payload
 
 
 def _run_materialization_quality_public_boundary(
@@ -428,9 +590,7 @@ def _quality_repair_progress_evidence(
     before_signature = set(_artifact_quality_error_signature(before_errors))
     after_signature = set(_artifact_quality_error_signature(after_errors))
     mutated_paths = sorted(
-        path
-        for path in set(before_files) | set(after_files)
-        if before_files.get(path) != after_files.get(path)
+        path for path in set(before_files) | set(after_files) if before_files.get(path) != after_files.get(path)
     )
 
     def _matches_responsible_path(mutated_path: str, raw_responsible_path: str) -> bool:
@@ -456,9 +616,7 @@ def _quality_repair_progress_evidence(
     mutation_evidenced = bool(successful_write_paths and responsible_mutated_paths)
     converged = not after_signature and int(after_missing_count) == 0
     effective_progress = bool(
-        mutation_evidenced
-        and not introduced
-        and (converged or error_reduction > 0 or missing_reduction > 0)
+        mutation_evidenced and not introduced and (converged or error_reduction > 0 or missing_reduction > 0)
     )
     return {
         "schema_version": "director.quality_repair_progress.v1",
@@ -1119,9 +1277,16 @@ def _finalize_claimed_execution(
             return {"success": False, "reason": "invalid_outcome", "outcome": outcome}
         if task_completion_projection is not None:
             try:
+                authority_snapshot = authority.snapshot(lock_timeout_seconds=5.0)
+                if (
+                    authority_snapshot.success is not True
+                    or authority_snapshot.identity is None
+                    or not authority_snapshot.identity.external_task_id
+                ):
+                    raise RuntimeError("task runtime external task identity is unavailable")
                 project_artifact_receipts, missing_owned_artifacts = _record_project_artifacts_before_settlement(
                     adapter,
-                    target_task_id=target_task_id,
+                    contract_task_id=authority_snapshot.identity.external_task_id,
                     task_completion_projection=task_completion_projection,
                 )
             except (OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -1131,6 +1296,12 @@ def _finalize_claimed_execution(
                 # in-progress task that can block the whole Director cascade.
                 project_artifact_receipt_failure = "project_artifact_receipt_failed"
                 settlement_metadata["project_artifact_receipt_error"] = str(exc)
+                logger.error(
+                    "Director project artifact receipt failed for runtime_task=%s: %s",
+                    target_task_id,
+                    exc,
+                    exc_info=True,
+                )
                 settlement_outcome = "failed"
                 summary = project_artifact_receipt_failure
             else:
@@ -1175,6 +1346,7 @@ def _finalize_claimed_execution(
             **result,
             "success": False,
             "reason": project_artifact_receipt_failure,
+            "error": str(settlement_metadata.get("project_artifact_receipt_error") or ""),
             "outcome": outcome,
         }
     if verdict.success is not True:
@@ -1190,7 +1362,7 @@ def _finalize_claimed_execution(
 def _record_project_artifacts_before_settlement(
     adapter: Any,
     *,
-    target_task_id: str,
+    contract_task_id: str,
     task_completion_projection: Mapping[str, Any],
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     """Record final CE-owned artifact bytes before TaskRuntime settlement."""
@@ -1202,7 +1374,7 @@ def _record_project_artifacts_before_settlement(
     if projection.get("schema_version") != "polaris.task_completion_projection.v1":
         raise ValueError("task completion projection schema is invalid")
     projected_task_id = str(projection.get("task_id") or "").strip()
-    if _canonical_task_owner_identity(projected_task_id) != _canonical_task_owner_identity(target_task_id):
+    if _canonical_task_owner_identity(projected_task_id) != _canonical_task_owner_identity(contract_task_id):
         raise ValueError("task completion projection owner does not match claimed task")
     project_id = str(projection.get("project_id") or "").strip()
     run_id = str(projection.get("run_id") or "").strip()
@@ -2657,11 +2829,19 @@ async def _execute_standard_llm_flow(
         workspace_full=str(getattr(adapter, "workspace", "") or ""),
         workspace_name=workspace_name,
     )
+    existing_contract_evidence, project_artifact_receipt_evidence = _attach_current_task_project_receipt_evidence(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        context=context,
+        existing_contract_evidence=existing_contract_evidence,
+    )
     write_tool_evidence = has_successful_write_tool(state.tool_results)
     can_accept_existing_scope = bool(existing_contract_evidence.get("ok")) and _can_accept_existing_workspace_scope(
         task=task,
         requires_fresh_materialization=requires_fresh_materialization,
         write_tool_evidence=write_tool_evidence,
+        project_artifact_receipt_evidence=project_artifact_receipt_evidence,
     )
 
     (
@@ -3259,12 +3439,22 @@ def _phase_existing_scope_preflight(
         workspace_full=str(getattr(adapter, "workspace", "") or ""),
         workspace_name=workspace_name,
     )
+    preflight_existing_contract_evidence, project_artifact_receipt_evidence = (
+        _attach_current_task_project_receipt_evidence(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            context=context,
+            existing_contract_evidence=preflight_existing_contract_evidence,
+        )
+    )
     preflight_can_accept_existing_scope = bool(
         preflight_existing_contract_evidence.get("ok")
     ) and _can_accept_existing_workspace_scope(
         task=task,
         requires_fresh_materialization=requires_fresh_materialization,
         write_tool_evidence=False,
+        project_artifact_receipt_evidence=project_artifact_receipt_evidence,
     )
     preflight_quality_errors: list[str] = []
     if preflight_can_accept_existing_scope:
@@ -3348,6 +3538,32 @@ def _phase_existing_scope_preflight(
                     decision_signals=decision_signals,
                     materialization_mode="preflight_verified_existing_workspace_scope",
                 )
+            if requires_fresh_materialization and project_artifact_receipt_evidence:
+                try:
+                    task_boundary_verdict = _append_receipt_bound_preflight_task_boundary(
+                        adapter,
+                        context=context,
+                        target_task_id=target_task_id,
+                        run_id=run_id,
+                        finalize_result=finalize_result,
+                        receipt_evidence=preflight_existing_contract_evidence.get(
+                            "project_artifact_receipt_evidence",
+                            {},
+                        ),
+                    )
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    return {
+                        "success": False,
+                        "task_id": target_task_id,
+                        "error": "director_task_boundary_receipt_projection_failed",
+                        "error_code": "director.task_boundary_receipt_projection_failed",
+                        "failure_class": "TASK_BOUNDARY_FAILED",
+                        "root_cause_hint": str(exc),
+                        "retry_scope": "same_director_task_only",
+                        "pm_ce_restart_allowed": False,
+                        "decision_signals": decision_signals,
+                    }
+                completion_metadata["adapter_result"]["task_boundary_verdict"] = task_boundary_verdict
         adapter._update_task_progress(target_task_id, "completed")
         decision_signals.append(
             {
@@ -3835,6 +4051,15 @@ async def _phase_pre_materialization_quality(
                 workspace_full=str(getattr(adapter, "workspace", "") or ""),
                 workspace_name=workspace_name,
             )
+            existing_contract_evidence, project_artifact_receipt_evidence = (
+                _attach_current_task_project_receipt_evidence(
+                    adapter,
+                    task=task,
+                    target_task_id=target_task_id,
+                    context=context,
+                    existing_contract_evidence=existing_contract_evidence,
+                )
+            )
             write_tool_evidence = has_successful_write_tool(tool_results)
             can_accept_existing_scope = bool(
                 existing_contract_evidence.get("ok")
@@ -3842,6 +4067,7 @@ async def _phase_pre_materialization_quality(
                 task=task,
                 requires_fresh_materialization=requires_fresh_materialization,
                 write_tool_evidence=write_tool_evidence,
+                project_artifact_receipt_evidence=project_artifact_receipt_evidence,
             )
     # Post-execution language-specific repair pass: always run deterministic
     # repairs after Director finishes writing files, regardless of quality gate
@@ -4971,9 +5197,7 @@ def _phase_no_materialized_changes(
                 run_id=str(run_id or ""),
                 task_id=str(target_task_id or ""),
                 turn_id=str(
-                    (primary_llm_summary or {}).get("turn_id")
-                    or (primary_llm_summary or {}).get("last_turn_id")
-                    or ""
+                    (primary_llm_summary or {}).get("turn_id") or (primary_llm_summary or {}).get("last_turn_id") or ""
                 ),
                 reason=str(error or "director_no_materialized_changes"),
                 failure_class=str(failure_class or FailureClassV1.INCOMPLETE_MATERIALIZATION.value),

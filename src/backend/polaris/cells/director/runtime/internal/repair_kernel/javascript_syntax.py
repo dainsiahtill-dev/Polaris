@@ -570,72 +570,44 @@ def build_javascript_missing_export_plan(
         for target in _missing_export_targets(diagnostic, normalized_base):
             exporter_path = target["exporter"]
             symbol = target["symbol"]
-            importer_path = target.get("importer", "")
             key = (exporter_path, symbol)
             if key in seen:
                 continue
             seen.add(key)
             exporter_text = normalized_base.get(exporter_path)
-            importer_text = normalized_base.get(importer_path, "")
             if exporter_text is None:
                 continue
             if _javascript_module_exports_symbol(exporter_text, symbol):
-                operation = _replace_exported_function_contract_operation(
-                    path=exporter_path,
-                    text=exporter_text,
-                    symbol=symbol,
-                    importer_text=importer_text,
-                    exporter_rel_path=exporter_path,
-                    base_files=normalized_base,
-                    diagnostic=diagnostic,
-                )
-            else:
-                operation = _export_existing_declaration_operation(
-                    path=exporter_path,
-                    text=exporter_text,
-                    symbol=symbol,
-                    diagnostic=diagnostic,
-                )
-                if operation is None:
-                    operation = _export_class_method_facade_operation(
-                        path=exporter_path,
-                        text=exporter_text,
-                        symbol=symbol,
-                        diagnostic=diagnostic,
-                    )
-                if operation is None:
-                    operation = _append_imported_binding_reexport_operation(
-                        path=exporter_path,
-                        text=exporter_text,
-                        symbol=symbol,
-                        diagnostic=diagnostic,
-                    )
-                if operation is None:
-                    operation = _append_javascript_contract_function_operation(
-                        path=exporter_path,
-                        text=exporter_text,
-                        symbol=symbol,
-                        importer_text=importer_text,
-                        exporter_rel_path=exporter_path,
-                        base_files=normalized_base,
-                        diagnostic=diagnostic,
-                    )
-            dependency_operation = _append_javascript_contract_dependency_operation(
+                # A missing-export repair must be monotonic: an already exported
+                # symbol proves this diagnostic is not an export defect. Never use
+                # a generic test assertion to rewrite its domain implementation.
+                continue
+            operation = _export_existing_declaration_operation(
                 path=exporter_path,
                 text=exporter_text,
                 symbol=symbol,
-                importer_text=importer_text,
-                base_files=normalized_base,
                 diagnostic=diagnostic,
             )
             if operation is None:
-                if dependency_operation is None:
-                    continue
-                operations.append(dependency_operation)
-            else:
-                operations.append(operation)
-                if dependency_operation is not None:
-                    operations.append(dependency_operation)
+                operation = _export_class_method_facade_operation(
+                    path=exporter_path,
+                    text=exporter_text,
+                    symbol=symbol,
+                    diagnostic=diagnostic,
+                )
+            if operation is None:
+                operation = _append_imported_binding_reexport_operation(
+                    path=exporter_path,
+                    text=exporter_text,
+                    symbol=symbol,
+                    diagnostic=diagnostic,
+                )
+            if operation is None:
+                # No declaration/binding means semantic implementation is absent.
+                # Keep it covered-unplannable for same-task LLM repair; deterministic
+                # repair must not invent a domain function from test expectations.
+                continue
+            operations.append(operation)
             matched.append(diagnostic)
     operations = _coalesce_javascript_append_operations(operations)
     if not operations:
@@ -1997,19 +1969,7 @@ def _missing_export_targets(
         exporter = _resolve_js_module(base_files, importer, module_ref)
         if _JS_IDENTIFIER_RE.match(symbol) and exporter:
             targets.append({"exporter": exporter, "symbol": symbol, "importer": importer})
-    if _looks_like_javascript_export_contract_assertion_error(raw):
-        targets.extend(_javascript_import_contract_targets(base_files))
     return tuple(targets)
-
-
-def _looks_like_javascript_export_contract_assertion_error(error: object) -> bool:
-    text = str(error or "").lower()
-    return (
-        "assertionerror" in text
-        or "expected values to be strictly equal" in text
-        or "undefined !==" in text
-        or ("actual" in text and "expected" in text and ("npm test" in text or ".test.js" in text or "tests/" in text))
-    )
 
 
 def _javascript_import_contract_targets(base_files: Mapping[str, str]) -> tuple[dict[str, str], ...]:

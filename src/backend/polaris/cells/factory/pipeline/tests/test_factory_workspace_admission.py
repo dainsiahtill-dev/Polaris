@@ -2517,6 +2517,7 @@ async def test_terminal_failed_run_retry_opens_fresh_epoch_in_same_service(tmp_p
     failed = await service.complete_run(run.id, success=False)
     assert failed.status is FactoryRunStatus.FAILED
     assert failed.metadata["factory_workspace_run_lease"]["state"] == "released"
+    assert "factory_terminal_task_runtime_projection" in failed.metadata
     assert old_port.admission_closed is True
 
     retried = await service.retry_run_from_stage(
@@ -2532,6 +2533,42 @@ async def test_terminal_failed_run_retry_opens_fresh_epoch_in_same_service(tmp_p
     assert old_port.admission_closed is True
     assert new_port is not old_port
     assert new_port.admission_closed is False
+    assert "factory_terminal_task_runtime_projection" not in retried.metadata
+    invalidation = retried.metadata["factory_terminal_task_runtime_projection_invalidation"]
+    assert invalidation["reason"] == "director_execution_epoch_reopened"
+    assert invalidation["requested_stage"] == "director_dispatch"
+
+
+@pytest.mark.asyncio
+async def test_terminal_failed_quality_retry_preserves_frozen_task_runtime_epoch(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "runtime"
+    workspace.mkdir()
+    service = FactoryRunService(
+        workspace,
+        cache_root=cache_root,
+        executor=_SuccessfulStageExecutor(),
+    )
+    run = await service.create_run(
+        FactoryConfig(
+            name="quality-retry-frozen-authority",
+            stages=["director_dispatch", "quality_gate"],
+        )
+    )
+    await service.start_run(run.id)
+    failed = await service.complete_run(run.id, success=False)
+    frozen = failed.metadata["factory_terminal_task_runtime_projection"]
+
+    retried = await service.retry_run_from_stage(
+        run.id,
+        target_stage="quality_gate",
+        reason="rerun verifier only",
+    )
+
+    assert retried.metadata["factory_terminal_task_runtime_projection"] == frozen
+    assert "factory_terminal_task_runtime_projection_invalidation" not in retried.metadata
 
 
 @pytest.mark.asyncio

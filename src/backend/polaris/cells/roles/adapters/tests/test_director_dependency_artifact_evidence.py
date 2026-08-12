@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,7 @@ from polaris.cells.roles.adapters.internal.director import dependency_artifact_e
 from polaris.cells.roles.adapters.internal.director.dependency_artifact_evidence import (
     DirectorDependencyArtifactEvidenceError,
     TrustedDirectorDependencyArtifactSnapshotV2,
+    build_current_task_project_artifact_receipt_evidence,
     build_director_dependency_artifact_snapshot,
     project_director_dependency_artifact_snapshot,
 )
@@ -172,6 +174,151 @@ def test_completion_adapter_result_tool_results_feed_sibling_snapshot(tmp_path: 
     )
     assert type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2
     assert snapshot.payload()["modules"][0]["body"] == body
+
+
+def test_existing_scope_retry_uses_current_project_artifact_receipts(tmp_path: Path) -> None:
+    """R48: retry preflight must reuse project receipts when no new tool write occurs."""
+
+    path = "src/engine/rules.js"
+    source = tmp_path / path
+    source.parent.mkdir(parents=True)
+    body = "export const rules = ['dream', 'alchemy'];\n"
+    source.write_text(body, encoding="utf-8")
+    contract_hash = "a" * 64
+    parent = {
+        "id": 9,
+        "status": "completed",
+        "metadata": {
+            "external_task_id": "TASK-1",
+            "adapter_result": {
+                "materialization_mode": "preflight_verified_existing_workspace_scope",
+                "existing_contract_evidence": {
+                    "ok": True,
+                    "existing_paths": [path],
+                },
+                "new_files": [],
+                "modified_files": [],
+            },
+            "task_completion_projection": {
+                "schema_version": "polaris.task_completion_projection.v1",
+                "task_id": "TASK-1",
+                "project_id": "L1-02",
+                "run_id": "factory-r48",
+                "project_contract_hash": contract_hash,
+                "owned_artifacts": [
+                    {
+                        "applicability": "required",
+                        "obligation_id": "artifact-rules",
+                        "owner_task_id": "TASK-1",
+                        "path": path,
+                    }
+                ],
+            },
+        },
+    }
+    observed_queries: list[dict[str, str]] = []
+
+    def lookup(query: Any) -> dict[str, str]:
+        payload = dict(query)
+        observed_queries.append(payload)
+        return {
+            **payload,
+            "artifact_hash": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            "authority_revision": "b" * 64,
+            "receipt_hash": "c" * 64,
+            "receipt_ref": "execution-broker://project-verification/artifact/" + "c" * 64,
+        }
+
+    snapshot = build_director_dependency_artifact_snapshot(
+        workspace=str(tmp_path),
+        child_task=_child_task(["TASK-1"]),
+        get_task=_resolver({"TASK-1": parent}),
+        get_project_artifact_receipt=lookup,
+    )
+
+    assert type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2
+    assert observed_queries == [
+        {
+            "workspace": str(tmp_path),
+            "project_id": "L1-02",
+            "run_id": "factory-r48",
+            "completion_contract_hash": contract_hash,
+            "obligation_id": "artifact-rules",
+            "owner_task_id": "TASK-1",
+            "path": path,
+        }
+    ]
+    module = snapshot.payload()["modules"][0]
+    assert module["body"] == body
+    assert module["receipt_authority_source"] == "runtime.execution_broker.project_artifact_receipt.v1"
+    assert module["effect_receipt_hash"] == "c" * 64
+    assert module["physical_result_hash"] == hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def test_current_task_retry_accepts_only_complete_byte_current_project_receipts(tmp_path: Path) -> None:
+    paths = ("tests/product.test.js", "README.md")
+    bodies = {
+        "tests/product.test.js": "import test from 'node:test';\ntest('ok', () => {});\n",
+        "README.md": "# Verified project\n",
+    }
+    for path, body in bodies.items():
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+    task = {
+        "id": 13,
+        "metadata": {"external_task_id": "TASK-2"},
+        "task_completion_projection": {
+            "task_id": "TASK-2",
+            "project_id": "L1-02",
+            "run_id": "factory-r48",
+            "project_contract_hash": "a" * 64,
+            "owned_artifacts": [
+                {
+                    "applicability": "required",
+                    "obligation_id": f"artifact-{index}",
+                    "owner_task_id": "TASK-2",
+                    "path": path,
+                }
+                for index, path in enumerate(paths)
+            ],
+        },
+    }
+
+    def lookup(query: Any) -> dict[str, str]:
+        payload = dict(query)
+        receipt_hash = ("c" if payload["path"] == paths[0] else "d") * 64
+        return {
+            **payload,
+            "artifact_hash": hashlib.sha256(bodies[payload["path"]].encode("utf-8")).hexdigest(),
+            "authority_revision": "b" * 64,
+            "receipt_hash": receipt_hash,
+            "receipt_ref": "execution-broker://project-verification/artifact/" + receipt_hash,
+        }
+
+    evidence = build_current_task_project_artifact_receipt_evidence(
+        task=task,
+        task_id="13",
+        workspace=str(tmp_path),
+        lookup=lookup,
+    )
+    assert evidence["ok"] is True
+    assert evidence["receipt_paths"] == sorted(paths)
+    assert evidence["receipt_refs"] == [
+        "execution-broker://project-verification/artifact/" + "c" * 64,
+        "execution-broker://project-verification/artifact/" + "d" * 64,
+    ]
+    assert evidence["missing_or_stale_paths"] == []
+
+    (tmp_path / "README.md").write_text("# stale bytes\n", encoding="utf-8")
+    stale = build_current_task_project_artifact_receipt_evidence(
+        task=task,
+        task_id="13",
+        workspace=str(tmp_path),
+        lookup=lookup,
+    )
+    assert stale["ok"] is False
+    assert stale["missing_or_stale_paths"] == ["README.md"]
 
 
 def test_multiple_receipts_for_same_path_use_last_successful_write(tmp_path: Path) -> None:

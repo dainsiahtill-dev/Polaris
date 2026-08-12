@@ -557,6 +557,55 @@ def build_claimed_materialization_without_tool_lifecycle_receipt(
     ).to_dict()
 
 
+def build_verified_existing_artifact_lifecycle_receipt(
+    *,
+    run_id: str,
+    task_id: str,
+    artifact_receipt_refs: Sequence[Any],
+    turn_id: str = "",
+    role: str = "director",
+) -> ToolCallLifecycleReceiptV1:
+    """Seal a no-dispatch retry that reuses exact project artifact receipts.
+
+    This is deliberately distinct from a successful tool dispatch: all tool
+    counters remain zero.  It only proves that the current Director attempt did
+    not require another provider/tool turn because byte-current,
+    project-authoritative artifact receipts already close the task scope.
+    Empty, duplicate, or non-string receipt references fail closed.
+    """
+
+    normalized_refs = [_clean_string(item) for item in artifact_receipt_refs]
+    if not normalized_refs or any(not item for item in normalized_refs):
+        raise ValueError("verified-existing lifecycle requires non-empty artifact receipt refs")
+    if len(set(normalized_refs)) != len(normalized_refs):
+        raise ValueError("verified-existing lifecycle artifact receipt refs must be unique")
+    return ToolCallLifecycleReceiptV1(
+        run_id=_clean_string(run_id),
+        task_id=_clean_string(task_id),
+        turn_id=_clean_string(turn_id),
+        role=_clean_string(role) or "director",
+        provider_response_hash="",
+        native_tool_calls_count=0,
+        decoded_tool_calls_count=0,
+        dispatched_tool_calls_count=0,
+        tool_result_count=0,
+        effect_receipt_count=len(normalized_refs),
+        dispatch_status="verified_existing_artifacts",
+        failure_class="",
+        ok=True,
+        effect_receipt_refs=tuple(
+            {
+                "receipt_ref": receipt_ref,
+                "receipt_outcome": "success",
+                "source": "runtime.execution_broker.project_artifact_receipt.v1",
+            }
+            for receipt_ref in normalized_refs
+        ),
+        reason="verified_existing_project_artifact_receipts",
+        compatibility_mode="receipt_reuse",
+    )
+
+
 def build_tool_call_lifecycle_run_ledger_event(
     *,
     run_id: str,

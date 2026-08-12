@@ -476,10 +476,6 @@ def validate_director_handoff_from_payload(
                 blueprint,
                 task_id=task_id or blueprint_task_id,
             )
-            job_token = _project_validated_job_token(
-                blueprint,
-                task_completion_projection=task_completion_projection,
-            )
         except (TypeError, ValueError) as exc:
             return _handoff_validation_result(
                 allowed=False,
@@ -527,6 +523,24 @@ def validate_director_handoff_from_payload(
             task_completion_projection=task_completion_projection,
             require_strict=require_strict,
         )
+    if require_strict:
+        try:
+            job_token = _project_validated_job_token(
+                blueprint,
+                task_completion_projection=task_completion_projection,
+            )
+        except (TypeError, ValueError) as exc:
+            return _handoff_validation_result(
+                allowed=False,
+                reason=f"task-local project completion projection is invalid: {exc}",
+                task_id=task_id,
+                blueprint_id=blueprint_id,
+                blueprint_task_id=blueprint_task_id,
+                base_handoff_decision=base_handoff_decision,
+                strict_decision=strict_decision,
+                task_completion_projection=task_completion_projection,
+                require_strict=require_strict,
+            )
     return _handoff_validation_result(
         allowed=True,
         reason=base_handoff_decision.reason,

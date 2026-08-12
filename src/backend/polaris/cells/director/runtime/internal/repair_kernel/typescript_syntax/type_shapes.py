@@ -1311,6 +1311,12 @@ def _too_few_arguments_operation(base_files: Mapping[str, str], item: Mapping[st
         )
         if too_many is not None:
             return too_many
+        if expected_count == 0:
+            return _too_many_arguments_declaration_operation(
+                base_files=base_files,
+                method_name=method_name,
+                expected_count=expected_count,
+            )
         too_many = _too_many_arguments_declaration_expand_operation(
             base_files=base_files,
             method_name=method_name,
@@ -1319,11 +1325,7 @@ def _too_few_arguments_operation(base_files: Mapping[str, str], item: Mapping[st
         )
         if too_many is not None:
             return too_many
-        return _too_many_arguments_declaration_operation(
-            base_files=base_files,
-            method_name=method_name,
-            expected_count=expected_count,
-        )
+        return None
     callsite_operation = _too_few_arguments_callsite_operation(
         path=path,
         content=content,

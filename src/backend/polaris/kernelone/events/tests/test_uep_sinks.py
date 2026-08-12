@@ -7,6 +7,7 @@ import gzip
 import json
 import tempfile
 from collections.abc import Generator
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -153,6 +154,45 @@ class TestJournalSink:
         assert "secret system prompt" not in serialized
         assert "secret assistant answer" not in serialized
 
+        await sink.stop()
+
+    @pytest.mark.asyncio
+    async def test_journal_sink_serializes_datetime_metadata(
+        self,
+        temp_workspace: str,
+        message_bus: MessageBus,
+    ) -> None:
+        """Typed runtime metadata must not break the async journal subscriber."""
+        from polaris.infrastructure.log_pipeline.journal_sink import JournalSink
+
+        sink = JournalSink(message_bus)
+        await sink.start()
+        run_id = "test-run-datetime"
+        occurred_at = datetime(2026, 8, 12, 2, 8, 23, tzinfo=timezone.utc)
+        await message_bus.publish(
+            Message(
+                type=MessageType.RUNTIME_EVENT,
+                sender="test",
+                payload={
+                    "topic": "runtime.event.llm",
+                    "workspace": temp_workspace,
+                    "run_id": run_id,
+                    "role": "chief_engineer",
+                    "event_type": "call_end",
+                    "metadata": {"occurred_at": occurred_at},
+                    "timestamp": occurred_at,
+                },
+            )
+        )
+        await asyncio.sleep(0.1)
+
+        from polaris.kernelone.storage import resolve_storage_roots
+
+        roots = resolve_storage_roots(temp_workspace)
+        norm_journal = Path(roots.runtime_root) / "runs" / run_id / "logs" / "journal.norm.jsonl"
+        event = json.loads(norm_journal.read_text(encoding="utf-8").splitlines()[-1])
+        serialized_at = event["raw"]["metadata"]["occurred_at"]
+        assert datetime.fromisoformat(serialized_at.replace("Z", "+00:00")) == occurred_at
         await sink.stop()
 
     @pytest.mark.asyncio

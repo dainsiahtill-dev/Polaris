@@ -35,6 +35,10 @@ _DECLARED_FILE_TOKEN_RE = re.compile(
     r"(?:py|txt|toml|json|md|html|js|ts|tsx|jsx|css|yaml|yml|go|mod|sum|sh)"
     r"(?![\w.-])"
 )
+_COMMAND_FAILURE_MARKER_RE = re.compile(
+    r"(?im)^(?:not ok\b|fail(?:ed)?(?:\s|:)|error(?:\s|:)|traceback\b)|"
+    r"\b(?:AssertionError|ERR_ASSERTION|failureType|error TS\d+|error\[E\d+\])\b"
+)
 _FILE_AS_DIRECTORY_SUFFIXES = frozenset(
     {
         ".css",
@@ -151,6 +155,37 @@ def _canonical_task_id_token(task_id: Any) -> str:
     return token
 
 
+def _runtime_row_contract_task_id(row: Mapping[str, Any]) -> str:
+    """Return the immutable PM/CE identity carried by a TaskRuntime row.
+
+    TaskRuntime's local integer ``task_id`` is a storage-row identity and may
+    advance across stage-local retries.  Contract authority is carried by the
+    row's sealed ``external_task_id``/``backlog_ref`` metadata.  Conflicting
+    external identities fail closed instead of falling back to the local row.
+    """
+
+    metadata = row.get("metadata")
+    metadata_map = metadata if isinstance(metadata, Mapping) else {}
+    dependency = metadata_map.get("task_runtime_dependency_satisfaction")
+    dependency_map = dependency if isinstance(dependency, Mapping) else {}
+    candidates = {
+        _canonical_task_id_token(value)
+        for value in (
+            row.get("external_task_id"),
+            metadata_map.get("external_task_id"),
+            metadata_map.get("backlog_ref"),
+            dependency_map.get("external_task_id"),
+        )
+        if str(value or "").strip()
+    }
+    candidates.discard("")
+    if len(candidates) > 1:
+        return ""
+    if candidates:
+        return next(iter(candidates))
+    return _canonical_task_id_token(row.get("task_id") or row.get("id"))
+
+
 def _runtime_row_execution_completed(row: Mapping[str, Any]) -> bool:
     """Whether the TaskRuntime lifecycle itself reached completion.
 
@@ -206,7 +241,7 @@ def evaluate_canonical_factory_authority(
     normalized_runtime_rows: dict[str, Mapping[str, Any]] = {}
     runtime_id_collision = False
     for row in runtime_row_items:
-        task_id = _canonical_task_id_token(row.get("task_id") or row.get("id"))
+        task_id = _runtime_row_contract_task_id(row)
         if not task_id:
             continue
         if task_id in normalized_runtime_rows:
@@ -268,11 +303,7 @@ def evaluate_canonical_factory_authority(
         and not incomplete_runtime_task_ids
     )
     missing_task_boundary_ids = tuple(
-        sorted(
-            task_id
-            for task_id in expected_task_ids
-            if task_id not in normalized_verdicts
-        )
+        sorted(task_id for task_id in expected_task_ids if task_id not in normalized_verdicts)
     )
     failed_task_boundary_ids = tuple(
         sorted(
@@ -310,7 +341,12 @@ def evaluate_canonical_factory_authority(
     failure_class = str((failed_verdict or {}).get("failure_class") or "").strip()
     responsible_layer = str((failed_verdict or {}).get("responsible_layer") or "").strip()
 
-    gates = payload.get("gates")
+    # Raw ``gates`` are append-only history.  Only Run Ledger's effective gate
+    # projection may authorize current delivery; otherwise a QA FAIL from an
+    # older Director epoch can poison a newly completed TaskBoundary.
+    gates = payload.get("effective_gates")
+    if not isinstance(gates, list):
+        gates = payload.get("gates")
     gate_rows = [item for item in gates if isinstance(item, Mapping)] if isinstance(gates, list) else []
     qa_gate = next(
         (gate for gate in reversed(gate_rows) if str(gate.get("name") or "").strip().lower() == "qa_verdict"),
@@ -475,7 +511,7 @@ def recover_terminal_runtime_delivery_authority(
 
     runtime_rows_by_task: dict[str, Mapping[str, Any]] = {}
     for row in runtime_row_items:
-        task_id = _canonical_task_id_token(row.get("task_id") or row.get("id"))
+        task_id = _runtime_row_contract_task_id(row)
         if not task_id or task_id in runtime_rows_by_task:
             return None
         runtime_rows_by_task[task_id] = row
@@ -788,7 +824,33 @@ def trim_command_output(text: str, limit: int = _WORKSPACE_VALIDATION_OUTPUT_MAX
     body = str(text or "")
     if len(body) <= limit:
         return body
-    return body[-limit:]
+    if limit < 256:
+        return body[-limit:]
+    marker = _COMMAND_FAILURE_MARKER_RE.search(body)
+    if marker is None or marker.start() >= len(body) - limit:
+        return body[-limit:]
+    failure_separator = "\n... [failure excerpt preserved] ...\n"
+    tail_separator = "\n... [output tail preserved] ...\n"
+    head_budget = max(64, limit // 10)
+    tail_budget = max(128, limit // 4)
+    excerpt_budget = max(1, limit - head_budget - tail_budget - len(failure_separator) - len(tail_separator))
+    excerpt_start = max(0, marker.start() - min(512, excerpt_budget // 5))
+    # Keep all slices disjoint.  Earlier code always emitted ``body[:head]``
+    # and then restarted the failure excerpt at (often) offset zero, duplicating
+    # TAP failures in the downstream diagnostic input.  That inflated one
+    # verifier failure into repeated repair work and wasted provider tokens.
+    head_end = min(head_budget, excerpt_start)
+    tail_start = max(head_end, len(body) - tail_budget)
+    excerpt_end = min(tail_start, excerpt_start + excerpt_budget)
+    return "".join(
+        (
+            body[:head_end],
+            failure_separator,
+            body[excerpt_start:excerpt_end],
+            tail_separator,
+            body[tail_start:],
+        )
+    )[:limit]
 
 
 def resolve_workspace_quality_command(command: list[str]) -> list[str]:

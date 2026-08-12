@@ -86,6 +86,9 @@ Treat these as architecture failures until disproven:
   cancel/deadline failure.
 - TaskRuntime row, Director status, Run Ledger, and QA verdict disagree on the
   same task.
+- A QA verdict from an older Director `run_id` authorizes or blocks a newer
+  TaskBoundary for the same task; raw historical gates must never outrank the
+  current delivery epoch projected by `effective_gates`.
 - Any final status depends on raw TaskBoard JSON, session JSON, message text, or
   prompt regex instead of Execution Ledger / TaskRuntime observable projection.
 - Factory starts a new LLM turn without enough downstream QA budget, or cancels
@@ -122,3 +125,27 @@ Do not accept a base rewrite as complete unless all of the following hold:
 - QA failure classes match upstream evidence when any task is incomplete.
 - No legacy deterministic repair, direct-write bench workaround, or raw
   TaskBoard/session status path is needed for the pass.
+
+## First Positive System Oracle (2026-08-12)
+
+`L1-01` r44 is the first recorded fresh isolated project to reach stable
+`COMPLETED_VERIFIED` through the complete fact chain above. It is positive proof
+for one project only, not L1-L12 or N-batch closure.
+
+The mandatory lessons, defect mechanisms, archived evidence hashes, and next
+proof boundary are recorded in
+`UNATTENDED_COMPLETION_FIRST_PROOF_20260812.md`. Reviewers must apply that debug
+order before accepting another full-chain rerun or a model-ceiling attribution.
+
+## Second Positive System Oracle (2026-08-12)
+
+`L1-02` r48 reached Factory `completed` after exact-stage recovery: Director
+reused verified artifact receipts, then only `qa_gate` reran. The run proved
+that QA authority must be scoped to `(task_id, director_run_id)` and that stale
+historical verdicts remain auditable but ineffective. Build, 22 Node tests,
+the CLI entrypoint, 16 platform acceptance tests, and delivery depth all passed
+with exit code `0`. Evidence is archived under
+`~/.polaris/audit_archives/unattended-completion-20260812/r48/`.
+
+Two projects are still not L1-L12 or N-batch proof. The next sequential project
+must use the same fact-chain audit and may not reuse a stale QA delivery epoch.

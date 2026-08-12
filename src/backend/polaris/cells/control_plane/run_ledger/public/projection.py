@@ -1007,6 +1007,32 @@ def _gate_revision_key(event: dict[str, Any]) -> GateRevisionKey | None:
     )
 
 
+def _latest_task_boundary_epochs(events: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Project the latest canonical delivery epoch for each task.
+
+    QA verdicts judge one concrete Director delivery.  They remain immutable
+    history after a same-task Director retry, but they must not authorize or
+    block a newer TaskBoundary for that task.
+    """
+
+    latest_by_task: dict[str, dict[str, Any]] = {}
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        boundary_raw = event.get("task_boundary_verdict")
+        if event.get("event_type") != "task_boundary_verdict" and not isinstance(boundary_raw, dict):
+            continue
+        verdict = normalize_task_boundary_verdict(boundary_raw if isinstance(boundary_raw, dict) else event)
+        for key in ("task_id", "run_id", "turn_id"):
+            if not _clean_string(verdict.get(key)):
+                verdict[key] = _clean_string(event.get(key))
+        task_key = _task_boundary_task_key(verdict)
+        if _preserves_completed_task_boundary(latest_by_task.get(task_key), verdict):
+            continue
+        latest_by_task[task_key] = verdict
+    return latest_by_task
+
+
 def _effective_gate_event_indexes(events: list[dict[str, Any]]) -> tuple[frozenset[int], tuple[str, ...]]:
     """Select only explicitly chained revisions; keep legacy events independent."""
 
@@ -1046,6 +1072,28 @@ def _effective_gate_event_indexes(events: list[dict[str, Any]]) -> tuple[frozens
                 continue
             effective_indexes.discard(previous_index)
         latest_by_obligation[key] = (index, revision, content_id)
+
+    # QA authority is delivery-epoch scoped.  Keep historical verdict facts in
+    # ``gates`` but exclude a verdict when the same task now has a newer
+    # canonical TaskBoundary run.  Exact IDs only: missing legacy identity is
+    # preserved rather than guessed.
+    latest_boundaries = _latest_task_boundary_epochs(events)
+    for index in tuple(effective_indexes):
+        event = events[index]
+        raw_gate = event.get("gate")
+        gate = raw_gate if isinstance(raw_gate, dict) else {}
+        if _clean_string(gate.get("name")).lower() != "qa_verdict":
+            continue
+        raw_physical = event.get("physical_evidence")
+        physical = raw_physical if isinstance(raw_physical, dict) else {}
+        raw_token = event.get("job_token")
+        token = raw_token if isinstance(raw_token, dict) else {}
+        task_id = _clean_string(event.get("task_id") or physical.get("task_id") or token.get("task_id"))
+        verdict_run_id = _clean_string(event.get("run_id") or physical.get("run_id") or token.get("run_id"))
+        latest_boundary = latest_boundaries.get(task_id)
+        latest_run_id = _clean_string((latest_boundary or {}).get("run_id"))
+        if task_id and verdict_run_id and latest_run_id and verdict_run_id != latest_run_id:
+            effective_indexes.discard(index)
     return frozenset(effective_indexes), tuple(issues)
 
 
@@ -1085,6 +1133,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     capability_issues: list[str] = []
     job_token_ids: list[str] = []
     latest_token: dict[str, Any] = {}
+    execution_capability_by_task: dict[str, dict[str, Any]] = {}
     command_count_total = 0
     sampled_command_count = 0
     truncated_command_events = 0
@@ -1165,6 +1214,24 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             job_token_ids.append(token_id)
         if gate_is_effective:
             latest_token = job_token
+        physical_metadata = _dict_value(physical_evidence.get("metadata"))
+        task_id = _clean_string(job_token.get("task_id") or physical_metadata.get("task_id"))
+        token_stage = _clean_string(job_token.get("stage") or event.get("stage"))
+        if gate_is_effective and task_id and token_stage == "pending_exec":
+            execution_capability_by_task[task_id] = {
+                "ok": bool(capability_audit.get("ok")) and not bool(issues),
+                "issues": list(issues) if isinstance(issues, list) else [],
+                "latest_token_id": token_id,
+                "latest_contract_hash": _clean_string(job_token.get("contract_hash")),
+                "latest_blueprint_hash": _clean_string(job_token.get("blueprint_hash")),
+                # Freeze the capability epoch as it existed when this task's
+                # Director gate settled.  Earlier prerequisite tokens remain
+                # part of the original artifact authority; later QA/workspace
+                # tokens must not retroactively mutate it.
+                "job_token_ids": list(dict.fromkeys(job_token_ids)),
+                "stage": token_stage,
+                "task_id": task_id,
+            }
         command_count_total += int(physical_evidence.get("command_count") or 0)
         sampled_command_count += int(physical_evidence.get("sampled_command_count") or 0)
         if physical_evidence.get("commands_truncated"):
@@ -1195,6 +1262,13 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             gate_required_modalities,
             gate_modalities,
         )
+        gate_task_id = _clean_string(
+            event.get("task_id")
+            or physical_evidence.get("task_id")
+            or job_token.get("task_id")
+            or physical_metadata.get("task_id")
+        )
+        gate_run_id = _clean_string(event.get("run_id") or physical_evidence.get("run_id") or job_token.get("run_id"))
         if gate_is_effective:
             missing_required_modalities.extend(gate_missing_required_modalities)
             failed_required_modalities.extend(gate_failed_required_modalities)
@@ -1217,6 +1291,8 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             {
                 "name": _clean_string(gate.get("name")) or "unknown",
                 "stage": _clean_string(event.get("stage")),
+                "task_id": gate_task_id,
+                "run_id": gate_run_id,
                 "ok": bool(gate.get("ok")),
                 "summary": _clean_string(gate.get("summary")),
                 "content_id": _clean_string(event.get("content_id") or event.get("event_id")),
@@ -1242,8 +1318,8 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     effective_gates = [gate for gate in gates if gate["effective"]]
     failed_gates = [gate for gate in effective_gates if not gate["ok"]]
     historical_failed_gate_count = sum(not gate["ok"] for gate in gates)
-    capability_ok = bool(effective_gates) and not capability_issues and all(
-        gate["capability_ok"] for gate in effective_gates
+    capability_ok = (
+        bool(effective_gates) and not capability_issues and all(gate["capability_ok"] for gate in effective_gates)
     )
     enabled_modalities = _string_list(enabled_modalities)
     required_modalities = _string_list(required_modalities)
@@ -1326,6 +1402,11 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             "latest_blueprint_hash": _clean_string(latest_token.get("blueprint_hash")) if latest_token else "",
             "job_token_ids": list(dict.fromkeys(job_token_ids)),
         },
+        # Artifact execution authority is task-local.  Global capability also
+        # contains later workspace/QA tokens; using that aggregate for an
+        # artifact receipt changes its authority revision after QA and makes a
+        # byte-current Director delivery invisible on the next local retry.
+        "execution_capability_by_task": dict(sorted(execution_capability_by_task.items())),
         "physical_evidence": {
             "command_count": command_count_total,
             "sampled_command_count": sampled_command_count,

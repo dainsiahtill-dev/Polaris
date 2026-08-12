@@ -17,6 +17,7 @@ from polaris.cells.director.runtime.public import DirectorRepairEffectV1
 from polaris.infrastructure.storage import LocalFileSystemAdapter
 from polaris.kernelone.events.file_event_broadcaster import (
     broadcast_file_written,
+    calculate_patch,
     replace_in_file_with_broadcast,
     write_file_with_broadcast,
 )
@@ -635,7 +636,7 @@ class DirectorToolExecutor:
                         operation=operation,
                         content_size=len(text.encode("utf-8")),
                         task_id=task_id,
-                        patch="",
+                        patch=calculate_patch(existing_content or "", text),
                         message_bus=self._message_bus,
                         worker_id=self._worker_id,
                         event_log_workspace=str(workspace),
@@ -822,7 +823,7 @@ class DirectorToolExecutor:
                         operation="modify",
                         content_size=len(final_content.encode("utf-8")),
                         task_id=task_id,
-                        patch="",
+                        patch=calculate_patch(content, final_content),
                         message_bus=self._message_bus,
                         worker_id=self._worker_id,
                         event_log_workspace=str(workspace),
@@ -963,7 +964,7 @@ class DirectorToolExecutor:
                         operation="modify",
                         content_size=len(final_content.encode("utf-8")),
                         task_id=task_id,
-                        patch="",
+                        patch=calculate_patch(content, final_content),
                         message_bus=self._message_bus,
                         worker_id=self._worker_id,
                         event_log_workspace=str(workspace),

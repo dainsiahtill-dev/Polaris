@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from collections.abc import Mapping
 from dataclasses import fields, replace
@@ -1035,6 +1036,14 @@ async def test_real_repair_cas_returns_hash_bound_physical_effect_receipt(tmp_pa
     assert commit["receipt_binding_hash"] == receipt["receipt_binding_hash"]
     assert commit["receipt_outcome"] == receipt["receipt_outcome"]
     assert events == ["revalidate", "consume", "revalidate"]
+    event_log = workspace_path / ".polaris" / "runtime" / "file-edits" / "events.jsonl"
+    event = json.loads(event_log.read_text(encoding="utf-8").strip().splitlines()[-1])
+    event_payload = event["payload"]
+    assert event_payload["operation"] == "modify"
+    assert event_payload["has_patch"] is True
+    assert "patch_unavailable_reason" not in event_payload
+    assert "-before" in event_payload["patch"]
+    assert "+after" in event_payload["patch"]
 
 
 @pytest.mark.asyncio

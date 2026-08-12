@@ -892,6 +892,32 @@ def test_factory_role_projection_marks_chief_engineer_stage_running() -> None:
     assert status.roles["chief_engineer"].current_task == "chief_engineer_review"
 
 
+def test_factory_status_elides_oversized_metadata_but_preserves_control_fields() -> None:
+    run = factory_router_module.FactoryRun(
+        id="factory_large_status",
+        config=factory_router_module.FactoryConfig(name="test", stages=["quality_gate"]),
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-08-12T00:00:00Z",
+        metadata={
+            "current_stage": "quality_gate",
+            "last_successful_stage": "director_dispatch",
+            "workspace_validation": {"repair_rounds": ["x" * 70_000]},
+        },
+    )
+
+    status = factory_router_module._map_service_run_to_contract(run)
+
+    assert status.current_stage == "quality_gate"
+    assert status.last_successful_stage == "director_dispatch"
+    assert status.metadata["current_stage"] == "quality_gate"
+    assert status.metadata["workspace_validation"] == {
+        "elided": True,
+        "json_bytes": 70_022,
+        "reason": "factory_status_metadata_size_limit",
+        "durable_evidence": "factory_run_audit_bundle",
+    }
+
+
 def test_artifact_endpoint_includes_existing_stage_result_artifacts(
     client: TestClient,
     service: FactoryRunService,

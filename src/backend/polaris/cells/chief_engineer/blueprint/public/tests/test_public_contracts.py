@@ -520,6 +520,15 @@ class TestChiefEngineerBlueprintPortfolio:
             ),
         )
 
+    def test_entrypoint_targets_cannot_widen_pm_target_authority(self) -> None:
+        with pytest.raises(ValueError, match="entrypoint_targets must be exact PM target_files"):
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Build application",
+                target_files=("src/main.py",),
+                entrypoint_targets=("src/unowned.py",),
+            )
+
     def test_public_command_rejects_caller_supplied_project_kind_authority(self, tmp_path: Path) -> None:
         forged = ProjectKindAuthorityV1(
             project_kind="library",
@@ -632,6 +641,7 @@ class TestChiefEngineerBlueprintPortfolio:
                 objective="Build the application entrypoint",
                 target_files=("src/main.py",),
                 scope_paths=("src/main.py",),
+                entrypoint_targets=("src/main.py",),
             ),
             ChiefEngineerPortfolioTaskV1(
                 task_id="TASK-B",
@@ -681,6 +691,7 @@ class TestChiefEngineerBlueprintPortfolio:
                 objective="Build the application entrypoint",
                 target_files=("src/main.py",),
                 scope_paths=("src/main.py",),
+                entrypoint_targets=("src/main.py",),
             ),
             ChiefEngineerPortfolioTaskV1(
                 task_id="TASK-B",
@@ -816,15 +827,76 @@ class TestChiefEngineerBlueprintPortfolio:
         assert "entrypoint-web-advisory-only" not in build_verifier.covers_obligation_ids
         test_verifier = next(item for item in completion.obligations.verification if item.modality == "test")
         assert test_verifier.owner_task_id == "TASK-C"
-        assert test_verifier.command_authority_hash == _command_authority(
-            "TASK-C", "test", ("pytest", "-q")
-        ).authority_hash
+        assert (
+            test_verifier.command_authority_hash
+            == _command_authority("TASK-C", "test", ("pytest", "-q")).authority_hash
+        )
         assert "artifact-tests" in test_verifier.covers_obligation_ids
         environment_verifier = next(
             item for item in completion.obligations.verification if item.modality == "environment_prep"
         )
         assert environment_verifier.applicability == "required"
         assert environment_verifier.command_authority_hash is not None
+
+    def test_completion_contract_normalizes_sole_entrypoint_to_pm_command_authority(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """CE entrypoint semantics may vary, but executable command authority remains PM-owned."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Build the application entrypoint",
+                target_files=("src/main.py",),
+                scope_paths=("src/main.py",),
+                entrypoint_targets=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build the application tests",
+                target_files=("tests/test_main.py",),
+                scope_paths=("tests/test_main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        # Live L1-02 shape: the executable source is correctly declared as a
+        # required source artifact, while the separate entrypoint obligation
+        # binds that path to PM-owned command authority.  Artifact role wording
+        # must not decide whether an otherwise exact entrypoint survives.
+        assert requirements["obligations"]["artifacts"][0]["semantic_role"] == "source"
+        entrypoint_row = requirements["obligations"]["entrypoints"][0]
+        entrypoint_row["command"] = "python src/main.py --example model-wording"
+
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-normalize-entrypoint-command",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-normalize-entrypoint-command",
+                ),
+                llm_blueprint={
+                    "construction_plan": {"implementation": ["Build the application"]},
+                    "project_completion_contract": requirements,
+                },
+            )
+        )
+
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        assert len(completion.obligations.entrypoints) == 1
+        assert completion.obligations.entrypoints[0].source_path == "src/main.py"
+        assert completion.obligations.entrypoints[0].command == "python -m src.main"
+        entrypoint_verifier = next(
+            item for item in completion.obligations.verification if item.modality == "entrypoint"
+        )
+        expected = _command_authority("TASK-A", "entrypoint", ("python", "-m", "src.main"))
+        assert entrypoint_verifier.command == expected.command
+        assert entrypoint_verifier.command_authority_hash == expected.authority_hash
 
     def test_compiled_runtime_entrypoint_derives_from_pm_owned_source(self, tmp_path: Path) -> None:
         """Compiled output need not be a PM source target when source and command authority are exact."""

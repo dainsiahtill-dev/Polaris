@@ -16,7 +16,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
-from polaris.infrastructure.messaging.nats.client import NATSClient
+from polaris.infrastructure.messaging.nats.client import NATSClient, NATSPayloadTooLargeError
 from polaris.infrastructure.messaging.nats.nats_types import JetStreamConstants
 
 logger = logging.getLogger(__name__)
@@ -163,6 +163,14 @@ class JetStreamPublisher:
                 if published:
                     return
                 last_error = RuntimeError("publish returned False")
+            except NATSPayloadTooLargeError as exc:
+                logger.error(
+                    "P0: JetStream publish rejected deterministic oversized payload; "
+                    "subject=%s error=%s",
+                    request.subject,
+                    exc,
+                )
+                return
             except (RuntimeError, ValueError) as exc:
                 last_error = exc
                 logger.warning(

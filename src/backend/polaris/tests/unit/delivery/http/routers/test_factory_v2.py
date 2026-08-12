@@ -1251,6 +1251,45 @@ async def test_control_factory_run_retry_phase(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_control_factory_run_retry_planning_resumes_failed_ce_stage(client: AsyncClient) -> None:
+    """A CE-only failure must reuse the valid PM contract instead of restarting PM."""
+    run = _make_factory_run(
+        run_id="factory_abc",
+        status="failed",
+        stages=["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
+        metadata={
+            "current_stage": "chief_engineer_review",
+            "last_failed_stage": "chief_engineer_review",
+        },
+    )
+    run.stages_completed = ["pm_planning"]
+    run.stages_failed = ["chief_engineer_review"]
+    recovered = _make_factory_run(run_id="factory_abc", status="recovering")
+
+    with (
+        patch("polaris.delivery.http.routers.factory.FactoryRunService") as mock_svc_cls,
+        patch("polaris.delivery.http.routers.factory._schedule_factory_run_task") as schedule_run_mock,
+    ):
+        mock_svc = MagicMock()
+        mock_svc_cls.return_value = mock_svc
+        mock_svc.get_run = AsyncMock(return_value=run)
+        mock_svc.retry_run_from_stage = AsyncMock(return_value=recovered)
+
+        response = await client.post(
+            "/v2/factory/runs/factory_abc/control",
+            json={"action": "retry_phase", "target_phase": "planning", "reason": "rerun CE only"},
+        )
+
+        assert response.status_code == 200
+        mock_svc.retry_run_from_stage.assert_awaited_once_with(
+            "factory_abc",
+            "chief_engineer_review",
+            "rerun CE only",
+        )
+        schedule_run_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_control_factory_run_retry_phase_rejects_unconfigured_phase(client: AsyncClient) -> None:
     """POST /v2/factory/runs/{run_id}/control rejects phases outside the run stage graph."""
     run = _make_factory_run(run_id="factory_abc", status="failed", stages=["pm_planning"])

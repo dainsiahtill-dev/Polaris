@@ -5378,7 +5378,8 @@ class TestBuildDirectorMessage:
         )
 
         assert "- blueprint_id: bp-L1-01-contract" in msg
-        assert "- handoff_ready: yes" in msg
+        assert "- handoff_ready: no" in msg
+        assert "project completion contract is missing from Chief Engineer blueprint" in msg
         assert "- blueprint target_files: src/engine/SimulationEngine.ts" in msg
         assert "tests/behavior.test.ts" in msg
         assert "- blueprint required test targets: tests/behavior.test.ts" in msg
@@ -5623,6 +5624,78 @@ class TestDirectorFailureClosure:
         assert projection is not None
         assert projection["task_id"] == "TASK-1"
 
+    def test_receipt_bound_preflight_appends_completed_task_boundary(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """No-provider retry must supersede an older mutation-bypass verdict."""
+
+        paths = ["tests/product.test.js", "tests/test_product.py", "README.md"]
+        for path in paths:
+            target = tmp_path / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(f"verified {path}\n", encoding="utf-8")
+        appended: list[Any] = []
+        lifecycle_appended: list[Any] = []
+        monkeypatch.setattr(execute_method_module, "append_run_ledger_event", appended.append)
+        monkeypatch.setattr(
+            execute_method_module,
+            "append_tool_call_lifecycle_event",
+            lifecycle_appended.append,
+        )
+        refs = [f"receipt://{index}" for index in range(3)]
+
+        verdict = execute_method_module._append_receipt_bound_preflight_task_boundary(
+            SimpleNamespace(workspace=str(tmp_path)),
+            context={
+                "metadata": {
+                    "task_completion_projection": {
+                        "schema_version": "polaris.task_completion_projection.v1",
+                        "task_id": "TASK-2",
+                        "project_id": "L1-02",
+                        "run_id": "factory-run-1",
+                        "project_contract_hash": "c" * 64,
+                        "owned_artifacts": [
+                            {
+                                "applicability": "required",
+                                "obligation_id": f"artifact-{index}",
+                                "owner_task_id": "TASK-2",
+                                "path": path,
+                            }
+                            for index, path in enumerate(paths)
+                        ],
+                    }
+                }
+            },
+            target_task_id="16",
+            run_id="director-retry-1",
+            finalize_result={"identity": {"external_task_id": "TASK-2"}},
+            receipt_evidence={
+                "schema_version": "polaris.current_task_project_artifact_receipt_evidence.v1",
+                "authority": "runtime.execution_broker.project_artifact_receipt.v1",
+                "ok": True,
+                "required_artifact_count": 3,
+                "receipt_count": 3,
+                "receipt_paths": paths,
+                "receipt_refs": refs,
+            },
+        )
+
+        assert verdict["status"] == "completed_verified"
+        assert verdict["task_id"] == "TASK-2"
+        assert verdict["evidence_refs"] == refs
+        assert len(lifecycle_appended) == 1
+        lifecycle = lifecycle_appended[0].lifecycle_receipt
+        assert lifecycle["ok"] is True
+        assert lifecycle["dispatch_status"] == "verified_existing_artifacts"
+        assert lifecycle["dispatched_tool_calls_count"] == 0
+        assert [item["receipt_ref"] for item in lifecycle["effect_receipt_refs"]] == refs
+        assert len(appended) == 1
+        event = appended[0].event
+        assert event["task_boundary_verdict"]["status"] == "completed_verified"
+        assert event["job_token"]["project_id"] == "L1-02"
+
     def test_cross_task_completion_projection_settles_failed_without_leaking_lease(
         self,
         tmp_path: Path,
@@ -5774,6 +5847,80 @@ class TestDirectorFailureClosure:
                 "receipt_ref": "execution-broker://project-verification/artifact/" + "b" * 64,
             }
         ]
+
+    def test_retry_row_identity_records_receipt_by_immutable_external_task_id(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """A retried local row id must not replace its PM/CE contract identity."""
+
+        artifact_path = tmp_path / "src" / "main.py"
+        artifact_path.parent.mkdir(parents=True)
+        artifact_path.write_text("print('ok')\n", encoding="utf-8")
+        recorded_owner_ids: list[str] = []
+        execution_attempt = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=str(tmp_path),
+            task_id=6,
+            external_task_id="TASK-1",
+            session_id="session-retry-1",
+            attempt=1,
+            role_id="director",
+            worker_id="director-worker",
+            run_id="director-run-retry-1",
+            lease_expires_at="2030-01-01T00:00:00+00:00",
+        )
+
+        def record_project_artifact(command: Any) -> Any:
+            recorded_owner_ids.append(command.owner_task_id)
+            return SimpleNamespace(
+                project_id=command.project_id,
+                run_id=command.run_id,
+                completion_contract_hash=command.completion_contract_hash,
+                obligation_id=command.obligation_id,
+                owner_task_id=command.owner_task_id,
+                path=command.path,
+                artifact_hash="a" * 64,
+                receipt_hash="b" * 64,
+                receipt_ref="execution-broker://project-verification/artifact/" + "b" * 64,
+            )
+
+        monkeypatch.setattr(execute_method_module, "record_project_artifact", record_project_artifact)
+        authority = create_task_runtime_execution_attempt_authority(
+            execution_attempt,
+            settle=lambda command: TaskRuntimeExecutionAttemptSettlementVerdictV1(
+                success=True,
+                code="settled",
+                workspace=command.workspace,
+                identity=command.identity,
+                outcome=command.outcome,
+            ),
+        )
+
+        result = _finalize_claimed_execution(
+            SimpleNamespace(workspace=str(tmp_path)),
+            target_task_id="6",
+            authority=authority,
+            outcome="completed",
+            result_summary="done",
+            task_completion_projection={
+                "schema_version": "polaris.task_completion_projection.v1",
+                "project_id": "project-1",
+                "run_id": "factory-run-1",
+                "project_contract_hash": "c" * 64,
+                "task_id": "TASK-1",
+                "owned_artifacts": [
+                    {
+                        "obligation_id": "artifact-main",
+                        "owner_task_id": "TASK-1",
+                        "path": "src/main.py",
+                    }
+                ],
+            },
+        )
+
+        assert result["success"] is True
+        assert recorded_owner_ids == ["TASK-1"]
 
     def test_artifact_receipt_failure_settles_task_failed_without_leaking_lease(
         self,
@@ -9147,6 +9294,21 @@ class TestExistingWorkspaceTaskEvidence:
             is False
         )
 
+    def test_current_project_artifact_receipts_authorize_retry_without_noop_write(self) -> None:
+        assert (
+            _can_accept_existing_workspace_scope(
+                task={
+                    "subject": "Complete verification artifacts",
+                    "phase": "implementation",
+                    "target_files": ["tests/product.test.js", "README.md"],
+                },
+                requires_fresh_materialization=True,
+                write_tool_evidence=False,
+                project_artifact_receipt_evidence=True,
+            )
+            is True
+        )
+
 
 class TestDeterministicPythonRuntimeSmokeLongRunningBoundary:
     """Runtime smoke is deferred to the authoritative Director command port.
@@ -11582,9 +11744,7 @@ def test_materialization_typescript_runtime_repair_loads_html_entrypoint_without
     )
 
     assert "index.html" in captured["base_files"]
-    assert captured["base_files"]["index.html"] == (
-        '<script type="module" src="./src/web.ts"></script>\n'
-    )
+    assert captured["base_files"]["index.html"] == ('<script type="module" src="./src/web.ts"></script>\n')
 
 
 def test_runtime_dependency_repair_authorizes_missing_tsconfig_creation(tmp_path: Path) -> None:
@@ -11649,8 +11809,8 @@ def test_materialization_html_entrypoint_schedule_plans_physical_edit_without_ll
     )
 
     assert any(item.get("success") and item.get("result", {}).get("file") == "index.html" for item in projected)
-    assert './dist/web.js' in (tmp_path / "index.html").read_text(encoding="utf-8")
-    assert './src/web.ts' not in (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "./dist/web.js" in (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "./src/web.ts" not in (tmp_path / "index.html").read_text(encoding="utf-8")
 
 
 def test_html_module_script_quality_error_identifies_existing_entrypoint_fallback_target(tmp_path: Path) -> None:
@@ -11718,7 +11878,9 @@ async def test_existing_html_quality_fallback_requires_edit_not_read_or_command(
         '<script type="module" src="./src/web.ts"></script>\n',
         encoding="utf-8",
     )
-    monkeypatch.setattr(quality_gate, "_run_materialization_quality_public_boundary", lambda *_args, **_kwargs: ([], {}))
+    monkeypatch.setattr(
+        quality_gate, "_run_materialization_quality_public_boundary", lambda *_args, **_kwargs: ([], {})
+    )
     adapter = _Adapter()
 
     await quality_gate._run_materialization_quality_repair_retry(
@@ -11739,8 +11901,7 @@ async def test_existing_html_quality_fallback_requires_edit_not_read_or_command(
     repair = adapter.repair_context["director_quality_repair"]
     assert repair["repair_target_files"] == ["index.html"]
     forced_names = [
-        item["function"]["name"]
-        for item in adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
+        item["function"]["name"] for item in adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
     ]
     assert "read_file" not in forced_names
     assert set(forced_names) == {"edit_file", "write_file", "execute_command"}
@@ -11880,7 +12041,7 @@ class TestQualityRepairMissingTargetContract:
         assert not (tmp_path / "src" / "router.tsx").exists()
 
     @pytest.mark.asyncio
-    async def test_quality_repair_uses_deterministic_typescript_semantic_repair_before_llm(
+    async def test_quality_repair_does_not_invent_missing_typescript_export(
         self,
         tmp_path: Any,
         monkeypatch: pytest.MonkeyPatch,
@@ -11906,6 +12067,8 @@ class TestQualityRepairMissingTargetContract:
                 del content, target_task_id, update_task_progress
                 return []
 
+        llm_calls: list[dict[str, Any]] = []
+
         class _Adapter:
             workspace = str(tmp_path)
             _execution = _Execution()
@@ -11919,8 +12082,9 @@ class TestQualityRepairMissingTargetContract:
                 timeout_seconds: float,
                 stage_label: str,
             ) -> dict[str, Any]:
-                del message, context, timeout_seconds, stage_label
-                raise AssertionError("deterministic semantic repair should run before LLM repair")
+                del timeout_seconds, stage_label
+                llm_calls.append({"message": message, "context": context})
+                return {"content": ""}
 
         (tmp_path / "src").mkdir()
         (tmp_path / "tests").mkdir()
@@ -11946,17 +12110,14 @@ class TestQualityRepairMissingTargetContract:
             changed_files=["src/verify.ts", "tests/verify.test.ts"],
         )
 
-        assert len(tool_results) == 1
-        repair_payload = tool_results[0]["result"]
-        assert repair_payload["source_tool"] == "deterministic_typescript_missing_export_repair"
-        assert repair_payload["file"] == "src/verify.ts"
-        assert repair_payload["repair_kernel"]["owner_cell"] == "director.runtime"
-        assert repair_payload["repair_kernel"]["status"] == "applied"
-        assert summary["stage"] == "deterministic_materialization_quality_repair"
-        assert summary["success_reason"] == "repair_actions_require_quality_gate_rerun"
-        assert summary["write_tool_evidence"] is True
+        assert tool_results == []
+        assert llm_calls == []
+        assert summary["stage"] == "runtime_plan_probe_unplannable"
+        assert summary["success_reason"] == "task_boundary_interface_discrepancy_required"
+        assert summary["interface_discrepancy_evidence"]["covered_unplannable"] is True
+        assert summary["write_tool_evidence"] is False
         repaired = (tmp_path / "src" / "verify.ts").read_text(encoding="utf-8")
-        assert "runVerification" in repaired
+        assert repaired == "export const verify = () => true;\n"
 
     @pytest.mark.asyncio
     async def test_quality_repair_interface_discrepancy_retry_requires_final_request_evidence(
@@ -14236,7 +14397,7 @@ class TestQualityRepairMissingTargetContract:
         forced_defs = adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
         forced_names = [item["function"]["name"] for item in forced_defs]
         assert forced_names == ["edit_file", "write_file", "execute_command"]
-        assert adapter.repair_context["metadata"]["tool_contract"]["required_tools"] == ["execute_command"]
+        assert adapter.repair_context["metadata"]["tool_contract"]["required_tools"] == ["edit_file"]
         assert "_transaction_kernel_forced_tool_choice" not in adapter.repair_context
         assert "_transaction_kernel_force_exact_tools" not in adapter.repair_context
         assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["models/exhibit.go"]
@@ -15774,6 +15935,133 @@ class TestQualityRepairMissingTargetContract:
         assert "src/models/weather.py" not in adapter.repair_message
         assert adapter._execution.allowed_tool_names == {"edit_file", "execute_command", "write_file"}
         assert adapter._execution.allow_patch_fallback is True
+
+    @pytest.mark.asyncio
+    async def test_tap_failure_repair_targets_implementation_and_carries_structured_failure_context(
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A real TAP assertion must become one same-task source edit request.
+
+        Regression for r46: the verifier had one actionable assertion failure,
+        but deterministic attempt evidence (without a write) suppressed the LLM
+        repair.  This adapter-level boundary proves the surviving repair request
+        identifies the imported implementation, preserves structured failure
+        evidence, and exposes mutation-capable tools.
+        """
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        monkeypatch.delenv("KERNELONE_DIRECTOR_REPAIR_FORCE_EXISTING_WRITE", raising=False)
+
+        class _Execution:
+            def __init__(self) -> None:
+                self.allowed_tool_names: set[str] | None = None
+
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                del result
+                return []
+
+            async def execute_tools(
+                self,
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **kwargs: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                self.allowed_tool_names = kwargs.get("allowed_tool_names")
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self._execution = _Execution()
+                self.repair_context: dict[str, Any] = {}
+                self.repair_message = ""
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del timeout_seconds, stage_label
+                self.repair_context = context
+                self.repair_message = message
+                return {"content": ""}
+
+        source = tmp_path / "src" / "dream.js"
+        source.parent.mkdir(parents=True)
+        source.write_text(
+            "export function extractDreamKeywords(text) { return text.split(/\\s+/); }\n",
+            encoding="utf-8",
+        )
+        test_file = tmp_path / "tests" / "product.test.js"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text(
+            "import { extractDreamKeywords } from '../src/dream.js';\n",
+            encoding="utf-8",
+        )
+        failure = (
+            "not ok 2 - 正常路径：extractDreamKeywords 提取梦境关键词\n"
+            "  ---\n"
+            f"  location: '{test_file}:46:1'\n"
+            "  failureType: 'testCodeFailure'\n"
+            "  error: |-\n"
+            "    assert.ok(keywords.includes('火焰'))\n"
+            "  code: 'ERR_ASSERTION'\n"
+            "  expected: true\n"
+            "  actual: false\n"
+            "  operator: '=='\n"
+            "  ...\n"
+        )
+
+        adapter = _Adapter()
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["src/dream.js"]},
+            target_task_id="TASK-1-source-core",
+            run_id="run-tap-semantic-repair",
+            context={},
+            original_message="Implement dream keyword extraction.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[failure],
+            changed_files=["src/dream.js", "tests/product.test.js"],
+        )
+
+        assert summary["explicit_quality_target_files"] == [
+            "src/dream.js",
+            "tests/product.test.js",
+        ]
+        assert summary["repair_target_files"] == ["src/dream.js"]
+        assert adapter.repair_context["repair_target_files"] == ["src/dream.js"]
+        failure_errors = adapter.repair_context["failed_gate_evidence"]["quality_errors"]
+        workspace_errors = adapter.repair_context["workspace_quality_evidence"]["quality_errors"]
+        assert len(failure_errors) == 1
+        assert len(workspace_errors) == 1
+        assert "火焰" in failure_errors[0]
+        forced_tools = {
+            item["function"]["name"] for item in adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
+        }
+        assert forced_tools == {"edit_file"}
+        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
+            "type": "function",
+            "function": {"name": "edit_file"},
+        }
+        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
+        assert adapter.repair_context["metadata"]["tool_contract"]["required_tools"] == ["edit_file"]
+        assert adapter.repair_context["metadata"]["tool_contract"]["mutation_required"] is True
+        assert adapter._execution.allowed_tool_names == {"edit_file"}
+        assert "CURRENT UTF-8 CONTENT" in adapter.repair_message
+        assert "assert.ok(keywords.includes('火焰'))" in adapter.repair_message
 
     @pytest.mark.asyncio
     async def test_semantic_quality_single_changed_file_repair_forces_write_context(self, tmp_path) -> None:

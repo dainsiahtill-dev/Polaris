@@ -504,6 +504,12 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
                 "stdout_tail": stdout,
                 "stderr_tail": stderr,
             }
+            if not bool(result["passed"]):
+                diagnostic_excerpt = helpers.trim_command_output(
+                    "\n".join(part for part in (completed.stdout, completed.stderr) if part)
+                )
+                if diagnostic_excerpt:
+                    result["diagnostic_excerpt"] = diagnostic_excerpt
             if cargo_test:
                 result.update(
                     {
@@ -530,6 +536,11 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
                 "stdout_tail": helpers.trim_command_output(str(exc.stdout or "")),
                 "stderr_tail": helpers.trim_command_output(str(exc.stderr or "")),
             }
+            diagnostic_excerpt = helpers.trim_command_output(
+                "\n".join(str(part or "") for part in (exc.stdout, exc.stderr) if part)
+            )
+            if diagnostic_excerpt:
+                result["diagnostic_excerpt"] = diagnostic_excerpt
             if cargo_test:
                 result.update(
                     {

@@ -1,6 +1,6 @@
 # ADR-0101: Durable Project-Completion Actions Use TaskRuntime Authority
 
-- 状态: Implemented; restart integration complete; fresh Bench verification pending
+- 状态: Implemented; restart integration complete; fresh isolated L1-01 verified
 - 日期: 2026-08-09
 - 关联: ADR-0097, ADR-0100
 
@@ -51,7 +51,12 @@ TaskMarket work item。使用 TaskMarket 会增加不可达的第二生命周期
 - workflow orchestration 与 TaskRuntime 增加 typed public contract，需要同步 graph/catalog 和测试。
 - backend lifespan-owned driver 已恢复 live/recovering runs 与 pending local-rework
   actions；真实 backend process restart 已验证旧 epoch 关闭、新 epoch 续跑且无需新
-  HTTP 请求。尚需 fresh isolated `COMPLETED_VERIFIED` 才能宣称无人值守闭环。
+  HTTP 请求。
+- 2026-08-12 的 fresh isolated L1-01 r44 已达到 `COMPLETED_VERIFIED`。Task 3
+  在 TS6133 后保持 exact Director task ownership，完成局部 repair、affected verifier
+  复跑与 settlement，未重启 PM/CE。该证据只关闭“至少一个项目”的验收项；平台级
+  就绪仍需顺序推进后续项目与 N-batch 无新通用根因证据。完整记录见
+  `../UNATTENDED_COMPLETION_FIRST_PROOF_20260812.md`。
 
 ## 验收
 

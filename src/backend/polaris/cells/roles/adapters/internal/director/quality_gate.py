@@ -2053,7 +2053,7 @@ def _materialization_quality_task_id(task: dict[str, Any], context: dict[str, An
 def _execute_method_artifact_quality_scanner_is_default() -> bool:
     scanner = getattr(_em, "scan_workspace_artifact_quality", None)
     return (
-        getattr(scanner, "__module__", "") == "polaris.kernelone.quality.artifact_quality"
+        str(getattr(scanner, "__module__", "")).startswith("polaris.kernelone.quality.artifact_quality")
         and getattr(scanner, "__name__", "") == "scan_workspace_artifact_quality"
     )
 
@@ -2766,6 +2766,11 @@ async def _run_materialization_quality_repair_retry(
         repair_context["metadata"] = repair_metadata
     repair_metadata["delivery_mode"] = "materialize_changes"
     repair_metadata["task_id"] = target_task_id
+    tap_assertion_requires_edit = bool(
+        existing_repair_target_files
+        and not missing_repair_target_files
+        and any(_TAP_FAILED_TEST_RE.search(str(error or "")) for error in prompt_artifact_quality_errors)
+    )
     if repair_target_files:
         if missing_repair_target_files and not existing_repair_target_files:
             # Missing-file repair is creation, so keep the historically narrow
@@ -2780,6 +2785,29 @@ async def _run_materialization_quality_repair_retry(
                 _quality_repair_write_file_tool_definition()
             ]
             repair_context["_transaction_kernel_force_exact_tools"] = True
+        elif tap_assertion_requires_edit:
+            # A verifier assertion against existing code is a mutation task,
+            # not another exploration turn.  r46 exposed the full TAP failure
+            # and current source bodies but the auto tool surface still let the
+            # model read/run commands without editing; two no-op rounds then
+            # tripped stagnation.  Force the smallest authoritative effect.
+            # The prompt already carries the current UTF-8 bodies, so an exact
+            # edit_file SEARCH/REPLACE can be emitted without a discovery call.
+            repair_context["_transaction_kernel_forced_tool_definitions"] = [
+                _quality_repair_edit_file_tool_definition(),
+            ]
+            repair_context["_transaction_kernel_forced_tool_choice"] = {
+                "type": "function",
+                "function": {"name": "edit_file"},
+            }
+            repair_context["_transaction_kernel_force_exact_tools"] = True
+            repair_metadata["tool_contract"] = {
+                **dict(repair_metadata.get("tool_contract") or {}),
+                "required_tools": ["edit_file"],
+                "mutation_required": True,
+                "mutation_reason": "verifier_test_failure",
+            }
+            repair_context["director_quality_repair"]["edit_preferred_target_files"] = existing_repair_target_files[:12]
         elif _director_repair_force_existing_write_enabled():
             # Existing-file repair must MUTATE, not explore. Auto tool_choice plus an
             # available execute_command let weak models run a command or return empty
@@ -2882,6 +2910,9 @@ async def _run_materialization_quality_repair_retry(
         allow_patch_fallback = True
         if repair_target_files and not existing_repair_target_files:
             allowed_tool_names = {"write_file"}
+            allow_patch_fallback = False
+        elif tap_assertion_requires_edit:
+            allowed_tool_names = {"edit_file"}
             allow_patch_fallback = False
         elif repair_target_files:
             allowed_tool_names = {"edit_file", "write_file", "execute_command"}
@@ -6332,18 +6363,20 @@ def _can_accept_existing_workspace_scope(
     task: dict[str, Any],
     requires_fresh_materialization: bool,
     write_tool_evidence: bool,
+    project_artifact_receipt_evidence: bool = False,
 ) -> bool:
     """Return whether authoritative evidence permits a no-diff completion.
 
     Provider prose and provider availability never authorize completion. A
     task requiring fresh materialization must carry successful write-tool
-    evidence.  Merely labelling a task as verification over declared existing
-    targets is not execution evidence and must not bypass the normal
-    verifier/receipt path.
+    evidence from this attempt OR byte-current ProjectArtifactReceiptV1 proof
+    from an earlier attempt of the same project/run/contract/task. Merely
+    labelling a task as verification over declared existing targets is not
+    execution evidence and must not bypass the normal verifier/receipt path.
     """
     if not requires_fresh_materialization:
         return True
-    return bool(write_tool_evidence)
+    return bool(write_tool_evidence or project_artifact_receipt_evidence)
 
 
 def _director_direct_text_patch_only_enabled(context: dict[str, Any]) -> bool:

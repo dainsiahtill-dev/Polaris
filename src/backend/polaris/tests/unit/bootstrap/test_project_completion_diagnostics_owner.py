@@ -189,6 +189,19 @@ def _ledger(contract: ProjectCompletionContractV1) -> RunLedgerProjectionResultV
                     "job_token_ids": ["job-token-1"],
                     "latest_token_id": "job-token-1",
                 },
+                "execution_capability_by_task": {
+                    task_id: {
+                        "ok": True,
+                        "issues": [],
+                        "latest_contract_hash": "c" * 64,
+                        "latest_blueprint_hash": "d" * 64,
+                        "job_token_ids": ["job-token-1"],
+                        "latest_token_id": "job-token-1",
+                        "stage": "pending_exec",
+                        "task_id": task_id,
+                    }
+                    for task_id in ("task-1", "task-2")
+                },
                 "evidence_policy": {
                     "enabled_modalities": ["command"],
                     "required_modalities": ["command"],
@@ -314,6 +327,44 @@ def test_exact_owner_artifact_receipt_maps_to_pass_and_drift_returns_missing(
         completion_contract_hash=contract.contract_hash,
     )
     assert all(item.obligation_id != "artifact.main" for item in second.evidence)
+
+
+def test_artifact_authority_ignores_later_global_qa_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = _patch_owners(monkeypatch, tmp_path)
+    ledger = _ledger(contract).projection
+    ledger["run_projection"]["capability"] = {
+        "ok": True,
+        "issues": [],
+        "latest_contract_hash": "e" * 64,
+        "latest_blueprint_hash": "f" * 64,
+        "job_token_ids": ["job-token-1", "qa-token-later"],
+        "latest_token_id": "qa-token-later",
+    }
+    monkeypatch.setattr(
+        adapter_module,
+        "read_run_ledger_projection",
+        lambda query: RunLedgerProjectionResultV1(projection=ledger),
+    )
+    source = tmp_path / "src" / "main.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("print('stable')\n", encoding="utf-8")
+
+    receipt = record_project_artifact(
+        RecordProjectArtifactCommandV1(
+            workspace=str(tmp_path),
+            project_id=contract.project_id,
+            run_id=contract.run_id,
+            completion_contract_hash=contract.contract_hash,
+            obligation_id="artifact.main",
+            owner_task_id="task-1",
+            path="src/main.py",
+        )
+    )
+
+    assert receipt.job_token_id == "job-token-1"
 
 
 def test_nonzero_physical_command_receipt_is_failed_not_missing(

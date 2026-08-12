@@ -267,7 +267,12 @@ class LogEventWriter:
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
         # Serialize with UTF-8
-        line = json.dumps(event.model_dump(), ensure_ascii=False) + "\n"
+        # Runtime payloads may contain typed values such as ``datetime`` in
+        # nested metadata. Pydantic JSON mode is the canonical serialization
+        # boundary; plain ``model_dump()`` leaves those Python objects intact
+        # and makes the async RUNTIME_EVENT subscriber fail after a successful
+        # Provider call.
+        line = json.dumps(event.model_dump(mode="json"), ensure_ascii=False) + "\n"
 
         # Phase B: Use append-only mode to prevent overwriting existing content
         # Lock + append + fsync pattern for durability
@@ -298,6 +303,7 @@ class LogEventWriter:
         if not _jetstream_available and not _ensure_jetstream_support():
             return
         try:
+            serialized_event = event.model_dump(mode="json")
             workspace_key = str(self.workspace_key or "").strip()
             if not workspace_key or workspace_key == "unknown":
                 workspace_key = self._extract_workspace_key()
@@ -322,9 +328,9 @@ class LogEventWriter:
                     "severity": event.severity,
                     "domain": event.domain,
                     "kind": event.kind,
-                    "refs": event.refs,
-                    "tags": event.tags,
-                    "raw": event.raw if event.raw else None,
+                    "refs": serialized_event["refs"],
+                    "tags": serialized_event["tags"],
+                    "raw": serialized_event["raw"] if serialized_event["raw"] else None,
                 },
                 "meta": {
                     "source": "log_pipeline_writer",

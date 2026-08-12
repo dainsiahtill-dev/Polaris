@@ -580,6 +580,78 @@ def test_normalizer_builds_typed_typescript_diagnostic() -> None:
     assert diagnostic.column == 14
 
 
+def test_normalizer_collapses_tap_failure_island_into_one_actionable_diagnostic() -> None:
+    raw = """
+TAP version 13
+# Subtest: 正常路径：extractDreamKeywords 提取梦境关键词
+not ok 2 - 正常路径：extractDreamKeywords 提取梦境关键词
+  ---
+  duration_ms: 1.7
+  type: 'test'
+  location: '/workspace/tests/product.test.js:46:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+
+      assert.ok(keywords.includes('火焰'))
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (file:///workspace/tests/product.test.js:57:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+  ...
+ok 3 - 边界路径：空内容返回空关键词
+1..23
+# tests 23
+# pass 22
+# fail 1
+"""
+
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    assert diagnostic.source == "verifier"
+    assert diagnostic.code == "verifier_test_failure"
+    assert diagnostic.path == "/workspace/tests/product.test.js"
+    assert diagnostic.line == 46
+    assert diagnostic.column == 1
+    assert diagnostic.metadata["framework"] == "tap"
+    assert diagnostic.metadata["test_name"] == "正常路径：extractDreamKeywords 提取梦境关键词"
+    assert diagnostic.metadata["expected"] == "true"
+    assert diagnostic.metadata["actual"] == "false"
+    assert "火焰" in diagnostic.raw
+    assert "# pass 22" not in diagnostic.raw
+
+
+def test_normalizer_does_not_invent_failure_for_passing_tap_output() -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        ["TAP version 13\nok 1 - creates item\n1..1\n# tests 1\n# pass 1\n# fail 0"]
+    )
+
+    assert all(diagnostic.code != "verifier_test_failure" for diagnostic in diagnostics)
+
+
+def test_normalizer_bounds_many_tap_failures_without_losing_audit_cardinality() -> None:
+    raw = "TAP version 13\n" + "".join(
+        f"not ok {index} - failure {index}\n  location: '/workspace/tests/product.test.js:{index}:1'\n"
+        f"  expected: true\n  actual: false\n"
+        for index in range(1, 101)
+    )
+
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    assert len(diagnostics) == 12
+    assert all(item.code == "verifier_test_failure" for item in diagnostics)
+    assert all(item.metadata["total_failure_count"] == 100 for item in diagnostics)
+    assert all(item.metadata["truncated_failure_count"] == 88 for item in diagnostics)
+    assert all(len(str(item.metadata["source_blob_sha256"])) == 64 for item in diagnostics)
+
+
 def test_normalizer_preserves_structured_artifact_quality_issue() -> None:
     diagnostics = normalize_artifact_quality_errors(
         [
@@ -1531,7 +1603,7 @@ def test_javascript_missing_export_typed_cross_artifact_diagnostic_exports_exist
     assert "export function scoreWish(wish)" in repaired
 
 
-def test_javascript_missing_run_export_with_entrypoint_contract_is_plannable() -> None:
+def test_javascript_missing_run_export_without_declaration_is_covered_unplannable() -> None:
     diagnostics = (
         "Artifact quality scan failed: unresolved import symbol 'run' from '../src/index.js' in tests/test_basic.js",
     )
@@ -1554,12 +1626,35 @@ def test_javascript_missing_run_export_with_entrypoint_contract_is_plannable() -
         )
     ).to_dict()
 
-    assert planning["ok"] is True
-    assert planning["planned"] is True
-    assert planning["composition_summary"]["changed_paths"] == ["src/index.js"]
-    repaired = planning["composition_summary"]["patches"][0]["content_after"]
-    assert "export function run(...args)" in repaired
-    assert "return { ok: true, entrypoint };" in repaired
+    assert planning["ok"] is False
+    assert planning["planned"] is False
+    assert planning["composition_summary"]["changed_paths"] == []
+
+
+def test_javascript_assertion_failure_does_not_rewrite_exported_domain_functions() -> None:
+    diagnostics = (
+        "npm test failed: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal: actual 0 expected 1",
+    )
+    base_files = {
+        "src/engine/rules.js": "export function validateDream(value) {\n  return value?.length > 0;\n}\n",
+        "tests/product.test.js": (
+            'import { validateDream } from "../src/engine/rules.js";\n'
+            "assert.equal(validateDream('moon'), true);\n"
+        ),
+    }
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=js_syntax.JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is False
+    assert planning["planned"] is False
+    assert planning["composition_summary"]["patch_count"] == 0
 
 
 def _plan_javascript_missing_export(
@@ -1768,9 +1863,8 @@ def test_javascript_esm_commonjs_entrypoint_repair_preserves_namespace_require_b
     assert "module.exports" not in repaired
 
 
-def test_javascript_missing_export_repair_uses_js_contracts() -> None:
-    repaired = _javascript_missing_export_after(
-        base_files={
+def test_javascript_missing_export_repair_does_not_invent_domain_contracts() -> None:
+    base_files = {
             "src/index.js": "console.log('dream note app');\n",
             "tests/test_basic.js": (
                 'import { run, refineDreamNotes } from "../src/index.js";\n'
@@ -1781,22 +1875,26 @@ def test_javascript_missing_export_repair_uses_js_contracts() -> None:
                 "assert.equal(output.ok, true);\n"
                 "assert.match(output.entrypoint, /src[\\\\/]+index\\.js$/);\n"
             ),
-        },
-        diagnostics=(
+        }
+    diagnostics = (
             "Artifact quality scan failed: unresolved import symbol 'refineDreamNotes' "
             "from '../src/index.js' in tests/test_basic.js",
             "Artifact quality scan failed: unresolved import symbol 'run' "
             "from '../src/index.js' in tests/test_basic.js",
-        ),
-    )
+        )
 
-    assert "export function refineDreamNotes(...args)" in repaired
-    assert '"[提炼] " + note.trim()' in repaired
-    assert "return { count: distilled.length, distilled };" in repaired
-    assert "export function run(...args)" in repaired
-    assert "return { ok: true, entrypoint };" in repaired
-    assert ": unknown" not in repaired
-    assert "): any" not in repaired
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=js_syntax.JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is False
+    assert planning["planned"] is False
+    assert planning["composition_summary"]["patch_count"] == 0
 
 
 def test_javascript_missing_export_repair_turns_iterable_method_into_constant() -> None:
@@ -1823,8 +1921,8 @@ def test_javascript_missing_export_repair_turns_iterable_method_into_constant() 
     assert "export class AlchemyEngine" in repaired
 
 
-def test_javascript_export_contract_repair_replaces_wrong_existing_function() -> None:
-    repaired = _javascript_missing_export_after(
+def test_javascript_assertion_does_not_replace_wrong_existing_function() -> None:
+    planning = _plan_javascript_missing_export(
         base_files={
             "src/index.js": (
                 "export function refineDreamNotes(cards) {\n"
@@ -1848,14 +1946,13 @@ def test_javascript_export_contract_repair_replaces_wrong_existing_function() ->
         ),
     )
 
-    assert "export function refineDreamNotes(...args)" in repaired
-    assert "const values = args" in repaired
-    assert 'summary: values.join(" | ")' in repaired
-    assert "if (!Array.isArray(cards)) return [];" not in repaired
+    assert planning["ok"] is False
+    assert planning["planned"] is False
+    assert planning["composition_summary"]["patch_count"] == 0
 
 
-def test_javascript_export_contract_repair_supports_prefixed_text_and_semver() -> None:
-    repaired = _javascript_missing_export_after(
+def test_javascript_assertion_does_not_invent_prefixed_text_and_semver() -> None:
+    planning = _plan_javascript_missing_export(
         base_files={
             "package.json": '{"version":"0.2.0"}\n',
             "src/index.js": (
@@ -1887,15 +1984,13 @@ def test_javascript_export_contract_repair_supports_prefixed_text_and_semver() -
         ),
     )
 
-    assert "function refineDreamNotes(...args)" in repaired
-    assert 'throw new TypeError("Expected a string input");' in repaired
-    assert '"[dream] " + line' in repaired
-    assert "return VERSION;" in repaired
-    assert 'export const VERSION = "0.2.0";' in repaired
+    assert planning["ok"] is False
+    assert planning["planned"] is False
+    assert planning["composition_summary"]["patch_count"] == 0
 
 
-def test_javascript_export_contract_repair_supports_app_metadata() -> None:
-    repaired = _javascript_missing_export_after(
+def test_javascript_missing_export_does_not_invent_app_metadata() -> None:
+    planning = _plan_javascript_missing_export(
         base_files={
             "package.json": (
                 '{"name":"dream-note-alchemy-furnace","version":"0.1.0","description":"Dream note alchemy CLI"}\n'
@@ -1927,16 +2022,13 @@ def test_javascript_export_contract_repair_supports_app_metadata() -> None:
         ),
     )
 
-    assert 'export const APP_NAME = "dream-note-alchemy-furnace";' in repaired
-    assert 'export const APP_VERSION = "0.1.0";' in repaired
-    assert 'export const APP_DESCRIPTION = "Dream note alchemy CLI";' in repaired
-    assert "name: APP_NAME" in repaired
-    assert "version: APP_VERSION" in repaired
-    assert "description: APP_DESCRIPTION" in repaired
+    assert planning["ok"] is False
+    assert planning["planned"] is False
+    assert planning["composition_summary"]["patch_count"] == 0
 
 
-def test_javascript_export_contract_repair_uses_asserted_literal_and_note_shape() -> None:
-    repaired = _javascript_missing_export_after(
+def test_javascript_missing_export_does_not_invent_asserted_literal_or_note_shape() -> None:
+    planning = _plan_javascript_missing_export(
         base_files={
             "package.json": '{"name":"dream-note-alchemy-furnace","version":"0.1.0"}\n',
             "src/index.js": "export function main() {\n  return true;\n}\n",
@@ -1965,11 +2057,9 @@ def test_javascript_export_contract_repair_uses_asserted_literal_and_note_shape(
         ),
     )
 
-    assert 'export const ALCHEMY_FURNACE = "dream-note-alchemy-furnace";' in repaired
-    assert "export function refineDreamNote(...args)" in repaired
-    assert 'const source = typeof args[0] === "string" ? args[0] : "";' in repaired
-    assert "const refined = source.trim();" in repaired
-    assert 'tag: refined.length > 0 ? "dream-fragment" : "empty"' in repaired
+    assert planning["ok"] is False
+    assert planning["planned"] is False
+    assert planning["composition_summary"]["patch_count"] == 0
 
 
 def test_repair_rule_registry_rejects_duplicate_rule_ids_and_unknown_source_tool() -> None:
@@ -7753,8 +7843,8 @@ def test_public_typescript_arg_type_function_alias_rewrites_humidity_to_hydratio
     assert "import { adjustHumidity }" not in after
 
 
-def test_public_typescript_json_as_source_seeds_vitest_smoke_for_bare_test_script() -> None:
-    """L1-01 r161: package.json scripts.test is bare ``vitest run`` with no tests/."""
+def test_public_typescript_json_as_source_does_not_invent_vitest_smoke() -> None:
+    """Missing tests stay owned by their declared PM/CE task, not M10."""
 
     real_package = (
         "{\n"
@@ -7780,21 +7870,14 @@ def test_public_typescript_json_as_source_seeds_vitest_smoke_for_bare_test_scrip
             mode="shadow",
         )
     ).to_dict()
-    assert planning["ok"] is True
-    assert planning["planned"] is True
-    patches = planning["composition_summary"]["patches"]
-    by_path = {str(patch.get("path") or ""): patch for patch in patches}
-    assert "tests/verify.test.ts" in by_path
-    test_after = str(by_path["tests/verify.test.ts"].get("content_after") or "")
-    assert 'from "vitest"' in test_after
-    assert "package.json" in test_after
-    assert "expect(" in test_after
+    assert planning["ok"] is False
+    assert planning["planned"] is False
 
 
-def test_public_typescript_json_as_source_rewrites_package_manifest_and_adds_smoke_test() -> None:
+def test_public_typescript_json_as_source_rewrites_only_proven_misplaced_manifest() -> None:
     """L1-01 r159: package.json body written into src/verify.ts blocks tsc (TS1005).
 
-    Also package.json scripts.test points at tests/*.test.ts with no test files.
+    Missing test artifacts remain outside this source tool's authority.
     """
 
     diagnostic = "src/verify.ts(1,8): error TS1005: ';' expected."
@@ -7855,10 +7938,7 @@ def test_public_typescript_json_as_source_rewrites_package_manifest_and_adds_smo
     verify_after = str(by_path["src/verify.ts"].get("content_after") or "")
     assert '"scripts"' not in verify_after
     assert "export function runVerification" in verify_after
-    assert "tests/verify.test.ts" in by_path
-    test_after = str(by_path["tests/verify.test.ts"].get("content_after") or "")
-    assert "node:test" in test_after
-    assert "package.json" in test_after
+    assert "tests/verify.test.ts" not in by_path
 
 
 def test_public_typescript_readonly_assignment_mutates_readonly_array_fields() -> None:
@@ -9426,7 +9506,13 @@ def test_typescript_unused_parameter_repairs_ts6133_without_unused_import_misrou
 
     coverage_payload = coverage.to_dict()
     assert coverage_payload["covered_diagnostic_count"] == 1
-    assert coverage_payload["items"][0]["matched_rule_ids"] == ["typescript.unused_parameter"]
+    # TS6133 alone cannot distinguish a local from a parameter without the
+    # source line. Coverage therefore reports both safe candidates; the
+    # source-aware planner below must select the parameter repair.
+    assert coverage_payload["items"][0]["matched_rule_ids"] == [
+        "typescript.unused_local",
+        "typescript.unused_parameter",
+    ]
     assert planning["ok"] is True
     assert planning["planned"] is True
     assert planning["plan_summary"]["rule_id"] == "typescript.unused_parameter"

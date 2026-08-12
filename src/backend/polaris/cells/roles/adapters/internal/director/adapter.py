@@ -52,6 +52,7 @@ from .dependency_artifact_evidence import (
     TrustedDirectorDependencyArtifactSnapshotV2,
     build_director_dependency_artifact_snapshot,
     project_director_dependency_artifact_snapshot,
+    query_project_artifact_receipt_payload,
 )
 from .dialogue import get_settings_safe
 from .execute_method import execute_director_task
@@ -2328,6 +2329,7 @@ class DirectorAdapter(BaseRoleAdapter):
                 workspace=str(self.workspace),
                 child_task=merged_task,
                 get_task=lambda parent_task_id: self._get_task(parent_task_id),
+                get_project_artifact_receipt=query_project_artifact_receipt_payload,
             )
         except DirectorDependencyArtifactEvidenceError as exc:
             metadata = _copy_mapping_payload(context.get("metadata")) or {}

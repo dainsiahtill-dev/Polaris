@@ -7,6 +7,7 @@ artifact quality error lists.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections.abc import Mapping
@@ -52,6 +53,9 @@ _WORKSPACE_QUALITY_REPAIR_SOURCE_SUFFIXES = frozenset(
     }
 )
 
+_LEDGER_REPAIR_LIST_LIMIT = 24
+_LEDGER_REPAIR_TEXT_LIMIT = 512
+
 
 def _is_workspace_quality_repair_path(path: str) -> bool:
     normalized = os.path.normpath(str(path or "").strip().replace("\\", "/")).replace("\\", "/")
@@ -81,6 +85,14 @@ def _dedupe_workspace_repair_paths(paths: list[str]) -> list[str]:
 
 
 def workspace_quality_repair_result_has_mutation(item: dict[str, Any]) -> bool:
+    """Return true only for a path-bound, non-no-op physical write receipt.
+
+    A successful write-shaped tool row proves dispatch, not mutation.  Quality
+    repair settlement must additionally carry the affected path and the
+    before/after content hashes; otherwise a rejected/no-op ``edit_file`` can
+    incorrectly complete the Director task without changing the workspace.
+    """
+
     if not isinstance(item, dict) or not bool(item.get("success")):
         return False
     raw_result = item.get("result")
@@ -94,11 +106,19 @@ def workspace_quality_repair_result_has_mutation(item: dict[str, Any]) -> bool:
         or ""
     ).strip()
     operation = str(result.get("operation") or "").strip()
-    if tool_name in _WORKSPACE_QUALITY_MUTATION_TOKENS or operation in _WORKSPACE_QUALITY_MUTATION_TOKENS:
-        return True
-    before_hash = str(result.get("before_sha256") or "").strip()
-    after_hash = str(result.get("after_sha256") or "").strip()
-    return bool(before_hash and after_hash and before_hash != after_hash)
+    if tool_name not in _WORKSPACE_QUALITY_MUTATION_TOKENS and operation not in _WORKSPACE_QUALITY_MUTATION_TOKENS:
+        return False
+    file_name = str(result.get("file") or result.get("path") or "").strip()
+    if not _is_workspace_quality_repair_path(file_name):
+        return False
+    before_hash = str(result.get("before_sha256") or result.get("before_hash") or "").strip().lower()
+    after_hash = str(result.get("after_sha256") or result.get("after_hash") or "").strip().lower()
+    valid_hash_tokens = {"file_absent"}
+
+    def valid_hash(value: str) -> bool:
+        return value in valid_hash_tokens or (len(value) == 64 and all(char in "0123456789abcdef" for char in value))
+
+    return bool(valid_hash(before_hash) and valid_hash(after_hash) and before_hash != after_hash)
 
 
 def workspace_quality_repair_evidence(repair_results: list[dict[str, Any]]) -> list[str]:
@@ -357,4 +377,132 @@ def workspace_quality_repair_summary_projection(
                 summary,
                 artifact_quality_errors,
             )
+    return projected
+
+
+def _bounded_ledger_strings(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    return [
+        str(item or "").strip()[:_LEDGER_REPAIR_TEXT_LIMIT]
+        for item in value
+        if str(item or "").strip()
+    ][:_LEDGER_REPAIR_LIST_LIMIT]
+
+
+def _compact_repair_probe(value: Any) -> dict[str, Any]:
+    source = value if isinstance(value, Mapping) else {}
+    projected: dict[str, Any] = {}
+    for key in (
+        "status",
+        "total_diagnostics",
+        "covered_diagnostic_count",
+        "uncovered_diagnostic_count",
+        "executable_runtime_plan_count",
+        "metadata_only_diagnostic_count",
+        "coverage_gap_count",
+        "covered_unplannable_diagnostic_count",
+    ):
+        if key in source:
+            projected[key] = source[key]
+    for key in (
+        "plannable_source_tools",
+        "covered_unplannable_source_tools",
+        "matched_source_tools",
+        "source_tools",
+    ):
+        bounded = _bounded_ledger_strings(source.get(key))
+        if bounded:
+            projected[key] = bounded
+    return projected
+
+
+def _compact_repair_round(value: Any) -> dict[str, Any]:
+    source = value if isinstance(value, Mapping) else {}
+    projected: dict[str, Any] = {}
+    for key in (
+        "round",
+        "attempted",
+        "tool_results",
+        "write_tool_evidence",
+        "verifier_effect",
+        "verifier_authoritative_success",
+        "diagnostic_count_before",
+        "diagnostic_count_after",
+    ):
+        if key in source:
+            projected[key] = source[key]
+    summary = source.get("repair_summary")
+    summary = summary if isinstance(summary, Mapping) else {}
+    summary_projection = {
+        key: summary[key]
+        for key in (
+            "stage",
+            "success",
+            "success_reason",
+            "reason",
+            "error_code",
+            "repair_mode",
+            "success_authority",
+            "verifier_effect",
+            "task_boundary_triage_required",
+        )
+        if key in summary
+    }
+    if summary_projection:
+        projected["repair_summary"] = summary_projection
+    return projected
+
+
+def workspace_quality_repair_ledger_projection(
+    repair: dict[str, Any],
+    *,
+    full_evidence_ref: str,
+) -> dict[str, Any]:
+    """Project full repair evidence into a bounded Run Ledger receipt.
+
+    Full workspace-quality evidence is already durable in
+    ``runtime/qa/workspace-validation.json``.  Re-embedding its nested coverage
+    reports in every Run Ledger event duplicated megabytes of data and then
+    exceeded NATS' 1 MiB transport limit.  Ledger keeps decision-critical
+    scalars plus a content hash/reference; the artifact remains the evidence
+    authority.
+    """
+
+    canonical = json.dumps(repair, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    projected: dict[str, Any] = {
+        "schema_version": "factory.workspace_quality_repair_ledger_projection.v1",
+        "full_evidence_ref": str(full_evidence_ref or "").strip(),
+        "full_evidence_sha256": hashlib.sha256(canonical).hexdigest(),
+        "full_evidence_bytes": len(canonical),
+    }
+    for key in (
+        "attempted",
+        "success",
+        "revalidated",
+        "write_tool_evidence",
+        "tool_results",
+        "residual_error_count",
+        "max_rounds",
+        "consecutive_stagnant_rounds",
+        "convergence_stop_reason",
+        "stage",
+        "error_code",
+        "repair_mode",
+    ):
+        if key in repair:
+            projected[key] = repair[key]
+    for key in ("source_tools", "evidence", "artifact_quality_errors", "residual_errors"):
+        bounded = _bounded_ledger_strings(repair.get(key))
+        if bounded:
+            projected[key] = bounded
+            projected[f"{key}_total"] = len(repair.get(key) or [])
+    for key in ("plan_probe_preaudit", "director_runtime_repair_coverage"):
+        compact = _compact_repair_probe(repair.get(key))
+        if compact:
+            projected[key] = compact
+    rounds = [_compact_repair_round(item) for item in repair.get("rounds", []) if isinstance(item, Mapping)]
+    if rounds:
+        projected["rounds"] = rounds[:_LEDGER_REPAIR_LIST_LIMIT]
+        projected["round_count"] = len(repair.get("rounds") or [])
     return projected

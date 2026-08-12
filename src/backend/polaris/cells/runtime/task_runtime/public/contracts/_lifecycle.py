@@ -562,9 +562,20 @@ class ObservableTaskRowsProjectionV1:
             metadata = row.get("metadata")
             metadata_map = metadata if isinstance(metadata, Mapping) else {}
             workflow_run_id = _workflow_run_id_from_task_row(row)
+            external_task_id = str(
+                row.get("external_task_id")
+                or metadata_map.get("external_task_id")
+                or metadata_map.get("pm_task_id")
+                or metadata_map.get("source_task_id")
+                or ""
+            ).strip()
             projected_rows.append(
                 {
                     "task_id": str(row.get("task_id") or row.get("id") or "").strip(),
+                    # Local numeric row ids change across task-local retries.
+                    # Completion consumers need the immutable PM/CE contract
+                    # identity to correlate the newest attempt without guessing.
+                    "external_task_id": external_task_id,
                     "workflow_run_id": workflow_run_id,
                     "factory_run_id": _factory_run_id_from_task_row(row),
                     "status": str(row.get("status") or "").strip().lower(),

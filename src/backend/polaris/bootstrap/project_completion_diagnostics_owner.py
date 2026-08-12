@@ -532,7 +532,14 @@ class ProjectCompletionOwnerObservationAdapter:
             raise _fail("invalid_project_artifact_run_ledger_type", "Run Ledger returned a lookalike")
         ledger = _mapping(ledger_result.projection, "run_ledger")
         run_projection = _mapping(ledger.get("run_projection"), "run_ledger.run_projection")
-        capability = _mapping(run_projection.get("capability"), "run_ledger.run_projection.capability")
+        capability_by_task = _mapping(
+            run_projection.get("execution_capability_by_task"),
+            "run_ledger.run_projection.execution_capability_by_task",
+        )
+        capability = _mapping(
+            capability_by_task.get(intent.owner_task_id),
+            f"run_ledger.run_projection.execution_capability_by_task[{intent.owner_task_id!r}]",
+        )
         if ledger.get("query_scope") != {
             "run_id": query.run_id,
             "factory_run_id": query.run_id,
@@ -542,7 +549,7 @@ class ProjectCompletionOwnerObservationAdapter:
         token_ids, latest_token_id = _committed_job_token_set(
             capability,
             error_code="project_artifact_capability_not_authoritative",
-            message="Artifact requires a clean committed JobToken set",
+            message="Artifact requires a clean task-local Director JobToken",
         )
         job_token_set_hash = _canonical_hash(
             {"domain": "control_plane.run_ledger.job_token_set.v1", "token_ids": list(token_ids)}
@@ -924,7 +931,7 @@ class ProjectCompletionOwnerObservationAdapter:
             raise _fail("project_completion_run_ledger_scope_mismatch", "Run Ledger scope does not match query")
         run_projection = _mapping(ledger.get("run_projection"), "run_ledger.run_projection")
         capability = _mapping(run_projection.get("capability"), "run_ledger.run_projection.capability")
-        job_token_ids_tuple, latest_token_id = _committed_job_token_set(
+        job_token_ids_tuple, _latest_token_id = _committed_job_token_set(
             capability,
             error_code="project_completion_run_ledger_capability_uncommitted",
             message="Run Ledger capability must bind a clean committed JobToken set",

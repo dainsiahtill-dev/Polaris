@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -112,6 +113,18 @@ _PYTHON_RUNTIME_SMOKE_RE = re.compile(
     r"python runtime smoke (?:crashed|timed out|could not launch) for ['\"](?P<path>[^'\"]+)['\"]",
     re.IGNORECASE,
 )
+_TAP_FAILURE_HEADER_RE = re.compile(
+    r"(?m)^\s*not ok\s+(?P<ordinal>\d+)\s+-\s+(?P<name>.+?)\s*$",
+    re.IGNORECASE,
+)
+_TAP_RESULT_BOUNDARY_RE = re.compile(r"(?m)^\s*(?:not ok|ok)\s+\d+\s+-\s+|^\s*1\.\.\d+\s*$", re.IGNORECASE)
+_TAP_FAILURE_DIAGNOSTIC_LIMIT = 12
+_VERIFIER_LOCATION_RE = re.compile(
+    r"(?P<path>(?:file://)?(?:[A-Za-z]:)?[^\s()'\"]+\.(?:js|mjs|cjs|ts|tsx|jsx|py|go|rs|java|cc|cpp|cxx))"
+    r":(?P<line>\d+):(?P<column>\d+)",
+    re.IGNORECASE,
+)
+_TAP_FIELD_RE = re.compile(r"(?m)^\s*(?P<key>actual|expected|operator):\s*(?P<value>.+?)\s*$", re.IGNORECASE)
 
 
 def normalize_artifact_quality_errors(errors: Sequence[Any]) -> tuple[RepairDiagnostic, ...]:
@@ -171,6 +184,7 @@ def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
     expanded = _normalize_typescript_errors(blob)
     if expanded:
         residuals: list[RepairDiagnostic] = []
+        expanded_codes = {item.code for item in expanded}
         for line in blob.splitlines():
             stripped = line.strip()
             if not stripped:
@@ -179,13 +193,62 @@ def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
                 continue
             if _TS_ERROR_RE.search(line):
                 continue
+            if _WORKSPACE_VALIDATION_RE.search(line):
+                # The command wrapper is provenance, not an additional
+                # compiler diagnostic.  Keeping it beside expanded TS rows
+                # inflated coverage and could route a second generic repair.
+                continue
+            if (
+                "typescript_config_key_syntax" in expanded_codes
+                and "expected" in stripped.lower()
+                and "but found" in stripped.lower()
+            ):
+                continue
+            if "javascript_module_error" in expanded_codes and (
+                _JAVASCRIPT_MODULE_ERROR_RE.search(stripped) or stripped.startswith("> ")
+            ):
+                # The canonical module diagnostic retains the complete blob,
+                # including the npm command that selected the failing loader.
+                # Emitting those lines again creates uncovered duplicates.
+                continue
             if "missing the following properties from type" in stripped.lower():
                 continue
             residual = _normalize_one_error(stripped)
             if residual.code.startswith("typescript_"):
                 continue
+            if residual.code in expanded_codes:
+                continue
             residuals.append(residual)
         return expanded + residuals
+    tap_failures = _normalize_tap_failures(blob)
+    if tap_failures:
+        # Node TAP output is one causal failure island per ``not ok`` block.
+        # Treating every stack/summary/pass row as an independent generic
+        # diagnostic inflated one assertion into 100+ repair inputs, hid the
+        # responsible path, and starved the same-task repair prompt. Preserve
+        # exact assertion evidence while keeping coverage bounded.
+        return tap_failures
+    rust_location = _RUST_LOCATION_RE.search(blob)
+    if rust_location and re.search(r"(?m)^\s*(?:error|warning):", blob, re.IGNORECASE):
+        # Rust diagnostics without an E-code (parser errors and warnings) are
+        # still one causal block.  Per-line fallback destroys the association
+        # between the headline, ``--> path:line:column`` and source excerpt,
+        # leaving planners without a usable path/raw block.  Keep the complete
+        # block so existing Rust rules can match and compose precise patches.
+        first_line = next((line.strip() for line in blob.splitlines() if line.strip()), "Rust diagnostic")
+        return [
+            RepairDiagnostic(
+                source="compiler",
+                code="rust_diagnostic",
+                severity="warning" if first_line.lower().startswith("warning:") else "error",
+                message=first_line,
+                path=str(rust_location.group("path") or "").strip(),
+                line=_to_int(rust_location.group("line")),
+                column=_to_int(rust_location.group("column")),
+                raw=blob.strip(),
+                metadata={"language": "rust"},
+            )
+        ]
     lowered = blob.lower()
     if (
         ("npm run test" in lowered or "npm test" in lowered)
@@ -201,11 +264,65 @@ def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
     # Normalize the causal blob before per-line fallback so the leading
     # wrapper cannot mask the nested error as a generic validation failure.
     combined = _normalize_one_error(blob.strip())
+    if combined.code == "workspace_validation_failed" and "eaddrinuse" in lowered:
+        # Keep the command wrapper and its nested port collision as one causal
+        # diagnostic. The npm-script repair rule deliberately matches both the
+        # command provenance and EADDRINUSE from this complete raw block.
+        return [combined]
     if combined.code not in {"artifact_quality_error", "workspace_validation_failed"}:
         return [combined]
     # Non-TS blob: preserve one diagnostic per non-empty line.
     per_line = [_normalize_one_error(line.strip()) for line in blob.splitlines() if line.strip()]
     return per_line if per_line else [_normalize_one_error(blob.strip())]
+
+
+def _normalize_tap_failures(text: str) -> list[RepairDiagnostic]:
+    """Project Node TAP failure blocks into bounded, actionable diagnostics."""
+
+    blob = str(text or "")
+    matches = list(_TAP_FAILURE_HEADER_RE.finditer(blob))
+    if not matches:
+        return []
+
+    diagnostics: list[RepairDiagnostic] = []
+    total_failure_count = len(matches)
+    truncated_failure_count = max(0, total_failure_count - _TAP_FAILURE_DIAGNOSTIC_LIMIT)
+    source_blob_sha256 = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+    for match in matches[:_TAP_FAILURE_DIAGNOSTIC_LIMIT]:
+        next_boundary = _TAP_RESULT_BOUNDARY_RE.search(blob, match.end())
+        end = next_boundary.start() if next_boundary is not None else len(blob)
+        failure_block = blob[match.start() : end].strip()
+        location = _VERIFIER_LOCATION_RE.search(failure_block)
+        fields = {
+            str(field.group("key") or "").strip().lower(): str(field.group("value") or "").strip()
+            for field in _TAP_FIELD_RE.finditer(failure_block)
+        }
+        name = str(match.group("name") or "test").strip()
+        message = f"Test failed: {name}"
+        if fields.get("expected") or fields.get("actual"):
+            message += f"; expected={fields.get('expected', 'unknown')}; actual={fields.get('actual', 'unknown')}"
+        path = str(location.group("path") or "").removeprefix("file://") if location else None
+        diagnostics.append(
+            RepairDiagnostic(
+                source="verifier",
+                code="verifier_test_failure",
+                message=message,
+                path=path,
+                line=_to_int(location.group("line")) if location else None,
+                column=_to_int(location.group("column")) if location else None,
+                raw=failure_block,
+                metadata={
+                    "framework": "tap",
+                    "test_name": name,
+                    "test_ordinal": _to_int(match.group("ordinal")),
+                    "total_failure_count": total_failure_count,
+                    "truncated_failure_count": truncated_failure_count,
+                    "source_blob_sha256": source_blob_sha256,
+                    **fields,
+                },
+            )
+        )
+    return diagnostics
 
 
 def _normalize_structured_error(raw: Mapping[str, Any]) -> RepairDiagnostic | None:

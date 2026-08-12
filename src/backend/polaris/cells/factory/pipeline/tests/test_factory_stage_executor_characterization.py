@@ -1604,6 +1604,118 @@ def test_workspace_quality_repair_transports_nested_command_diagnostics_without_
     assert "deterministic_typescript_local_js_import_repair" in matched_tools
 
 
+def test_workspace_quality_repair_uses_one_tap_failure_island_without_duplicate_stream_rows(
+    tmp_path: Path,
+) -> None:
+    """Marker-aware excerpt is authoritative repair input, not excerpt plus duplicated tails."""
+
+    executor = _executor(tmp_path)
+    failure = """not ok 2 - extracts dream keywords
+  ---
+  location: '/workspace/tests/product.test.js:46:1'
+  error: |-
+    assert.ok(keywords.includes('火焰'))
+  expected: true
+  actual: false
+  operator: '=='
+  ...
+ok 3 - handles empty content
+1..23
+# pass 22
+# fail 1"""
+    results = [
+        {
+            "command": ["npm", "test"],
+            "phase": "check",
+            "exit_code": 1,
+            "passed": False,
+            "diagnostic_excerpt": failure,
+            "stdout_tail": failure,
+            "stderr_tail": failure,
+        }
+    ]
+
+    repair_errors = executor._workspace_quality_repair_errors(results)
+
+    assert len(repair_errors) == 1
+    assert repair_errors[0].count("not ok 2") == 1
+    assert "tests/product.test.js:46:1" in repair_errors[0]
+    assert "火焰" in repair_errors[0]
+    assert "# pass 22" not in repair_errors[0]
+
+
+def test_workspace_quality_repair_maps_absolute_test_failure_to_imported_source_owner(
+    tmp_path: Path,
+) -> None:
+    """Verifier location becomes safe relative scope and expands through test imports."""
+
+    src = tmp_path / "src"
+    tests = tmp_path / "tests"
+    src.mkdir()
+    tests.mkdir()
+    (src / "dream.js").write_text("export const extractDreamKeywords = () => [];\n", encoding="utf-8")
+    test_path = tests / "product.test.js"
+    test_path.write_text(
+        "import { extractDreamKeywords } from '../src/dream.js';\nvoid extractDreamKeywords;\n",
+        encoding="utf-8",
+    )
+    executor = _executor(tmp_path)
+    diagnostic = f"""not ok 2 - extracts dream keywords
+  ---
+  location: '{test_path}:46:1'
+  expected: true
+  actual: false
+  ..."""
+
+    targets = executor._workspace_quality_repair_diagnostic_target_files([diagnostic])
+
+    assert targets == ["tests/product.test.js", "src/dream.js"]
+
+
+def test_workspace_quality_repair_ignores_declared_downstream_test_discovery_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A planned downstream test path must not hijack current-task repair routing."""
+
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"node --test tests/"}}\n',
+        encoding="utf-8",
+    )
+    executor = _executor(tmp_path)
+    monkeypatch.setattr(
+        executor,
+        "_workspace_quality_repair_target_files",
+        lambda: ["package.json", "src/index.js", "tests/product.test.js"],
+    )
+
+    repair_errors = executor._workspace_quality_repair_errors([])
+
+    assert not any("references missing local entrypoint 'tests/'" in error for error in repair_errors)
+
+
+def test_workspace_quality_repair_keeps_unowned_missing_test_discovery_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing test paths absent from the PM contract remain hard diagnostics."""
+
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"node --test tests/"}}\n',
+        encoding="utf-8",
+    )
+    executor = _executor(tmp_path)
+    monkeypatch.setattr(
+        executor,
+        "_workspace_quality_repair_target_files",
+        lambda: ["package.json", "src/index.js"],
+    )
+
+    repair_errors = executor._workspace_quality_repair_errors([])
+
+    assert any("references missing local entrypoint 'tests/'" in error for error in repair_errors)
+
+
 def test_quality_gate_failure_stage_does_not_add_qa_llm_warning_for_deterministic_blocker(
     tmp_path: Path,
 ) -> None:
@@ -1677,7 +1789,18 @@ def test_workspace_validation_artifact_writes_run_ledger_command_evidence(tmp_pa
                     "exit_code": 0,
                 }
             ],
-            "repair": {"attempted": False},
+            "repair": {
+                "attempted": True,
+                "success": False,
+                "residual_error_count": 1,
+                "plan_probe_preaudit": {"status": "covered", "items": ["x" * 1_200_000]},
+                "rounds": [
+                    {
+                        "round": 1,
+                        "repair_summary": {"stage": "runtime_plan", "nested": "y" * 1_200_000},
+                    }
+                ],
+            },
         },
     )
 
@@ -1691,6 +1814,12 @@ def test_workspace_validation_artifact_writes_run_ledger_command_evidence(tmp_pa
     gate = projection["gates"][0]
     assert gate["capability_ok"] is True
     assert gate["capability_issues"] == []
+    ledger_path = tmp_path / "runtime" / "control_plane" / "ledger" / f"{run.id}.ndjson"
+    ledger_event = json.loads(ledger_path.read_text(encoding="utf-8").splitlines()[-1])
+    repair_result = ledger_event["physical_evidence"]["repair_result"]
+    assert repair_result["full_evidence_ref"] == "runtime/qa/workspace-validation.json"
+    assert repair_result["full_evidence_bytes"] > 2_000_000
+    assert len(json.dumps(ledger_event, ensure_ascii=False).encode("utf-8")) < 64_000
 
 
 def test_pm_plan_validation_contract_hygiene_defers_test_acceptance_to_validation_task() -> None:
@@ -2392,6 +2521,7 @@ class TestChiefEngineerHandoffGuards:
                 "id": "TASK-OWNER",
                 "goal": "Bind exact completion owner",
                 "target_files": ["src/owner.py"],
+                "project_declared_entrypoint_targets": ["src/owner.py", "src/other-owner.py"],
                 "acceptance_criteria": ["python -m compileall src passes"],
                 "verification_commands": [
                     {
@@ -2403,6 +2533,7 @@ class TestChiefEngineerHandoffGuards:
             }
         ]
         portfolio_tasks = executor._chief_engineer_portfolio_tasks(pm_tasks)
+        assert portfolio_tasks[0].entrypoint_targets == ("src/owner.py",)
         store_calls: list[tuple[Path, bool]] = []
 
         class _FakeFactoryStore:
@@ -6378,9 +6509,7 @@ class TestQualityGateDeadlineHandling:
         assert committed_payloads[0]["source"] == "factory_physical_verifier"
         assert committed_payloads[0]["llm_invoked"] is False
         assert "advisory QA LLM not required" in result.output
-        report = json.loads(
-            Path(resolve_logical_path(tmp_path, "runtime/qa/report.json")).read_text(encoding="utf-8")
-        )
+        report = json.loads(Path(resolve_logical_path(tmp_path, "runtime/qa/report.json")).read_text(encoding="utf-8"))
         assert report["verdict"] == "PASS"
         assert report["qa_invoked"] is False
         assert report["llm_invoked"] is False
@@ -7231,6 +7360,24 @@ class TestRunWorkspaceQualityCommand:
         assert result["exit_code"] is None
         assert "timeout after" in result["error"]
 
+    def test_trim_command_output_preserves_early_tap_failure_and_final_summary(self) -> None:
+        output = (
+            "TAP version 13\n"
+            "# Subtest: failing behavior\n"
+            "not ok 2 - failing behavior\n"
+            "  failureType: 'testCodeFailure'\n"
+            "  error: assert.ok(keywords.includes('火焰'))\n"
+            "  code: 'ERR_ASSERTION'\n" + ("ok 99 - unrelated passing test\n" * 500) + "# pass 22\n# fail 1\n"
+        )
+
+        trimmed = OrchestrationStageExecutor._trim_command_output(output, limit=2_000)
+
+        assert len(trimmed) <= 2_000
+        assert "not ok 2 - failing behavior" in trimmed
+        assert trimmed.count("not ok 2 - failing behavior") == 1
+        assert "assert.ok(keywords.includes('火焰'))" in trimmed
+        assert "# fail 1" in trimmed
+
 
 class TestWorkspaceQualityDeterministicRepairExecution:
     def test_synthetic_repair_task_id_is_event_store_safe(self) -> None:
@@ -7244,12 +7391,49 @@ class TestWorkspaceQualityDeterministicRepairExecution:
         assert " " not in task_id
         assert task_id.startswith("factory-quality-gate-factory-run-with-spaces-repair-2-")
 
+    def test_deterministic_repair_preserves_exact_task_scope(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        captured: dict[str, Any] = {}
+
+        def fake_schedule(_adapter: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            captured.update(kwargs)
+            return [], {"attempted": False}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.run_director_materialization_quality_repair_schedule",
+            fake_schedule,
+        )
+
+        executor._apply_workspace_quality_repairs(
+            run_id="factory-scope",
+            artifact_quality_errors=["src/engine/rules.js failed"],
+            task_id="TASK-2",
+            repair_task={
+                "id": "TASK-2",
+                "goal": "Repair engine rule",
+                "target_files": ["src/engine/rules.js"],
+                "metadata": {"blueprint_id": "ce_TASK-2"},
+            },
+        )
+
+        task = captured["task"]
+        assert task["id"] == "TASK-2"
+        assert task["target_files"] == ["src/engine/rules.js"]
+        assert task["metadata"]["blueprint_id"] == "ce_TASK-2"
+        assert "factory_workspace_quality_repair" not in task["metadata"]
+
     @pytest.mark.asyncio
     async def test_claims_commits_and_settles_deferred_repair_on_director_task(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from polaris.cells.factory.pipeline.internal import factory_workspace_quality_impl
+
         executor = _executor(tmp_path)
         run = FactoryRun(
             id="factory-quality-deferred",
@@ -7276,6 +7460,22 @@ class TestWorkspaceQualityDeterministicRepairExecution:
             },
         }
         commit_calls: list[dict[str, Any]] = []
+        heartbeat_calls: list[dict[str, Any]] = []
+
+        class FakeAttemptAuthority:
+            def heartbeat(self, **kwargs: Any) -> SimpleNamespace:
+                heartbeat_calls.append(kwargs)
+                return SimpleNamespace(success=True, code="heartbeat_renewed")
+
+        monkeypatch.setattr(
+            factory_workspace_quality_impl,
+            "_WORKSPACE_QUALITY_REPAIR_HEARTBEAT_INTERVAL_SECONDS",
+            0.001,
+        )
+        monkeypatch.setattr(
+            "polaris.cells.runtime.task_runtime.public.create_task_runtime_execution_attempt_authority",
+            lambda _identity: FakeAttemptAuthority(),
+        )
 
         monkeypatch.setattr(
             executor,
@@ -7311,6 +7511,7 @@ class TestWorkspaceQualityDeterministicRepairExecution:
 
         async def fake_commit_materialization_deferred_repairs(**kwargs: Any) -> list[dict[str, Any]]:
             commit_calls.append(kwargs)
+            await asyncio.sleep(0.01)
             return [
                 {
                     "success_count": 1,
@@ -7333,6 +7534,9 @@ class TestWorkspaceQualityDeterministicRepairExecution:
         assert results == [deferred_result]
         assert len(commit_calls) == 1
         assert commit_calls[0]["execution_attempt"] == identity
+        assert heartbeat_calls
+        assert heartbeat_calls[0]["lease_ttl_seconds"] == 300
+        assert heartbeat_calls[0]["context_summary"] == "director_workspace_quality_deterministic_repair"
         assert summary["success"] is True
         assert summary["write_tool_evidence"] is True
         assert summary["committed_receipt_count"] == 1
@@ -7342,6 +7546,181 @@ class TestWorkspaceQualityDeterministicRepairExecution:
             "settled": True,
             "outcome": "completed",
         }
+
+    @pytest.mark.asyncio
+    async def test_deterministic_repair_heartbeat_failure_invalidates_committed_receipt(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from polaris.cells.factory.pipeline.internal import factory_workspace_quality_impl
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-heartbeat-failed",
+            config=FactoryConfig(name="quality-heartbeat-failed"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-12T00:00:00+00:00",
+        )
+        identity = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=str(tmp_path),
+            task_id=8,
+            external_task_id="TASK-4",
+            session_id="quality-heartbeat-failed-session",
+            attempt=1,
+            role_id="director",
+            worker_id="director",
+            run_id=run.id,
+            lease_expires_at="2026-08-12T00:05:00+00:00",
+        )
+        settled: dict[str, Any] = {}
+
+        async def fail_heartbeat(
+            _authority: Any,
+            *,
+            stop: asyncio.Event,
+            failures: list[dict[str, Any]],
+            context_summary: str,
+        ) -> None:
+            failures.append({"code": "lease_expired", "context_summary": context_summary})
+            await stop.wait()
+
+        monkeypatch.setattr(factory_workspace_quality_impl, "_run_workspace_quality_repair_heartbeat", fail_heartbeat)
+        monkeypatch.setattr(
+            "polaris.cells.runtime.task_runtime.public.create_task_runtime_execution_attempt_authority",
+            lambda _identity: object(),
+        )
+        monkeypatch.setattr(
+            executor,
+            "_director_stage_materialization_settle_target_files",
+            lambda *, diagnostics: ["src/app.js"],
+        )
+        monkeypatch.setattr(
+            executor,
+            "_claim_workspace_quality_repair_attempt",
+            lambda **_kwargs: ("TASK-4", 8, identity, {"id": "TASK-4", "target_files": ["src/app.js"]}),
+        )
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_repairs",
+            lambda **_kwargs: (
+                [{"success": True, "result": {"status": "deferred_repair_effects_pending", "deferred_request": {}}}],
+                {"source_tools": ["deterministic_test_repair"]},
+            ),
+        )
+        monkeypatch.setattr(
+            executor,
+            "_director_stage_materialization_settle_commit_context",
+            lambda **_kwargs: {},
+        )
+        monkeypatch.setattr(
+            executor,
+            "_settle_director_stage_materialization_attempt",
+            lambda **kwargs: settled.update(kwargs) or {"success": True},
+        )
+
+        async def fake_commit(**_kwargs: Any) -> list[dict[str, Any]]:
+            await asyncio.sleep(0)
+            return [{"success_count": 1, "failure_count": 0, "results": [{"status": "success"}]}]
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.commit_materialization_deferred_repairs",
+            fake_commit,
+        )
+
+        _, summary = await executor._apply_workspace_quality_deterministic_repairs(
+            run=run,
+            artifact_quality_errors=["src/app.js failed"],
+            repair_attempt=1,
+        )
+
+        assert summary["success"] is False
+        assert summary["write_tool_evidence"] is False
+        assert summary["committed_receipt_count"] == 1
+        assert summary["execution_attempt_heartbeat_failures"][0]["code"] == "lease_expired"
+        assert summary["task_runtime_repair_attempt"]["outcome"] == "failed"
+        assert settled["stage_status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_llm_repair_heartbeat_failure_invalidates_physical_mutation(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from polaris.cells.factory.pipeline.internal import factory_workspace_quality_impl
+
+        executor = _executor(tmp_path)
+        (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "src" / "app.js").write_text("export const app = 1;\n", encoding="utf-8")
+        identity = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=str(tmp_path),
+            task_id=9,
+            external_task_id="TASK-5",
+            session_id="quality-llm-heartbeat-failed-session",
+            attempt=1,
+            role_id="director",
+            worker_id="director",
+            run_id="factory-quality-llm-heartbeat-failed",
+            lease_expires_at="2026-08-12T00:05:00+00:00",
+        )
+        settled: dict[str, Any] = {}
+
+        async def fail_heartbeat(
+            _authority: Any,
+            *,
+            stop: asyncio.Event,
+            failures: list[dict[str, Any]],
+            context_summary: str,
+        ) -> None:
+            failures.append({"code": "heartbeat_rejected", "context_summary": context_summary})
+            await stop.wait()
+
+        async def fake_llm_repair(*_args: Any, **_kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            return (
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {
+                            "file": "src/app.js",
+                            "before_sha256": "a" * 64,
+                            "after_sha256": "b" * 64,
+                        },
+                    }
+                ],
+                {"attempted": True, "success": True},
+            )
+
+        monkeypatch.setattr(factory_workspace_quality_impl, "_run_workspace_quality_repair_heartbeat", fail_heartbeat)
+        monkeypatch.setattr(
+            "polaris.cells.runtime.task_runtime.public.create_task_runtime_execution_attempt_authority",
+            lambda _identity: object(),
+        )
+        monkeypatch.setattr(
+            executor,
+            "_claim_workspace_quality_repair_attempt",
+            lambda **_kwargs: ("TASK-5", 9, identity, {"id": "TASK-5", "target_files": ["src/app.js"]}),
+        )
+        monkeypatch.setattr(
+            executor,
+            "_settle_director_stage_materialization_attempt",
+            lambda **kwargs: settled.update(kwargs) or {"success": True},
+        )
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.run_director_materialization_quality_repair",
+            fake_llm_repair,
+        )
+
+        _, summary = await executor._apply_workspace_quality_llm_repairs(
+            run_id="factory-quality-llm-heartbeat-failed",
+            context={},
+            artifact_quality_errors=["src/app.js failed"],
+            repair_attempt=1,
+        )
+
+        assert summary["execution_attempt_heartbeat_failures"][0]["code"] == "heartbeat_rejected"
+        assert summary["task_runtime_repair_attempt"]["outcome"] == "failed"
+        assert settled["stage_status"] == "failed"
 
 
 class TestRunWorkspaceQualityChecks:
@@ -7971,8 +8350,36 @@ class TestRunWorkspaceQualityChecks:
         )
 
         assert non_owner_score == (0, 1)
-        assert owner_score == (1, 0)
+        assert owner_score == (2, 0)
         assert owner_score > non_owner_score
+
+    def test_workspace_quality_owner_score_prefers_imported_source_over_test_path(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run_id = "factory-source-owner-score"
+        test_owner = {
+            "status": "failed",
+            "metadata": {
+                "factory_run_id": run_id,
+                "external_task_id": "TASK-test",
+                "target_files": ["tests/product.test.js"],
+            },
+        }
+        source_owner = {
+            "status": "completed",
+            "metadata": {
+                "factory_run_id": run_id,
+                "external_task_id": "TASK-source",
+                "target_files": ["src/dream.js"],
+            },
+        }
+        targets = {"tests/product.test.js", "src/dream.js"}
+
+        assert executor._workspace_quality_repair_owner_score(
+            source_owner, run_id=run_id, normalized_targets=targets
+        ) > executor._workspace_quality_repair_owner_score(test_owner, run_id=run_id, normalized_targets=targets)
 
     def test_workspace_quality_repair_effect_requires_post_repair_verifier_progress(self) -> None:
         classify = OrchestrationStageExecutor._workspace_quality_repair_effect
@@ -8123,7 +8530,26 @@ class TestRunWorkspaceQualityChecks:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from polaris.cells.factory.pipeline.internal import factory_workspace_quality_impl
+        from polaris.cells.runtime.task_runtime.public import TaskRuntimeExecutionAttemptAuthorityV1
+
         executor = _executor(tmp_path)
+        heartbeat_calls: list[dict[str, Any]] = []
+        original_heartbeat = TaskRuntimeExecutionAttemptAuthorityV1.heartbeat
+
+        def tracking_heartbeat(
+            authority: TaskRuntimeExecutionAttemptAuthorityV1,
+            **kwargs: Any,
+        ) -> Any:
+            heartbeat_calls.append(kwargs)
+            return original_heartbeat(authority, **kwargs)
+
+        monkeypatch.setattr(
+            factory_workspace_quality_impl,
+            "_WORKSPACE_QUALITY_REPAIR_HEARTBEAT_INTERVAL_SECONDS",
+            0.001,
+        )
+        monkeypatch.setattr(TaskRuntimeExecutionAttemptAuthorityV1, "heartbeat", tracking_heartbeat)
         (tmp_path / ".polaris").mkdir(parents=True, exist_ok=True)
         (tmp_path / ".polaris" / "catalog_contract.json").write_text(
             json.dumps(
@@ -8198,6 +8624,7 @@ class TestRunWorkspaceQualityChecks:
             changed_files: list[str],
             repair_attempt: int,
         ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            await asyncio.sleep(0.01)
             from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
             from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
@@ -8235,6 +8662,8 @@ class TestRunWorkspaceQualityChecks:
                         "result": {
                             "file": "src/engine/rules.js",
                             "operation": "modify",
+                            "before_sha256": "a" * 64,
+                            "after_sha256": "b" * 64,
                             "source_tool": "director_materialization_quality_repair",
                         },
                     }
@@ -8267,6 +8696,9 @@ class TestRunWorkspaceQualityChecks:
         )
 
         assert summary["repair_mode"] == "director_llm"
+        assert heartbeat_calls
+        assert heartbeat_calls[0]["lease_ttl_seconds"] == 300
+        assert heartbeat_calls[0]["context_summary"] == "director_workspace_quality_llm_repair"
         repair_context = captured["context"]
         assert repair_context["language"] == "javascript"
         assert repair_context["programming_language"] == "javascript"
@@ -8298,10 +8730,17 @@ class TestRunWorkspaceQualityChecks:
         assert execution_attempt.role_id == "director"
         assert repair_context["session_id"] == execution_attempt.session_id
         assert captured["attempt_validation"].status == "valid"
-        assert captured["attempt_validation"].execution_attempt == execution_attempt
+        validated_attempt = captured["attempt_validation"].execution_attempt
+        assert validated_attempt is not None
+        assert {key: value for key, value in validated_attempt.to_record().items() if key != "lease_expires_at"} == {
+            key: value for key, value in execution_attempt.to_record().items() if key != "lease_expires_at"
+        }
         authority_snapshot = authority.snapshot(lock_timeout_seconds=5.0)
         assert authority_snapshot.success is True
-        assert authority_snapshot.identity == execution_attempt
+        assert authority_snapshot.identity is not None
+        assert {
+            key: value for key, value in authority_snapshot.identity.to_record().items() if key != "lease_expires_at"
+        } == {key: value for key, value in execution_attempt.to_record().items() if key != "lease_expires_at"}
         assert summary["task_runtime_repair_attempt"] == {
             "task_id": captured["target_task_id"],
             "session_id": execution_attempt.session_id,
@@ -8374,6 +8813,9 @@ class TestRunWorkspaceQualityChecks:
                     "source_tools": ["director_materialization_quality_repair"],
                     "tool_results": 1,
                     "write_tool_evidence": False,
+                    # Attempt evidence is not mutation evidence and must not
+                    # suppress the same-task LLM edit fallback.
+                    "evidence": ["coverage matched but deterministic repair made no mutation"],
                 },
             )
 
@@ -8635,7 +9077,18 @@ class TestRunWorkspaceQualityChecks:
             llm_repair_contexts.append(interface_discrepancy_evidence)
             state["repaired"] = True
             return (
-                [{"success": True, "tool": "write_file", "file": "src/main.ts", "operation": "update"}],
+                [
+                    {
+                        "success": True,
+                        "tool": "write_file",
+                        "result": {
+                            "file": "src/main.ts",
+                            "operation": "update",
+                            "before_sha256": "a" * 64,
+                            "after_sha256": "b" * 64,
+                        },
+                    }
+                ],
                 {
                     "stage": "quality_repair",
                     "attempted": True,

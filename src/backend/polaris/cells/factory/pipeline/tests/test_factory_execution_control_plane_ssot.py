@@ -39,6 +39,10 @@ from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
     evaluate_canonical_factory_authority,
     recover_terminal_runtime_delivery_authority,
 )
+from polaris.cells.factory.pipeline.public.contracts import (
+    FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
+    FactoryTerminalTaskRuntimeProjectionV1,
+)
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
 from polaris.cells.runtime.task_runtime.public.contracts import ObservableTaskRowsProjectionV1
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
@@ -204,6 +208,48 @@ def test_canonical_authority_requires_sequence_qa_and_evidence() -> None:
     assert complete.quality_stage_authorized is True
 
 
+def test_canonical_authority_ignores_historical_qa_gate_outside_effective_projection() -> None:
+    projection = _canonical_projection()
+    projection["gates"] = [
+        {
+            "name": "qa_verdict",
+            "ok": False,
+            "run_id": "director-old",
+            "task_id": "TASK-1",
+            "append_id": "qa-old-append",
+            "content_id": "qa-old-content",
+        }
+    ]
+    projection["effective_gates"] = []
+
+    stale = evaluate_canonical_factory_authority(
+        projection,
+        sequence_barrier_satisfied=True,
+    )
+
+    assert stale.qa_verdict_present is False
+    assert stale.reason_code == "qa_verdict_missing"
+
+    projection["effective_gates"] = [
+        {
+            "name": "qa_verdict",
+            "ok": True,
+            "run_id": "director-new",
+            "task_id": "TASK-1",
+            "append_id": "qa-new-append",
+            "content_id": "qa-new-content",
+        }
+    ]
+    fresh = evaluate_canonical_factory_authority(
+        projection,
+        sequence_barrier_satisfied=True,
+    )
+
+    assert fresh.qa_verdict_present is True
+    assert fresh.qa_verdict_passed is True
+    assert fresh.quality_stage_authorized is True
+
+
 def test_canonical_authority_rejects_partial_task_runtime_convergence() -> None:
     projection = _canonical_projection()
     task_runtime = projection["task_runtime_projection"]
@@ -230,6 +276,34 @@ def test_canonical_authority_rejects_partial_task_runtime_convergence() -> None:
     assert authority.reason_code == "task_runtime_not_converged"
     assert authority.incomplete_runtime_task_ids == ("TASK-2",)
     assert authority.missing_task_boundary_ids == ("TASK-2",)
+
+
+def test_canonical_authority_uses_external_contract_identity_after_stage_retry() -> None:
+    """Local row ids may advance; immutable external ids remain PM/CE authority."""
+
+    projection = _canonical_projection()
+    runtime_row = projection["task_runtime_projection"]["rows"][0]
+    runtime_row["task_id"] = "6"
+    runtime_row["external_task_id"] = "TASK-1"
+
+    authority = evaluate_canonical_factory_authority(projection)
+
+    assert authority.contract_task_scope_valid is True
+    assert authority.task_runtime_converged is True
+    assert authority.director_stage_authorized is True
+
+
+def test_canonical_authority_rejects_conflicting_external_task_id_evidence() -> None:
+    projection = _canonical_projection()
+    runtime_row = projection["task_runtime_projection"]["rows"][0]
+    runtime_row["task_id"] = "6"
+    runtime_row["external_task_id"] = "TASK-1"
+    runtime_row["metadata"] = {"backlog_ref": "TASK-2"}
+
+    authority = evaluate_canonical_factory_authority(projection)
+
+    assert authority.contract_task_scope_valid is False
+    assert authority.reason_code == "task_runtime_contract_scope_mismatch"
 
 
 def test_completed_verified_boundary_does_not_override_failed_runtime() -> None:
@@ -619,6 +693,7 @@ def test_canonical_projection_filters_task_rows_to_current_run(
     assert authority["rows"] == [
         {
             "task_id": "TASK-CURRENT",
+            "external_task_id": "",
             "workflow_run_id": "factory-current",
             "factory_run_id": "factory-current",
             "status": "completed",
@@ -628,6 +703,193 @@ def test_canonical_projection_filters_task_rows_to_current_run(
             "status_source": "task_runtime.execution_fact",
         }
     ]
+
+
+def test_canonical_projection_uses_latest_retry_row_by_external_contract_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R48: local numeric retry rows must not collide with immutable PM task ids."""
+
+    executor = OrchestrationStageExecutor(tmp_path)
+    runtime_projection = ObservableTaskRowsProjectionV1(
+        workspace=str(tmp_path),
+        source="task_runtime.execution_fact",
+        authoritative=True,
+        degraded=False,
+        rows=(
+            {
+                "id": 6,
+                "status": "failed",
+                "fact_event_seq": 40,
+                "metadata": {
+                    "external_task_id": "TASK-1",
+                    "factory_run_id": "factory-r48",
+                    "workflow_run_id": "director-old",
+                },
+            },
+            {
+                "id": 9,
+                "status": "completed",
+                "fact_event_seq": 81,
+                "metadata": {
+                    "external_task_id": "TASK-1",
+                    "factory_run_id": "factory-r48",
+                    "workflow_run_id": "director-current-1",
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                },
+            },
+            {
+                "id": 10,
+                "status": "completed",
+                "fact_event_seq": 88,
+                "metadata": {
+                    "external_task_id": "TASK-2",
+                    "factory_run_id": "factory-r48",
+                    "workflow_run_id": "director-current-2",
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                },
+            },
+        ),
+        readiness={"ready": True, "blocking_reasons": []},
+    )
+
+    class _TaskRuntimeService:
+        def __init__(self, _workspace: str) -> None:
+            pass
+
+        def query_observable_task_rows_projection(self) -> ObservableTaskRowsProjectionV1:
+            return runtime_projection
+
+    monkeypatch.setattr(executor_module, "TaskRuntimeService", _TaskRuntimeService)
+    monkeypatch.setattr(executor_module, "load_run_ledger_projection", lambda *_args, **_kwargs: {})
+
+    projection = executor._canonical_factory_projection(
+        _factory_run("factory-r48"),
+        {
+            PM_STAGE_ARTIFACT_BINDING_CONTEXT_KEY: _revalidated_pm_task_scope(
+                "factory-r48",
+                "TASK-1",
+                "TASK-2",
+            )
+        },
+    )
+
+    authority = projection["task_runtime_projection"]
+    assert authority["row_count"] == 2
+    assert [(row["task_id"], row["external_task_id"], row["fact_event_seq"]) for row in authority["rows"]] == [
+        ("9", "TASK-1", 81),
+        ("10", "TASK-2", 88),
+    ]
+
+
+def test_canonical_projection_uses_frozen_terminal_authority_after_live_drain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """QA retry consumes pre-reset TaskRuntime facts, never removed tombstones."""
+
+    executor = OrchestrationStageExecutor(tmp_path)
+    frozen_projection = ObservableTaskRowsProjectionV1(
+        workspace=str(tmp_path),
+        source="task_runtime.execution_fact",
+        authoritative=True,
+        degraded=False,
+        rows=(
+            {
+                "id": 9,
+                "status": "completed",
+                "fact_event_seq": 81,
+                "metadata": {
+                    "external_task_id": "TASK-1",
+                    "factory_run_id": "factory-r48",
+                    "workflow_run_id": "director-current-1",
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                },
+            },
+            {
+                "id": 10,
+                "status": "completed",
+                "fact_event_seq": 88,
+                "metadata": {
+                    "external_task_id": "TASK-2",
+                    "factory_run_id": "factory-r48",
+                    "workflow_run_id": "director-current-2",
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                },
+            },
+        ),
+        readiness={"ready": True, "blocking_reasons": []},
+    ).to_authority_dict(factory_run_id="factory-r48")
+    live_projection = ObservableTaskRowsProjectionV1(
+        workspace=str(tmp_path),
+        source="task_runtime.execution_fact",
+        authoritative=True,
+        degraded=False,
+        rows=(
+            {
+                "id": 9,
+                "status": "removed",
+                "fact_event_seq": 91,
+                "metadata": {
+                    "external_task_id": "TASK-1",
+                    "factory_run_id": "factory-r48",
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                },
+            },
+            {
+                "id": 10,
+                "status": "removed",
+                "fact_event_seq": 92,
+                "metadata": {
+                    "external_task_id": "TASK-2",
+                    "factory_run_id": "factory-r48",
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                },
+            },
+        ),
+        readiness={"ready": True, "blocking_reasons": []},
+    )
+
+    class _TaskRuntimeService:
+        def __init__(self, _workspace: str) -> None:
+            pass
+
+        def query_observable_task_rows_projection(self) -> ObservableTaskRowsProjectionV1:
+            return live_projection
+
+    monkeypatch.setattr(executor_module, "TaskRuntimeService", _TaskRuntimeService)
+    monkeypatch.setattr(executor_module, "load_run_ledger_projection", lambda *_args, **_kwargs: {})
+    run = _factory_run("factory-r48")
+    run.metadata[FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY] = FactoryTerminalTaskRuntimeProjectionV1(
+        workspace=str(tmp_path),
+        factory_run_id=run.id,
+        captured_at="2026-08-12T01:48:31+00:00",
+        projection=frozen_projection,
+    ).to_dict()
+
+    projection = executor._canonical_factory_projection(
+        run,
+        {
+            PM_STAGE_ARTIFACT_BINDING_CONTEXT_KEY: _revalidated_pm_task_scope(
+                run.id,
+                "TASK-1",
+                "TASK-2",
+            )
+        },
+    )
+
+    authority = projection["task_runtime_projection"]
+    assert authority["authority_epoch_source"] == "factory_terminal_task_runtime_projection"
+    assert authority["row_count"] == 2
+    assert [row["status"] for row in authority["rows"]] == ["completed", "completed"]
+    assert [row["external_task_id"] for row in authority["rows"]] == ["TASK-1", "TASK-2"]
 
 
 def test_pm_materialization_binds_preexisting_runtime_row_to_factory_run(tmp_path: Path) -> None:
