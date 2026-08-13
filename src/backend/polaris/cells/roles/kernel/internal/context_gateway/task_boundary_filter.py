@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
+from polaris.kernelone.tasks.task_tokens import normalize_task_token as _normalize_task_token_sso
 
 TASK_TOKEN_KEYS = (
     "task_id",
@@ -27,12 +28,10 @@ _BLUEPRINT_KEYS = frozenset({"ce_blueprint", "chief_engineer_blueprint"})
 
 
 def normalize_task_token(value: Any) -> str:
-    token = str(value or "").strip().lower()
-    if not token:
-        return ""
-    while token.startswith(("task-", "task_")):
-        token = token[5:]
-    return token
+    # Delegated to the canonical SSoT in polaris.kernelone.tasks.task_tokens
+    # (§9.5). Kept as a thin wrapper so existing call sites + monkeypatch
+    # targets resolve unchanged.
+    return _normalize_task_token_sso(value)
 
 
 def context_task_sources(context_override: Mapping[str, Any]) -> list[Mapping[str, Any]]:

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import stable_hash
+from polaris.kernelone.tasks.task_tokens import normalize_task_token
 
 from ...internal.architecture_decisions import (
     normalize_architecture_decisions,
@@ -1494,15 +1495,13 @@ def _existing_target_files_from_payload(payload: dict[str, Any]) -> tuple[dict[s
 def _normalize_task_token(token: str) -> str:
     """Normalize task identifiers for comparison.
 
-    Strips common prefixes (``TASK-``, ``task-``, ``task_``) so that
-    ``"TASK-1"`` and ``"1"`` compare equal.  This bridges the PM taskboard
-    (numeric IDs) and CE blueprints (``TASK-N`` prefixed IDs).
+    Delegates to the canonical SSoT in
+    ``polaris.kernelone.tasks.task_tokens`` (§9.5). Strips common prefixes
+    (``TASK-``, ``task-``, ``task_``) so that ``"TASK-1"`` and ``"1"`` compare
+    equal. This bridges the PM taskboard (numeric IDs) and CE blueprints
+    (``TASK-N`` prefixed IDs).
     """
-    import re
-
-    t = str(token or "").strip().lower()
-    t = re.sub(r"^(task[-_])+", "", t)
-    return t
+    return normalize_task_token(token)
 
 
 def _latest_blueprint_for_task(
