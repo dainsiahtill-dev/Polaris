@@ -25,9 +25,15 @@ from polaris.kernelone.security.dangerous_patterns import (
 )
 from polaris.kernelone.security.guardrails import GuardrailsChain
 from polaris.kernelone.security.rate_limiter import RateLimiter
+from polaris.kernelone.security.record_id_guard import (
+    SAFE_RECORD_ID_PATTERN,
+    is_safe_record_id,
+    validate_storage_record_id,
+)
 from polaris.kernelone.security.sanitizer import InputSanitizer
 
 __all__ = [
+    "SAFE_RECORD_ID_PATTERN",
     "AuditConfig",
     "CommandAuditEvent",
     "CommandAuditResult",
@@ -45,4 +51,6 @@ __all__ = [
     "is_dangerous",
     "is_dangerous_command",
     "is_path_traversal",
+    "is_safe_record_id",
+    "validate_storage_record_id",
 ]

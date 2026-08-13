@@ -27,6 +27,7 @@ from polaris.cells.orchestration.pm_planning.internal.decision_log import (
     DecisionRegister,
     DecisionStatus,
 )
+from polaris.kernelone.security.record_id_guard import SAFE_RECORD_ID_PATTERN
 
 # Expected enum vocabulary, asserted via a hardcoded map (no cross-cell import).
 EXPECTED_STATUS = {
@@ -139,7 +140,7 @@ def test_decision_id_format_is_guard_clean(register: DecisionRegister) -> None:
     record = register.register(title="label with spaces / weird.chars")
     decision_id = record.decision_id
     assert decision_id.startswith("decision_")
-    assert dl._SAFE_ID_FULLMATCH.match(decision_id)
+    assert SAFE_RECORD_ID_PATTERN.match(decision_id)
     assert ".." not in decision_id
     assert dl._validate_record_id(decision_id) == decision_id
 
@@ -580,7 +581,11 @@ def test_module_does_not_import_chief_engineer_or_delivery() -> None:
         assert not name.startswith("polaris.delivery")
     assert DecisionStatus.__module__.endswith("decision_log")
     non_stdlib = {m for m in modules if m.startswith("polaris")}
-    assert non_stdlib <= {"polaris.kernelone.fs", "polaris.kernelone.storage"}
+    assert non_stdlib <= {
+        "polaris.kernelone.fs",
+        "polaris.kernelone.storage",
+        "polaris.kernelone.security.record_id_guard",
+    }
 
 
 def test_test_file_does_not_import_chief_engineer() -> None:

@@ -26,6 +26,7 @@ from polaris.cells.orchestration.pm_planning.internal.milestones import (
     MilestoneStatus,
     classify_milestone_health,
 )
+from polaris.kernelone.security.record_id_guard import SAFE_RECORD_ID_PATTERN
 
 # Expected enum vocabulary, asserted via a hardcoded map (no cross-cell import).
 EXPECTED_STATUS = {
@@ -182,7 +183,7 @@ def test_register_none_target_round_trips(register: MilestoneRegister) -> None:
 
 def test_milestone_id_guard_clean(register: MilestoneRegister) -> None:
     rec = register.register(name="label-a")
-    assert ms._SAFE_ID_FULLMATCH.match(rec.milestone_id)
+    assert SAFE_RECORD_ID_PATTERN.match(rec.milestone_id)
     assert ".." not in rec.milestone_id
     assert ms._validate_record_id(rec.milestone_id) == rec.milestone_id
 
@@ -683,6 +684,7 @@ def test_module_imports_only_allowed() -> None:
     allowed_non_stdlib = {
         "polaris.kernelone.fs",
         "polaris.kernelone.storage",
+        "polaris.kernelone.security.record_id_guard",
         ".dependency_validator",
     }
     stdlib = {

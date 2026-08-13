@@ -29,6 +29,7 @@ from polaris.cells.orchestration.pm_planning.internal.raid_register import (
     compute_risk_band,
     compute_risk_score,
 )
+from polaris.kernelone.security.record_id_guard import SAFE_RECORD_ID_PATTERN
 
 # CE-byte-identical vocabulary, asserted WITHOUT importing chief_engineer.
 EXPECTED_SEVERITY = {
@@ -201,7 +202,7 @@ def test_register_returns_open_record_with_seeded_history(
 
 def test_entry_id_format_is_guard_clean(register: RaidRegister) -> None:
     record = _register_one(register, task_id="task1", category=RaidCategory.ISSUE)
-    assert rr._SAFE_ID_FULLMATCH.match(record.entry_id)
+    assert SAFE_RECORD_ID_PATTERN.match(record.entry_id)
     assert ".." not in record.entry_id
     assert record.entry_id.startswith("raid_issue_")
     # round-trips cleanly through the guard

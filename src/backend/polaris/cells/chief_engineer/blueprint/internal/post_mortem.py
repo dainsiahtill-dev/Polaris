@@ -26,10 +26,10 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
     UpdatePostMortemStatusCommandV1,
 )
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+from polaris.kernelone.security.record_id_guard import validate_storage_record_id
 from polaris.kernelone.storage import resolve_logical_path
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
-_SAFE_ID_FULLMATCH = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def _utc_now() -> str:
@@ -47,12 +47,14 @@ def _safe_token(value: str) -> str:
 
 
 def _validate_record_id(value: str) -> str:
-    """Reject ids that could escape the storage directory (path traversal)."""
+    """Reject ids that could escape the storage directory (path traversal).
 
-    token = str(value or "").strip()
-    if not token or ".." in token or not _SAFE_ID_FULLMATCH.match(token):
-        raise ValueError(f"unsafe incident_id: {value!r}")
-    return token
+    Delegates to the canonical SSoT in
+    ``polaris.kernelone.security.record_id_guard``; kept as a thin local
+    wrapper so existing call sites and test monkeypatch targets resolve
+    unchanged. Fail-closed: anything but a bare safe token raises.
+    """
+    return validate_storage_record_id(value, label="incident_id")
 
 
 def _coerce_severity(value: Any) -> IncidentSeverity:
