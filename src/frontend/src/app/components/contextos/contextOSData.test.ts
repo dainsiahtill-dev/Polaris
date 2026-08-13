@@ -247,7 +247,7 @@ describe('buildContextOSModel', () => {
     const model = buildContextOSModel(baseInput({ executionLogs: logs }));
     expect(model.errorCount).toBe(1);
     expect(model.lastLatencyMs).toBe(1234);
-    // Telemetry component reflects the error.
+    expect(model.currentErrorUnrecovered).toBe(true);
     expect(model.components.find((c) => c.id === 'telemetry')?.state).toBe('blocked');
   });
 
@@ -1328,14 +1328,16 @@ describe('provider error handling', () => {
     expect(model.calls).toBe(2); // both llm_failed and llm_completed count as calls
   });
 
-  it('flags telemetry component as blocked when errors exist', () => {
+  it('keeps an unrecovered latest provider error blocked', () => {
     const llmStream: LogEntry[] = [
       wsLog({ id: 'f1', timestamp: '2026-06-15T10:00:00Z', level: 'error', source: 'Director', message: 'rate limit exceeded', meta: { channel: 'llm', streamEvent: 'llm_failed', role: 'Director', error: 'rate_limit' }, tags: ['llm_failed'] }),
     ];
     const model = buildContextOSModel(baseInput({ telemetry: telemetryOf(llmStream) }));
     expect(model.errorCount).toBe(1);
     const telemetryComponent = model.components.find((c) => c.id === 'telemetry');
+    expect(model.currentErrorUnrecovered).toBe(true);
     expect(telemetryComponent?.state).toBe('blocked');
+    expect(telemetryComponent?.metric).toContain('历史错误事件');
   });
 
   it('does not count llm_failed events as token usage', () => {
@@ -1360,7 +1362,7 @@ describe('provider error handling', () => {
     expect(errorEvent).toBeDefined();
   });
 
-  it('shows error count in the telemetry component metric', () => {
+  it('shows historical error count without claiming a current block', () => {
     const llmStream: LogEntry[] = [
       wsLog({ id: 'f1', timestamp: '2026-06-15T10:00:00Z', level: 'error', source: 'PM', message: 'err1', meta: { channel: 'llm', streamEvent: 'llm_failed', role: 'PM', error: 'timeout' }, tags: ['llm_failed'] }),
       wsLog({ id: 'f2', timestamp: '2026-06-15T10:00:02Z', level: 'error', source: 'Director', message: 'err2', meta: { channel: 'llm', streamEvent: 'llm_failed', role: 'Director', error: 'rate_limit' }, tags: ['llm_failed'] }),
@@ -1368,8 +1370,9 @@ describe('provider error handling', () => {
     ];
     const model = buildContextOSModel(baseInput({ telemetry: telemetryOf(llmStream) }));
     const telemetryComponent = model.components.find((c) => c.id === 'telemetry')!;
-    expect(telemetryComponent.state).toBe('blocked');
-    expect(telemetryComponent.metric).toContain('2 错误');
+    expect(model.currentErrorUnrecovered).toBe(false);
+    expect(telemetryComponent.state).toBe('active');
+    expect(telemetryComponent.metric).toContain('2 历史错误事件');
     expect(telemetryComponent.metric).toContain('3 调用');
   });
 });

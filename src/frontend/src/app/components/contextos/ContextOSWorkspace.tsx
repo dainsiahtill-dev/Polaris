@@ -699,7 +699,7 @@ function PipelineDetailModal({
       <DetailStat label="状态" value={STATE_STYLES[stage.state].label} tone={stage.state} sub={stage.component} />
       <DetailStat label="节点指标" value={stage.metric} tone={stage.state} sub={stage.hint} />
       <DetailStat label="遥测事件" value={telemetry.events.length} tone={telemetry.events.length > 0 ? 'active' : 'idle'} sub={model.telemetryWindowed ? '最近窗口' : '实时流'} />
-      <DetailStat label="错误" value={model.errorCount} tone={model.errorCount > 0 ? 'blocked' : 'idle'} sub="ContextOS / LLM / 回执" />
+      <DetailStat label="历史错误事件" value={model.errorCount} tone={model.currentErrorUnrecovered ? 'blocked' : model.errorCount > 0 ? 'active' : 'idle'} sub={model.currentErrorUnrecovered ? '最近事件仍失败' : '累计观测，不代表当前受阻'} />
     </div>
   );
 
@@ -719,7 +719,7 @@ function PipelineDetailModal({
               <div className="space-y-2 text-[11px] text-text-muted">
                 <div className="rounded-lg bg-black/20 px-3 py-2">当前阶段：<span className="font-mono text-text-main">{model.running ? '运行中' : '空闲'}</span></div>
                 <div className="rounded-lg bg-black/20 px-3 py-2">任务看板：<span className="font-mono text-text-main">{model.taskCount}</span> 个任务</div>
-                <div className="rounded-lg bg-black/20 px-3 py-2">质量门：<span className="font-mono text-text-main">{model.errorCount > 0 ? '有风险' : '未见错误'}</span></div>
+                <div className="rounded-lg bg-black/20 px-3 py-2">历史异常：<span className="font-mono text-text-main">{model.errorCount} 条（仅观测）</span></div>
               </div>
             </DetailBlock>
             <DetailBlock title="最近请求证据" subtitle="来自决策流和运行时推送">
@@ -906,7 +906,7 @@ function PipelineDetailModal({
         <>
           <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
             <DetailStat label="回执" value={model.receiptCount} tone={model.receiptCount > 0 ? 'active' : 'idle'} sub="context snapshot refs" />
-            <DetailStat label="错误" value={model.errorCount} tone={model.errorCount > 0 ? 'blocked' : 'idle'} sub="Receipt / LLM / runtime" />
+            <DetailStat label="历史错误事件" value={model.errorCount} tone={model.currentErrorUnrecovered ? 'blocked' : model.errorCount > 0 ? 'active' : 'idle'} sub={model.currentErrorUnrecovered ? '最近事件仍失败' : '累计观测，不代表当前受阻'} />
             <DetailStat label="快照事件" value={receiptEvents.length} tone={receiptEvents.length > 0 ? 'active' : 'idle'} sub="可追踪 context ref" />
             <DetailStat label="最近时延" value={model.realLatencyMs !== null ? `${model.realLatencyMs}ms` : '未知'} tone={model.realLatencyMs !== null ? 'active' : 'idle'} sub="回执闭环延迟线索" />
           </div>
@@ -914,8 +914,8 @@ function PipelineDetailModal({
             <DetailBlock title="回执与快照证据" subtitle="可追踪 context snapshot 或降级原因">
               <ReceiptEvidenceDeck events={receiptEvents.length > 0 ? receiptEvents : callEvents} />
             </DetailBlock>
-            <DetailBlock title="异常闭环" subtitle="ReceiptStore / provider / runtime 错误">
-              <DetailEventList events={errorEvents} emptyLabel="暂无错误闭环" />
+            <DetailBlock title="历史异常事件" subtitle="ReceiptStore / provider / runtime 观测历史">
+              <DetailEventList events={errorEvents} emptyLabel="暂无历史异常事件" />
             </DetailBlock>
           </div>
         </>
@@ -1248,8 +1248,8 @@ function ContextStructurePanel({ model, telemetry }: { model: ContextOSModel; te
           <StructureMetric
             label="ReceiptStore"
             value={`${model.receiptCount} 回执`}
-            tone={model.receiptCount > 0 ? 'active' : model.errorCount > 0 ? 'blocked' : 'idle'}
-            sub={model.errorCount > 0 ? `${model.errorCount} 错误` : 'snapshot receipts'}
+            tone={model.currentErrorUnrecovered ? 'blocked' : model.receiptCount > 0 ? 'active' : 'idle'}
+            sub={model.errorCount > 0 ? `${model.errorCount} 历史错误事件` : 'snapshot receipts'}
           />
         </div>
 
@@ -2121,9 +2121,14 @@ export function ContextOSWorkspace({
     label: 'Receipt',
     component: 'Context Snapshot + Telemetry',
     hint: '落盘上下文快照与遥测反馈闭环',
-    state: model.errorCount > 0 ? 'blocked' : model.receiptCount > 0 || model.calls > 0 ? 'active' : 'idle',
+    // Historical error events are immutable telemetry, not current gate state.
+    state: model.currentErrorUnrecovered
+      ? 'blocked'
+      : model.receiptCount > 0 || model.calls > 0
+        ? 'active'
+        : 'idle',
     metric: model.errorCount > 0
-      ? `${model.errorCount} 错误`
+      ? `${model.errorCount} 历史错误`
       : model.receiptCount > 0
         ? `${model.receiptCount} 快照`
         : `${model.calls} 调用`,

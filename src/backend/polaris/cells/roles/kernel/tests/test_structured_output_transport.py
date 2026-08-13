@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 
 import pytest
 from polaris.cells.factory.pipeline.internal.factory_stage_executor import OrchestrationStageExecutor
@@ -443,6 +444,75 @@ def test_r17_root_fragment_recovers_under_factory_ce_schema() -> None:
     assert normalized["structured_output_transport"]["schema_normalization_policy"] == (
         "schema_proven_root_fragment_v1"
     )
+
+
+def test_real_ce_schema_removes_provider_text_noise_only_from_closed_object() -> None:
+    """L1-04 r50: MiniMax added XML-style $text to one strict artifact row."""
+
+    contract, expected_payload = _real_ce_contract_and_payload()
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    provider_payload = deepcopy(expected_payload)
+    completion = provider_payload["project_completion_contract"]
+    assert isinstance(completion, dict)
+    obligations = completion["obligations"]
+    assert isinstance(obligations, dict)
+    artifacts = obligations["artifacts"]
+    assert isinstance(artifacts, list)
+    assert isinstance(artifacts[0], dict)
+    artifacts[0]["$text"] = "provider-envelope-noise"
+
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "args": provider_payload,
+                    "call_id": "call-closed-object-text-noise",
+                }
+            ],
+        },
+        plan,
+    )
+
+    assert json.loads(normalized["content"]) == expected_payload
+    evidence = normalized["structured_output_transport"]
+    assert evidence["schema_normalization_applied"] is True
+    assert evidence["schema_normalization_policy"] == "schema_proven_closed_object_text_noise_v1"
+
+
+def test_real_ce_schema_keeps_other_unknown_nested_members_fail_closed() -> None:
+    contract, payload = _real_ce_contract_and_payload()
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    completion = payload["project_completion_contract"]
+    assert isinstance(completion, dict)
+    obligations = completion["obligations"]
+    assert isinstance(obligations, dict)
+    artifacts = obligations["artifacts"]
+    assert isinstance(artifacts, list)
+    assert isinstance(artifacts[0], dict)
+    artifacts[0]["untrusted_extra"] = "must-not-be-hidden"
+
+    with pytest.raises(ValueError, match="structured_output_payload_schema_mismatch"):
+        normalize_structured_output_response(
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                        "args": payload,
+                        "call_id": "call-unknown-nested-member",
+                    }
+                ],
+            },
+            plan,
+        )
 
 
 @pytest.mark.parametrize("missing_path", ["project_completion_contract", "TASK-3"])

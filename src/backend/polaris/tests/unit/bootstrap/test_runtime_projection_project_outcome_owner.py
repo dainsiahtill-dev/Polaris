@@ -18,6 +18,10 @@ from polaris.cells.chief_engineer.blueprint.public import (
 )
 from polaris.cells.control_plane.run_ledger.public import RunLedgerProjectionResultV1
 from polaris.cells.factory.pipeline.public import FactoryTerminalTaskRuntimeProjectionV1
+from polaris.cells.factory.verification_guard.public import ProjectCompletionDiagnosticsV1
+from polaris.cells.factory.verification_guard.public.contracts import (
+    _PROJECT_COMPLETION_DIAGNOSTICS_AUTHORITY_TOKEN,
+)
 from polaris.cells.runtime.projection.public import (
     DeliveryAxisV1,
     ProjectOutcomeNonFactoryOwnerObservationV1,
@@ -334,6 +338,7 @@ def _install_owner_queries(
     task_runtime: ObservableTaskRowsProjectionV1,
     run_ledger: RunLedgerProjectionResultV1,
     completion_contract: ProjectCompletionContractV1 | None = None,
+    completion_diagnostics: ProjectCompletionDiagnosticsV1 | None = None,
 ) -> tuple[list[str], list[object], list[QueryProjectCompletionContractV1]]:
     from polaris.bootstrap import runtime_projection_project_outcome_owner as adapter_module
 
@@ -357,7 +362,29 @@ def _install_owner_queries(
     monkeypatch.setattr(adapter_module, "get_factory_terminal_task_runtime_projection", lambda query: None)
     monkeypatch.setattr(adapter_module, "read_run_ledger_projection", query_ledger)
     monkeypatch.setattr(adapter_module, "query_project_completion_contract", query_completion_contract)
+    monkeypatch.setattr(
+        adapter_module,
+        "query_project_completion_diagnostics",
+        lambda query: completion_diagnostics,
+    )
     return task_queries, ledger_queries, completion_queries
+
+
+def _green_completion_diagnostics(workspace: Path) -> ProjectCompletionDiagnosticsV1:
+    passed = ("artifact-source", "artifact-test", "verify-test")
+    return ProjectCompletionDiagnosticsV1(
+        workspace=str(workspace.resolve()),
+        project_id=_PROJECT_ID,
+        run_id=_RUN_ID,
+        completion_contract_hash=_CONTRACT_HASH,
+        owner_bundle_hash="a" * 64,
+        diagnostics=(),
+        passed_obligation_ids=passed,
+        missing_obligation_ids=(),
+        failed_obligation_ids=(),
+        non_blocking_obligation_ids=(),
+        _authority_token=_PROJECT_COMPLETION_DIAGNOSTICS_AUTHORITY_TOKEN,
+    )
 
 
 @pytest.mark.asyncio
@@ -455,6 +482,68 @@ async def test_adapter_returns_six_owner_bound_green_axes_for_exact_identity(
     assert ledger_query.factory_run_id == _RUN_ID
     assert ledger_query.project_id == _PROJECT_ID
     assert ledger_query.include_migration_ledgers is False
+
+
+@pytest.mark.asyncio
+async def test_settled_physical_receipts_close_stale_taskruntime_and_boundary_epoch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Post-QA physical truth outranks stale failed/pending intermediate rows."""
+
+    from polaris.bootstrap import runtime_projection_project_outcome_owner as adapter_module
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/main.py").write_text("print('ok')\n", encoding="utf-8")
+    task_runtime = _task_runtime_projection(tmp_path, execution_state="failed")
+    auxiliary = {
+        **dict(task_runtime.rows[0]),
+        "task_id": "99",
+        "external_task_id": "CE-PORTFOLIO-factory-run-1",
+        "workflow_run_id": _RUN_ID,
+        "status": "completed",
+        "execution_state": "completed",
+        "fact_event_seq": 8,
+        "metadata": None,
+    }
+    object.__setattr__(task_runtime, "rows", (*task_runtime.rows, auxiliary))
+    run_ledger = _run_ledger_projection(
+        tmp_path,
+        include_entrypoint=False,
+        include_environment=False,
+        include_verifier=False,
+    )
+    for projection in (
+        run_ledger.projection["task_boundary"],
+        run_ledger.projection["run_projection"]["task_boundary"],
+        run_ledger.projection["projects"][0]["task_boundary"],
+    ):
+        projection["latest"]["downstream_pending_artifacts"] = ["src/main.py"]
+        projection["latest_by_task"][_TASK_ID]["downstream_pending_artifacts"] = ["src/main.py"]
+    _install_owner_queries(
+        monkeypatch,
+        task_runtime=task_runtime,
+        run_ledger=run_ledger,
+        completion_diagnostics=_green_completion_diagnostics(tmp_path),
+    )
+
+    observation = (
+        await adapter_module.ProjectOutcomeNonFactoryOwnerObservationAdapter().observe_project_outcome_non_factory(
+            workspace=str(tmp_path),
+            project_id=_PROJECT_ID,
+            run_id=_RUN_ID,
+            completion_contract_hash=_CONTRACT_HASH,
+        )
+    )
+
+    assert observation.delivery is DeliveryAxisV1.VERIFIED
+    assert observation.task_boundary is TaskBoundaryAxisV1.PASSED
+    assert observation.task_runtime is TaskRuntimeAxisV1.CONVERGED
+    assert observation.run_ledger is RunLedgerAxisV1.CLOSED
+    assert observation.task_count == 1
+    assert observation.completed_task_count == 1
+    assert observation.missing_required_modalities == ()
+    assert observation.failed_required_modalities == ()
 
 
 @pytest.mark.asyncio

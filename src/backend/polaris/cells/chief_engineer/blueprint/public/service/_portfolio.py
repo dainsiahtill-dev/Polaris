@@ -724,21 +724,40 @@ def _build_portfolio_completion_contract(
         def verification_obligation(row: Mapping[str, Any]) -> VerificationObligationV1:
             applicability = row["applicability"]
             authority_hash = row["command_authority_hash"]
-            if applicability == "not_applicable":
+            modality_authorities = authorities_for(modality=str(row["modality"]))
+            if applicability != "not_applicable" and not modality_authorities:
+                # CE verification rows are semantic advice; only PM owns the
+                # executable command surface.  A live CE may propose a useful
+                # verifier (for example ``go vet``) whose modality has no
+                # committed PM command authority.  Keeping that row active
+                # would either invent authority or fail the whole otherwise
+                # valid portfolio.  Preserve it as an explicit, non-executable
+                # N/A declaration instead.  Ambiguous PM authority is still a
+                # hard failure in ``authority_for_row`` below.
+                applicability = "not_applicable"
+                authority_hash = None
+                verifier_command = None
+                covers_obligation_ids: tuple[str, ...] = ()
+                owner_task_id = None
+            elif applicability == "not_applicable":
                 if authority_hash is not None:
                     raise ValueError("not_applicable verification must use command_authority_hash=null")
                 verifier_command = None
+                covers_obligation_ids = row["covers_obligation_ids"]
+                owner_task_id = row["owner_task_id"]
             else:
                 authority = authority_for_row(row)
                 authority_hash = authority.authority_hash
                 verifier_command = authority.command
+                covers_obligation_ids = row["covers_obligation_ids"]
+                owner_task_id = authority.task_id
             return VerificationObligationV1(
                 obligation_id=row["obligation_id"],
                 modality=row["modality"],
                 command=verifier_command,
                 applicability=applicability,
-                covers_obligation_ids=row["covers_obligation_ids"],
-                owner_task_id=(authority.task_id if applicability != "not_applicable" else row["owner_task_id"]),
+                covers_obligation_ids=covers_obligation_ids,
+                owner_task_id=owner_task_id,
                 command_authority_hash=authority_hash,
             )
 

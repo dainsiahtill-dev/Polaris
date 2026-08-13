@@ -727,6 +727,65 @@ class TestChiefEngineerBlueprintPortfolio:
         assert verifier.command_authority_hash == expected.authority_hash
         assert verifier.command == expected.command
 
+    def test_unowned_ce_advisory_verifier_becomes_non_executable(self, tmp_path: Path) -> None:
+        """A CE-only verifier must not invent PM command authority or kill the portfolio."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Build the application entrypoint",
+                target_files=("src/main.py",),
+                scope_paths=("src/main.py",),
+                entrypoint_targets=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build the application tests",
+                target_files=("tests/test_main.py",),
+                scope_paths=("tests/test_main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        requirements["obligations"]["verification"].append(
+            {
+                "obligation_id": "verify-lint-advisory",
+                "modality": "lint",
+                "command_authority_hash": "f" * 64,
+                "applicability": "required",
+                "covers_obligation_ids": ["artifact-main"],
+                "owner_task_id": "TASK-A",
+            }
+        )
+
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-unowned-ce-advisory-verifier",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-unowned-ce-advisory-verifier",
+                ),
+                llm_blueprint={
+                    "construction_plan": {"implementation": ["Build the application"]},
+                    "project_completion_contract": requirements,
+                },
+            )
+        )
+
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        verifier = next(
+            item for item in completion.obligations.verification if item.obligation_id == "verify-lint-advisory"
+        )
+        assert verifier.applicability == "not_applicable"
+        assert verifier.command is None
+        assert verifier.command_authority_hash is None
+        assert verifier.owner_task_id is None
+        assert verifier.covers_obligation_ids == ()
+
     def test_completion_contract_composer_repairs_cross_owner_rows_and_drops_unexecutable_entrypoints(
         self,
         tmp_path: Path,

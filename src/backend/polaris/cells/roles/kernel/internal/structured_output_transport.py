@@ -437,6 +437,61 @@ def _normalize_schema_proven_json_containers(
     return result, "+".join(policies) if policies else "none"
 
 
+def _normalize_schema_closed_object_text_noise(
+    value: Any,
+    schema: Mapping[str, Any],
+) -> tuple[Any, bool]:
+    """Remove one provider-only ``$text`` member from schema-closed objects.
+
+    Some Anthropic-compatible structured-tool providers serialize an otherwise
+    valid JSON object with an XML-style ``$text`` shadow member.  Normalize
+    only that exact key, only when the caller schema explicitly closes the
+    object with ``additionalProperties: false``, does not declare ``$text``,
+    and the shadow value is a string.  The complete caller schema is still
+    applied afterwards, so this cannot supply missing semantics or hide any
+    other unknown member.
+    """
+
+    schema_type = schema.get("type")
+    if schema_type == "object" and isinstance(value, Mapping):
+        properties = schema.get("properties")
+        declared = properties if isinstance(properties, Mapping) else {}
+        result = dict(value)
+        changed = False
+        if (
+            schema.get("additionalProperties") is False
+            and "$text" not in declared
+            and isinstance(result.get("$text"), str)
+        ):
+            result.pop("$text")
+            changed = True
+        for key, child_schema in declared.items():
+            if key not in result or not isinstance(child_schema, Mapping):
+                continue
+            normalized_child, child_changed = _normalize_schema_closed_object_text_noise(
+                result[key],
+                child_schema,
+            )
+            if child_changed:
+                result[key] = normalized_child
+                changed = True
+        return result, changed
+
+    if schema_type == "array" and isinstance(value, list):
+        item_schema = schema.get("items")
+        if not isinstance(item_schema, Mapping):
+            return value, False
+        result_items: list[Any] = []
+        changed = False
+        for item in value:
+            normalized_item, item_changed = _normalize_schema_closed_object_text_noise(item, item_schema)
+            result_items.append(normalized_item)
+            changed = changed or item_changed
+        return result_items, changed
+
+    return value, False
+
+
 def _validate_payload_with_normalization(
     payload: Mapping[str, Any],
     plan: StructuredOutputTransportPlan,
@@ -445,6 +500,16 @@ def _validate_payload_with_normalization(
     if not isinstance(schema, Mapping):
         raise ValueError("structured_output_json_schema_must_be_object")
     normalized, normalization_policy = _normalize_schema_proven_json_containers(payload, schema)
+    normalized_text_noise, text_noise_changed = _normalize_schema_closed_object_text_noise(normalized, schema)
+    if not isinstance(normalized_text_noise, dict):
+        raise ValueError("structured_output_payload_must_be_json_object")
+    normalized = normalized_text_noise
+    if text_noise_changed:
+        normalization_policy = (
+            f"{normalization_policy}+schema_proven_closed_object_text_noise_v1"
+            if normalization_policy != "none"
+            else "schema_proven_closed_object_text_noise_v1"
+        )
     coerced = _coerce_structured_output_payload_defaults(normalized, schema)
     if coerced != normalized:
         normalization_policy = (

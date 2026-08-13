@@ -23,10 +23,16 @@ from polaris.cells.control_plane.run_ledger.public import (
     ReadRunLedgerProjectionQueryV1,
     RunLedgerProjectionResultV1,
     read_run_ledger_projection,
+    reconcile_task_boundary_artifacts_with_workspace,
 )
 from polaris.cells.factory.pipeline.public import (
     GetFactoryTerminalTaskRuntimeProjectionQueryV1,
     get_factory_terminal_task_runtime_projection,
+)
+from polaris.cells.factory.verification_guard.public import (
+    ProjectCompletionDiagnosticsV1,
+    QueryProjectCompletionDiagnosticsV1,
+    query_project_completion_diagnostics,
 )
 from polaris.cells.runtime.projection.public import (
     DeliveryAxisV1,
@@ -143,12 +149,13 @@ def _task_runtime_authority_for_run(
 
     live_authority = task_projection.to_authority_dict(factory_run_id=run_id)
     live_rows = live_authority.get("rows")
-    candidates = [
+    live_candidates = [
         dict(row)
         for row in (live_rows if isinstance(live_rows, list) else ())
         if isinstance(row, Mapping)
         and str(row.get("execution_state") or row.get("status") or "").strip().lower() != "removed"
     ]
+    _validate_task_runtime_rows(tuple(live_candidates), run_id=run_id)
     frozen = get_factory_terminal_task_runtime_projection(
         GetFactoryTerminalTaskRuntimeProjectionQueryV1(
             workspace=workspace,
@@ -157,9 +164,11 @@ def _task_runtime_authority_for_run(
     )
     frozen_authority = dict(frozen.projection) if frozen is not None else None
     frozen_rows = frozen_authority.get("rows") if frozen_authority is not None else ()
-    candidates[:0] = [
+    frozen_candidates = [
         dict(row) for row in (frozen_rows if isinstance(frozen_rows, list) else ()) if isinstance(row, Mapping)
     ]
+    _validate_task_runtime_rows(tuple(frozen_candidates), run_id=run_id)
+    candidates = [*frozen_candidates, *live_candidates]
 
     rows_by_owner: dict[str, dict[str, Any]] = {}
     for row in candidates:
@@ -362,6 +371,7 @@ def _qa_gate_state(gates: list[dict[str, Any]]) -> tuple[bool, bool]:
 
 def _validate_task_boundary(
     *,
+    workspace: str,
     task_boundary: Mapping[str, Any],
     expected_task_ids: tuple[str, ...],
 ) -> tuple[TaskBoundaryAxisV1, tuple[str, ...]]:
@@ -385,7 +395,6 @@ def _validate_task_boundary(
             "missing_entrypoint_targets",
             "unresolved_local_imports",
             "artifact_semantic_mismatches",
-            "downstream_pending_artifacts",
             "blocked_dependencies",
             "missing_required_evidence_modalities",
             "failed_required_evidence_modalities",
@@ -394,6 +403,14 @@ def _validate_task_boundary(
         ):
             if verdict.get(field_name):
                 reasons.append(f"task_boundary_{field_name}:{task_id}")
+        _, residual_pending = reconcile_task_boundary_artifacts_with_workspace(
+            workspace=workspace,
+            target_files=verdict.get("target_files"),
+            completed_artifacts=verdict.get("completed_artifacts"),
+            downstream_pending_artifacts=verdict.get("downstream_pending_artifacts"),
+        )
+        if residual_pending:
+            reasons.append(f"task_boundary_downstream_pending_artifacts:{task_id}")
         if not verdict.get("evidence_refs"):
             reasons.append(f"task_boundary_evidence_refs_missing:{task_id}")
     if not bool(task_boundary.get("ok")) or task_boundary.get("failed"):
@@ -467,12 +484,25 @@ class ProjectOutcomeNonFactoryOwnerObservationAdapter:
             workspace=canonical_workspace,
             run_id=run_id,
         )
+        covered_task_ids = set(completion_contract.covered_task_ids)
+        task_rows = tuple(row for row in task_rows if _owner_task_identity(row) in covered_task_ids)
+        task_authority = {
+            **task_authority,
+            "rows": [dict(row) for row in task_rows],
+            "row_count": len(task_rows),
+            "total_row_count": len(task_rows),
+        }
         if not task_rows:
             raise _fail(
                 "project_outcome_task_runtime_rows_empty",
                 "TaskRuntime projection has no rows bound to the exact Factory run",
             )
         _validate_task_runtime_rows(task_rows, run_id=run_id)
+        if {_owner_task_identity(row) for row in task_rows} != covered_task_ids:
+            raise _fail(
+                "project_outcome_task_runtime_owner_tasks_missing",
+                "TaskRuntime projection must contain every CE-covered owner task",
+            )
         if int(task_authority.get("row_count") or 0) != len(task_rows):
             raise _fail(
                 "project_outcome_task_runtime_row_count_mismatch",
@@ -593,6 +623,49 @@ class ProjectOutcomeNonFactoryOwnerObservationAdapter:
             owner_failed=owner_failed,
         )
 
+        physical_diagnostics = query_project_completion_diagnostics(
+            QueryProjectCompletionDiagnosticsV1(
+                workspace=canonical_workspace,
+                project_id=project_id,
+                run_id=run_id,
+                completion_contract_hash=completion_contract_hash,
+            )
+        )
+        if physical_diagnostics is not None and type(physical_diagnostics) is not ProjectCompletionDiagnosticsV1:
+            raise _fail(
+                "invalid_project_outcome_physical_diagnostics_type",
+                "VerificationGuard must return exact ProjectCompletionDiagnosticsV1 owner evidence",
+            )
+        active_obligation_owners = {
+            obligation.obligation_id: str(getattr(obligation, "owner_task_id", "") or "").strip()
+            for obligation in (
+                *completion_contract.obligations.artifacts,
+                *completion_contract.obligations.entrypoints,
+                *completion_contract.obligations.verification,
+            )
+            if str(getattr(obligation, "applicability", "") or "").strip() != "not_applicable"
+        }
+        physical_contract_closed = bool(
+            physical_diagnostics is not None
+            and physical_diagnostics.authority_bound
+            and not physical_diagnostics.diagnostics
+            and not physical_diagnostics.missing_obligation_ids
+            and not physical_diagnostics.failed_obligation_ids
+            and set(physical_diagnostics.evaluated_obligation_ids) == set(active_obligation_owners)
+            and set(physical_diagnostics.passed_obligation_ids) == set(active_obligation_owners)
+        )
+        physically_completed_tasks = {
+            task_id
+            for task_id in completion_contract.covered_task_ids
+            if physical_contract_closed
+            and any(owner_task_id == task_id for owner_task_id in active_obligation_owners.values())
+            and all(
+                obligation_id in physical_diagnostics.passed_obligation_ids
+                for obligation_id, owner_task_id in active_obligation_owners.items()
+                if owner_task_id == task_id
+            )
+        }
+
         effective_missing = set(owner_missing)
         effective_failed = set(owner_failed)
         delivery_missing = {
@@ -604,7 +677,12 @@ class ProjectOutcomeNonFactoryOwnerObservationAdapter:
         reasons: list[str] = []
         for modality in sorted(_REQUIRED_PHYSICAL_MODALITIES):
             present, ok = _modality_state(modalities, modality)
-            if not present:
+            if physical_contract_closed:
+                effective_missing.discard(modality)
+                effective_failed.discard(modality)
+                delivery_missing.discard(modality)
+                delivery_failed.discard(modality)
+            elif not present:
                 effective_missing.add(modality)
                 delivery_missing.add(modality)
                 reasons.append(f"{modality}_evidence_missing")
@@ -613,7 +691,14 @@ class ProjectOutcomeNonFactoryOwnerObservationAdapter:
                 delivery_failed.add(modality)
                 reasons.append(f"{modality}_evidence_failed")
         entrypoint_present, entrypoint_ok = _entrypoint_state(gates)
-        if not entrypoint_present:
+        if physical_contract_closed:
+            entrypoint_present = True
+            entrypoint_ok = True
+            effective_missing.discard("entrypoint")
+            effective_failed.discard("entrypoint")
+            delivery_missing.discard("entrypoint")
+            delivery_failed.discard("entrypoint")
+        elif not entrypoint_present:
             effective_missing.add("entrypoint")
             delivery_missing.add("entrypoint")
             reasons.append("entrypoint_evidence_missing")
@@ -635,6 +720,7 @@ class ProjectOutcomeNonFactoryOwnerObservationAdapter:
             row
             for row in task_rows
             if str(row.get("execution_state") or row.get("status") or "").strip().lower() == "completed"
+            or _owner_task_identity(row) in physically_completed_tasks
         )
         task_runtime_axis = (
             TaskRuntimeAxisV1.CONVERGED if len(completed_rows) == len(task_rows) else TaskRuntimeAxisV1.NOT_CONVERGED
@@ -648,12 +734,16 @@ class ProjectOutcomeNonFactoryOwnerObservationAdapter:
             field_name="run_ledger.task_boundary",
         )
         task_boundary_axis, boundary_reasons = _validate_task_boundary(
+            workspace=canonical_workspace,
             task_boundary=task_boundary,
             expected_task_ids=completion_contract.covered_task_ids,
         )
         reasons.extend(boundary_reasons)
 
         code_present, code_ok = _modality_state(modalities, "code")
+        if physical_contract_closed:
+            code_present = True
+            code_ok = True
         delivery_ready = code_ok and not delivery_missing and not delivery_failed
         delivery_axis = (
             DeliveryAxisV1.VERIFIED
@@ -677,11 +767,24 @@ class ProjectOutcomeNonFactoryOwnerObservationAdapter:
         )
         run_ledger_axis = RunLedgerAxisV1.CLOSED if run_ledger_closed else RunLedgerAxisV1.NOT_CLOSED
 
-        task_runtime_hash = _canonical_hash(axis="task_runtime", identity=identity, payload=task_authority)
+        physical_owner_bundle_hash = physical_diagnostics.owner_bundle_hash if physical_diagnostics is not None else ""
+        task_runtime_hash = _canonical_hash(
+            axis="task_runtime",
+            identity=identity,
+            payload={
+                "task_runtime": task_authority,
+                "physically_completed_tasks": sorted(physically_completed_tasks),
+                "physical_owner_bundle_hash": physical_owner_bundle_hash,
+            },
+        )
         delivery_hash = _canonical_hash(
             axis="delivery",
             identity=identity,
-            payload={"evidence_modalities": modalities, "gates": gates},
+            payload={
+                "evidence_modalities": modalities,
+                "gates": gates,
+                "physical_owner_bundle_hash": physical_owner_bundle_hash,
+            },
         )
         qa_hash = _canonical_hash(axis="qa", identity=identity, payload={"gates": gates})
         task_boundary_hash = _canonical_hash(
@@ -689,7 +792,11 @@ class ProjectOutcomeNonFactoryOwnerObservationAdapter:
             identity=identity,
             payload=task_boundary,
         )
-        run_ledger_hash = _canonical_hash(axis="run_ledger", identity=identity, payload=ledger)
+        run_ledger_hash = _canonical_hash(
+            axis="run_ledger",
+            identity=identity,
+            payload={"run_ledger": ledger, "physical_owner_bundle_hash": physical_owner_bundle_hash},
+        )
         hashes = ProjectOutcomeNonFactoryOwnerProjectionHashesV1(
             delivery=delivery_hash,
             qa=qa_hash,

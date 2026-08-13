@@ -240,6 +240,8 @@ export interface ContextOSModel {
   dataIdle: boolean;
   /** error 级日志 + 失败对话事件计数 */
   errorCount: number;
+  /** 最近权威观测仍为 error，且尚无更新事件证明恢复。 */
+  currentErrorUnrecovered: boolean;
   /** 从最近日志解析出的单次调用时延（毫秒），无则 null */
   lastLatencyMs: number | null;
   /** PM 迭代轮次（来自 snapshot.pm_state.pm_iteration / run_id），无则 null */
@@ -1033,6 +1035,12 @@ export function buildContextOSModel(input: {
     ? telemetry.errorCount
     : executionLogs.filter((log) => log.level === 'error').length +
       dialogueEvents.filter((event) => /error|fail/i.test(String(event.type || ''))).length;
+  const latestFallbackLog = executionLogs.reduce<LogEntry | null>((latest, entry) => (
+    latest === null || parseEpoch(entry.timestamp) >= parseEpoch(latest.timestamp) ? entry : latest
+  ), null);
+  const currentErrorUnrecovered = telemetryActive
+    ? latestEvent?.category === 'error'
+    : latestFallbackLog?.level === 'error';
   const lastLatencyMs = realLatencyMs ?? parseLatencyMs(executionLogs);
   const dataIdle = !observed && totalTokens === 0 && eventCount === 0 && logCount === 0;
 
@@ -1098,9 +1106,17 @@ export function buildContextOSModel(input: {
     },
     {
       id: 'telemetry', name: 'Receipt · Telemetry', component: '回执遥测',
-      state: errorCount > 0 ? 'blocked' : llmBlocked ? 'blocked' : observed || llmRuntimeState.state === 'READY' ? 'active' : 'idle',
+      // errorCount is a cumulative observation-window count.  A later repair or
+      // successful verifier does not erase the historical event, so it cannot
+      // authoritatively mean the current project is still blocked.  Current
+      // blocking comes from the runtime gate; errors remain visible as history.
+      state: currentErrorUnrecovered || llmBlocked
+        ? 'blocked'
+        : observed || llmRuntimeState.state === 'READY'
+          ? 'active'
+          : 'idle',
       metric: errorCount > 0
-        ? `${errorCount} 错误 · ${calls} 调用`
+        ? `${errorCount} 历史错误事件 · ${calls} 调用`
         : receiptCount > 0
           ? `${receiptCount} 快照 · ${formatTokens(completionTokens)} 输出`
           : `${formatTokens(completionTokens)} 输出 tok`,
@@ -1486,6 +1502,7 @@ export function buildContextOSModel(input: {
     running,
     dataIdle,
     errorCount,
+    currentErrorUnrecovered,
     lastLatencyMs,
     iteration,
     taskCount,
