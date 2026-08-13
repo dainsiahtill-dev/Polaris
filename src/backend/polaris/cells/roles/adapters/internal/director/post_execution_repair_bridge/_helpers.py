@@ -23,12 +23,12 @@ from ._constants import (
     _ANSI_ESCAPE_RE,
     _CALLBACK_RECEIPT_MIGRATION_BLOCKER,
     _CPP_REPAIR_FILE_SUFFIXES,
-    _RUST_BASE_FILE_IGNORES,
     _RUST_E0583_HELP_LINE_RE,
     _RUST_QUOTED_RS_PATH_RE,
     _RUST_TYPED_RECEIPT_CUTOVER_SOURCE_TOOLS,
     _RUST_TYPED_RECEIPT_CUTOVER_SUBCASES_BY_SOURCE_TOOL,
     _RUST_TYPED_RECEIPT_SOURCE_TOOL_BLOCKER,
+    _VENDORED_OR_GENERATED_DIR_NAMES,
     RuntimeAdvisorNotes,
 )
 
@@ -207,7 +207,7 @@ def _collect_rust_base_files(workspace: Path) -> dict[str, str]:
         with contextlib.suppress(OSError, UnicodeDecodeError):
             base_files["Cargo.toml"] = cargo_manifest.read_text(encoding="utf-8")
     for path in sorted(workspace.rglob("*.rs")):
-        if not path.is_file() or any(part in _RUST_BASE_FILE_IGNORES for part in path.parts):
+        if not path.is_file() or _is_vendored_or_generated_path(path):
             continue
         try:
             relative_path = path.relative_to(workspace).as_posix()
@@ -386,8 +386,28 @@ def _looks_like_cpp_workspace(workspace: Path) -> bool:
     )
 
 
+def _is_vendored_or_generated_path(path: Path) -> bool:
+    """True if ``path`` sits under any vendored/dependency/generated-output subtree.
+
+    Shared SSoT skip predicate for every language base-file collector. Covers
+    dependency/vendor dirs (``node_modules``, ``.venv``, ``.git``,
+    ``__pycache__``) and language-agnostic build outputs (``target``,
+    ``build``, ``dist``, ``cmake-build-*``) so no collector leaks generated or
+    third-party source into the repair kernel as if it were authored.
+    """
+
+    return any(part in _VENDORED_OR_GENERATED_DIR_NAMES for part in path.parts)
+
+
 def _is_generated_build_path(path: Path) -> bool:
-    return "build" in path.parts or "cmake-build" in path.parts
+    """Back-compat alias for the cpp/go/java build-output check.
+
+    Kept for callers/tests that still reference it; delegates to the unified
+    :func:`_is_vendored_or_generated_path` so build outputs are still excluded
+    and the legacy call sites gain the comprehensive vendored-dir coverage too.
+    """
+
+    return _is_vendored_or_generated_path(path)
 
 
 def _rust_typed_receipt_unbound_source_tools(

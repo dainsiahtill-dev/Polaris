@@ -16,7 +16,27 @@ ConvergenceVerifier = Callable[[Any], Any]
 _CPP_REPAIR_FILE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx")
 _POST_EXECUTION_REPAIR_MAX_ROUNDS = 3
 _CALLBACK_RECEIPT_MIGRATION_BLOCKER = "adapter schedule runners still return tool_results instead of RepairReceipt"
-_RUST_BASE_FILE_IGNORES = frozenset({".git", ".venv", "__pycache__", "node_modules", "target"})
+# Comprehensive set of vendored / dependency / generated-output directory names that
+# must NEVER be collected as authored source by ANY language base-file collector.
+# Rust historically used this exact set; cpp/go/java only checked build/cmake-build,
+# leaking node_modules/.venv/.git/__pycache__ source into the repair kernel. Unified
+# here so every collector skips the same subtrees. Language-specific build outputs
+# (target/ for rust, build/|cmake-build* for cpp/go) are folded in below.
+_VENDORED_OR_GENERATED_DIR_NAMES = frozenset(
+    {
+        ".git",
+        ".venv",
+        "__pycache__",
+        "node_modules",
+        "target",
+        "build",
+        "dist",
+        "cmake-build-debug",
+        "cmake-build-release",
+    }
+)
+# Retained for back-compat: rust-specific alias used by typed-receipt projection.
+_RUST_BASE_FILE_IGNORES = _VENDORED_OR_GENERATED_DIR_NAMES
 _RUST_TYPED_RECEIPT_CUTOVER_SOURCE_TOOLS = frozenset(
     {
         "deterministic_rust_missing_fields_repair",
