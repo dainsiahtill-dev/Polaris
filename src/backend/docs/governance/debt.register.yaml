@@ -1,5 +1,5 @@
 version: 1
-generated_at: "2026-03-25"
+generated_at: "2026-08-10"
 scope: "src/backend governance debt register"
 debts:
   - id: "DEBT-20260325-roles-kernel-turn-stage-contract"
@@ -156,3 +156,586 @@ debts:
       - "Keep process-local realtime infrastructure deleted; reintroduction must fail the single-rail static guard"
       - "Keep upstream provider event-stream tokens confined to the provider allowlist"
       - "Run Factory L1-L8 and the Playwright realtime audit as stress evidence, not as open-debt retirement prerequisites"
+
+  - id: "DEBT-20260810-F01"
+    title: "KernelOne 顶层过宽，像第二个 `core/`"
+    classification: structural
+    status: open
+    severity: high
+    scope_refs:
+      - "polaris/kernelone"
+      - "polaris/cells/kernelone"
+      - "docs/blueprints/KERNELONE_FOUNDATION_HARDENING_PLAN_20260810.md"
+    summary: >
+      kernelone/ 顶层已约 57 个子树、约 37.5 万行；缺下沉判定与准入清单，
+      能力按需堆目录，形态像第二个 core/。新 Agent 不知道该复用哪个面，容易重复实现。
+    root_cause: >
+      缺「下沉判定 + 准入清单」，能力按需堆目录。规范已禁止底座再膨胀成新的
+      core/ 垃圾场，但没有冻结第 58 个顶层子树的架构测试。
+    trigger_conditions:
+      - "在 polaris/kernelone 下新增顶层子树或方便目录"
+      - "把 Cell/业务能力直接堆进 kernelone 而不是走已有端口"
+      - "新 Agent 找不到公共入口而另起实现"
+    mitigations:
+      - "KERNELONE_ARCHITECTURE_SPEC 明确底座不得再膨胀成新的 core/"
+      - "2026-08-10 硬化计划已盘点顶层目录面与体量"
+      - "阶段 A 将产出能力目录并冻结顶层子树数"
+    residual_risks:
+      - "准入门禁落地前仍可无 ADR 新增第 58 个顶层子树"
+      - "57 个子树中哪些是死模块/重复子系统尚未验证"
+    linked_assets:
+      adrs: []
+      verification_cards: []
+      verify_packs: []
+      tests:
+        - "polaris/tests/architecture/governance/test_catalog_presence.py"
+    next_actions:
+      - "产出 kernelone 能力目录：每个顶层目录写 owner、公共入口、是否允许新增文件、替代 Cell"
+      - "新增架构测试：禁止再增加第 58 个顶层子树，除非 ADR + catalog 条目"
+      - "明确 polaris.cells.kernelone.* 与 polaris.kernelone.* 的唯一消费面（Cell public 对外，kernelone 仅技术实现）"
+
+  - id: "DEBT-20260810-F02"
+    title: "`kernelone` 包 vs `cells/kernelone` 双入口"
+    classification: structural
+    status: open
+    severity: high
+    scope_refs:
+      - "polaris/kernelone"
+      - "polaris/cells/kernelone/core"
+      - "polaris/cells/kernelone/traceability"
+    summary: >
+      同时存在 polaris/kernelone/ 与 polaris/cells/kernelone/（core/traceability）
+      双入口。调用方选错层会导致契约漂移。
+    root_cause: >
+      Cell 化中途未切断旧公共面；推荐消费面（Cell public 对外，kernelone 仅技术实现）
+      尚未用测试钉死。
+    trigger_conditions:
+      - "新增 from polaris.kernelone 或 polaris.cells.kernelone 的公共 import"
+      - "在 cells/kernelone 再开公共 facade 而不收口旧面"
+      - "同一契约从两层同时 re-export"
+    mitigations:
+      - "cells/kernelone 目前仅 core/traceability 两个子树，尚未全面分叉"
+      - "跨 Cell 只能走 public/ 的规范已存在"
+      - "StreamEventType 等 LLM 契约已有 re-export parity 先例"
+    residual_risks:
+      - "双入口并存时调用方仍会选错层"
+      - "切断旧公共面前无法证明契约身份一致"
+    linked_assets:
+      adrs: []
+      verification_cards: []
+      verify_packs: []
+      tests:
+        - "tests/architecture/test_kernelone_llm_contract_reexports.py"
+        - "polaris/kernelone/llm/tests/test_core_contracts.py"
+    next_actions:
+      - "钉死唯一消费面：Cell public 对外，kernelone 仅技术实现"
+      - "为双入口补 identity/parity 测试，禁止新消费者直连错误层"
+      - "阶段 A 能力目录写明每个子系统的合法 import 路径（对外 ≤2 个）"
+
+  - id: "DEBT-20260810-F03"
+    title: "Delivery 直接碰 KernelOne/Infra 过多"
+    classification: structural
+    status: open
+    severity: high
+    scope_refs:
+      - "polaris/delivery"
+      - "polaris/kernelone"
+      - "polaris/infrastructure"
+      - "polaris/application"
+    summary: >
+      delivery/ 中至少 142 个文件引用 infrastructure 或 kernelone；传输层承担编排/策略，
+      薄适配层偏厚，破坏「delivery 必须薄」。
+    root_cause: >
+      传输层承担编排/策略。142 处引用里多少是合法薄适配、多少是用例编排泄漏尚未分类。
+    trigger_conditions:
+      - "在 polaris/delivery 新增对 kernelone 或 infrastructure 的 import"
+      - "在 HTTP/CLI/WS 适配层编写用例编排或策略"
+      - "把 application/ 或 Cell public 的职责留在 delivery"
+    mitigations:
+      - "架构规范已要求 delivery/bootstrap 必须薄"
+      - "阶段 E 计划按合法适配 vs 编排泄漏分类 142 处引用"
+    residual_risks:
+      - "未分类前无法判断哪些引用必须下沉"
+      - "delivery 继续增厚会把策略锁在传输层"
+    linked_assets:
+      adrs: []
+      verification_cards: []
+      verify_packs: []
+      tests: []
+    next_actions:
+      - "审计 142 处 delivery 引用，分类：合法传输适配 vs 用例编排泄漏"
+      - "编排泄漏下沉到 application/ 或对应 Cell public service"
+      - "delivery 新增文件默认不能 import infrastructure.*（allowlist 例外 + 架构测试）"
+
+  - id: "DEBT-20260810-F04"
+    title: "完成/验证/repair 三套证据链仍依赖约定而非编译期类型"
+    classification: structural
+    status: open
+    severity: high
+    scope_refs:
+      - "polaris/cells/runtime/projection"
+      - "polaris/cells/factory/verification_guard"
+      - "polaris/cells/director/runtime/internal/repair_kernel"
+      - "polaris/cells/orchestration/workflow_runtime"
+      - "polaris/bootstrap/project_completion_diagnostics_owner.py"
+    summary: >
+      完成/验证/repair 三套证据链仍依赖约定而非编译期类型。控制面字段多、投影多，
+      存在误签发 completed_verified / model_ceiling 的风险。
+    root_cause: >
+      控制面字段多、投影多。文档已确认 completed_verified 仅 runtime.projection 可签发、
+      factory.verification_guard 只做物理验证，但本轮未全链路重放 bench，owner 输入仍可能走
+      dict[str, Any] 旁路。
+    trigger_conditions:
+      - "签发 completed_verified 或封存 model_ceiling"
+      - "VerificationGuard 接受 caller-supplied evidence"
+      - "repair receipt 缺 hash / 错 owner / 无 revalidation 却被当权威"
+    mitigations:
+      - "文档与 AGENTS 已规定 completed_verified 仅 runtime.projection 可签发"
+      - "verification_guard 只消费 owner contract 的规范已存在"
+      - "投影层已有 owner-binding / project-outcome 测试"
+    residual_risks:
+      - "伪造 receipt / 缺 hash / 错 owner 仍可能靠约定而非类型被挡住"
+      - "自报 attempt 触发 model_ceiling 终态的架构测试尚未补齐"
+    linked_assets:
+      adrs: []
+      verification_cards: []
+      verify_packs: []
+      tests:
+        - "polaris/cells/runtime/projection/tests/test_project_outcome_authority_binding.py"
+        - "polaris/cells/runtime/projection/tests/test_factory_chain_owner_binding.py"
+        - "polaris/tests/unit/bootstrap/test_project_completion_diagnostics_owner.py"
+        - "polaris/tests/unit/bootstrap/test_workflow_runtime_model_ceiling_owner.py"
+        - "polaris/cells/director/runtime/tests/test_repair_kernel_revalidation.py"
+    next_actions:
+      - "Completion：runtime.projection 签发输入必须是 typed obligation set + owner-sealed receipts，禁止 dict[str, Any] 旁路"
+      - "VerificationGuard：caller-supplied evidence 编译期不可进入 success 路径"
+      - "model_ceiling：只能由最终请求快照 + physical attempt + ledger + repair residual 共同封存；补架构测试禁止自报 attempt 触发终态"
+      - "用测试矩阵证明伪造 receipt / 缺 hash / 错 owner 无法走到 completed_verified"
+
+  - id: "DEBT-20260810-F05"
+    title: "LLM：`tool_spec_registry` + toolkit executor + engine executor + stream executor 多层并行"
+    classification: structural
+    status: open
+    severity: medium
+    scope_refs:
+      - "polaris/kernelone/tool_execution/tool_spec_registry.py"
+      - "polaris/kernelone/llm/toolkit"
+      - "polaris/kernelone/llm/toolkit/executor"
+      - "polaris/kernelone/llm/engine/executor.py"
+      - "polaris/kernelone/llm/engine/stream/executor.py"
+    summary: >
+      LLM 面同时存在 tool_spec_registry、toolkit executor、engine executor、
+      stream executor 多层并行。历史兼容面未收口，调用方不知哪一层是工具/执行事实源。
+    root_cause: >
+      历史兼容面未收口。ToolSpecRegistry 应为唯一工具事实源，engine/stream 只应消费，
+      但多层执行器仍并行存在。
+    trigger_conditions:
+      - "新增 ToolIntegration 或旁路 ToolSpecRegistry 的工具定义"
+      - "在 engine/stream executor 内复制 toolkit 执行语义"
+      - "delivery 或 Cell 直接 new Provider / 自建执行器"
+    mitigations:
+      - "kernelone/llm/toolkit 已是工具系统唯一实现声明"
+      - "StreamEventType / core contract re-export 已有 parity 门禁"
+      - "禁止在 cells/llm 下新建 *ToolIntegration"
+    residual_risks:
+      - "多层执行器并存时语义会漂移"
+      - "弱模型裁剪/兼容包装可能静默绕过 ToolSpecRegistry"
+    linked_assets:
+      adrs: []
+      verification_cards: []
+      verify_packs: []
+      tests:
+        - "polaris/tests/architecture/test_kernelone_llm_contract_reexports.py"
+        - "polaris/kernelone/llm/tests/test_core_contracts.py"
+        - "polaris/kernelone/llm/toolkit/tests/test_tools_execution.py"
+        - "polaris/kernelone/llm/toolkit/tests/test_tools_normalization.py"
+    next_actions:
+      - "C2：ToolSpecRegistry 收口为唯一工具事实源；engine/stream 只消费，不新建 ToolIntegration"
+      - "C3：ProviderManager 唯一实例化；delivery 禁止 new Provider"
+      - "每个 LLM 子系统对外 ≤2 个稳定 import 路径，旧 re-export 补 parity 测试"
+
+  - id: "DEBT-20260810-F06"
+    title: "ContextOS：models / pipeline / evaluation / projection 各自 1.5k+"
+    classification: structural
+    status: open
+    severity: medium
+    scope_refs:
+      - "polaris/kernelone/context"
+      - "polaris/kernelone/context/context_os"
+      - "polaris/kernelone/context/projection_engine.py"
+    summary: >
+      ContextOS 的 models / pipeline / evaluation / projection 各自 1.5k+ 行
+      （models.py、evaluation.py 已过 1.7k）。认知运行时与投影未拆成稳定端口，
+      UI 仍可能订到错误事实面。
+    root_cause: >
+      认知运行时与投影未拆成稳定端口。大文件把模型、流水线、评估、投影耦在同一子树。
+    trigger_conditions:
+      - "改 context_os models/pipeline/evaluation 或 projection_engine"
+      - "把 bench 事件当生产 ContextOS 事实"
+      - "跨 workspace 读取 context_snapshot_ref"
+    mitigations:
+      - "context 子树已有 ports/contracts 与四层拆分测试"
+      - "context_snapshot_ref 必须是 24-hex 的规则已存在"
+      - "UI 只订 runtime.v2 的规范已写明"
+    residual_risks:
+      - "未拆端口前改任一 1.5k+ 文件都可能串层"
+      - "跨 workspace 404 契约测试仍待补"
+    linked_assets:
+      adrs: []
+      verification_cards: []
+      verify_packs: []
+      tests:
+        - "polaris/kernelone/context/tests/test_context_os_four_layer_split.py"
+        - "polaris/kernelone/context/tests/test_context_os_projection_isolation.py"
+        - "polaris/kernelone/context/tests/test_context_os_pipeline.py"
+        - "polaris/kernelone/context/tests/test_context_os_evaluation.py"
+    next_actions:
+      - "C4：pipeline / evaluation / projection 拆稳定端口；UI 只订 runtime.v2"
+      - "不把 bench 事件当生产事实"
+      - "补跨 workspace 404 契约测试：非法 context_snapshot_ref 在 delivery 层 fail-closed"
+
+  - id: "DEBT-20260810-F07"
+    title: "FS：`locked_regular_file` + snapshot 接近 2k"
+    classification: structural
+    status: open
+    severity: medium
+    scope_refs:
+      - "polaris/kernelone/fs/locked_regular_file.py"
+      - "polaris/kernelone/fs/guarded_regular_file_snapshot.py"
+      - "polaris/kernelone/storage"
+    summary: >
+      FS 面 locked_regular_file 与 snapshot 接近 2k 行（locked_regular_file 审计约 1925）。
+      锁、原子写、路径策略混居，难以单独演进。
+    root_cause: >
+      锁/原子写/路径策略混居。C1 要求 storage/paths 成为唯一路径解析，Cells 只委托；
+      C5 要求 locked file + snapshot 合并策略对象，但不能改 UTF-8 / 锁语义。
+    trigger_conditions:
+      - "改 locked_regular_file 或 guarded_regular_file_snapshot"
+      - "在 Cells 内再写本地路径解析而不委托 KernelOne storage"
+      - "调整 UTF-8 / 锁 / 磁盘 layout 语义"
+    mitigations:
+      - "CELL_KERNELONE_04 要求 Cells 路径解析必须委托 KernelOne storage"
+      - "fs 已有 locked file / snapshot 单测"
+      - "计划明确不改 UTF-8 / 锁语义与磁盘布局"
+    residual_risks:
+      - "混居文件继续膨胀会使锁与路径策略难以拆分"
+      - "C1 与 repair path_files 若并行改语义会双写路径规则"
+    linked_assets:
+      adrs: []
+      verification_cards: []
+      verify_packs: []
+      tests:
+        - "polaris/kernelone/fs/tests/test_locked_regular_file.py"
+        - "polaris/kernelone/fs/tests/test_guarded_regular_file_snapshot.py"
+        - "polaris/tests/architecture/governance/test_cell_kernelone_04.py"
+    next_actions:
+      - "C1：kernelone.storage / paths 成为唯一路径解析；Cells 只委托；不改磁盘布局语义"
+      - "C5：locked file + snapshot 合并策略对象；不改 UTF-8 / 锁语义"
+      - "禁止与 repair path_files 同时改路径语义"
+
+  - id: "DEBT-20260810-F08"
+    title: "Quality：`artifact_quality` 测试已 2k+，生产扫描器仍是平台热点"
+    classification: structural
+    status: open
+    severity: medium
+    scope_refs:
+      - "polaris/kernelone/quality/artifact_quality"
+      - "polaris/kernelone/quality/tests/test_artifact_quality.py"
+      - "polaris/cells/director/runtime/internal/repair_kernel/registry"
+    summary: >
+      artifact_quality 测试已 2k+（审计约 2075），生产扫描器仍是平台热点。
+      诊断 taxonomy 与 repair coverage 未完全同源。
+    root_cause: >
+      诊断 taxonomy 与 repair coverage 未完全同源。质量门与 repair registry 各记一套诊断码，
+      bench_gates 存在「顺手修」诱惑。
+    trigger_conditions:
+      - "改 artifact_quality 扫描器或诊断码"
+      - "在 bench_gates 里改 workspace / 初始化 manifest / 当 repair 用"
+      - "新增 verifier diagnostic 却不进 repair coverage"
+    mitigations:
+      - "repair coverage 只读报告与 strategy catalog 已存在"
+      - "规范禁止 bench_gates 改写 workspace 或伪装 deterministic repair"
+    residual_risks:
+      - "双套 taxonomy 会让同一诊断在 quality 与 repair 对不齐"
+      - "测试文件继续膨胀但生产扫描器热点不变"
+    linked_assets:
+      adrs: []
+      verification_cards: []
+      verify_packs: []
+      tests:
+        - "polaris/kernelone/quality/tests/test_artifact_quality.py"
+        - "polaris/cells/director/runtime/tests/test_repair_kernel_coverage_gate.py"
+    next_actions:
+      - "C6：artifact_quality 诊断码与 repair coverage/registry 同源"
+      - "bench_gates 禁止顺手修；新 diagnostic 先走 query_director_repair_coverage"
+      - "同源后再谈扫描器拆分，避免只搬测试不收口 taxonomy"
+
+  - id: "DEBT-20260810-F09"
+    title: "path helper 18 副本、6 语义"
+    classification: structural
+    status: open
+    severity: medium
+    scope_refs:
+      - "polaris/cells/director/runtime/internal/repair_kernel/path_files.py"
+      - "polaris/cells/director/runtime/internal/repair_kernel"
+      - "polaris/kernelone/storage"
+    summary: >
+      repair_kernel 仍有 _normalize_repair_path 约 18 处副本、6 种语义。
+      typescript_syntax 已走 path_files；其它语言未迁。18 处语义差异在真实 bench 上的接受集未验证。
+    root_cause: >
+      TS 已走 path_files，其它语言未迁。新代码仍可复制本地 while normalized.startswith 实现；
+      静默统一 6 种语义而不经 characterization 被明确禁止。
+    trigger_conditions:
+      - "在 repair_kernel 语言文件中新增本地 _normalize_repair_path"
+      - "改 path_files 的 strict / permissive 语义"
+      - "与 kernelone.storage 路径解析同时改规则"
+    mitigations:
+      - "path_files.py 已是 TS 采用的 SSoT 入口"
+      - "已有 test_repair_kernel_path_files.py"
+      - "阶段 B5：CELL_KERNELONE_04 将扩展到禁止新增 path helper 副本"
+    residual_risks:
+      - "18 副本的 6 种语义接受集未做 characterization，强行统一会改 repair 结果"
+      - "非 TS 语言继续复制 helper"
+    linked_assets:
+      adrs: []
+      verification_cards: []
+      verify_packs: []
+      tests:
+        - "polaris/cells/director/runtime/tests/test_repair_kernel_path_files.py"
+        - "polaris/tests/architecture/governance/test_cell_kernelone_04.py"
+    next_actions:
+      - "CELL_KERNELONE_04 扩展到 repair_kernel：新代码禁止新增 _normalize_repair_path 副本"
+      - "旧副本分批改 path_files（syntax 层 strict，runtime 层 permissive 显式）"
+      - "每语言一 PR 删除副本；先 characterization，禁止静默统一 6 种语义"
+
+  - id: "DEBT-20260810-F10"
+    title: "`javascript_syntax.py` 4166 仍是单文件"
+    classification: structural
+    status: open
+    severity: medium
+    scope_refs:
+      - "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax"
+      - "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax"
+    summary: >
+      审计时 javascript_syntax 仍约 4166 行单文件，是 repair 语言内核热点。
+      计划要求应用 typescript_syntax 同模式拆包，且不改启发式 / SOURCE_TOOL 字符串。
+    root_cause: >
+      应用 TS 同模式尚未完成收口。TS 已按 constants / common / domain / dispatch / facade 拆包，
+      JS 仍按单文件演进（或拆包后仍需守门禁防止回并）。
+    trigger_conditions:
+      - "继续往 javascript_syntax 追加规则或把子模块回并成单文件"
+      - "改 JS source_tool 常量（会被 registry import）"
+      - "与 registry / runtime_dispatch 同时改 JS 绑定"
+    mitigations:
+      - "typescript_syntax 拆包剧本可复用"
+      - "已有 JS runtime 测试与 TS package-split 测试"
+      - "计划禁止改启发式 / SOURCE_TOOL 字符串"
+    residual_risks:
+      - "单文件或回并后继续超过 3000 行成功标准"
+      - "D2 JS 与 D3 registry 并行会破坏 source_tool 常量"
+    linked_assets:
+      adrs: []
+      verification_cards: []
+      verify_packs: []
+      tests:
+        - "polaris/cells/director/runtime/tests/test_repair_kernel_javascript_python_runtime.py"
+        - "polaris/cells/director/runtime/tests/test_typescript_syntax_package_split.py"
+    next_actions:
+      - "javascript_syntax → 包：复用 TS 拆包剧本（constants / common / domain / dispatch / facade）"
+      - "不改启发式 / SOURCE_TOOL 字符串；D2 不可与 D3 registry 并行"
+      - "成功标准：无单文件 syntax/runtime >3000；targeted repair tests 全绿"
+
+  - id: "DEBT-20260810-F11"
+    title: "`typescript_syntax/common` 已拆子包，但 `misc_ops`/`arg_shape`/`member_text` 仍 >1k"
+    classification: structural
+    status: open
+    severity: medium
+    scope_refs:
+      - "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax/common/misc_ops.py"
+      - "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax/common/arg_shape_ops.py"
+      - "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax/common/member_text_ops.py"
+      - "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax/imports_exports.py"
+    summary: >
+      typescript_syntax/common 已拆子包，但 misc_ops / arg_shape / member_text 仍 >1k
+      （并含 type_shapes / imports_exports 等热点）。需要二次切片，压到 <1500。
+    root_cause: >
+      一次拆包只切了目录边界，未把超大 ops 再切片。二次切片不得改启发式 / SOURCE_TOOL。
+    trigger_conditions:
+      - "继续扩大 misc_ops / arg_shape_ops / member_text_ops / imports_exports"
+      - "二次切片时改规则行为或 source_tool"
+    mitigations:
+      - "typescript_syntax 已完成第一轮包化"
+      - "test_typescript_syntax_package_split.py 锁住包边界"
+    residual_risks:
+      - "ops 文件继续 >1k 会让 TS 规则不可审"
+      - "二次切片若改启发式会破坏 targeted gate"
+    linked_assets:
+      adrs: []
+      verification_cards: []
+      verify_packs: []
+      tests:
+        - "polaris/cells/director/runtime/tests/test_typescript_syntax_package_split.py"
+        - "polaris/cells/director/runtime/tests/test_typescript_m10_strict_compile_repairs.py"
+    next_actions:
+      - "二次切片：common/misc_ops、arg_shape_ops、member_text_ops、type_shapes、imports_exports 压到 <1500"
+      - "不改启发式 / SOURCE_TOOL；保持 TS 包 facade"
+      - "成功标准配合无单文件 syntax/runtime >3000"
+
+  - id: "DEBT-20260810-F12"
+    title: "`registry` 规则表、`runtime_dispatch` 绑定表仍厚"
+    classification: structural
+    status: open
+    severity: medium
+    scope_refs:
+      - "polaris/cells/director/runtime/internal/repair_kernel/registry"
+      - "polaris/cells/director/runtime/internal/repair_kernel/runtime_dispatch"
+      - "polaris/cells/director/runtime/internal/repair_kernel/strategy_catalog.py"
+    summary: >
+      registry 规则表与 runtime_dispatch 绑定表仍厚（runtime_dispatch __init__ 审计约 1707，
+      已部分包化）。需要按语言拆 catalog，门面保持 default_repair_rule_registry() /
+      runtime_repair_bindings() 不变。
+    root_cause: >
+      按语言拆 catalog 未做完，门面必须保持。未知/reserved_only/metadata-only source_tool
+      必须 fail-closed 为 unsupported_repair_source_tool，不能靠厚表继续堆规则。
+    trigger_conditions:
+      - "向 registry / runtime_dispatch 追加语言规则或绑定"
+      - "改 default_repair_rule_registry / runtime_repair_bindings 签名"
+      - "把 aggregate post-execution label 当成 executable source_tool"
+    mitigations:
+      - "runtime_dispatch 已部分包化；public 只走 Plan/RunDirectorRepairCommandV1"
+      - "runtime_repair_bindings() 是 executable binding 唯一事实源"
+      - "Rust executable 不变量为 20；targeted gate 摘要 842 passed"
+    residual_risks:
+      - "厚表继续膨胀会使语言分派不可审"
+      - "拆文件时改门面会破坏全仓 Plan/Run 调用方"
+    linked_assets:
+      adrs: []
+      verification_cards: []
+      verify_packs: []
+      tests:
+        - "polaris/tests/architecture/test_director_repair_kernel_boundary.py"
+        - "polaris/cells/director/runtime/tests/test_repair_kernel_contract_3.py"
+        - "polaris/cells/director/runtime/tests/test_repair_kernel_coverage_gate.py"
+    next_actions:
+      - "按语言拆 registry 规则表与 runtime_dispatch 绑定表"
+      - "保持 default_repair_rule_registry() / runtime_repair_bindings() 门面不变"
+      - "D3 不可与 D2 JS 并行（JS source_tool 常量被 registry import）"
+
+  - id: "DEBT-20260810-F13"
+    title: "`debt.register.yaml` 几乎空转；真实债散落在 10+ ledger md"
+    classification: structural
+    status: open
+    severity: low
+    scope_refs:
+      - "docs/governance/debt.register.yaml"
+      - "docs/governance/POLARIS_EXECUTION_CONTRACT_GAP_LEDGER.md"
+      - "docs/governance/POLARIS_CATALOG_BOUNDARY_DEBT_LEDGER_20260701.md"
+      - "docs/governance/POLARIS_LEGACY_RESIDUAL_LEDGER_20260703.md"
+      - "docs/governance/POLARIS_KFS_DIRECT_WRITE_CONVERGENCE_LEDGER_20260701.md"
+    summary: >
+      审计时 debt.register.yaml 仅 3 条且均为 retired，活跃结构债未集中登记；
+      真实债散落在 10+ ledger md。账本空、文档散，新 Agent 无法从一张表看到底座债。
+    root_cause: >
+      债务账几乎空转。阶段 A 要求把 F-01~F-15 登记为 status=open，结束「账本空、文档散」，
+      但散落 ledger 仍需收敛到本寄存器，不能继续只写新 md。
+    trigger_conditions:
+      - "只在 ledger md 记新债而不登记本寄存器"
+      - "把已登记债改写进另一份清单当第二事实源"
+      - "退休债不回写 status/residual_risks"
+    mitigations:
+      - "本寄存器 schema 已固定，3 条 retired 债保留为历史证据"
+      - "阶段 A 明确把 F-01~F-15 写入本文件"
+    residual_risks:
+      - "10+ ledger md 仍可能与本寄存器双写"
+      - "登记后若不维护 status，账本会再次空转"
+    linked_assets:
+      adrs: []
+      verification_cards: []
+      verify_packs: []
+      tests: []
+    next_actions:
+      - "把 F-01~F-15 登记为 open（本条跟踪登记后的持续维护）"
+      - "后续新结构债只追加本寄存器，禁止再开平行 ledger 当事实源"
+      - "散落 ledger 只保留审计副本，收敛时回写 id/status"
+
+  - id: "DEBT-20260810-F14"
+    title: "CELL_KERNELONE_04 等门禁存在，但未覆盖「新 kernelone 子树准入」"
+    classification: structural
+    status: open
+    severity: low
+    scope_refs:
+      - "docs/governance/ci/fitness-rules.yaml"
+      - "polaris/tests/architecture/governance/test_cell_kernelone_03.py"
+      - "polaris/tests/architecture/governance/test_cell_kernelone_04.py"
+      - "polaris/tests/architecture/governance/test_cell_kernelone_05.py"
+      - "polaris/tests/architecture/governance/test_cell_kernelone_06.py"
+      - "polaris/kernelone"
+    summary: >
+      CELL_KERNELONE_03/04/05/06 门禁存在（04 要求 Cells 路径解析必须委托 KernelOne storage），
+      但未覆盖「新 kernelone 子树准入」。没有冻结第 58 个顶层目录的架构测试。
+    root_cause: >
+      门禁覆盖路径委托与重复危险模式，不覆盖顶层子树准入。阶段 A 要求：禁止再增加
+      第 58 个顶层子树，除非 ADR + catalog 条目。
+    trigger_conditions:
+      - "在 polaris/kernelone 新增顶层目录"
+      - "只改 fitness-rules 文案而不补架构测试"
+      - "扩展 CELL_KERNELONE_04 到 repair path helper 时改变现有 Cells 委托语义"
+    mitigations:
+      - "CELL_KERNELONE_03/04/05/06 及其治理测试已存在"
+      - "04 已锁 Cells → KernelOne storage 委托"
+    residual_risks:
+      - "无顶层冻结测试时 F-01 可继续发生"
+      - "规则写在 yaml 但没有对应测试会被当成已覆盖"
+    linked_assets:
+      adrs: []
+      verification_cards: []
+      verify_packs: []
+      tests:
+        - "polaris/tests/architecture/governance/test_cell_kernelone_03.py"
+        - "polaris/tests/architecture/governance/test_cell_kernelone_04.py"
+        - "polaris/tests/architecture/governance/test_cell_kernelone_05.py"
+        - "polaris/tests/architecture/governance/test_cell_kernelone_06.py"
+        - "polaris/tests/architecture/governance/test_catalog_presence.py"
+    next_actions:
+      - "新增架构测试：kernelone 顶层目录冻结 + catalog 必须存在"
+      - "新子树仅允许 ADR + catalog 条目后增加"
+      - "B5：把 CELL_KERNELONE_04 扩展到禁止 repair_kernel 新增 path helper 副本"
+
+  - id: "DEBT-20260810-F15"
+    title: "图谱 `cells.yaml` 仍标注 phase1 gap（bootstrap 启动仍穿越 infrastructure）"
+    classification: structural
+    status: open
+    severity: low
+    scope_refs:
+      - "docs/graph/catalog/cells.yaml"
+      - "polaris/bootstrap"
+      - "polaris/infrastructure"
+    summary: >
+      图谱 cells.yaml 仍标注 phase1 gap：bootstrap.assembly 的 Provider runtime injection
+      在进程启动时仍穿越 infrastructure。docs/graph/** 是图谱唯一真相，该 gap 必须做成
+      显式 port，而不是继续直 import。
+    root_cause: >
+      bootstrap 启动仍穿越 infrastructure。cells.yaml 已写明 keep this boundary explicit
+      until bootstrap ports are fully factored；阶段 E 要求做成显式 port。
+    trigger_conditions:
+      - "改 polaris/bootstrap 启动装配或 provider runtime injection"
+      - "bootstrap 新增对 infrastructure 的直 import"
+      - "把 cells.yaml gap 文案删掉却不补 port"
+    mitigations:
+      - "cells.yaml 已显式记录该 gap，避免假装边界已完成"
+      - "bootstrap 已有 assembly / backend_bootstrap / launch 单测"
+    residual_risks:
+      - "启动路径继续直连 infrastructure，阶段 E 变薄无法收口"
+      - "图谱 gap 与实现长期不一致"
+    linked_assets:
+      adrs: []
+      verification_cards: []
+      verify_packs: []
+      tests:
+        - "polaris/tests/unit/bootstrap/test_backend_bootstrap.py"
+        - "polaris/tests/unit/bootstrap/test_assembly.py"
+        - "polaris/tests/architecture/governance/test_catalog_presence.py"
+    next_actions:
+      - "把 bootstrap 启动穿越 infrastructure 的 gap 做成显式 port，禁止继续直 import"
+      - "E 必须在 B/C 端口稳定之后再做"
+      - "gap 关闭后回写 cells.yaml verification.gaps，保持图谱为唯一真相"

@@ -1,7 +1,7 @@
 # KernelOne / 底座代码审计与完善计划
 
 **版本**: 2026-08-10  
-**状态**: Audit / Proposed  
+**状态**: Phase A landed 2026-08-10 (catalog + debt register + path SSoT fence); later phases still open  
 **范围**: `polaris/kernelone`、`polaris/cells` 公共契约面、控制面（Run Ledger / Factory / Director repair）、`delivery`/`bootstrap` 薄适配层  
 **原则**: Evidence First · Cell Reuse First · KernelOne Foundation · No Dual Truth · 最小安全变更  
 
@@ -34,7 +34,7 @@ kernelone/*                   Agent-OS 技术底座（LLM / Context / Effect / F
 | 证据 | 观察 | 置信度 |
 |------|------|--------|
 | 规范 | `KERNELONE_ARCHITECTURE_SPEC.md` 明确：底座不得再膨胀成新的 `core/` 垃圾场 | 已确认 |
-| 目录面 | `kernelone/` 顶层 **57** 个子树（agent/akashic/cognitive/llm/context/fs/workflow…） | 已确认 |
+| 目录面 | `kernelone/` 顶层 **56** 个子树（磁盘为准；旧快照 57 已作废） | 已确认 |
 | 体量 | `kernelone/**/*.py` 合计约 **37.5 万行** | 已确认 |
 | 大文件 | `artifact_quality` 测试 2075；`locked_regular_file` 1925；`tool_spec_registry` 1861；ContextOS pipeline/evaluation 1.7k+ | 已确认 |
 | 双轨 | 同时存在 `polaris/kernelone/` 与 `polaris/cells/kernelone/`（core/traceability） | 已确认 |

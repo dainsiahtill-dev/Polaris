@@ -1,0 +1,367 @@
+version: 1
+generated_at: "2026-08-10"
+owner: kernelone-foundation
+kernelone_root: polaris/kernelone
+policy:
+  no_new_toplevel_subtree_without_adr_and_catalog: true
+  summary: 禁止未经 ADR + 本 catalog 更新新增顶层子树
+  admission: >
+    禁止在 polaris/kernelone/ 下新增顶层子树，除非同时完成：
+    (1) 在 src/backend/docs/adr/ 新增 ADR，证明满足 KERNELONE_ARCHITECTURE_SPEC.md
+    §2 / §3.5 准入（无业务语义、可独立测试、稳定技术契约）；
+    (2) 在本 catalog 的 entries 中新增对应 id/path/kind/public_entry/allowed_new_files/notes。
+    本目录只冻结顶层目录集合，不禁止已登记目录内演进。
+overlap_warning:
+  id: cells_kernelone_dual_entry
+  kind: dual_entry
+  consumer_surface: polaris.cells.kernelone
+  implementation_surface: polaris.kernelone
+  cells_paths:
+    - polaris/cells/kernelone/core
+    - polaris/cells/kernelone/traceability
+  overlapping_implementation_paths:
+    - polaris/kernelone/context
+    - polaris/kernelone/workflow
+    - polaris/kernelone/traceability
+  recommended_consumption: Cell public 对外，kernelone 仅技术实现
+  note: >
+    polaris/cells/kernelone 与 polaris/kernelone 双入口并存（F-02）。
+    cells/kernelone 是 Cell 治理/声明层（cell.yaml + generated packs），
+    实现仍在 polaris/kernelone。本阶段不改 cells/kernelone 代码。
+entries:
+  - id: kernelone.agent
+    path: agent
+    kind: legacy_or_overlap
+    public_entry: ""
+    allowed_new_files: true
+    notes: needs_owner; tests-only shell, no package __init__
+  - id: kernelone.akashic
+    path: akashic
+    kind: capability
+    public_entry: polaris.kernelone.akashic
+    allowed_new_files: true
+    notes: Multi-tier memory engine (Akashic Nexus)
+  - id: kernelone.audit
+    path: audit
+    kind: capability
+    public_entry: polaris.kernelone.audit
+    allowed_new_files: true
+    notes: Audit public exports, diagnosis, and evidence paths
+  - id: kernelone.auth_context
+    path: auth_context
+    kind: capability
+    public_entry: polaris.kernelone.auth_context
+    allowed_new_files: true
+    notes: Authentication context subsystem
+  - id: kernelone.benchmark
+    path: benchmark
+    kind: support
+    public_entry: polaris.kernelone.benchmark
+    allowed_new_files: true
+    notes: Internal measurement harness; not a product fact source
+  - id: kernelone.cognitive
+    path: cognitive
+    kind: capability
+    public_entry: polaris.kernelone.cognitive
+    allowed_new_files: true
+    notes: Cognitive runtime (design, governance, execution)
+  - id: kernelone.common
+    path: common
+    kind: support
+    public_entry: polaris.kernelone.common
+    allowed_new_files: true
+    notes: Shared clock and small utilities
+  - id: kernelone.concurrency
+    path: concurrency
+    kind: capability
+    public_entry: polaris.kernelone.concurrency
+    allowed_new_files: true
+    notes: Unified in-process concurrency manager
+  - id: kernelone.config
+    path: config
+    kind: support
+    public_entry: polaris.kernelone.config
+    allowed_new_files: true
+    notes: Configuration and flag registry
+  - id: kernelone.context
+    path: context
+    kind: capability
+    public_entry: polaris.kernelone.context
+    allowed_new_files: true
+    notes: ContextOS / context runtime; also declared by cells/kernelone.core
+  - id: kernelone.contracts
+    path: contracts
+    kind: capability
+    public_entry: polaris.kernelone.contracts
+    allowed_new_files: true
+    notes: Technical contracts package (contracts/technical)
+  - id: kernelone.db
+    path: db
+    kind: capability
+    public_entry: polaris.kernelone.db
+    allowed_new_files: true
+    notes: Database runtime boundary and path policy
+  - id: kernelone.dialogue
+    path: dialogue
+    kind: legacy_or_overlap
+    public_entry: ""
+    allowed_new_files: true
+    notes: needs_owner; tests-only shell, no package __init__
+  - id: kernelone.distributed
+    path: distributed
+    kind: legacy_or_overlap
+    public_entry: ""
+    allowed_new_files: true
+    notes: needs_owner; tests-only shell, no package __init__
+  - id: kernelone.editing
+    path: editing
+    kind: capability
+    public_entry: polaris.kernelone.editing
+    allowed_new_files: true
+    notes: Canonical code-editing engines
+  - id: kernelone.effect
+    path: effect
+    kind: capability
+    public_entry: polaris.kernelone.effect
+    allowed_new_files: true
+    notes: Effect tracking subsystem
+  - id: kernelone.errors
+    path: errors
+    kind: support
+    public_entry: polaris.kernelone.errors
+    allowed_new_files: true
+    notes: KernelOne exception hierarchy
+  - id: kernelone.events
+    path: events
+    kind: capability
+    public_entry: polaris.kernelone.events
+    allowed_new_files: true
+    notes: Event bus, fact events, realtime bridge
+  - id: kernelone.fs
+    path: fs
+    kind: capability
+    public_entry: polaris.kernelone.fs
+    allowed_new_files: true
+    notes: UTF-8 filesystem runtime and locked-file I/O
+  - id: kernelone.learning
+    path: learning
+    kind: legacy_or_overlap
+    public_entry: ""
+    allowed_new_files: true
+    notes: needs_owner; tests-only shell, no package __init__
+  - id: kernelone.llm
+    path: llm
+    kind: capability
+    public_entry: polaris.kernelone.llm
+    allowed_new_files: true
+    notes: LLM runtime, providers, and toolkit
+  - id: kernelone.locks
+    path: locks
+    kind: capability
+    public_entry: polaris.kernelone.locks
+    allowed_new_files: true
+    notes: Distributed lock contracts
+  - id: kernelone.memory
+    path: memory
+    kind: capability
+    public_entry: polaris.kernelone.memory
+    allowed_new_files: true
+    notes: Long-term / working memory runtime
+  - id: kernelone.multi_agent
+    path: multi_agent
+    kind: capability
+    public_entry: ""
+    allowed_new_files: true
+    notes: needs_owner; neural_syndicate present but no package __init__
+  - id: kernelone.observability
+    path: observability
+    kind: legacy_or_overlap
+    public_entry: ""
+    allowed_new_files: true
+    notes: needs_owner; tests-only shell, no package __init__
+  - id: kernelone.performance
+    path: performance
+    kind: legacy_or_overlap
+    public_entry: ""
+    allowed_new_files: true
+    notes: needs_owner; tests-only shell, no package __init__
+  - id: kernelone.planning
+    path: planning
+    kind: capability
+    public_entry: polaris.kernelone.planning
+    allowed_new_files: true
+    notes: Formal plan validation and execution
+  - id: kernelone.platform_modules
+    path: platform_modules
+    kind: capability
+    public_entry: polaris.kernelone.platform_modules
+    allowed_new_files: true
+    notes: Residual attribution and formal run admission
+  - id: kernelone.ports
+    path: ports
+    kind: support
+    public_entry: polaris.kernelone.ports
+    allowed_new_files: true
+    notes: Abstraction ports (bus, storage, layout)
+  - id: kernelone.process
+    path: process
+    kind: capability
+    public_entry: polaris.kernelone.process
+    allowed_new_files: true
+    notes: Process and command control
+  - id: kernelone.prompts
+    path: prompts
+    kind: support
+    public_entry: polaris.kernelone.prompts
+    allowed_new_files: true
+    notes: Prompt loader and meta-prompting helpers
+  - id: kernelone.quality
+    path: quality
+    kind: capability
+    public_entry: polaris.kernelone.quality
+    allowed_new_files: true
+    notes: Artifact quality gates and syntax scanners
+  - id: kernelone.reasoning
+    path: reasoning
+    kind: legacy_or_overlap
+    public_entry: ""
+    allowed_new_files: true
+    notes: needs_owner; tests-only shell, no package __init__
+  - id: kernelone.resilience
+    path: resilience
+    kind: capability
+    public_entry: polaris.kernelone.resilience
+    allowed_new_files: true
+    notes: Retry, backoff, and self-healing utilities
+  - id: kernelone.resource
+    path: resource
+    kind: capability
+    public_entry: polaris.kernelone.resource
+    allowed_new_files: true
+    notes: Agent and cell resource quota
+  - id: kernelone.role
+    path: role
+    kind: capability
+    public_entry: polaris.kernelone.role
+    allowed_new_files: true
+    notes: Role composition and provider binding
+  - id: kernelone.roles
+    path: roles
+    kind: support
+    public_entry: polaris.kernelone.roles
+    allowed_new_files: true
+    notes: Shared role contracts; not the roles Cell
+  - id: kernelone.runtime
+    path: runtime
+    kind: capability
+    public_entry: polaris.kernelone.runtime
+    allowed_new_files: true
+    notes: Agent-OS runtime infrastructure
+  - id: kernelone.scheduler
+    path: scheduler
+    kind: capability
+    public_entry: polaris.kernelone.scheduler
+    allowed_new_files: true
+    notes: In-process task scheduler
+  - id: kernelone.security
+    path: security
+    kind: capability
+    public_entry: polaris.kernelone.security
+    allowed_new_files: true
+    notes: Guardrails, sanitizer, and command auditor
+  - id: kernelone.shared
+    path: shared
+    kind: support
+    public_entry: polaris.kernelone.shared
+    allowed_new_files: true
+    notes: Shared path and text helpers
+  - id: kernelone.single_agent
+    path: single_agent
+    kind: capability
+    public_entry: polaris.kernelone.single_agent
+    allowed_new_files: true
+    notes: Single-agent role framework
+  - id: kernelone.storage
+    path: storage
+    kind: capability
+    public_entry: polaris.kernelone.storage
+    allowed_new_files: true
+    notes: Path and storage-layout SSoT
+  - id: kernelone.stream
+    path: stream
+    kind: capability
+    public_entry: polaris.kernelone.stream
+    allowed_new_files: true
+    notes: Stream ports and backpressure buffer
+  - id: kernelone.tasks
+    path: tasks
+    kind: capability
+    public_entry: polaris.kernelone.tasks
+    allowed_new_files: true
+    notes: Task token helpers
+  - id: kernelone.telemetry
+    path: telemetry
+    kind: capability
+    public_entry: polaris.kernelone.telemetry
+    allowed_new_files: true
+    notes: Metrics, logging, and debug stream
+  - id: kernelone.tests
+    path: tests
+    kind: test_root
+    public_entry: ""
+    allowed_new_files: true
+    notes: Package-local test_root; not a production capability
+  - id: kernelone.tool_creation
+    path: tool_creation
+    kind: legacy_or_overlap
+    public_entry: ""
+    allowed_new_files: true
+    notes: needs_owner; tests-only shell, no package __init__
+  - id: kernelone.tool_execution
+    path: tool_execution
+    kind: capability
+    public_entry: polaris.kernelone.tool_execution
+    allowed_new_files: true
+    notes: Tool execution, composer, and error classifier
+  - id: kernelone.tool_state
+    path: tool_state
+    kind: capability
+    public_entry: polaris.kernelone.tool_state
+    allowed_new_files: true
+    notes: Tool state machine and transcript
+  - id: kernelone.tools
+    path: tools
+    kind: capability
+    public_entry: polaris.kernelone.tools
+    allowed_new_files: true
+    notes: Tool kind constants
+  - id: kernelone.trace
+    path: trace
+    kind: capability
+    public_entry: polaris.kernelone.trace
+    allowed_new_files: true
+    notes: Unified tracer and logger
+  - id: kernelone.traceability
+    path: traceability
+    kind: legacy_or_overlap
+    public_entry: polaris.kernelone.traceability.public
+    allowed_new_files: true
+    notes: Dual entry with polaris.cells.kernelone.traceability; consume public
+  - id: kernelone.utils
+    path: utils
+    kind: support
+    public_entry: polaris.kernelone.utils
+    allowed_new_files: true
+    notes: JSON and time helpers
+  - id: kernelone.workflow
+    path: workflow
+    kind: capability
+    public_entry: polaris.kernelone.workflow
+    allowed_new_files: true
+    notes: Workflow engine primitives; also declared by cells/kernelone.core
+  - id: kernelone.ws
+    path: ws
+    kind: capability
+    public_entry: ""
+    allowed_new_files: true
+    notes: needs_owner; reserved OS websocket slot, empty subtree
