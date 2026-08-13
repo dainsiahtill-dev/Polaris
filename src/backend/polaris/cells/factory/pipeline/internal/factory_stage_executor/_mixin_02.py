@@ -1570,12 +1570,12 @@ class _Mixin02:
     def _claim_workspace_quality_repair_attempt(
         self,
         *,
-        run_id: str,
+        run: FactoryRun,
         repair_attempt: int,
         target_files: list[str],
     ) -> tuple[str, int, TaskRuntimeExecutionAttemptIdentityV1, dict[str, Any]]:
         return workspace_quality_impl._claim_workspace_quality_repair_attempt(
-            self, run_id=run_id, repair_attempt=repair_attempt, target_files=target_files
+            self, run=run, repair_attempt=repair_attempt, target_files=target_files
         )
 
     @staticmethod

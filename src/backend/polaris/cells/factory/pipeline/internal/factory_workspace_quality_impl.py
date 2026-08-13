@@ -229,7 +229,7 @@ def _workspace_quality_repair_errors(executor, results: list[dict[str, Any]]) ->
 def _claim_workspace_quality_repair_attempt(
     executor,
     *,
-    run_id: str,
+    run: FactoryRun,
     repair_attempt: int,
     target_files: list[str],
 ) -> tuple[str, int, TaskRuntimeExecutionAttemptIdentityV1, dict[str, Any]]:
@@ -248,6 +248,7 @@ def _claim_workspace_quality_repair_attempt(
     not restarted for this local verifier failure.
     """
 
+    run_id = run.id
     task_runtime = TaskRuntimeService(str(executor.workspace))
     normalized_targets = {
         str(path or "").strip().replace("\\", "/") for path in target_files if str(path or "").strip()
@@ -266,6 +267,92 @@ def _claim_workspace_quality_repair_attempt(
         if row_owner_score(candidate)[0] > 0
     ]
     owner_row = max(owner_rows, key=row_owner_score) if owner_rows else None
+    if owner_row is None:
+        # A terminal Factory drain deliberately removes live TaskRuntime rows
+        # after freezing their authority.  A QA-only retry preserves that
+        # frozen epoch, so restore the exact PM task contract named by it
+        # before claiming a local Director repair.  Without this bridge the QA
+        # boundary can validate the frozen projection, but the repair claimant
+        # sees no live owner and fails before the Provider/tool layer runs.
+        from polaris.cells.factory.pipeline.public.contracts import (
+            FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
+            FactoryTerminalTaskRuntimeProjectionV1,
+        )
+
+        frozen_payload = run.metadata.get(FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY)
+        frozen_task_statuses: dict[str, str] = {}
+        if isinstance(frozen_payload, Mapping):
+            frozen = FactoryTerminalTaskRuntimeProjectionV1.from_dict(frozen_payload)
+            if frozen.factory_run_id != run_id:
+                raise RuntimeError("workspace_quality_repair_frozen_authority_run_mismatch")
+            rows = frozen.projection.get("rows")
+            for row in rows if isinstance(rows, list) else []:
+                if not isinstance(row, Mapping):
+                    continue
+                external_task_id = str(row.get("external_task_id") or "").strip()
+                row_factory_run_id = str(row.get("factory_run_id") or "").strip()
+                if (
+                    external_task_id
+                    and not external_task_id.startswith("factory-")
+                    and row_factory_run_id == run_id
+                ):
+                    frozen_task_statuses[external_task_id] = str(
+                        row.get("execution_state") or row.get("status") or ""
+                    ).strip()
+
+        canonical_tasks: dict[str, dict[str, Any]] = {}
+        frozen_candidates: list[dict[str, Any]] = []
+        for index, task in enumerate(executor._load_pm_plan_tasks("tasks/plan.json"), start=1):
+            task_id = executor._task_id(task, index)
+            if not task_id or task_id not in frozen_task_statuses:
+                continue
+            canonical_task = dict(task)
+            canonical_tasks[task_id] = canonical_task
+            metadata_raw = canonical_task.get("metadata")
+            metadata = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
+            metadata.update(
+                {
+                    "external_task_id": task_id,
+                    "pm_task_id": task_id,
+                    "source_task_id": task_id,
+                    "factory_run_id": run_id,
+                    "factory_stage": "quality_gate",
+                    "source_artifact": "tasks/plan.json",
+                    "task_contract": canonical_task,
+                }
+            )
+            for key in ("scope", "scope_paths", "target_files", "acceptance", "acceptance_criteria", "steps"):
+                if key in canonical_task:
+                    metadata[key] = canonical_task[key]
+            frozen_candidate = {
+                **canonical_task,
+                "external_task_id": task_id,
+                "status": frozen_task_statuses[task_id],
+                "metadata": metadata,
+            }
+            if row_owner_score(frozen_candidate)[0] > 0:
+                frozen_candidates.append(frozen_candidate)
+
+        if frozen_candidates:
+            frozen_owner = max(frozen_candidates, key=row_owner_score)
+            frozen_owner_id = str(frozen_owner.get("external_task_id") or "").strip()
+            materialized = executor._materialize_pm_plan_taskboard(
+                [canonical_tasks[frozen_owner_id]],
+                run_id=run_id,
+                source_stage="quality_gate",
+                run_metadata=run.metadata,
+            )
+            binding_failures = materialized.get("binding_failures")
+            if binding_failures:
+                raise RuntimeError("workspace_quality_repair_frozen_owner_binding_failed")
+            # ``_materialize_pm_plan_taskboard`` owns a separate service
+            # instance. Reopen TaskRuntime here so this claimant cannot retain
+            # the pre-restore empty board cache and report ``task_not_found``.
+            task_runtime = TaskRuntimeService(str(executor.workspace))
+            restored_row = task_runtime.get_task(frozen_owner_id)
+            if not isinstance(restored_row, Mapping):
+                raise RuntimeError("workspace_quality_repair_frozen_owner_restore_failed")
+            owner_row = restored_row
     if owner_row is not None:
         owner_metadata = owner_row.get("metadata")
         owner_metadata = owner_metadata if isinstance(owner_metadata, Mapping) else {}
@@ -481,7 +568,7 @@ async def _apply_workspace_quality_deterministic_repairs(
     target_files = executor._director_stage_materialization_settle_target_files(diagnostics=artifact_quality_errors)
     try:
         task_id, task_row_id, execution_attempt, repair_task = executor._claim_workspace_quality_repair_attempt(
-            run_id=run_id,
+            run=run,
             repair_attempt=repair_attempt,
             target_files=target_files,
         )
@@ -614,13 +701,14 @@ async def _apply_workspace_quality_deterministic_repairs(
 async def _apply_workspace_quality_llm_repairs(
     executor,
     *,
-    run_id: str,
+    run: FactoryRun,
     context: dict[str, Any],
     artifact_quality_errors: list[str],
     repair_attempt: int,
     interface_discrepancy_evidence: dict[str, Any] | None = None,
     owner_target_files: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    run_id = run.id
     changed_files = executor._workspace_quality_repair_changed_files()
     if not changed_files:
         return [], {
@@ -717,7 +805,7 @@ async def _apply_workspace_quality_llm_repairs(
             execution_attempt,
             repair_task,
         ) = executor._claim_workspace_quality_repair_attempt(
-            run_id=run_id,
+            run=run,
             repair_attempt=repair_attempt,
             target_files=target_files or changed_files,
         )
@@ -1099,7 +1187,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                             ),
                         )
                     round_repair_results, round_summary = await executor._apply_workspace_quality_llm_repairs(
-                        run_id=run.id,
+                        run=run,
                         context=context,
                         artifact_quality_errors=repair_errors,
                         repair_attempt=round_index + 1,
@@ -1139,7 +1227,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                         ),
                     )
                 round_repair_results, round_summary = await executor._apply_workspace_quality_llm_repairs(
-                    run_id=run.id,
+                    run=run,
                     context=context,
                     artifact_quality_errors=repair_errors,
                     repair_attempt=round_index + 1,
@@ -1162,7 +1250,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                         ),
                     )
                 round_repair_results, round_summary = await executor._apply_workspace_quality_llm_repairs(
-                    run_id=run.id,
+                    run=run,
                     context=context,
                     artifact_quality_errors=repair_errors,
                     repair_attempt=round_index + 1,
@@ -1195,7 +1283,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                         ),
                     )
                 round_repair_results, round_summary = await executor._apply_workspace_quality_llm_repairs(
-                    run_id=run.id,
+                    run=run,
                     context=context,
                     artifact_quality_errors=repair_errors,
                     repair_attempt=round_index + 1,

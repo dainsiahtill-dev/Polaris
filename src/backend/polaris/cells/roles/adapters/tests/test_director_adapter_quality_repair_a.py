@@ -1585,7 +1585,11 @@ class TestQualityRepairMissingTargetContractA:
         assert summary["semantic_quality_target_files"] == ["package.json"]
         assert summary["repair_target_files"] == ["package.json"]
         assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["package.json"]
-        assert "_transaction_kernel_forced_tool_choice" not in adapter.repair_context
+        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
+            "type": "function",
+            "function": {"name": "edit_file"},
+        }
+        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
         assert "NPM PACKAGE MANIFEST REPAIR" in adapter.repair_message
 
     def test_package_script_entrypoint_outside_task_scope_is_deferred(
@@ -2803,17 +2807,18 @@ class TestQualityRepairMissingTargetContractA:
 
         forced_defs = adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
         forced_names = [item["function"]["name"] for item in forced_defs]
-        assert forced_names == ["edit_file", "write_file", "execute_command"]
+        assert forced_names == ["edit_file"]
         assert adapter.repair_context["metadata"]["tool_contract"]["required_tools"] == ["edit_file"]
-        assert "_transaction_kernel_forced_tool_choice" not in adapter.repair_context
-        assert "_transaction_kernel_force_exact_tools" not in adapter.repair_context
+        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
+            "type": "function",
+            "function": {"name": "edit_file"},
+        }
+        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
         assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["models/exhibit.go"]
         assert "edit_preferred_single_target" in adapter.repair_message
         assert "Do not call read_file" not in adapter.repair_message
         assert "call read_file for this target first when required by tool policy" in adapter.repair_message
         assert "write_only_single_target" not in adapter.repair_message
-        assert adapter._execution.allowed_tool_names == {"edit_file", "execute_command", "write_file"}
-        assert adapter._execution.allow_patch_fallback is True
+        assert adapter._execution.allowed_tool_names == {"edit_file"}
+        assert adapter._execution.allow_patch_fallback is False
         assert summary["repair_target_files"] == ["models/exhibit.go"]
-
-    @pytest.mark.asyncio

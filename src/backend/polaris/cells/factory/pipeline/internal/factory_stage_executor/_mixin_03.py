@@ -412,7 +412,7 @@ class _Mixin03:
     async def _apply_workspace_quality_llm_repairs(
         self,
         *,
-        run_id: str,
+        run: FactoryRun,
         context: dict[str, Any],
         artifact_quality_errors: list[str],
         repair_attempt: int,
@@ -421,7 +421,7 @@ class _Mixin03:
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         return await workspace_quality_impl._apply_workspace_quality_llm_repairs(
             self,
-            run_id=run_id,
+            run=run,
             context=context,
             artifact_quality_errors=artifact_quality_errors,
             repair_attempt=repair_attempt,

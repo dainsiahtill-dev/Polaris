@@ -659,7 +659,10 @@ def _build_portfolio_completion_contract(
             and row["semantic_role"] == "entrypoint"
             and row["owner_task_id"] is not None
         }
-        pm_entrypoint_owner_by_path = {path: task.task_id for task in command.tasks for path in task.entrypoint_targets}
+        pm_entrypoint_owners_by_path: dict[str, set[str]] = {}
+        for task in command.tasks:
+            for path in task.entrypoint_targets:
+                pm_entrypoint_owners_by_path.setdefault(path, set()).add(task.task_id)
         explicit_pm_entrypoint_owners = {task.task_id for task in command.tasks if task.entrypoint_targets}
 
         def authorities_for(*, modality: str, owner_task_id: str | None = None) -> tuple[Any, ...]:
@@ -771,7 +774,7 @@ def _build_portfolio_completion_contract(
                 len(matching) == 1
                 and source_path is not None
                 and (
-                    pm_entrypoint_owner_by_path.get(source_path) == owner_task_id
+                    owner_task_id in pm_entrypoint_owners_by_path.get(source_path, set())
                     or (
                         owner_task_id not in explicit_pm_entrypoint_owners
                         and entrypoint_artifact_owner_by_path.get(source_path) == owner_task_id

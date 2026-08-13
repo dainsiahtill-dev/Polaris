@@ -7711,8 +7711,14 @@ class TestWorkspaceQualityDeterministicRepairExecution:
             fake_llm_repair,
         )
 
+        run = FactoryRun(
+            id="factory-quality-llm-heartbeat-failed",
+            config=FactoryConfig(name="quality-llm-heartbeat", stages=["quality_gate"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-13T00:00:00+00:00",
+        )
         _, summary = await executor._apply_workspace_quality_llm_repairs(
-            run_id="factory-quality-llm-heartbeat-failed",
+            run=run,
             context={},
             artifact_quality_errors=["src/app.js failed"],
             repair_attempt=1,
@@ -8006,13 +8012,13 @@ class TestRunWorkspaceQualityChecks:
 
         async def fake_apply_workspace_quality_llm_repairs(
             *,
-            run_id: str,
+            run: FactoryRun,
             context: dict[str, Any],
             artifact_quality_errors: list[str],
             repair_attempt: int,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
             del context
-            assert run_id == "factory-quality-depth-contract"
+            assert run.id == "factory-quality-depth-contract"
             assert repair_attempt == 1
             assert any("production_source_lines=1 < 3" in item for item in artifact_quality_errors)
             source_path.write_text(
@@ -8139,12 +8145,12 @@ class TestRunWorkspaceQualityChecks:
 
         async def fake_apply_workspace_quality_llm_repairs(
             *,
-            run_id: str,
+            run: FactoryRun,
             context: dict[str, Any],
             artifact_quality_errors: list[str],
             repair_attempt: int,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
-            assert run_id == "factory-quality-llm-repair"
+            assert run.id == "factory-quality-llm-repair"
             assert context["workspace_quality_repair_max_rounds"] == 1
             assert artifact_quality_errors
             assert repair_attempt == 1
@@ -8244,7 +8250,7 @@ class TestRunWorkspaceQualityChecks:
 
         async def fake_apply_workspace_quality_llm_repairs(
             *,
-            run_id: str,
+            run: FactoryRun,
             context: dict[str, Any],
             artifact_quality_errors: list[str],
             repair_attempt: int,
@@ -8252,7 +8258,7 @@ class TestRunWorkspaceQualityChecks:
             owner_target_files: list[str] | None = None,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
             del context, artifact_quality_errors, interface_discrepancy_evidence
-            assert run_id == "factory-quality-owner-rebind"
+            assert run.id == "factory-quality-owner-rebind"
             assert repair_attempt == 1
             owner_target_calls.append(owner_target_files)
             if owner_target_files is None:
@@ -8380,6 +8386,103 @@ class TestRunWorkspaceQualityChecks:
         assert executor._workspace_quality_repair_owner_score(
             source_owner, run_id=run_id, normalized_targets=targets
         ) > executor._workspace_quality_repair_owner_score(test_owner, run_id=run_id, normalized_targets=targets)
+
+    def test_workspace_quality_rehydrates_frozen_owner_for_qa_only_retry(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Terminal drain removes live rows, but QA retry must reclaim the same PM task."""
+
+        from polaris.cells.factory.pipeline.public.contracts import (
+            FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
+            FactoryTerminalTaskRuntimeProjectionV1,
+        )
+        from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-frozen-quality-owner",
+            config=FactoryConfig(name="frozen-quality-owner", stages=["director_dispatch", "quality_gate"]),
+            status=FactoryRunStatus.RECOVERING,
+            created_at="2026-08-13T00:00:00+00:00",
+        )
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "goal": "Own the model exports",
+                        "scope": "src/models",
+                        "scope_paths": ["src/models/__init__.py", "src/models/mood.py"],
+                        "target_files": ["src/models/__init__.py", "src/models/mood.py"],
+                        "acceptance_criteria": ["model imports pass"],
+                    },
+                    {
+                        "id": "TASK-2",
+                        "goal": "Own the CLI",
+                        "scope": "src/main.py",
+                        "scope_paths": ["src/main.py"],
+                        "target_files": ["src/main.py"],
+                        "acceptance_criteria": ["CLI starts"],
+                    },
+                ]
+            },
+        )
+        run.metadata[FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY] = (
+            FactoryTerminalTaskRuntimeProjectionV1(
+                workspace=str(tmp_path),
+                factory_run_id=run.id,
+                captured_at="2026-08-13T00:05:00+00:00",
+                projection={
+                    "schema_version": "task_runtime.observable_task_rows_authority.v1",
+                    "source": "task_runtime.execution_fact",
+                    "workspace": str(tmp_path),
+                    "requested_factory_run_id": run.id,
+                    "authoritative": True,
+                    "degraded": False,
+                    "row_count": 2,
+                    "total_row_count": 2,
+                    "rows": [
+                        {
+                            "task_id": "6",
+                            "external_task_id": "TASK-1",
+                            "factory_run_id": run.id,
+                            "status": "failed",
+                            "execution_state": "failed",
+                            "source": "task_runtime.execution_fact",
+                            "status_source": "task_runtime.execution_fact",
+                            "fact_event_seq": 10,
+                        },
+                        {
+                            "task_id": "7",
+                            "external_task_id": "TASK-2",
+                            "factory_run_id": run.id,
+                            "status": "completed",
+                            "execution_state": "completed",
+                            "source": "task_runtime.execution_fact",
+                            "status_source": "task_runtime.execution_fact",
+                            "fact_event_seq": 11,
+                        },
+                    ],
+                    "readiness": {"ready": True, "blocking_reasons": []},
+                },
+            ).to_dict()
+        )
+
+        external_id, task_row_id, attempt, repair_task = executor._claim_workspace_quality_repair_attempt(
+            run=run,
+            repair_attempt=1,
+            target_files=["src/models/__init__.py"],
+        )
+
+        assert external_id == "TASK-1"
+        assert attempt.run_id == run.id
+        assert repair_task["target_files"] == ["src/models/__init__.py", "src/models/mood.py"]
+        restored = TaskRuntimeService(str(tmp_path)).get_task(task_row_id)
+        assert restored is not None
+        assert restored["metadata"]["external_task_id"] == "TASK-1"
+        assert restored["metadata"]["factory_stage"] == "quality_gate"
 
     def test_workspace_quality_repair_effect_requires_post_repair_verifier_progress(self) -> None:
         classify = OrchestrationStageExecutor._workspace_quality_repair_effect
@@ -8682,8 +8785,14 @@ class TestRunWorkspaceQualityChecks:
             fake_run_director_materialization_quality_repair,
         )
 
+        run = FactoryRun(
+            id="factory-context",
+            config=FactoryConfig(name="quality-repair-context", stages=["quality_gate"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-13T00:00:00+00:00",
+        )
         _, summary = await executor._apply_workspace_quality_llm_repairs(
-            run_id="factory-context",
+            run=run,
             context={
                 "factory_run_deadline_epoch_seconds": 4_102_444_800.0,
                 "factory_run_deadline_source": "unit_test",
@@ -8821,13 +8930,13 @@ class TestRunWorkspaceQualityChecks:
 
         async def fake_apply_workspace_quality_llm_repairs(
             *,
-            run_id: str,
+            run: FactoryRun,
             context: dict[str, Any],
             artifact_quality_errors: list[str],
             repair_attempt: int,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
             nonlocal llm_repair_calls
-            assert run_id == "factory-quality-deterministic-no-write"
+            assert run.id == "factory-quality-deterministic-no-write"
             assert context["workspace_quality_repair_max_rounds"] == 1
             assert artifact_quality_errors
             assert repair_attempt == 1
@@ -8945,14 +9054,14 @@ class TestRunWorkspaceQualityChecks:
 
         async def fake_apply_workspace_quality_llm_repairs(
             *,
-            run_id: str,
+            run: FactoryRun,
             context: dict[str, Any],
             artifact_quality_errors: list[str],
             repair_attempt: int,
             interface_discrepancy_evidence: dict[str, Any] | None = None,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
             nonlocal llm_repair_calls
-            del run_id, context, artifact_quality_errors, repair_attempt, interface_discrepancy_evidence
+            del run, context, artifact_quality_errors, repair_attempt, interface_discrepancy_evidence
             llm_repair_calls += 1
             return [], {}
 
@@ -9064,13 +9173,13 @@ class TestRunWorkspaceQualityChecks:
 
         async def fake_apply_workspace_quality_llm_repairs(
             *,
-            run_id: str,
+            run: FactoryRun,
             context: dict[str, Any],
             artifact_quality_errors: list[str],
             repair_attempt: int,
             interface_discrepancy_evidence: dict[str, Any] | None = None,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
-            del run_id, context, artifact_quality_errors, repair_attempt
+            del run, context, artifact_quality_errors, repair_attempt
             assert interface_discrepancy_evidence is not None
             assert interface_discrepancy_evidence["recommended_owner"] == "director"
             assert interface_discrepancy_evidence["director_retry_allowed"] is True

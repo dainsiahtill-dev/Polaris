@@ -271,12 +271,18 @@ def _quality_repair_execute_command_tool_definition() -> dict[str, Any]:
 
 
 def _director_repair_force_existing_write_enabled() -> bool:
-    """Default OFF -> byte-identical. Opt in so an existing-file quality repair forces
-    a write/edit tool call (tool_choice=required, execute_command dropped) instead of
-    leaving tool_choice auto with execute_command available -- which let weak models
-    explore or return empty content, producing single_batch_contract_violation: no
-    write tool invocation (factory_bench L3-01 repair could not materialize the fix)."""
-    return str(os.environ.get("KERNELONE_DIRECTOR_REPAIR_FORCE_EXISTING_WRITE", "")).strip().lower() in {
+    """Require a physical edit for an existing-file quality repair by default.
+
+    A quality-repair turn is single-batch and already carries the current UTF-8
+    bodies plus structured verifier diagnostics.  Leaving ``tool_choice=auto``
+    allowed the model to spend the only batch on ``read_file`` and then stop;
+    the next identical attempt did the same and tripped the stagnation breaker.
+    Keep an explicit false value only as an emergency compatibility escape hatch.
+    """
+    raw = str(os.environ.get("KERNELONE_DIRECTOR_REPAIR_FORCE_EXISTING_WRITE", "")).strip().lower()
+    if not raw:
+        return True
+    return raw in {
         "1",
         "true",
         "yes",

@@ -776,9 +776,14 @@ class TestQualityRepairMissingTargetContractB:
         assert summary["runtime_smoke_target_files"] == ["calculator.py"]
         assert summary["repair_target_files"] == ["calculator.py"]
         assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["calculator.py"]
-        assert "_transaction_kernel_forced_tool_choice" not in adapter.repair_context
-        assert adapter._execution.allowed_tool_names == {"edit_file", "execute_command", "write_file"}
-        assert adapter._execution.allow_patch_fallback is True
+        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
+            "type": "function",
+            "function": {"name": "edit_file"},
+        }
+        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
+        assert adapter.repair_context["metadata"]["tool_contract"]["required_tools"] == ["edit_file"]
+        assert adapter._execution.allowed_tool_names == {"edit_file"}
+        assert adapter._execution.allow_patch_fallback is False
         assert "EXISTING FAILED TARGET FILES" in adapter.repair_message
         assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
         assert "MISSING TARGET FILES" not in adapter.repair_message
@@ -1409,9 +1414,14 @@ class TestQualityRepairMissingTargetContractB:
         assert summary["runtime_smoke_target_files"] == ["main.go"]
         assert summary["repair_target_files"] == ["main.go"]
         assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["main.go"]
-        assert "_transaction_kernel_forced_tool_choice" not in adapter.repair_context
-        assert adapter._execution.allowed_tool_names == {"edit_file", "execute_command", "write_file"}
-        assert adapter._execution.allow_patch_fallback is True
+        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
+            "type": "function",
+            "function": {"name": "edit_file"},
+        }
+        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
+        assert adapter.repair_context["metadata"]["tool_contract"]["required_tools"] == ["edit_file"]
+        assert adapter._execution.allowed_tool_names == {"edit_file"}
+        assert adapter._execution.allow_patch_fallback is False
         assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
         assert "CURRENT UTF-8 CONTENT OF REPAIR TARGETS" in adapter.repair_message
         assert "Before edit_file, call read_file" not in adapter.repair_message
@@ -1489,8 +1499,8 @@ class TestQualityRepairMissingTargetContractB:
         assert summary["runtime_smoke_target_files"] == ["models/gallery.go"]
         assert summary["repair_target_files"] == ["models/gallery.go"]
         assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["models/gallery.go"]
-        assert adapter._execution.allowed_tool_names == {"edit_file", "execute_command", "write_file"}
-        assert adapter._execution.allow_patch_fallback is True
+        assert adapter._execution.allowed_tool_names == {"edit_file"}
+        assert adapter._execution.allow_patch_fallback is False
         assert "models/gallery.go" in adapter.repair_message
 
     def test_python_unittest_discover_result_lines_infer_imported_src_modules(self, tmp_path) -> None:
@@ -1854,8 +1864,8 @@ class TestQualityRepairMissingTargetContractB:
         ]
         assert "tests/test_weather.py" in adapter.repair_message
         assert "src/models/weather.py" not in adapter.repair_message
-        assert adapter._execution.allowed_tool_names == {"edit_file", "execute_command", "write_file"}
-        assert adapter._execution.allow_patch_fallback is True
+        assert adapter._execution.allowed_tool_names == {"edit_file"}
+        assert adapter._execution.allow_patch_fallback is False
 
     @pytest.mark.asyncio
     async def test_tap_failure_repair_targets_implementation_and_carries_structured_failure_context(
@@ -2060,8 +2070,8 @@ class TestQualityRepairMissingTargetContractB:
         assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == [
             "test_calculator.py"
         ]
-        assert adapter._execution.allowed_tool_names == {"edit_file", "execute_command", "write_file"}
-        assert adapter._execution.allow_patch_fallback is True
+        assert adapter._execution.allowed_tool_names == {"edit_file"}
+        assert adapter._execution.allow_patch_fallback is False
         assert "EXISTING FAILED TARGET FILES" in adapter.repair_message
         assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
         assert "test_calculator.py" in adapter.repair_message
@@ -2532,8 +2542,8 @@ class TestQualityRepairMissingTargetContractB:
         assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == [
             "src/engine/simulation.ts"
         ]
-        assert adapter._execution.allowed_tool_names == {"edit_file", "execute_command", "write_file"}
-        assert adapter._execution.allow_patch_fallback is True
+        assert adapter._execution.allowed_tool_names == {"edit_file"}
+        assert adapter._execution.allow_patch_fallback is False
         assert "EXISTING FAILED TARGET FILES" in adapter.repair_message
         assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
         assert "src/engine/simulation.ts" in adapter.repair_message
@@ -2805,4 +2815,3 @@ class TestQualityRepairMissingTargetContractB:
             repair_attempt=4,
             rotate_after_first_attempt=True,
         ) == ["src/main.ts"]
-

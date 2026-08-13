@@ -38,18 +38,12 @@ from polaris.cells.chief_engineer.blueprint.public.service import (
     build_ce_handoff_decision,
     build_chief_engineer_blueprint_portfolio,
     generate_task_blueprint,
-    get_blueprint_status,
     project_chief_engineer_task_blueprint,
     query_blueprint_provenance,
     query_project_completion_contract,
     validate_director_handoff_from_payload,
 )
 from polaris.cells.control_plane.run_ledger.public import stable_hash
-from polaris.kernelone.quality.file_ownership_ledger import (
-    FileOwnershipLedgerError,
-    read_file_owners,
-)
-from polaris.kernelone.storage import resolve_storage_roots
 
 _PM_CONTRACT_HASH = "a" * 64
 _VERIFIER_POLICY_HASH = "b" * 64
@@ -334,8 +328,6 @@ def _blueprint_provenance_snapshot_kwargs() -> dict:
         "pm_task_canonical_hash": stable_hash(_pm_task_payload()),
         "target_files": ("src/main.py", "tests/test_main.py"),
     }
-
-
 
 
 class TestGovernanceEnumFailClosed:
@@ -898,6 +890,63 @@ class TestChiefEngineerBlueprintPortfolio:
         )
         expected = _command_authority("TASK-A", "entrypoint", ("python", "-m", "src.main"))
         assert entrypoint_verifier.command == expected.command
+        assert entrypoint_verifier.command_authority_hash == expected.authority_hash
+
+    def test_completion_contract_preserves_shared_pm_entrypoint_owner_authority(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A shared PM entrypoint path must retain every task-local owner."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Implement the application entrypoint",
+                target_files=("src/main.py",),
+                scope_paths=("src/main.py",),
+                entrypoint_targets=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Integrate and verify the application entrypoint",
+                target_files=("src/main.py", "tests/test_main.py"),
+                scope_paths=("src/main.py", "tests/test_main.py"),
+                entrypoint_targets=("src/main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        requirements["obligations"]["entrypoints"][0]["command"] = "python src/main.py --model-guess"
+
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-shared-entrypoint-owner",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-shared-entrypoint-owner",
+                ),
+                llm_blueprint={
+                    "construction_plan": {"implementation": ["Build the application"]},
+                    "project_completion_contract": requirements,
+                },
+            )
+        )
+
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        assert len(completion.obligations.entrypoints) == 1
+        entrypoint = completion.obligations.entrypoints[0]
+        assert entrypoint.owner_task_id == "TASK-A"
+        assert entrypoint.source_path == "src/main.py"
+        assert entrypoint.command == "python -m src.main"
+        entrypoint_verifier = next(
+            item for item in completion.obligations.verification if item.modality == "entrypoint"
+        )
+        expected = _command_authority("TASK-A", "entrypoint", ("python", "-m", "src.main"))
+        assert entrypoint_verifier.owner_task_id == "TASK-A"
         assert entrypoint_verifier.command_authority_hash == expected.authority_hash
 
     def test_compiled_runtime_entrypoint_derives_from_pm_owned_source(self, tmp_path: Path) -> None:
@@ -2508,5 +2557,3 @@ class TestChiefEngineerBlueprintErrorV1:
     def test_empty_code_raises(self) -> None:
         with pytest.raises(ValueError, match="code"):
             ChiefEngineerBlueprintErrorV1("error", code="  ")
-
-
