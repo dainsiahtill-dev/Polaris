@@ -485,7 +485,8 @@ class _Mixin03:
         context: dict[str, Any],
         payload: dict[str, Any],
     ) -> None:
-        raw_commands = payload.get("commands")
+        raw_effective_commands = payload.get("effective_commands")
+        raw_commands = raw_effective_commands if isinstance(raw_effective_commands, list) else payload.get("commands")
         commands = (
             [dict(item) for item in raw_commands if isinstance(item, dict)] if isinstance(raw_commands, list) else []
         )
@@ -1043,7 +1044,7 @@ class _Mixin03:
         rows = runtime.list_observable_task_rows()
         reconciled: list[str] = []
         for external_task_id in recovered_ids:
-            matches: list[dict[str, Any]] = []
+            historical_matches: list[dict[str, Any]] = []
             for raw_row in rows:
                 row = dict(raw_row) if isinstance(raw_row, dict) else {}
                 raw_metadata = row.get("metadata")
@@ -1056,17 +1057,119 @@ class _Mixin03:
                 }
                 factory_run_id = str(metadata.get("factory_run_id") or "").strip()
                 if external_task_id in aliases and factory_run_id == run.id:
-                    matches.append(row)
-            if len(matches) != 1:
+                    historical_matches.append(row)
+
+            # ``list_observable_task_rows`` is an execution-fact projection.
+            # It intentionally retains ``runtime_reset_removed`` tombstones for
+            # audit.  Those historical rows are not concurrent delivery owners.
+            # Counting them here made every QA-only retry fail after a terminal
+            # drain even though its frozen TaskRuntime authority was exact.
+            live_matches = [
+                row
+                for row in historical_matches
+                if str(row.get("execution_state") or row.get("status") or "").strip().lower() != "removed"
+            ]
+            if len(live_matches) > 1:
                 return {
                     "success": False,
                     "reason": "verified_delivery_runtime_owner_not_unique",
                     "external_task_id": external_task_id,
-                    "match_count": len(matches),
+                    "match_count": len(live_matches),
+                    "historical_match_count": len(historical_matches),
                     "reconciled_task_ids": reconciled,
                 }
 
-            task_id = int(matches[0]["id"])
+            if not live_matches:
+                # Terminal settlement removes live TaskRuntime files after
+                # persisting one authoritative projection on the Factory run.
+                # A QA-only retry preserves that epoch.  Validate the frozen
+                # exact owner first, then ask TaskRuntime to materialize a fresh
+                # row from the canonical PM contract.  Never resurrect an
+                # arbitrary tombstone or infer authority from the largest id.
+                from polaris.cells.factory.pipeline.public.contracts import (
+                    FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
+                    FactoryTerminalTaskRuntimeProjectionV1,
+                )
+
+                frozen_payload = run.metadata.get(FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY)
+                if not isinstance(frozen_payload, Mapping):
+                    return {
+                        "success": False,
+                        "reason": "verified_delivery_runtime_frozen_authority_missing",
+                        "external_task_id": external_task_id,
+                        "historical_match_count": len(historical_matches),
+                        "reconciled_task_ids": reconciled,
+                    }
+                try:
+                    frozen = FactoryTerminalTaskRuntimeProjectionV1.from_dict(frozen_payload)
+                except (OSError, TypeError, ValueError) as exc:
+                    return {
+                        "success": False,
+                        "reason": f"verified_delivery_runtime_frozen_authority_invalid:{type(exc).__name__}",
+                        "external_task_id": external_task_id,
+                        "historical_match_count": len(historical_matches),
+                        "reconciled_task_ids": reconciled,
+                    }
+                frozen_rows = frozen.projection.get("rows")
+                frozen_matches = [
+                    dict(row)
+                    for row in (frozen_rows if isinstance(frozen_rows, list) else [])
+                    if isinstance(row, Mapping)
+                    and str(row.get("external_task_id") or "").strip() == external_task_id
+                    and str(row.get("factory_run_id") or "").strip() == run.id
+                    and str(row.get("execution_state") or row.get("status") or "").strip().lower() != "removed"
+                ]
+                if frozen.factory_run_id != run.id or len(frozen_matches) != 1:
+                    return {
+                        "success": False,
+                        "reason": "verified_delivery_runtime_frozen_owner_not_unique",
+                        "external_task_id": external_task_id,
+                        "match_count": len(frozen_matches),
+                        "historical_match_count": len(historical_matches),
+                        "reconciled_task_ids": reconciled,
+                    }
+
+                canonical_matches = [
+                    dict(task)
+                    for index, task in enumerate(self._load_pm_plan_tasks("tasks/plan.json"), start=1)
+                    if self._task_id(task, index) == external_task_id
+                ]
+                if len(canonical_matches) != 1:
+                    return {
+                        "success": False,
+                        "reason": "verified_delivery_runtime_pm_contract_not_unique",
+                        "external_task_id": external_task_id,
+                        "match_count": len(canonical_matches),
+                        "reconciled_task_ids": reconciled,
+                    }
+                materialized = self._materialize_pm_plan_taskboard(
+                    canonical_matches,
+                    run_id=run.id,
+                    source_stage="quality_gate",
+                    run_metadata=run.metadata,
+                )
+                if materialized.get("binding_failures"):
+                    return {
+                        "success": False,
+                        "reason": "verified_delivery_runtime_owner_binding_failed",
+                        "external_task_id": external_task_id,
+                        "binding_failures": materialized.get("binding_failures"),
+                        "reconciled_task_ids": reconciled,
+                    }
+                # Materialization owns another service instance.  Reopen the
+                # projection so this claimant cannot retain an empty board.
+                runtime = pkg().TaskRuntimeService(str(self.workspace))
+                restored = runtime.get_task(external_task_id)
+                if not isinstance(restored, Mapping):
+                    return {
+                        "success": False,
+                        "reason": "verified_delivery_runtime_owner_restore_failed",
+                        "external_task_id": external_task_id,
+                        "reconciled_task_ids": reconciled,
+                    }
+                live_matches = [dict(restored)]
+
+            task_id = int(live_matches[0]["id"])
             evidence = {
                 "schema_version": "factory.verified_delivery_runtime_reconciliation.v1",
                 "factory_run_id": run.id,

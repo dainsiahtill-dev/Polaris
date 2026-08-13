@@ -1082,17 +1082,42 @@ def _effective_gate_event_indexes(events: list[dict[str, Any]]) -> tuple[frozens
         event = events[index]
         raw_gate = event.get("gate")
         gate = raw_gate if isinstance(raw_gate, dict) else {}
-        if _clean_string(gate.get("name")).lower() != "qa_verdict":
+        gate_name = _clean_string(gate.get("name")).lower()
+        if gate_name not in {"qa_verdict", "tool_receipt"}:
             continue
         raw_physical = event.get("physical_evidence")
         physical = raw_physical if isinstance(raw_physical, dict) else {}
+        physical_metadata = _dict_value(physical.get("metadata"))
         raw_token = event.get("job_token")
         token = raw_token if isinstance(raw_token, dict) else {}
-        task_id = _clean_string(event.get("task_id") or physical.get("task_id") or token.get("task_id"))
+        task_id = _clean_string(
+            event.get("task_id") or physical.get("task_id") or token.get("task_id") or physical_metadata.get("task_id")
+        )
         verdict_run_id = _clean_string(event.get("run_id") or physical.get("run_id") or token.get("run_id"))
         latest_boundary = latest_boundaries.get(task_id)
         latest_run_id = _clean_string((latest_boundary or {}).get("run_id"))
-        if task_id and verdict_run_id and latest_run_id and verdict_run_id != latest_run_id:
+        if (
+            gate_name == "qa_verdict"
+            and task_id
+            and verdict_run_id
+            and latest_run_id
+            and verdict_run_id != latest_run_id
+        ):
+            effective_indexes.discard(index)
+            continue
+        # Tool-batch failures are attempt facts, not durable delivery verdicts.
+        # Once the same immutable task owns a canonical completed_verified
+        # boundary, retain failed receipts in append-only history but remove
+        # them from current outcome authority. Successful receipts stay
+        # effective as physical-effect evidence. This prevents a repaired task
+        # from remaining permanently failed without hiding an unresolved task.
+        if (
+            gate_name == "tool_receipt"
+            and not bool(gate.get("ok"))
+            and task_id
+            and bool((latest_boundary or {}).get("ok"))
+            and _clean_string((latest_boundary or {}).get("status")).lower() == "completed_verified"
+        ):
             effective_indexes.discard(index)
     return frozenset(effective_indexes), tuple(issues)
 

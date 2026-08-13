@@ -1822,6 +1822,45 @@ def test_workspace_validation_artifact_writes_run_ledger_command_evidence(tmp_pa
     assert len(json.dumps(ledger_event, ensure_ascii=False).encode("utf-8")) < 64_000
 
 
+def test_workspace_validation_ledger_uses_terminal_verifier_epoch(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    run = FactoryRun(
+        id="run-workspace-repaired",
+        config=FactoryConfig(name="demo"),
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-08-13T00:00:00Z",
+    )
+
+    executor._write_workspace_validation_artifact(
+        run,
+        {"project_id": "L1-repaired", "target_files": ["src/main.py"]},
+        {
+            "schema_version": "factory.workspace_quality_checks.v1",
+            "factory_run_id": run.id,
+            "passed": True,
+            "commands": [
+                {"command": ["python", "-m", "unittest"], "passed": False, "exit_code": 1},
+                {"command": ["python", "-m", "unittest"], "passed": True, "exit_code": 0},
+            ],
+            "effective_commands": [
+                {"command": ["python", "-m", "unittest"], "passed": True, "exit_code": 0},
+            ],
+            "repair": {"attempted": True, "success": True, "convergence_stop_reason": "verifier_passed"},
+        },
+    )
+
+    projection = load_run_ledger_projection(tmp_path, run_id=run.id)
+    gate = projection["effective_gates"][0]
+    assert gate["ok"] is True
+    assert gate["failed_required_evidence_modalities"] == []
+    assert projection["evidence_policy"]["failed_required_modalities"] == []
+    assert projection["outcome_ok"] is True
+
+    artifact = json.loads(executor._artifact_path("runtime/qa/workspace-validation.json").read_text(encoding="utf-8"))
+    assert len(artifact["commands"]) == 2
+    assert artifact["commands"][0]["passed"] is False
+
+
 def test_pm_plan_validation_contract_hygiene_defers_test_acceptance_to_validation_task() -> None:
     payload = {
         "tasks": [
@@ -8080,6 +8119,11 @@ class TestRunWorkspaceQualityChecks:
         command_phases = [(item["command"], item["phase"], item["passed"]) for item in payload["commands"]]
         assert (["delivery_depth_contract"], "check", False) in command_phases
         assert (["delivery_depth_contract"], "check_after_repair", True) in command_phases
+        effective_command_phases = [
+            (item["command"], item["phase"], item["passed"]) for item in payload["effective_commands"]
+        ]
+        assert (["delivery_depth_contract"], "check", False) not in effective_command_phases
+        assert (["delivery_depth_contract"], "check_after_repair", True) in effective_command_phases
         assert payload["repair"]["attempted"] is True
         assert payload["repair"]["success"] is True
 
@@ -8429,46 +8473,44 @@ class TestRunWorkspaceQualityChecks:
                 ]
             },
         )
-        run.metadata[FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY] = (
-            FactoryTerminalTaskRuntimeProjectionV1(
-                workspace=str(tmp_path),
-                factory_run_id=run.id,
-                captured_at="2026-08-13T00:05:00+00:00",
-                projection={
-                    "schema_version": "task_runtime.observable_task_rows_authority.v1",
-                    "source": "task_runtime.execution_fact",
-                    "workspace": str(tmp_path),
-                    "requested_factory_run_id": run.id,
-                    "authoritative": True,
-                    "degraded": False,
-                    "row_count": 2,
-                    "total_row_count": 2,
-                    "rows": [
-                        {
-                            "task_id": "6",
-                            "external_task_id": "TASK-1",
-                            "factory_run_id": run.id,
-                            "status": "failed",
-                            "execution_state": "failed",
-                            "source": "task_runtime.execution_fact",
-                            "status_source": "task_runtime.execution_fact",
-                            "fact_event_seq": 10,
-                        },
-                        {
-                            "task_id": "7",
-                            "external_task_id": "TASK-2",
-                            "factory_run_id": run.id,
-                            "status": "completed",
-                            "execution_state": "completed",
-                            "source": "task_runtime.execution_fact",
-                            "status_source": "task_runtime.execution_fact",
-                            "fact_event_seq": 11,
-                        },
-                    ],
-                    "readiness": {"ready": True, "blocking_reasons": []},
-                },
-            ).to_dict()
-        )
+        run.metadata[FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY] = FactoryTerminalTaskRuntimeProjectionV1(
+            workspace=str(tmp_path),
+            factory_run_id=run.id,
+            captured_at="2026-08-13T00:05:00+00:00",
+            projection={
+                "schema_version": "task_runtime.observable_task_rows_authority.v1",
+                "source": "task_runtime.execution_fact",
+                "workspace": str(tmp_path),
+                "requested_factory_run_id": run.id,
+                "authoritative": True,
+                "degraded": False,
+                "row_count": 2,
+                "total_row_count": 2,
+                "rows": [
+                    {
+                        "task_id": "6",
+                        "external_task_id": "TASK-1",
+                        "factory_run_id": run.id,
+                        "status": "failed",
+                        "execution_state": "failed",
+                        "source": "task_runtime.execution_fact",
+                        "status_source": "task_runtime.execution_fact",
+                        "fact_event_seq": 10,
+                    },
+                    {
+                        "task_id": "7",
+                        "external_task_id": "TASK-2",
+                        "factory_run_id": run.id,
+                        "status": "completed",
+                        "execution_state": "completed",
+                        "source": "task_runtime.execution_fact",
+                        "status_source": "task_runtime.execution_fact",
+                        "fact_event_seq": 11,
+                    },
+                ],
+                "readiness": {"ready": True, "blocking_reasons": []},
+            },
+        ).to_dict()
 
         external_id, task_row_id, attempt, repair_task = executor._claim_workspace_quality_repair_attempt(
             run=run,
@@ -13626,6 +13668,141 @@ def test_reconcile_verified_runtime_delivery_settles_exact_failed_owner(
     assert evidence["qa_verdict_passed"] is True
     assert evidence["sequence_barrier_satisfied"] is True
     assert evidence["evidence_policy_passed"] is True
+
+
+def test_reconcile_verified_runtime_delivery_restores_frozen_owner_after_terminal_drain(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from polaris.cells.factory.pipeline.public.contracts import (
+        FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
+        FactoryTerminalTaskRuntimeProjectionV1,
+    )
+
+    run = FactoryRun(
+        id="factory-runtime-reconcile-drained",
+        config=FactoryConfig(name="bench-run"),
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-08-10T00:00:00+00:00",
+    )
+    run.metadata[FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY] = (
+        FactoryTerminalTaskRuntimeProjectionV1(
+            workspace=str(tmp_path),
+            factory_run_id=run.id,
+            captured_at="2026-08-10T00:00:00+00:00",
+            projection={
+                "schema_version": "task_runtime.observable_task_rows_authority.v1",
+                "workspace": str(tmp_path),
+                "source": "task_runtime.execution_fact",
+                "authoritative": True,
+                "degraded": False,
+                "requested_factory_run_id": run.id,
+                "row_count": 1,
+                "total_row_count": 1,
+                "rows": [
+                    {
+                        "task_id": "10",
+                        "external_task_id": "TASK-3",
+                        "factory_run_id": run.id,
+                        "execution_state": "failed",
+                        "status": "failed",
+                        "source": "task_runtime.execution_fact",
+                        "status_source": "task_runtime.execution_fact",
+                        "fact_event_seq": 106,
+                    }
+                ],
+                "readiness": {},
+            },
+        ).to_dict()
+    )
+    identity = TaskRuntimeExecutionAttemptIdentityV1(
+        workspace=str(tmp_path),
+        task_id=18,
+        external_task_id="TASK-3",
+        session_id="verified-delivery-reconcile-restored-session",
+        attempt=1,
+        role_id="qa",
+        worker_id=f"factory-quality-gate:{run.id}",
+        run_id=run.id,
+        lease_expires_at="2026-08-10T00:02:00+00:00",
+    )
+
+    class _Runtime:
+        def __init__(self) -> None:
+            self.restored: dict[str, Any] | None = None
+            self.reopened: list[int] = []
+            self.settled: list[SettleTaskRuntimeExecutionAttemptCommandV1] = []
+
+        def list_observable_task_rows(self) -> list[dict[str, Any]]:
+            return [
+                {
+                    "id": task_id,
+                    "external_task_id": "TASK-3",
+                    "status": "removed",
+                    "metadata": {"factory_run_id": run.id, "source_task_id": "TASK-3"},
+                }
+                for task_id in (10, 15, 16, 17)
+            ]
+
+        def get_task(self, external_task_id: str) -> dict[str, Any] | None:
+            assert external_task_id == "TASK-3"
+            return self.restored
+
+        def reopen_task_row(self, task_id: int, **kwargs: Any) -> dict[str, Any]:
+            self.reopened.append(task_id)
+            return {"id": task_id, "status": "pending"}
+
+        def claim_execution(self, task_id: int, **kwargs: Any) -> dict[str, Any]:
+            assert task_id == 18
+            return {"success": True, "execution_attempt": identity.to_record()}
+
+        def settle_execution_attempt(
+            self,
+            command: SettleTaskRuntimeExecutionAttemptCommandV1,
+        ) -> dict[str, Any]:
+            self.settled.append(command)
+            return {"success": True, "code": "settled"}
+
+    runtime = _Runtime()
+    monkeypatch.setattr(stage_executor_module, "TaskRuntimeService", lambda workspace: runtime)
+    executor = _executor(tmp_path)
+    monkeypatch.setattr(
+        executor,
+        "_load_pm_plan_tasks",
+        lambda path: [{"id": "TASK-3", "goal": "Add tests", "target_files": ["tests/test_product.py"]}],
+    )
+
+    materialized: list[tuple[list[dict[str, Any]], str, str]] = []
+
+    def _materialize(
+        tasks: list[dict[str, Any]],
+        *,
+        run_id: str,
+        source_stage: str,
+        run_metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        materialized.append((tasks, run_id, source_stage))
+        runtime.restored = {
+            "id": 18,
+            "external_task_id": "TASK-3",
+            "status": "failed",
+            "metadata": {"factory_run_id": run.id, "source_task_id": "TASK-3"},
+        }
+        return {"binding_failures": [], "task_ids": ["TASK-3"]}
+
+    monkeypatch.setattr(executor, "_materialize_pm_plan_taskboard", _materialize)
+
+    result = executor._reconcile_verified_runtime_delivery(
+        run=run,
+        authority=_verified_delivery_recovery_authority(),
+    )
+
+    assert result == {"success": True, "reconciled_task_ids": ["TASK-3"]}
+    assert materialized == [
+        ([{"id": "TASK-3", "goal": "Add tests", "target_files": ["tests/test_product.py"]}], run.id, "quality_gate")
+    ]
+    assert runtime.reopened == [18]
+    assert runtime.settled[0].identity == identity
 
 
 def test_reconcile_verified_runtime_delivery_fails_closed_without_quality_authority(

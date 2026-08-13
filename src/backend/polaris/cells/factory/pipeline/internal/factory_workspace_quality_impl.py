@@ -1087,6 +1087,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
     repair_errors: list[str] = []
     repair_results: list[dict[str, Any]] = []
 
+    rerun_prepare_results: list[dict[str, Any]] = []
     rerun_results: list[dict[str, Any]] = []
     if run_commands and not prepare_failed and not all(bool(item.get("passed")) for item in results):
         max_rounds = int(context.get("workspace_quality_repair_max_rounds") or _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS)
@@ -1365,6 +1366,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 convergence_stop_reason = "repair_produced_no_effect"
                 break
             latest_check_results = []
+            rerun_prepare_results = []
             rerun_results = []
             round_prepare_failed = False
             prepare_phase = "prepare_after_repair" if round_index == 0 else f"prepare_after_repair_{round_index + 1}"
@@ -1377,6 +1379,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                         repair_override=current_workspace_repair_summary(residual_errors=repair_errors),
                     )
                 results.append(result)
+                rerun_prepare_results.append(result)
                 if not bool(result.get("passed")):
                     round_prepare_failed = True
             phase = "check_after_repair" if round_index == 0 else f"check_after_repair_{round_index + 1}"
@@ -1489,7 +1492,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
 
     effective_results = rerun_results if rerun_results else results
     if rerun_results:
-        effective_results = [item for item in results if str(item.get("phase") or "") == "prepare"] + rerun_results
+        effective_results = rerun_prepare_results + rerun_results
 
     payload_warnings = []
     if bool(repair_summary.get("task_boundary_triage_required")):
@@ -1503,6 +1506,11 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
         "workspace": str(executor.workspace),
         "passed": all(bool(item.get("passed")) for item in effective_results),
         "commands": results,
+        # Preserve every physical attempt above for audit, but project only the
+        # terminal verifier epoch into Run Ledger outcome authority.  A failed
+        # pre-repair command is immutable history; once the same verifier is
+        # rerun successfully it must not keep the repaired delivery red.
+        "effective_commands": effective_results,
         "repair": repair_summary,
     }
     if payload_warnings:

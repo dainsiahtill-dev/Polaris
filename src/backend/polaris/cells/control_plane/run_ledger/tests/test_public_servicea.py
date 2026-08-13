@@ -150,8 +150,6 @@ def _assert_projection_flock_available(ledger: RunLedger) -> None:
         fcntl.flock(probe.fileno(), fcntl.LOCK_UN)
 
 
-
-
 def test_projection_query_rejects_project_scope_without_factory_run() -> None:
     with pytest.raises(ValueError, match="project_id requires factory_run_id"):
         ReadRunLedgerProjectionQueryV1(
@@ -2212,6 +2210,44 @@ def test_qa_verdict_effective_only_for_latest_task_boundary_epoch() -> None:
     assert after_fresh_qa["failed_gates"] == []
 
 
+def test_completed_task_boundary_makes_failed_tool_attempt_historical() -> None:
+    failed_tool_attempt = {
+        "event_type": "gate_evaluated",
+        "stage": "pending_exec",
+        "gate": {"name": "tool_receipt", "ok": False, "summary": "edit failed"},
+        "job_token": {
+            "token_id": "director-task-3",
+            "run_id": "factory-1",
+            "project_id": "P1",
+            "capability_audit": {"ok": True, "issues": []},
+            "gate_policy": {},
+        },
+        "physical_evidence": {"metadata": {"task_id": "TASK-3"}},
+    }
+    completed_boundary = {
+        "event_type": "task_boundary_verdict",
+        "task_id": "TASK-3",
+        "run_id": "director-repair",
+        "task_boundary_verdict": {
+            "schema_version": "polaris.task_boundary_verdict.v1",
+            "task_id": "TASK-3",
+            "run_id": "director-repair",
+            "status": "completed_verified",
+            "ok": True,
+            "failure_class": "PASSED",
+            "responsible_layer": "execution_control_plane",
+        },
+    }
+
+    before = build_run_ledger_projection([failed_tool_attempt])
+    assert [gate["summary"] for gate in before["failed_gates"]] == ["edit failed"]
+
+    after = build_run_ledger_projection([failed_tool_attempt, completed_boundary])
+    assert after["gates"][0]["effective"] is False
+    assert after["historical_failed_gate_count"] == 1
+    assert after["failed_gates"] == []
+
+
 def test_required_evidence_distinguishes_missing_from_failed() -> None:
     base_event = {
         "event_type": "gate_evaluated",
@@ -2633,5 +2669,3 @@ def test_task_boundary_plan_probe_projects_failed_required_evidence() -> None:
     assert summary["missing"] == []
     assert summary["failed_required_modalities"] == ["task_boundary"]
     assert summary["detail"] == "run ledger projection required evidence failed: task_boundary"
-
-
