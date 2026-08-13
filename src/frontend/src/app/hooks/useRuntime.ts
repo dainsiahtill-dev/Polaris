@@ -41,6 +41,18 @@ import type { LogEntry } from '@/types/log';
 import { TaskStatus, type PmTask } from '@/types/task';
 import type { TaskTraceEvent } from '../types/taskTrace';
 import * as Parsing from './runtimeParsing';
+import {
+  DEFAULT_RUNTIME_ROLES,
+  FACTORY_EVENT_CHANNEL,
+  BENCH_EVENT_CHANNEL,
+  isInternalBenchEventChannel,
+  isRuntimeFactoryOrBenchEventChannel,
+  normalizeRuntimeWorkspacePath,
+  collectRuntimeWorkspacePaths,
+  runtimeRecordMatchesWorkspace,
+  runtimeLineMatchesWorkspace,
+  isSettingsChangedEvent,
+} from './_runtimeEventFilter';
 import type { RuntimeWorkerState, SequentialTraceEvent, FileEditEvent } from './useRuntimeStore';
 import type { RuntimeProjectionPayload } from '@/runtime/projection';
 import {
@@ -123,96 +135,6 @@ export interface UseRuntimeResult {
   reconnect: () => void;
   refresh: () => void;
   updateSubscription: (roles: ('pm' | 'chief_engineer' | 'director' | 'qa')[]) => void;
-}
-
-const DEFAULT_RUNTIME_ROLES: Array<'pm' | 'chief_engineer' | 'director' | 'qa'> = [
-  'pm',
-  'chief_engineer',
-  'director',
-  'qa',
-];
-const FACTORY_EVENT_CHANNEL = 'event.factory';
-const BENCH_EVENT_CHANNEL = 'event.bench';
-
-function isInternalBenchEventChannel(channel: string): boolean {
-  return (
-    channel === BENCH_EVENT_CHANNEL ||
-    channel.startsWith(`${BENCH_EVENT_CHANNEL}:`)
-  );
-}
-
-function isRuntimeFactoryOrBenchEventChannel(channel: string): boolean {
-  return (
-    channel === FACTORY_EVENT_CHANNEL ||
-    channel.startsWith(`${FACTORY_EVENT_CHANNEL}:`) ||
-    isInternalBenchEventChannel(channel)
-  );
-}
-
-const RUNTIME_WORKSPACE_FIELD_NAMES = new Set([
-  'workspace',
-  'workspace_path',
-  'workspacePath',
-  'project_workspace',
-  'projectWorkspace',
-  'project_root',
-  'projectRoot',
-  'polaris_workspace',
-  'polarisWorkspace',
-  'runtime_workspace',
-  'runtimeWorkspace',
-]);
-
-function normalizeRuntimeWorkspacePath(value: unknown): string {
-  const token = Parsing.toStringValue(value).trim();
-  if (!token) return '';
-  return token.replace(/\\/g, '/').replace(/\/+$/g, '');
-}
-
-function collectRuntimeWorkspacePaths(
-  value: unknown,
-  paths: Set<string>,
-  seen: WeakSet<object>,
-  depth = 0,
-): void {
-  if (depth > 5 || !Parsing.isRecord(value)) return;
-  if (seen.has(value)) return;
-  seen.add(value);
-
-  for (const [key, nested] of Object.entries(value)) {
-    if (RUNTIME_WORKSPACE_FIELD_NAMES.has(key)) {
-      const normalized = normalizeRuntimeWorkspacePath(nested);
-      if (normalized) paths.add(normalized);
-    }
-
-    if (Parsing.isRecord(nested)) {
-      collectRuntimeWorkspacePaths(nested, paths, seen, depth + 1);
-    } else if (Array.isArray(nested)) {
-      for (const item of nested.slice(0, 12)) {
-        collectRuntimeWorkspacePaths(item, paths, seen, depth + 1);
-      }
-    }
-  }
-}
-
-function runtimeRecordMatchesWorkspace(raw: unknown, activeWorkspace: string): boolean {
-  const active = normalizeRuntimeWorkspacePath(activeWorkspace);
-  if (!active || !Parsing.isRecord(raw)) return true;
-
-  const candidates = new Set<string>();
-  collectRuntimeWorkspacePaths(raw, candidates, new WeakSet<object>());
-  if (candidates.size === 0) return true;
-  return candidates.has(active);
-}
-
-function runtimeLineMatchesWorkspace(line: string, activeWorkspace: string): boolean {
-  const parsed = Parsing.tryParseJsonObject(line);
-  return parsed ? runtimeRecordMatchesWorkspace(parsed, activeWorkspace) : true;
-}
-
-function isSettingsChangedEvent(raw: Record<string, unknown>): boolean {
-  const eventName = String(raw.event_name || raw.event || raw.name || raw.kind || '').trim().toLowerCase();
-  return eventName === 'settings_changed' || eventName.endsWith('.settings_changed');
 }
 
 // ============================================================================
