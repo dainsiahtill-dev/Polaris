@@ -9,6 +9,11 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any, cast
 
+from polaris.cells.chief_engineer.blueprint.public import (
+    GetBlueprintStatusQueryV1,
+    get_blueprint_status,
+    validate_director_handoff_from_payload,
+)
 from polaris.cells.director.tasking.public.execution_guidance import (
     apply_task_execution_strategy_overrides,
     build_task_language_section,
@@ -1224,6 +1229,80 @@ class DirectorAdapter(BaseRoleAdapter):
             return None
         return self._prepare_director_dependency_artifact_snapshot(task=task, context=context)
 
+    @staticmethod
+    def _dependency_artifact_factory_run_id(
+        *,
+        task: Mapping[str, Any],
+        context: Mapping[str, Any],
+    ) -> str:
+        """Resolve the exact Factory epoch that owns dependency receipts."""
+
+        task_metadata = _copy_mapping_payload(task.get("metadata")) or {}
+        context_metadata = _copy_mapping_payload(context.get("metadata")) or {}
+        for source in (task, task_metadata, context, context_metadata):
+            for key in ("factory_run_id", "workflow_run_id", "run_id"):
+                value = str(source.get(key) or "").strip()
+                if value:
+                    return value
+        return ""
+
+    def _resolve_dependency_parent_task(
+        self,
+        parent_task_id: str,
+        *,
+        child_task: Mapping[str, Any],
+        context: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        """Resolve live parent state or reconstruct receipt authority after drain.
+
+        Factory terminal drain intentionally removes TaskRuntime rows. Stage-local
+        QA repair must still consume already-settled sibling interfaces without
+        recreating a fake completed task. The fallback therefore uses only the
+        strict CE handoff projection plus execution-broker project receipts; the
+        dependency snapshot builder still verifies exact run/contract/task/path
+        identity and current guarded file hashes before exposing any source body.
+        """
+
+        live_parent = self._get_task(parent_task_id)
+        if isinstance(live_parent, dict):
+            return dict(live_parent)
+
+        factory_run_id = self._dependency_artifact_factory_run_id(task=child_task, context=context)
+        if not factory_run_id:
+            return None
+        try:
+            status = get_blueprint_status(
+                GetBlueprintStatusQueryV1(
+                    task_id=parent_task_id,
+                    workspace=str(self.workspace),
+                    run_id=factory_run_id,
+                )
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return None
+        blueprint_id = str(status.blueprint_id or "").strip()
+        if not status.ok or not blueprint_id:
+            return None
+        handoff = validate_director_handoff_from_payload(
+            str(self.workspace),
+            {"task_id": parent_task_id, "blueprint_id": blueprint_id},
+            require_strict=True,
+        )
+        projection = _copy_mapping_payload(handoff.get("task_completion_projection")) or {}
+        if handoff.get("allowed") is not True or str(projection.get("run_id") or "").strip() != factory_run_id:
+            return None
+        return {
+            "id": parent_task_id,
+            "metadata": {
+                "external_task_id": parent_task_id,
+                "factory_run_id": factory_run_id,
+                "task_completion_projection": projection,
+                "dependency_artifact_authority_source": (
+                    "chief_engineer.strict_handoff+runtime.execution_broker.project_artifact_receipt"
+                ),
+            },
+        }
+
     def _prepare_director_dependency_artifact_snapshot(
         self,
         *,
@@ -1254,7 +1333,11 @@ class DirectorAdapter(BaseRoleAdapter):
             snapshot = build_director_dependency_artifact_snapshot(
                 workspace=str(self.workspace),
                 child_task=merged_task,
-                get_task=lambda parent_task_id: self._get_task(parent_task_id),
+                get_task=lambda parent_task_id: self._resolve_dependency_parent_task(
+                    parent_task_id,
+                    child_task=merged_task,
+                    context=context,
+                ),
                 get_project_artifact_receipt=query_project_artifact_receipt_payload,
             )
         except DirectorDependencyArtifactEvidenceError as exc:

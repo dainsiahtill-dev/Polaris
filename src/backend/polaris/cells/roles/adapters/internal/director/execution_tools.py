@@ -663,6 +663,15 @@ class DirectorToolExecutor:
                 "file": rel_path,
                 "bytes_written": (raw_bytes_written if type(raw_bytes_written) is int else len(text.encode("utf-8"))),
                 "operation": str(write_result.get("operation") or "modify"),
+                # Content-level hashes are part of the physical mutation
+                # evidence consumed by Factory.  A generic successful tool
+                # receipt proves dispatch/settlement, not that bytes changed.
+                "before_sha256": (
+                    sha256(existing_content.encode("utf-8")).hexdigest()
+                    if existing_content is not None
+                    else "file_absent"
+                ),
+                "after_sha256": sha256(text.encode("utf-8")).hexdigest(),
                 "broadcast_ok": bool(write_result.get("broadcast_ok")),
                 "director_policy": policy_result.get("director_policy"),
             }
@@ -1000,6 +1009,11 @@ class DirectorToolExecutor:
                 "ok": True,
                 "file": rel_path,
                 "replacements": int(replace_result.get("replacements") or 1),
+                # Preserve exact physical pre/post state in the tool result so
+                # the durable directed-effect receipt and downstream Factory
+                # settlement can distinguish a real edit from dispatch/no-op.
+                "before_sha256": sha256(content.encode("utf-8")).hexdigest(),
+                "after_sha256": sha256(final_content.encode("utf-8")).hexdigest(),
                 "broadcast_ok": bool(replace_result.get("broadcast_ok")),
                 "director_policy": policy_result.get("director_policy"),
             }

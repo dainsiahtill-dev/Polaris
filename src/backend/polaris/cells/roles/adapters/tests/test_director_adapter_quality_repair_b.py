@@ -326,10 +326,6 @@ def _run_test_materialization_quality_repair_schedule(
     return _project_deferred_repair_results_for_test(workspace, results), summary
 
 
-
-
-
-
 class TestQualityRepairMissingTargetContractB:
     async def test_rust_line_suggestion_quality_error_runs_runtime_bridge_before_llm(
         self,
@@ -1548,6 +1544,97 @@ class TestQualityRepairMissingTargetContractB:
 
         assert targets == ["src/planet.py", "src/weather.py", "tests/test_planet.py", "tests/test_weather.py"]
 
+    def test_python_unittest_docstring_failures_target_unique_symbol_owners(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _python_runtime_smoke_repair_target_files,
+        )
+
+        domain_dir = tmp_path / "src" / "domain"
+        service_dir = tmp_path / "src" / "service"
+        domain_dir.mkdir(parents=True)
+        service_dir.mkdir(parents=True)
+        (domain_dir / "state.py").write_text(
+            "from enum import Enum\n\n"
+            "class Mode(Enum):\n"
+            "    LOW = 'low'\n\n"
+            "def derive_mode(value: int) -> Mode:\n"
+            "    return Mode.LOW\n",
+            encoding="utf-8",
+        )
+        (domain_dir / "__init__.py").write_text(
+            "from .state import Mode, derive_mode\n",
+            encoding="utf-8",
+        )
+        (service_dir / "processor.py").write_text(
+            "class Processor:\n    def run(self, value: int) -> int:\n        return value\n",
+            encoding="utf-8",
+        )
+        (service_dir / "__init__.py").write_text(
+            "from .processor import Processor\n",
+            encoding="utf-8",
+        )
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "test_product.py"
+        test_file.write_text(
+            "import unittest\n"
+            "from src.domain import Mode, derive_mode\n"
+            "from src.service import Processor\n\n"
+            "class DomainTest(unittest.TestCase):\n"
+            "    def test_mode(self) -> None:\n"
+            "        self.assertEqual(derive_mode(1), Mode.HIGH)\n\n"
+            "class ServiceTest(unittest.TestCase):\n"
+            "    def setUp(self) -> None:\n"
+            "        self.processor = Processor()\n"
+            "    def test_run(self) -> None:\n"
+            "        self.assertEqual(self.processor.run(9), 0)\n",
+            encoding="utf-8",
+        )
+        error = (
+            "Artifact quality scan failed: workspace validation command failed "
+            "(python -m unittest discover -s tests -p test_*.py -v):\n"
+            "test_mode (test_product.DomainTest.test_mode)\n"
+            "domain mode contract ... ERROR\n"
+            "test_run (test_product.ServiceTest.test_run)\n"
+            "service behavior contract ... FAIL\n"
+            "Traceback (most recent call last):\n"
+            f'  File "{test_file}", line 7, in test_mode\n'
+            "    self.assertEqual(derive_mode(1), Mode.HIGH)\n"
+            "AttributeError: type object 'Mode' has no attribute 'HIGH'\n"
+            "Traceback (most recent call last):\n"
+            f'  File "{test_file}", line 13, in test_run\n'
+            "    self.assertEqual(self.processor.run(9), 0)\n"
+            "AssertionError: 9 != 0\n"
+        )
+
+        targets = _python_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[error],
+            changed_files=["tests/test_product.py"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/domain/state.py", "src/service/processor.py"]
+
+    def test_python_import_target_prefers_existing_package_over_missing_module_shim(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _python_runtime_smoke_imported_source_target_files,
+        )
+
+        package_dir = tmp_path / "src" / "domain"
+        package_dir.mkdir(parents=True)
+        (package_dir / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
+        test_file = tmp_path / "tests" / "test_product.py"
+        test_file.parent.mkdir()
+        test_file.write_text("from src.domain import VALUE\n", encoding="utf-8")
+
+        targets = _python_runtime_smoke_imported_source_target_files(
+            "tests/test_product.py",
+            tmp_path,
+            include_missing_src_imports=True,
+        )
+
+        assert targets == ["src/domain/__init__.py"]
+
     def test_python_unittest_missing_top_level_src_module_authorizes_shim(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
             _python_runtime_smoke_repair_target_files,
@@ -1843,29 +1930,21 @@ class TestQualityRepairMissingTargetContractB:
             changed_files=["tests/test_weather.py"],
         )
 
-        # Diagnostic evidence still names both files, but only the task-owned
-        # test file is authorized for writing; the cross-task imported source
-        # module is deferred with scope evidence.
-        assert summary["stage"] == "quality_repair"
-        assert summary["explicit_quality_target_files"] == [
-            "src/models/weather.py",
-            "tests/test_weather.py",
-        ]
-        assert summary["repair_target_files"] == ["tests/test_weather.py"]
+        # The test is observation evidence, not a safe mutation fallback.  The
+        # unique source owner is outside this task, so defer to task-boundary
+        # recovery instead of weakening the test to match broken source.
+        assert summary["stage"] == "task_boundary_repair_targets_deferred"
+        assert summary["explicit_quality_target_files"] == ["src/models/weather.py"]
+        assert summary["repair_target_files"] == []
         scope_filter = summary["task_boundary_scope_filter"]
         assert scope_filter["deferred"] is True
         assert scope_filter["task_declared_write_targets"] == ["tests/test_weather.py"]
         assert scope_filter["out_of_scope_repair_target_files"] == ["src/models/weather.py"]
-        assert adapter.repair_context["repair_target_files"] == ["tests/test_weather.py"]
-        quality_repair_context = adapter.repair_context["director_quality_repair"]
-        assert quality_repair_context["repair_target_files"] == ["tests/test_weather.py"]
-        assert quality_repair_context["task_boundary_scope_filter"]["out_of_scope_repair_target_files"] == [
-            "src/models/weather.py"
-        ]
-        assert "tests/test_weather.py" in adapter.repair_message
-        assert "src/models/weather.py" not in adapter.repair_message
-        assert adapter._execution.allowed_tool_names == {"edit_file"}
-        assert adapter._execution.allow_patch_fallback is False
+        assert summary["llm_fallback_blocked"] is True
+        assert adapter.repair_context == {}
+        assert adapter.repair_message == ""
+        assert adapter._execution.allowed_tool_names is None
+        assert adapter._execution.allow_patch_fallback is None
 
     @pytest.mark.asyncio
     async def test_tap_failure_repair_targets_implementation_and_carries_structured_failure_context(
@@ -2445,7 +2524,7 @@ class TestQualityRepairMissingTargetContractB:
             workspace_full=str(tmp_path),
         )
 
-        assert targets == ["src/models/weather.py", "tests/test_weather.py"]
+        assert targets == ["src/models/weather.py"]
 
     def test_explicit_artifact_quality_repair_targets_prettier_syntax_path(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (

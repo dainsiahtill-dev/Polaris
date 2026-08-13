@@ -107,6 +107,7 @@ def _python_runtime_smoke_repair_target_files(
         if not _looks_like_python_runtime_smoke_quality_error(text):
             continue
         if workspace_root is not None and workspace_root.is_dir() and _looks_like_python_test_behavior_failure(text):
+            symbol_owner_targets = _python_test_failure_symbol_owner_target_files(text, workspace_root)
             targets.extend(_embedded_rust_compile_repair_target_files(text, workspace_root))
             if _looks_like_python_missing_module_failure(text):
                 targets.extend(
@@ -124,16 +125,23 @@ def _python_runtime_smoke_repair_target_files(
             if not regex_source_failure and not cli_subcommand_failure:
                 targets.extend(_python_test_harness_changed_source_target_files(text, changed_files, workspace_root))
             failed_test_targets = _python_unittest_failure_test_target_files(text, workspace_root)
-            for rel in failed_test_targets:
-                targets.extend(
-                    _python_runtime_smoke_imported_source_target_files(
-                        rel,
-                        workspace_root,
-                        include_missing_src_imports=True,
+            symbol_owners_cover_failures = bool(symbol_owner_targets) and len(symbol_owner_targets) >= max(
+                1, len(failed_test_targets)
+            )
+            if symbol_owners_cover_failures:
+                targets.extend(symbol_owner_targets)
+            else:
+                for rel in failed_test_targets:
+                    targets.extend(
+                        _python_runtime_smoke_imported_source_target_files(
+                            rel,
+                            workspace_root,
+                            include_missing_src_imports=True,
+                        )
                     )
-                )
             targets.extend(_python_runtime_smoke_missing_module_source_targets(text, workspace_root))
-            targets.extend(failed_test_targets)
+            if not symbol_owners_cover_failures:
+                targets.extend(failed_test_targets)
         for pattern in _PYTHON_RUNTIME_SMOKE_TARGET_PATTERNS:
             match = pattern.search(text)
             if not match:
@@ -901,17 +909,126 @@ def _python_runtime_smoke_imported_source_target_files(
                 continue
             allow_missing_src_import = bool(src_root_exists and module_parts[0] == "src" and len(module_parts) > 1)
             module_path = "/".join(module_parts)
-            for candidate in (f"{module_path}.py", f"{module_path}/__init__.py"):
+            module_candidates = (f"{module_path}.py", f"{module_path}/__init__.py")
+            existing_candidate = next(
+                (
+                    normalized
+                    for candidate in module_candidates
+                    if (normalized := _normalize_declared_task_path(candidate))
+                    and _workspace_path_exists_case_insensitive(root, normalized)
+                ),
+                "",
+            )
+            if existing_candidate:
+                if not _is_test_like_python_path(existing_candidate):
+                    candidates.append(existing_candidate)
+                continue
+            for candidate in module_candidates:
                 normalized = _normalize_declared_task_path(candidate)
                 if _is_test_like_python_path(normalized):
                     continue
-                if _workspace_path_exists_case_insensitive(root, normalized):
-                    candidates.append(normalized)
-                    break
                 if allow_missing_src_import and normalized.endswith(".py"):
                     candidates.append(normalized)
                     break
     return _dedupe_preserve_order(candidates)
+
+
+_PYTHON_TEST_TRACEBACK_FRAME_RE = re.compile(
+    r'File "(?P<path>[^"]+)", line (?P<line>\d+)',
+    re.IGNORECASE,
+)
+_PYTHON_ATTRIBUTE_OWNER_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"type object ['\"](?P<symbol>[A-Za-z_][A-Za-z0-9_]*)['\"] has no attribute", re.IGNORECASE),
+    re.compile(r"['\"](?P<symbol>[A-Za-z_][A-Za-z0-9_]*)['\"] object has no attribute", re.IGNORECASE),
+    re.compile(r"(?P<symbol>[A-Za-z_][A-Za-z0-9_]*)\.__init__\(\)", re.IGNORECASE),
+)
+
+
+def _python_test_failure_symbol_owner_target_files(text: str, workspace_root: Path) -> list[str]:
+    """Resolve failing unittest symbols to their unique source-owner files.
+
+    A traceback test path is observation evidence, not mutation authority.  The
+    old fallback authorized every directly imported module and then preferred
+    the most recently changed importer.  That could force a repair into an
+    unrelated file (for example an enum failure in ``models/weather.py`` was
+    sent exclusively to ``radio.py``).  Resolve names from the failing source
+    line and exception type against actual Python definitions instead.  Only a
+    unique owner is authoritative; ambiguous names remain fail-closed.
+    """
+
+    try:
+        root = workspace_root.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return []
+
+    symbols: list[str] = []
+    for pattern in _PYTHON_ATTRIBUTE_OWNER_RES:
+        symbols.extend(str(match.group("symbol") or "") for match in pattern.finditer(str(text or "")))
+
+    for match in _PYTHON_TEST_TRACEBACK_FRAME_RE.finditer(str(text or "")):
+        raw_path = str(match.group("path") or "").strip()
+        try:
+            line_number = int(match.group("line"))
+        except (TypeError, ValueError):
+            continue
+        try:
+            candidate = Path(raw_path)
+            source_path = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
+            rel = source_path.relative_to(root).as_posix()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if not _is_test_like_python_path(rel):
+            continue
+        try:
+            source_lines = source_path.read_text(encoding="utf-8").splitlines()
+            source_line = source_lines[line_number - 1].strip()
+            tree = ast.parse(source_line)
+        except (IndexError, OSError, RuntimeError, SyntaxError, UnicodeDecodeError, ValueError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name):
+                    symbols.append(node.func.id)
+                elif isinstance(node.func, ast.Attribute):
+                    symbols.append(node.func.attr)
+            elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+                symbols.append(node.value.id)
+
+    owner_index: dict[str, set[str]] = {}
+    source_files_seen = 0
+    for source_path in sorted(root.rglob("*.py")):
+        if source_files_seen >= 512:
+            break
+        try:
+            rel = source_path.resolve().relative_to(root).as_posix()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        rel_parts = set(Path(rel).parts)
+        if _is_test_like_python_path(rel) or rel_parts.intersection(
+            {".git", ".polaris", ".venv", "__pycache__", "build", "dist", "site-packages"}
+        ):
+            continue
+        try:
+            if source_path.stat().st_size > 512_000:
+                continue
+            tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        except (OSError, RuntimeError, SyntaxError, UnicodeDecodeError, ValueError):
+            continue
+        source_files_seen += 1
+        for node in tree.body:
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                owner_index.setdefault(node.name, set()).add(rel)
+            if isinstance(node, ast.ClassDef):
+                for child in node.body:
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        owner_index.setdefault(child.name, set()).add(rel)
+
+    targets: list[str] = []
+    for symbol in _dedupe_preserve_order(symbols):
+        owners = owner_index.get(symbol, set())
+        if len(owners) == 1:
+            targets.append(next(iter(owners)))
+    return _dedupe_preserve_order(targets)
 
 
 def _python_runtime_smoke_missing_module_source_targets(text: str, workspace_root: Path) -> list[str]:
@@ -1101,7 +1218,21 @@ def _explicit_artifact_quality_repair_target_files(
             priority_candidates.append("package.json")
         explicit_paths = [match.group("path") for match in _SEMANTIC_QUALITY_EXPLICIT_PATH_RE.finditer(text)]
         if _looks_like_python_test_behavior_failure(text):
-            for rel in _python_unittest_failure_test_target_files(text, workspace_root):
+            symbol_owner_targets = _python_test_failure_symbol_owner_target_files(text, workspace_root)
+            failed_test_targets = _python_unittest_failure_test_target_files(text, workspace_root)
+            symbol_owners_cover_failures = bool(symbol_owner_targets) and len(symbol_owner_targets) >= max(
+                1, len(failed_test_targets)
+            )
+            if symbol_owners_cover_failures:
+                candidates.extend(symbol_owner_targets)
+                priority_candidates.extend(symbol_owner_targets)
+                # Unique AST owners are stronger mutation authority than the
+                # failing test path or its broad import surface.  Do not append
+                # importers/tests after ownership has been resolved, otherwise
+                # the single-batch prompt can authorize unrelated files and
+                # waste the repair turn.
+                continue
+            for rel in failed_test_targets:
                 imported_sources = _python_runtime_smoke_imported_source_target_files(
                     rel,
                     workspace_root,

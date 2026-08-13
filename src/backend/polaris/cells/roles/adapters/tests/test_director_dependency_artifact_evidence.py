@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -517,6 +519,92 @@ def test_projecting_none_wipes_sibling_exports_and_rebind_restores_them(tmp_path
     # Second rebind is a no-op when trusted token already present.
     again = adapter._rebind_director_dependency_artifact_for_dialogue(context)
     assert again is rebound
+
+
+def test_rebind_restores_drained_parent_from_strict_ce_projection_and_project_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """QA-only recovery must reuse settled sibling facts after TaskRuntime drain.
+
+    The bridge may not fabricate a completed parent row or scan the workspace.
+    It resolves the same-run CE completion projection, then the dependency
+    snapshot accepts only an exact execution-broker receipt whose hash matches
+    the guarded file bytes.
+    """
+    from polaris.cells.roles.adapters.internal.director.adapter import (
+        DirectorAdapter,
+        _core as adapter_core,
+    )
+
+    path = "src/engine/forecast.py"
+    body = "def mood_from_weather(code: str) -> str:\n    return 'bright' if code == 'sun' else 'calm'\n"
+    source = tmp_path / path
+    source.parent.mkdir(parents=True)
+    source.write_text(body, encoding="utf-8")
+    artifact_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    run_id = "factory-r49"
+    contract_hash = "a" * 64
+    projection = {
+        "schema_version": "polaris.task_completion_projection.v1",
+        "task_id": "TASK-2",
+        "project_id": "L1-03",
+        "run_id": run_id,
+        "project_contract_hash": contract_hash,
+        "owned_artifacts": [
+            {
+                "applicability": "required",
+                "owner_task_id": "TASK-2",
+                "obligation_id": "artifact-task-2-forecast",
+                "path": path,
+            }
+        ],
+    }
+    child = {
+        "id": "TASK-3",
+        "metadata": {
+            "external_task_id": "TASK-3",
+            "factory_run_id": run_id,
+            "depends_on": ["TASK-2"],
+        },
+    }
+    adapter = DirectorAdapter(str(tmp_path))
+    adapter._get_task = lambda _task_id: None  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        adapter_core,
+        "get_blueprint_status",
+        lambda query: SimpleNamespace(ok=True, blueprint_id="ce_TASK-2_r49"),
+    )
+    monkeypatch.setattr(
+        adapter_core,
+        "validate_director_handoff_from_payload",
+        lambda workspace, payload, require_strict: {
+            "allowed": True,
+            "task_completion_projection": projection,
+        },
+    )
+
+    def receipt_lookup(query: Mapping[str, str]) -> Mapping[str, Any] | None:
+        return {
+            **dict(query),
+            "artifact_hash": artifact_hash,
+            "authority_revision": "b" * 64,
+            "receipt_hash": "c" * 64,
+            "receipt_ref": "project-artifact-receipt-r49",
+        }
+
+    monkeypatch.setattr(adapter_core, "query_project_artifact_receipt_payload", receipt_lookup)
+    context: dict[str, Any] = {"task": child, "task_id": "TASK-3"}
+
+    rebound = adapter._rebind_director_dependency_artifact_for_dialogue(context)
+
+    assert type(rebound) is TrustedDirectorDependencyArtifactSnapshotV2
+    payload = context["actual_sibling_exports"]
+    assert payload["dependency_task_ids"] == ["TASK-2"]
+    assert payload["covered_parent_task_ids"] == ["TASK-2"]
+    assert payload["modules"][0]["path"] == path
+    assert payload["modules"][0]["body"] == body
+    assert payload["modules"][0]["receipt_authority_source"] == ("runtime.execution_broker.project_artifact_receipt.v1")
 
 
 @pytest.mark.parametrize(

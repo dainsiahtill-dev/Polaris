@@ -723,9 +723,7 @@ async def _run_materialization_quality_repair_retry(
         if repair_target_files and not existing_repair_target_files:
             allowed_tool_names = {"write_file"}
             allow_patch_fallback = False
-        elif tap_assertion_requires_edit or (
-            repair_target_files and _director_repair_force_existing_write_enabled()
-        ):
+        elif tap_assertion_requires_edit or (repair_target_files and _director_repair_force_existing_write_enabled()):
             allowed_tool_names = {"edit_file"}
             allow_patch_fallback = False
         elif repair_target_files:
@@ -1405,7 +1403,8 @@ _FAILED_TEST_TITLE_RE = re.compile(
 _TAP_FAILED_TEST_RE = re.compile(r"^\s*not\s+ok\s+\d+\b", re.IGNORECASE | re.MULTILINE)
 _TEST_SUMMARY_FAIL_RE = re.compile(r"^\s*#?\s*fail\s+(?P<count>\d+)\s*$", re.IGNORECASE | re.MULTILINE)
 _PYTHON_UNITTEST_RESULT_LINE_RE = re.compile(
-    r"^\s*\S+\s+\((?P<module>[^)]+)\)\s+\.\.\.\s+(?:ERROR|FAIL|FAILED)\s*$",
+    r"^\s*\S+\s+\((?P<module>[^)]+)\)"
+    r"(?:\s+\.\.\.\s+(?:ERROR|FAIL|FAILED)\s*$|\s*\n[^\n]*\.\.\.\s+(?:ERROR|FAIL|FAILED)\s*$)",
     re.IGNORECASE | re.MULTILINE,
 )
 _TS_NO_EXPORTED_MEMBER_QUALITY_RE = re.compile(

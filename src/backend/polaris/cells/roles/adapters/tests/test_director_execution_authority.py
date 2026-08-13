@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import pickle
 
 import pytest
@@ -26,6 +27,34 @@ def test_private_factory_creates_authorized_executor(tmp_path) -> None:
 
     assert executor.supports_tool("read_file") is True
     assert executor.supports_tool("write_file") is True
+
+
+def test_edit_file_result_exposes_exact_content_hashes_for_factory_settlement(tmp_path) -> None:
+    """A real edit must survive the tool-result -> Factory mutation boundary."""
+
+    source = tmp_path / "src" / "models.py"
+    source.parent.mkdir(parents=True)
+    before = "MOOD = 'calm'\n"
+    after = "MOOD = 'bright'\n"
+    source.write_text(before, encoding="utf-8")
+    executor = _create_director_tool_executor(str(tmp_path))
+
+    result = executor.execute_tool(
+        "edit_file",
+        {
+            "file": "src/models.py",
+            "search": before,
+            "replace": after,
+            "allowed_scope": ["src/models.py"],
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["replacements"] == 1
+    assert result["before_sha256"] == hashlib.sha256(before.encode("utf-8")).hexdigest()
+    assert result["after_sha256"] == hashlib.sha256(after.encode("utf-8")).hexdigest()
+    assert result["before_sha256"] != result["after_sha256"]
+    assert source.read_text(encoding="utf-8") == after
 
 
 def test_execute_revalidates_process_local_instance_identity_before_dispatch(tmp_path) -> None:

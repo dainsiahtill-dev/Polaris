@@ -1,0 +1,52 @@
+card_id: vc-20260813-director-mutation-content-hash-receipt
+classification: structural
+status: closed
+scope:
+  cells:
+    - roles.adapters
+    - factory.pipeline
+  platform_only: true
+  target_project_edits: forbidden
+assumption_register:
+  - id: A1
+    claim: The provider emitted a native edit_file call.
+    evidence: call_00_O91HihbSW8Sqr0H5OVv32683 in director.llm.events.jsonl
+  - id: A2
+    claim: The physical edit executed and committed an authoritative receipt.
+    evidence: >-
+      kernel.turn.truthlog.events.jsonl reports status=success,
+      replacements=1, directed_effect_mutation_status=executed, and
+      effect_receipt_commit.state=RECEIPT_COMMITTED.
+  - id: A3
+    claim: Factory rejected the successful edit because the projected tool result omitted content hashes.
+    evidence: >-
+      workspace_quality_repair_result_has_mutation requires unequal
+      before_sha256/after_sha256; the live physical result contains neither.
+pre_mortem:
+  most_likely_wrong_fix: >-
+    Trusting status=success, replacements, or a generic receipt without
+    content hashes would admit no-op writes and create false completion.
+  containment: >-
+    Keep Factory's strict predicate unchanged. Add pre/post hashes at the
+    physical tool owner before the receipt is committed.
+verification_plan:
+  unit:
+    - Director edit result exposes exact pre/post hashes.
+    - Equal-content edits remain denied or rejected as no mutation.
+    - Existing Factory mutation predicate accepts unequal valid hashes.
+  static:
+    - ruff check and format on changed Python files
+    - mypy on changed Python files
+  live:
+    - Restart only the isolated L1-03 backend.
+    - Retry qa_gate on the existing Factory run.
+    - Prove PM and CE did not rerun.
+    - Prove failed verifier reruns and the exact Director task consumes the receipt.
+sign_off:
+  owner: Codex /root
+  started_at: "2026-08-13"
+  closed_at: "2026-08-13"
+  live_evidence: >-
+    L1-03 QA-only retry task 14 emitted three edit_file results with unequal
+    before_sha256/after_sha256 values and settled TaskRuntime seq 163 as
+    workspace_quality_repair_mutation_committed without rerunning PM or CE.

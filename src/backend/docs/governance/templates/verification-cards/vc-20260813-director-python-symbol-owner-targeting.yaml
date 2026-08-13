@@ -1,0 +1,48 @@
+card_id: vc-20260813-director-python-symbol-owner-targeting
+classification: structural
+status: implementing
+scope:
+  cells:
+    - roles.adapters
+  platform_only: true
+  target_project_edits: forbidden
+assumption_register:
+  - id: A1
+    claim: The Provider received the full verifier failure but only radio.py was writable.
+    evidence: context snapshot 5544e4f4a21359930f46c233
+  - id: A2
+    claim: The failure owners are unique source definitions, not radio.py.
+    evidence: >-
+      Dynamic AST replay resolves WindLevel/classify_wind to weather.py,
+      mood_from_weather to mood.py, and ForecastEngine.forecast to forecast.py.
+  - id: A3
+    claim: The earlier receipt and edit path is healthy.
+    evidence: >-
+      TaskRuntime seq 163/174 settled committed edits with unequal content
+      hashes; the verifier residual remained because the target was wrong.
+pre_mortem:
+  most_likely_wrong_fix: >-
+    Authorizing every imported module or editing the test would hide ownership
+    rather than resolve it and would increase token/tool surface.
+  containment: >-
+    Accept only unique AST definition owners, then apply the existing task
+    write-scope partition. Fall back to existing broad behavior only when the
+    owner set cannot cover the failed test observations.
+verification_plan:
+  unit:
+    - unittest docstring result lines map to their physical test module.
+    - unique enum/function/method owners precede and replace broad importers.
+    - existing package init wins over speculative module shim.
+    - incomplete owner coverage preserves the prior broad fallback.
+  static:
+    - ruff check and format on changed Python files
+    - mypy on changed Python files
+  live:
+    - Restart only the isolated L1-03 instance.
+    - Retry qa_gate on the existing Factory run.
+    - Prove the final request authorizes only real owner sources.
+    - Prove the unittest residual decreases without PM or CE calls.
+sign_off:
+  owner: Codex /root
+  started_at: "2026-08-13"
+  closed_at: null
