@@ -247,6 +247,99 @@ def _repair_target_context_block(
     )
 
 
+_PYTHON_TRACEBACK_SOURCE_RE = re.compile(
+    r'^\s*File\s+["\'](?P<path>[^"\']+)["\'],\s+line\s+(?P<line>\d+)',
+    re.MULTILINE,
+)
+
+
+def _is_verifier_source_path(rel_path: str) -> bool:
+    """Return whether ``rel_path`` is test/verifier source, not product code."""
+
+    normalized = _normalize_declared_task_path(rel_path)
+    if not normalized:
+        return False
+    path = Path(normalized)
+    lowered_parts = {part.lower() for part in path.parts}
+    lowered_name = path.name.lower()
+    return bool(
+        lowered_parts.intersection({"test", "tests", "__tests__", "spec", "specs"})
+        or lowered_name.startswith("test_")
+        or lowered_name.endswith("_test.py")
+        or ".test." in lowered_name
+        or ".spec." in lowered_name
+    )
+
+
+def _verifier_source_context_block(
+    *,
+    workspace_full: str,
+    artifact_quality_errors: list[str],
+    repair_target_files: list[str],
+) -> str:
+    """Project failing verifier source around traceback lines as read-only context.
+
+    A traceback normally shows only the assertion line. Without the nearby test
+    setup/call, a repair model cannot see the concrete input that produced the
+    mismatch and can make repeated, real but ineffective edits. Verifier source
+    is evidence only: it must never expand the repair write scope.
+    """
+
+    workspace = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
+    if workspace is None or not workspace.is_dir() or not artifact_quality_errors:
+        return ""
+
+    repair_targets = {
+        _normalize_declared_task_path(item)
+        for item in repair_target_files
+        if _normalize_declared_task_path(item)
+    }
+    refs: list[tuple[str, int]] = []
+    for error in artifact_quality_errors:
+        for match in _PYTHON_TRACEBACK_SOURCE_RE.finditer(str(error or "")):
+            raw_path = Path(str(match.group("path") or ""))
+            try:
+                absolute = raw_path.resolve() if raw_path.is_absolute() else (workspace / raw_path).resolve()
+                rel = absolute.relative_to(workspace).as_posix()
+                line_number = max(1, int(match.group("line")))
+            except (OSError, RuntimeError, TypeError, ValueError):
+                continue
+            if rel in repair_targets or not _is_verifier_source_path(rel):
+                continue
+            ref = (rel, line_number)
+            if ref not in refs:
+                refs.append(ref)
+
+    blocks: list[str] = []
+    total_budget = 8000
+    used = 0
+    for rel, line_number in refs[:6]:
+        try:
+            source_path = (workspace / rel).resolve()
+            source_path.relative_to(workspace)
+            lines = source_path.read_text(encoding="utf-8").splitlines()
+        except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+            continue
+        start = max(0, line_number - 5)
+        end = min(len(lines), line_number + 4)
+        excerpt = "\n".join(f"{index + 1}: {lines[index]}" for index in range(start, end))
+        remaining = max(0, total_budget - used)
+        if remaining <= 0:
+            break
+        excerpt = excerpt[:remaining]
+        used += len(excerpt)
+        blocks.append(f"--- {rel} around line {line_number} (READ-ONLY) ---\n```text\n{excerpt}\n```")
+    if not blocks:
+        return ""
+    return (
+        "FAILING VERIFIER SOURCE CONTEXT (READ-ONLY EVIDENCE; NEVER EDIT THESE FILES):\n"
+        "Use the concrete setup/call inputs below to repair the authorized product target. "
+        "This evidence does not expand write scope.\n"
+        + "\n".join(blocks)
+        + "\n"
+    )
+
+
 def _is_typescript_command_config_path(rel_path: str) -> bool:
     return Path(str(rel_path or "")).name.lower() in {"tsconfig.json", "jsconfig.json"}
 
@@ -1126,6 +1219,11 @@ def _build_materialization_quality_repair_message(
         workspace_full=workspace_full,
         repair_target_files=prompt_repair_target_files,
     )
+    verifier_source_context_block = _verifier_source_context_block(
+        workspace_full=workspace_full,
+        artifact_quality_errors=artifact_quality_errors,
+        repair_target_files=prompt_repair_target_files,
+    )
     # C7-text W3 (2026-06-16 deliberation): cross-file coherence repair. An
     # unresolved relative import means the importer references a module that
     # does not exist yet; QA detects it, but the bare "MISSING TARGET FILES"
@@ -1339,6 +1437,7 @@ def _build_materialization_quality_repair_message(
         f"{existing_repair_block}"
         f"{single_existing_repair_block}"
         f"{repair_context_block}"
+        f"{verifier_source_context_block}"
         f"{coherence_block}"
         f"{symbol_repair_block}"
         f"{javascript_named_export_block}"
@@ -1350,6 +1449,12 @@ def _build_materialization_quality_repair_message(
         f"{npm_manifest_block}"
         f"{forbidden_marker_block}"
         f"{interface_discrepancy_block}"
+        "EDIT CONSISTENCY PREFLIGHT (mandatory before every tool call):\n"
+        "- For every identifier, enum/member, import, callable, or mapping key introduced by an edit, verify that "
+        "its definition already exists in the CURRENT UTF-8 CONTENT or create/update that definition in the same "
+        "authorized edit batch. Never change a reference without its owner definition and dependent lookup tables.\n"
+        "- Cover every listed verifier diagnostic, preserve already-passing behavior, and do not trade one failure "
+        "for a new unresolved symbol or runtime exception.\n"
         "Do not repeat the same package/script/test scaffold. Replace the bad artifact with concrete runnable code, "
         "source files, and executable tests required by the task contract.\n"
         "If the npm manifest has a test script, it must run a real local test/check and must not contain "

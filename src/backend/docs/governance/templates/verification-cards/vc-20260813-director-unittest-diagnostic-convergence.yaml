@@ -1,0 +1,48 @@
+card_id: vc-20260813-director-unittest-diagnostic-convergence
+classification: structural
+status: implementing
+scope:
+  cells:
+    - director.runtime
+    - roles.adapters
+    - factory.pipeline
+  platform_only: true
+  target_project_edits: forbidden
+assumption_register:
+  - id: A1
+    claim: L1-03 stopped because two rounds were projected as stagnant.
+    evidence: >-
+      runtime/qa/workspace-validation.json records convergence_stop_reason
+      two_consecutive_stagnant_repairs and round effects equal_count_swap,
+      regression.
+  - id: A2
+    claim: The first repair made real verifier progress.
+    evidence: >-
+      Dynamic replay of the durable unittest transcripts yields four causal
+      failures before repair and three after repair.
+  - id: A3
+    claim: The prior normalizer collapsed each transcript to one exception.
+    evidence: >-
+      Pre-fix normalize_director_repair_diagnostics returned one
+      python_attributeerror for each failing unittest command row.
+pre_mortem:
+  most_likely_wrong_fix: >-
+    Raising retry limits or weakening QA would hide the false convergence
+    metric while allowing unbounded regressions.
+  containment: >-
+    Preserve the existing bounded two-stagnant-round breaker and only improve
+    causal diagnostic granularity.
+verification_plan:
+  unit:
+    - unittest transcript expands to one diagnostic per FAIL/ERROR block.
+    - prompt requires reference-owner consistency before edit tool calls.
+  dynamic:
+    - durable L1-03 transcript replays as diagnostic counts 4, 3, and 6.
+  live:
+    - Retry only qa_gate on the existing isolated run.
+    - Observe a third same-task correction round after progress then regression.
+    - Require the failed verifier to pass before project completion.
+sign_off:
+  owner: Codex /root
+  started_at: "2026-08-13"
+  closed_at: null

@@ -119,6 +119,12 @@ _TAP_FAILURE_HEADER_RE = re.compile(
 )
 _TAP_RESULT_BOUNDARY_RE = re.compile(r"(?m)^\s*(?:not ok|ok)\s+\d+\s+-\s+|^\s*1\.\.\d+\s*$", re.IGNORECASE)
 _TAP_FAILURE_DIAGNOSTIC_LIMIT = 12
+_UNITTEST_FAILURE_HEADER_RE = re.compile(
+    r"(?m)^={20,}\s*\n(?P<kind>FAIL|ERROR):\s+(?P<name>[^\n]+)\s*$",
+    re.IGNORECASE,
+)
+_UNITTEST_SUMMARY_BOUNDARY_RE = re.compile(r"(?m)^-{20,}\s*\nRan\s+\d+\s+tests?\b", re.IGNORECASE)
+_UNITTEST_FAILURE_DIAGNOSTIC_LIMIT = 12
 _VERIFIER_LOCATION_RE = re.compile(
     r"(?P<path>(?:file://)?(?:[A-Za-z]:)?[^\s()'\"]+\.(?:js|mjs|cjs|ts|tsx|jsx|py|go|rs|java|cc|cpp|cxx))"
     r":(?P<line>\d+):(?P<column>\d+)",
@@ -228,6 +234,15 @@ def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
         # responsible path, and starved the same-task repair prompt. Preserve
         # exact assertion evidence while keeping coverage bounded.
         return tap_failures
+    unittest_failures = _normalize_unittest_failures(blob)
+    if unittest_failures:
+        # ``unittest -v`` emits one large command transcript.  Collapsing the
+        # transcript to the first traceback makes a real 4 -> 3 reduction look
+        # like a 1 -> 1 diagnostic swap, which can trip the two-stagnant-round
+        # breaker before the Director gets a correction round.  Preserve one
+        # causal diagnostic per FAIL/ERROR block so convergence is measured
+        # from verifier facts rather than command-row count.
+        return unittest_failures
     rust_location = _RUST_LOCATION_RE.search(blob)
     if rust_location and re.search(r"(?m)^\s*(?:error|warning):", blob, re.IGNORECASE):
         # Rust diagnostics without an E-code (parser errors and warnings) are
@@ -320,6 +335,65 @@ def _normalize_tap_failures(text: str) -> list[RepairDiagnostic]:
                     "source_blob_sha256": source_blob_sha256,
                     **fields,
                 },
+            )
+        )
+    return diagnostics
+
+
+def _normalize_unittest_failures(text: str) -> list[RepairDiagnostic]:
+    """Project Python unittest FAIL/ERROR blocks into causal diagnostics."""
+
+    blob = str(text or "")
+    matches = list(_UNITTEST_FAILURE_HEADER_RE.finditer(blob))
+    if not matches:
+        return []
+
+    summary_boundary = _UNITTEST_SUMMARY_BOUNDARY_RE.search(blob)
+    source_blob_sha256 = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+    total_failure_count = len(matches)
+    truncated_failure_count = max(0, total_failure_count - _UNITTEST_FAILURE_DIAGNOSTIC_LIMIT)
+    diagnostics: list[RepairDiagnostic] = []
+    for index, match in enumerate(matches[:_UNITTEST_FAILURE_DIAGNOSTIC_LIMIT]):
+        if index + 1 < len(matches):
+            end = matches[index + 1].start()
+        elif summary_boundary is not None and summary_boundary.start() > match.start():
+            end = summary_boundary.start()
+        else:
+            end = len(blob)
+        failure_block = blob[match.start() : end].strip()
+        normalized = _normalize_one_error(failure_block)
+        name = str(match.group("name") or "test").strip()
+        kind = str(match.group("kind") or "FAIL").strip().lower()
+        metadata = dict(normalized.metadata)
+        metadata.update(
+            {
+                "framework": "unittest",
+                "test_name": name,
+                "result_kind": kind,
+                "total_failure_count": total_failure_count,
+                "truncated_failure_count": truncated_failure_count,
+                "source_blob_sha256": source_blob_sha256,
+            }
+        )
+        diagnostics.append(
+            RepairDiagnostic(
+                source=normalized.source if normalized.code != "artifact_quality_error" else "verifier",
+                code=(
+                    normalized.code
+                    if normalized.code not in {"artifact_quality_error", "workspace_validation_failed"}
+                    else "verifier_test_failure"
+                ),
+                message=(
+                    normalized.message
+                    if normalized.code not in {"artifact_quality_error", "workspace_validation_failed"}
+                    else f"Test failed: {name}"
+                ),
+                severity=normalized.severity,
+                path=normalized.path,
+                line=normalized.line,
+                column=normalized.column,
+                raw=failure_block,
+                metadata=metadata,
             )
         )
     return diagnostics

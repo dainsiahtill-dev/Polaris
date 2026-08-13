@@ -93,6 +93,9 @@ from polaris.cells.roles.adapters.internal.director.quality_gate import (
     _quality_repair_execute_command_tool_definition,
     _quality_repair_write_file_tool_definition,
 )
+from polaris.cells.roles.adapters.internal.director.quality_gate._prompt_and_targets import (
+    _build_materialization_quality_repair_message,
+)
 from polaris.cells.roles.adapters.internal.director.runtime_repair_tool_adapter import (
     run_runtime_repair_with_director_tools,
 )
@@ -160,6 +163,43 @@ def _make_adapter(tmp_path: Any, task_runtime: Any = None) -> DirectorAdapter:
     else:
         adapter = DirectorAdapter(workspace=str(workspace), task_runtime=task_runtime)
     return adapter
+
+
+def test_quality_repair_includes_read_only_failing_verifier_source_context(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    test_path = tests_dir / "test_product.py"
+    test_path.write_text(
+        "import unittest\n\n"
+        "class ProductTest(unittest.TestCase):\n"
+        "    def test_low_wind(self):\n"
+        "        mood = mood_from_weather('Mercury', 10, 5)\n"
+        "        self.assertEqual(mood.scale, MoodScale.RADIANT)\n",
+        encoding="utf-8",
+    )
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "mood.py").write_text("def mood_from_weather(*args):\n    return None\n", encoding="utf-8")
+    diagnostic = (
+        "FAIL: test_low_wind (test_product.ProductTest.test_low_wind)\n"
+        "Traceback (most recent call last):\n"
+        f'  File "{test_path}", line 6, in test_low_wind\n'
+        "    self.assertEqual(mood.scale, MoodScale.RADIANT)\n"
+        "AssertionError: MELLOW != RADIANT"
+    )
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair the failed behavior.",
+        artifact_quality_errors=[diagnostic],
+        changed_files=["src/mood.py"],
+        repair_target_files=["src/mood.py"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "FAILING VERIFIER SOURCE CONTEXT" in message
+    assert "tests/test_product.py around line 6 (READ-ONLY)" in message
+    assert "mood_from_weather('Mercury', 10, 5)" in message
+    assert "This evidence does not expand write scope" in message
 
 
 def _test_execution_attempt(workspace: Path, task_id: str) -> TaskRuntimeExecutionAttemptIdentityV1:
@@ -2072,6 +2112,9 @@ class TestQualityRepairMissingTargetContractB:
         assert adapter._execution.allowed_tool_names == {"edit_file"}
         assert "CURRENT UTF-8 CONTENT" in adapter.repair_message
         assert "assert.ok(keywords.includes('火焰'))" in adapter.repair_message
+        assert "EDIT CONSISTENCY PREFLIGHT" in adapter.repair_message
+        assert "Never change a reference without its owner definition" in adapter.repair_message
+        assert "preserve already-passing behavior" in adapter.repair_message
 
     @pytest.mark.asyncio
     async def test_semantic_quality_single_changed_file_repair_forces_write_context(self, tmp_path) -> None:

@@ -86,6 +86,58 @@ def _run_js_missing_method_runtime(
     return result, writes, edits
 
 
+def test_python_unittest_output_preserves_each_failure_for_convergence() -> None:
+    raw = """test_ok (test_product.TestDomain.test_ok) ... ok
+test_storm (test_product.TestDomain.test_storm) ... ERROR
+test_calm (test_product.TestDomain.test_calm) ... ERROR
+test_mood (test_product.TestDomain.test_mood) ... FAIL
+
+======================================================================
+ERROR: test_storm (test_product.TestDomain.test_storm)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_product.py", line 62, in test_storm
+    WindLevel.STORM
+AttributeError: type object 'WindLevel' has no attribute 'STORM'
+
+======================================================================
+ERROR: test_calm (test_product.TestDomain.test_calm)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_product.py", line 58, in test_calm
+    WindLevel.CALM
+AttributeError: type object 'WindLevel' has no attribute 'CALM'
+
+======================================================================
+FAIL: test_mood (test_product.TestDomain.test_mood)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_product.py", line 49, in test_mood
+    self.assertEqual(actual, expected)
+AssertionError: MELLOW != RADIANT
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.012s
+
+FAILED (failures=1, errors=2)
+"""
+
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    assert [item.code for item in diagnostics] == [
+        "python_attributeerror",
+        "python_attributeerror",
+        "python_assertionerror",
+    ]
+    assert [item.metadata["test_name"].split(" ", 1)[0] for item in diagnostics] == [
+        "test_storm",
+        "test_calm",
+        "test_mood",
+    ]
+    assert all(item.metadata["total_failure_count"] == 3 for item in diagnostics)
+    assert len({item.raw for item in diagnostics}) == 3
+
+
 def test_javascript_node_smoke_test_uses_source_entrypoint_for_plain_javascript_package() -> None:
     content = build_javascript_node_smoke_test_content(
         "tests/product.test.js",
