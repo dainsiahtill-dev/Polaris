@@ -102,7 +102,6 @@ __all__ = [
     "_characterization_authority_port",
     "_factory_stage_context",
     "_bootstrap_fact_stream_workspace",
-    "_bootstrap_real_fact_stream_workspace",
     "_executor",
     "_library_completion_requirements",
     "_write_minimal_chief_engineer_plan",
@@ -201,15 +200,6 @@ def _bootstrap_fact_stream_workspace(workspace: Path) -> None:
             maintenance_reason="factory_stage_executor_characterization_test_bootstrap",
         )
     )
-
-
-@pytest.fixture(autouse=True)
-def _bootstrap_real_fact_stream_workspace(request: pytest.FixtureRequest) -> None:
-    """Provision FactStream before characterization tests use a real workspace."""
-
-    if "tmp_path" not in request.fixturenames:
-        return
-    _bootstrap_fact_stream_workspace(Path(request.getfixturevalue("tmp_path")))
 
 
 def _executor(workspace: Path) -> OrchestrationStageExecutor:
