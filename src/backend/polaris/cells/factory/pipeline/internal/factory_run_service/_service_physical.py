@@ -60,6 +60,65 @@ from ._helpers import (
 
 
 class _FactoryRunServicePhysicalMixin:
+    async def _close_project_completion_physical_evidence(
+        self: Any,
+        *,
+        contract: Any,
+        result: StageResult,
+    ) -> tuple[dict[str, Any], ...]:
+        """Materialize exact CE obligations after a successful physical QA gate.
+
+        QA command receipts and on-disk files are process evidence, not the
+        project-completion SSoT.  The VerificationGuard/ExecutionBroker path
+        must record each artifact and verifier receipt before the completion
+        supervisor evaluates the project.  Failed stages never use this bridge.
+        """
+
+        if result.stage != "quality_gate" or result.status != "success":
+            return ()
+        from polaris.cells.factory.verification_guard.public import (
+            RunProjectCompletionEvidenceBatchCommandV1,
+            run_project_completion_evidence_batch,
+        )
+
+        obligations = (
+            *contract.obligations.artifacts,
+            *contract.obligations.verification,
+            *contract.obligations.entrypoints,
+        )
+        obligation_ids = tuple(
+            obligation.obligation_id
+            for obligation in obligations
+            if str(getattr(obligation, "applicability", "") or "").strip() != "not_applicable"
+        )
+        if not obligation_ids:
+            return ()
+        batch = await asyncio.to_thread(
+            run_project_completion_evidence_batch,
+            RunProjectCompletionEvidenceBatchCommandV1(
+                workspace=str(self.workspace),
+                project_id=contract.project_id,
+                run_id=contract.run_id,
+                completion_contract_hash=contract.contract_hash,
+                obligation_ids=obligation_ids,
+            ),
+        )
+        effects = [
+            {
+                "obligation_id": effect.obligation_id,
+                "code": effect.code,
+                "spawned": effect.spawned,
+                "receipt_ref": effect.receipt_ref,
+            }
+            for effect in batch.effects
+        ]
+        result.metadata["project_completion_physical_evidence_closure"] = {
+            "schema_version": "factory.project-completion-physical-evidence-closure.v1",
+            "effect_count": len(effects),
+            "effects": effects,
+        }
+        return tuple(effects)
+
     def _recover_physical_attempt_coordinator(
         self: Any,
         *,
@@ -303,6 +362,10 @@ class _FactoryRunServicePhysicalMixin:
                     run_id=run_id,
                     contract_hash=contract_hash,
                 )
+            )
+            await self._close_project_completion_physical_evidence(
+                contract=contract,
+                result=result,
             )
             identities.append(
                 FactoryProjectCompletionIdentityV1(

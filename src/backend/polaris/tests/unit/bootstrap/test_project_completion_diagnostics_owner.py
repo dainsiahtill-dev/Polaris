@@ -21,6 +21,7 @@ from polaris.cells.chief_engineer.blueprint.public import (
 )
 from polaris.cells.control_plane.run_ledger.public import RunLedgerProjectionResultV1
 from polaris.cells.control_plane.verifier_policy.public import VerifierCommandPolicyDecisionV1
+from polaris.cells.factory.pipeline.public import FactoryTerminalTaskRuntimeProjectionV1
 from polaris.cells.factory.verification_guard.public import ProjectCompletionOwnerObservationV1Error
 from polaris.cells.factory.verification_guard.public.contracts import ProjectRepairCoverageV1
 from polaris.cells.runtime.execution_broker.internal import project_verification_authority as authority_module
@@ -474,6 +475,91 @@ def test_same_task_repair_run_does_not_invalidate_historical_task_boundary(
             authoritative=True,
             degraded=False,
             rows=repaired_rows,
+        ),
+    )
+
+    observation = adapter_module.PROJECT_COMPLETION_OWNER_OBSERVATION_ADAPTER.observe_project_completion(
+        workspace=str(tmp_path),
+        project_id=contract.project_id,
+        run_id=contract.run_id,
+        completion_contract_hash=contract.contract_hash,
+    )
+
+    assert observation.contract.contract_hash == contract.contract_hash
+
+
+def test_completion_owner_merges_frozen_epoch_with_current_repair_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Terminal-drained owners remain visible while current repair rows win by sequence."""
+
+    contract = _patch_owners(monkeypatch, tmp_path)
+    frozen_rows = [
+        {
+            "task_id": "8",
+            "external_task_id": "task-1",
+            "workflow_run_id": "director-task-1",
+            "factory_run_id": "run-1",
+            "status": "completed",
+            "execution_state": "completed",
+            "source": "task_runtime.execution_fact",
+            "status_source": "task_runtime.execution_fact",
+            "fact_event_seq": 10,
+        },
+        {
+            "task_id": "9",
+            "external_task_id": "task-2",
+            "workflow_run_id": "director-task-2-old",
+            "factory_run_id": "run-1",
+            "status": "failed",
+            "execution_state": "failed",
+            "source": "task_runtime.execution_fact",
+            "status_source": "task_runtime.execution_fact",
+            "fact_event_seq": 11,
+        },
+    ]
+    frozen = FactoryTerminalTaskRuntimeProjectionV1(
+        workspace=str(tmp_path.resolve()),
+        factory_run_id="run-1",
+        captured_at="2026-08-14T00:00:00+00:00",
+        projection={
+            "schema_version": "task_runtime.observable_task_rows_authority.v1",
+            "workspace": str(tmp_path.resolve()),
+            "source": "task_runtime.execution_fact",
+            "authoritative": True,
+            "degraded": False,
+            "requested_factory_run_id": "run-1",
+            "rows": frozen_rows,
+            "row_count": 2,
+            "total_row_count": 2,
+            "readiness": {},
+        },
+    )
+    monkeypatch.setattr(
+        adapter_module,
+        "get_factory_terminal_task_runtime_projection",
+        lambda query: frozen,
+    )
+    monkeypatch.setattr(
+        adapter_module,
+        "query_observable_task_rows",
+        lambda requested_workspace: ObservableTaskRowsProjectionV1(
+            workspace=str(tmp_path.resolve()),
+            source="task_runtime.execution_fact",
+            authoritative=True,
+            degraded=False,
+            rows=(
+                {
+                    "task_id": "task-2",
+                    "external_task_id": "task-2",
+                    "workflow_run_id": "director-task-2-repair",
+                    "factory_run_id": "run-1",
+                    "status": "completed",
+                    "execution_state": "completed",
+                    "fact_event_seq": 99,
+                },
+            ),
         ),
     )
 

@@ -41,6 +41,7 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunService,
     FactoryRunStatus,
     StageResult,
+    _service_physical as service_physical_module,
 )
 from polaris.cells.factory.pipeline.internal.factory_stage_artifact_bindings import (
     PM_STAGE_ARTIFACT_BINDING_CONTEXT_KEY,
@@ -121,7 +122,7 @@ async def test_quality_stage_commit_explicitly_wakes_completion_with_ce_owned_id
         )
 
     monkeypatch.setattr(service.store, "get_run", get_run)
-    monkeypatch.setattr(factory_run_service_module, "resolve_logical_path", lambda *_args: str(ce_artifact))
+    monkeypatch.setattr(service_physical_module, "resolve_logical_path", lambda *_args: str(ce_artifact))
     monkeypatch.setattr(
         chief_engineer_public,
         "query_project_completion_contract",
@@ -141,6 +142,63 @@ async def test_quality_stage_commit_explicitly_wakes_completion_with_ce_owned_id
     assert len(observed) == 1
     assert observed[0].run_id == "factory-1"
     assert observed[0].completion_contract_hash == "a" * 64
+
+
+@pytest.mark.asyncio
+async def test_successful_quality_stage_closes_artifacts_before_verifiers_and_entrypoints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    service = FactoryRunService(
+        workspace,
+        cache_root=tmp_path / "runtime",
+        executor=_SuccessfulStageExecutor(),
+    )
+    contract = SimpleNamespace(
+        project_id="project-1",
+        run_id="factory-1",
+        contract_hash="a" * 64,
+        obligations=SimpleNamespace(
+            artifacts=(SimpleNamespace(obligation_id="artifact-main", applicability="required"),),
+            verification=(SimpleNamespace(obligation_id="verify-test", applicability="required"),),
+            entrypoints=(SimpleNamespace(obligation_id="entrypoint-cli", applicability="required"),),
+        ),
+    )
+    observed: list[str] = []
+
+    def run_evidence_batch(command: Any) -> SimpleNamespace:
+        observed.extend(command.obligation_ids)
+        return SimpleNamespace(
+            effects=tuple(
+                SimpleNamespace(
+                    obligation_id=obligation_id,
+                    code="project_completion_evidence_recorded",
+                    spawned=obligation_id != "artifact-main",
+                    receipt_ref=f"receipt://{obligation_id}",
+                )
+                for obligation_id in command.obligation_ids
+            )
+        )
+
+    import polaris.cells.factory.verification_guard.public as verification_guard_public
+
+    monkeypatch.setattr(verification_guard_public, "run_project_completion_evidence_batch", run_evidence_batch)
+    result = StageResult(stage="quality_gate", status="success")
+
+    effects = await service._close_project_completion_physical_evidence(contract=contract, result=result)
+
+    assert observed == ["artifact-main", "verify-test", "entrypoint-cli"]
+    assert [item["obligation_id"] for item in effects] == observed
+    assert result.metadata["project_completion_physical_evidence_closure"]["effect_count"] == 3
+
+    skipped = await service._close_project_completion_physical_evidence(
+        contract=contract,
+        result=StageResult(stage="quality_gate", status="failed"),
+    )
+    assert skipped == ()
+    assert observed == ["artifact-main", "verify-test", "entrypoint-cli"]
 
 
 class _SuccessfulStageExecutor:

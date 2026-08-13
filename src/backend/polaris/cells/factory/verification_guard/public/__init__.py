@@ -35,6 +35,8 @@ __all__ = [
     "ProjectVerificationObligationObservationV1",
     "QueryProjectCompletionDiagnosticsV1",
     "RepairCoverageStatusV1",
+    "RunProjectCompletionEvidenceBatchCommandV1",
+    "RunProjectCompletionEvidenceBatchResultV1",
     "RunProjectCompletionEvidenceCommandV1",
     "RunProjectCompletionEvidenceResultV1",
     "VerificationClaim",
@@ -51,6 +53,7 @@ __all__ = [
     "query_project_completion_diagnostics",
     "reset_verification_guard_service",
     "run_project_completion_evidence",
+    "run_project_completion_evidence_batch",
     "verify_completion",
 ]
 
@@ -95,6 +98,8 @@ _CONTRACT_EXPORTS = frozenset(
         "VerifyCompletionResultV1",
         "RunProjectCompletionEvidenceCommandV1",
         "RunProjectCompletionEvidenceResultV1",
+        "RunProjectCompletionEvidenceBatchCommandV1",
+        "RunProjectCompletionEvidenceBatchResultV1",
     }
 )
 _SERVICE_EXPORTS = frozenset(
@@ -104,6 +109,7 @@ _SERVICE_EXPORTS = frozenset(
         "query_project_completion_diagnostics",
         "reset_verification_guard_service",
         "run_project_completion_evidence",
+        "run_project_completion_evidence_batch",
         "verify_completion",
     }
 )

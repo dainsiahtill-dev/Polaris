@@ -24,6 +24,10 @@ from polaris.cells.control_plane.run_ledger.public import (
     RunLedgerProjectionResultV1,
     read_run_ledger_projection,
 )
+from polaris.cells.factory.pipeline.public import (
+    GetFactoryTerminalTaskRuntimeProjectionQueryV1,
+    get_factory_terminal_task_runtime_projection,
+)
 from polaris.cells.runtime.projection.public import (
     DeliveryAxisV1,
     ProjectOutcomeNonFactoryEvidenceRefsV1,
@@ -120,10 +124,62 @@ def _owner_task_identity(row: Mapping[str, Any]) -> str:
     return str(
         metadata_map.get("external_task_id")
         or metadata_map.get("source_task_id")
+        or row.get("external_task_id")
+        or row.get("source_task_id")
+        or row.get("pm_task_id")
         or row.get("task_id")
         or row.get("id")
         or ""
     ).strip()
+
+
+def _task_runtime_authority_for_run(
+    task_projection: ObservableTaskRowsProjectionV1,
+    *,
+    workspace: str,
+    run_id: str,
+) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
+    """Merge Factory's frozen terminal epoch with newer live repair facts."""
+
+    live_authority = task_projection.to_authority_dict(factory_run_id=run_id)
+    live_rows = live_authority.get("rows")
+    candidates = [
+        dict(row)
+        for row in (live_rows if isinstance(live_rows, list) else ())
+        if isinstance(row, Mapping)
+        and str(row.get("execution_state") or row.get("status") or "").strip().lower() != "removed"
+    ]
+    frozen = get_factory_terminal_task_runtime_projection(
+        GetFactoryTerminalTaskRuntimeProjectionQueryV1(
+            workspace=workspace,
+            factory_run_id=run_id,
+        )
+    )
+    frozen_authority = dict(frozen.projection) if frozen is not None else None
+    frozen_rows = frozen_authority.get("rows") if frozen_authority is not None else ()
+    candidates[:0] = [
+        dict(row) for row in (frozen_rows if isinstance(frozen_rows, list) else ()) if isinstance(row, Mapping)
+    ]
+
+    rows_by_owner: dict[str, dict[str, Any]] = {}
+    for row in candidates:
+        owner_task_id = _owner_task_identity(row)
+        if not owner_task_id:
+            continue
+        existing = rows_by_owner.get(owner_task_id)
+        if existing is None or int(row.get("fact_event_seq") or 0) >= int(existing.get("fact_event_seq") or 0):
+            rows_by_owner[owner_task_id] = row
+    rows = tuple(rows_by_owner[owner_task_id] for owner_task_id in sorted(rows_by_owner))
+
+    authority = dict(frozen_authority or live_authority)
+    authority.update(
+        {
+            "rows": [dict(row) for row in rows],
+            "row_count": len(rows),
+            "total_row_count": len(rows),
+        }
+    )
+    return rows, authority
 
 
 def _validate_run_ledger_commitments(
@@ -406,14 +462,17 @@ class ProjectOutcomeNonFactoryOwnerObservationAdapter:
                 "project_outcome_task_runtime_projection_degraded",
                 "TaskRuntime projection must be authoritative and non-degraded",
             )
-        task_rows = task_projection.rows_for_factory_run(run_id)
+        task_rows, task_authority = _task_runtime_authority_for_run(
+            task_projection,
+            workspace=canonical_workspace,
+            run_id=run_id,
+        )
         if not task_rows:
             raise _fail(
                 "project_outcome_task_runtime_rows_empty",
                 "TaskRuntime projection has no rows bound to the exact Factory run",
             )
         _validate_task_runtime_rows(task_rows, run_id=run_id)
-        task_authority = task_projection.to_authority_dict(factory_run_id=run_id)
         if int(task_authority.get("row_count") or 0) != len(task_rows):
             raise _fail(
                 "project_outcome_task_runtime_row_count_mismatch",

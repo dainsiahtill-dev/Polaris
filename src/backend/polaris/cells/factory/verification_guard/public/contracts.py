@@ -665,6 +665,42 @@ class RunProjectCompletionEvidenceCommandV1:
 
 
 @dataclass(frozen=True, slots=True)
+class RunProjectCompletionEvidenceBatchCommandV1:
+    """Request multiple physical obligation effects from one owner snapshot.
+
+    The caller controls only obligation identities and their execution order.
+    Canonical paths, commands, ownership and evidence remain derived from the
+    exact CE contract.  A batch avoids replaying large owner event streams once
+    per obligation while preserving one receipt per physical effect.
+    """
+
+    workspace: str
+    project_id: str
+    run_id: str
+    completion_contract_hash: str
+    obligation_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_exact_token("workspace", self.workspace, max_length=4096))
+        object.__setattr__(self, "project_id", _require_exact_token("project_id", self.project_id))
+        object.__setattr__(self, "run_id", _require_exact_token("run_id", self.run_id))
+        object.__setattr__(
+            self,
+            "completion_contract_hash",
+            _require_sha256("completion_contract_hash", self.completion_contract_hash),
+        )
+        if type(self.obligation_ids) is not tuple or not self.obligation_ids:
+            raise TypeError("obligation_ids must be a non-empty exact tuple")
+        obligation_ids = tuple(
+            _require_exact_token(f"obligation_ids[{index}]", value)
+            for index, value in enumerate(self.obligation_ids)
+        )
+        if len(set(obligation_ids)) != len(obligation_ids):
+            raise ValueError("obligation_ids must be unique")
+        object.__setattr__(self, "obligation_ids", obligation_ids)
+
+
+@dataclass(frozen=True, slots=True)
 class ProjectCompletionPhysicalArtifactInputV1:
     """Contract-derived artifact path bound into a physical command receipt."""
 
@@ -814,6 +850,21 @@ class RunProjectCompletionEvidenceResultV1:
             "receipt_ref",
             _optional_exact_token("receipt_ref", self.receipt_ref, max_length=2048),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class RunProjectCompletionEvidenceBatchResultV1:
+    """Ordered physical effects produced from one owner observation."""
+
+    effects: tuple[RunProjectCompletionEvidenceResultV1, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.effects) is not tuple or not self.effects:
+            raise TypeError("effects must be a non-empty exact tuple")
+        if any(type(item) is not RunProjectCompletionEvidenceResultV1 for item in self.effects):
+            raise TypeError("effects must contain exact RunProjectCompletionEvidenceResultV1 values")
+        if len({item.obligation_id for item in self.effects}) != len(self.effects):
+            raise ValueError("effects must contain unique obligation_id values")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1390,6 +1441,10 @@ __all__ = [
     "ProjectVerificationObligationObservationV1",
     "QueryProjectCompletionDiagnosticsV1",
     "RepairCoverageStatusV1",
+    "RunProjectCompletionEvidenceBatchCommandV1",
+    "RunProjectCompletionEvidenceBatchResultV1",
+    "RunProjectCompletionEvidenceCommandV1",
+    "RunProjectCompletionEvidenceResultV1",
     "VerificationClaim",
     "VerificationCompletedEventV1",
     "VerificationGuardErrorV1",

@@ -267,8 +267,14 @@ def _command_policy_query(
     ("modality", "argv", "profile_id"),
     [
         ("environment_prep", ("npm", "ci"), "node.package_install"),
+        ("environment_prep", ("python", "-m", "venv", ".venv"), "python.venv_create"),
         ("build", ("cargo", "build", "--locked"), "rust.cargo.build"),
         ("test", ("python", "-m", "pytest", "-q"), "python.pytest"),
+        (
+            "test",
+            ("python", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"),
+            "python.unittest_discover",
+        ),
         ("lint", ("ruff", "check", "."), "python.ruff_check"),
         ("entrypoint", ("go", "run", "./cmd/app"), "go.run"),
     ],
@@ -323,6 +329,8 @@ def test_verifier_command_policy_rejects_workspace_or_ephemeral_fake_executable(
         ("test", ("cargo", "build"), "verifier_modality_mismatch"),
         ("build", ("npx", "some-random-package"), "untrusted_verifier_command"),
         ("entrypoint", ("sh", "-c", "exit 0"), "untrusted_verifier_command"),
+        ("test", ("python", "-m", "unittest", "discover", "-s", "../tests"), "untrusted_verifier_command"),
+        ("environment_prep", ("python", "-m", "venv", "/tmp/foreign"), "untrusted_verifier_command"),
     ],
 )
 def test_verifier_command_policy_rejects_untrusted_noop_or_wrong_modality(
@@ -471,6 +479,9 @@ def test_node_package_script_rejects_missing_or_escaping_direct_runner(tmp_path:
     [
         ("python.pytest", "1 passed in 0.01s\n", True),
         ("python.pytest", "no tests ran in 0.01s\n", False),
+        ("python.unittest_discover", "Ran 29 tests in 0.123s\n\nOK\n", True),
+        ("python.unittest_discover", "Ran 0 tests in 0.001s\n\nOK\n", False),
+        ("python.unittest_discover", "Ran 2 tests in 0.010s\n\nFAILED (failures=1)\n", False),
         ("rust.cargo.test", "test result: ok. 2 passed; 0 failed; 0 ignored\n", True),
         ("rust.cargo.test", "test result: ok. 0 passed; 0 failed; 0 ignored\n", False),
         ("go.test", "?\tpkg\t[no test files]\n", False),

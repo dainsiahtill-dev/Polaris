@@ -35,6 +35,10 @@ from polaris.cells.director.runtime.public import (
     query_director_repair_coverage,
     query_director_repair_plan_probe,
 )
+from polaris.cells.factory.pipeline.public import (
+    GetFactoryTerminalTaskRuntimeProjectionQueryV1,
+    get_factory_terminal_task_runtime_projection,
+)
 from polaris.cells.factory.verification_guard.public.bootstrap import (
     bind_project_completion_owner_observation_port,
     bind_project_completion_physical_evidence_port,
@@ -258,6 +262,9 @@ def _owner_task_identity(row: Mapping[str, Any]) -> str:
     return str(
         metadata_map.get("external_task_id")
         or metadata_map.get("source_task_id")
+        or row.get("external_task_id")
+        or row.get("source_task_id")
+        or row.get("pm_task_id")
         or row.get("task_id")
         or row.get("id")
         or ""
@@ -891,7 +898,24 @@ class ProjectCompletionOwnerObservationAdapter:
             )
         task_rows = task_projection.rows_for_factory_run(run_id)
         rows_by_id: dict[str, dict[str, Any]] = {}
-        for row in task_rows:
+        frozen = get_factory_terminal_task_runtime_projection(
+            GetFactoryTerminalTaskRuntimeProjectionQueryV1(
+                workspace=canonical_workspace,
+                factory_run_id=run_id,
+            )
+        )
+        frozen_rows = frozen.projection.get("rows") if frozen is not None else ()
+        candidates = [
+            dict(row)
+            for row in (frozen_rows if isinstance(frozen_rows, list) else ())
+            if isinstance(row, Mapping)
+        ]
+        candidates.extend(
+            dict(row)
+            for row in task_rows
+            if str(row.get("execution_state") or row.get("status") or "").strip().lower() != "removed"
+        )
+        for row in candidates:
             owner_task_id = _owner_task_identity(row)
             if owner_task_id not in contract.covered_task_ids:
                 continue

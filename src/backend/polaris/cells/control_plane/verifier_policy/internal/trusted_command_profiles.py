@@ -110,6 +110,8 @@ def _node_profile(modality: str, argv: tuple[str, ...]) -> str:
 def _python_profile(modality: str, argv: tuple[str, ...]) -> str:
     executable = _exe(argv)
     if modality == "environment_prep":
+        if _python_module(argv, "venv") and tuple(argv[3:]) == (".venv",):
+            return "python.venv_create"
         pip_args = argv[3:] if _python_module(argv, "pip") else argv[1:] if executable in {"pip", "pip3"} else ()
         if (
             pip_args
@@ -125,6 +127,29 @@ def _python_profile(modality: str, argv: tuple[str, ...]) -> str:
             return "python.package_install"
     if modality == "test" and (executable in {"pytest", "py.test"} or _python_module(argv, "pytest")):
         return "python.pytest"
+    if modality == "test" and _python_module(argv, "unittest"):
+        args = tuple(argv[3:])
+        if not args:
+            return ""
+        if args[0] == "discover":
+            allowed_flags = {"-b", "--buffer", "-c", "--catch", "-f", "--failfast", "-q", "--quiet", "-v", "--verbose"}
+            value_flags = {"-p", "--pattern", "-s", "--start-directory", "-t", "--top-level-directory"}
+            index = 1
+            while index < len(args):
+                token = args[index]
+                if token in allowed_flags:
+                    index += 1
+                    continue
+                if token not in value_flags or index + 1 >= len(args):
+                    return ""
+                value = args[index + 1]
+                path = PurePath(value.replace("\\", "/"))
+                if path.is_absolute() or ".." in path.parts or not value.strip():
+                    return ""
+                index += 2
+            return "python.unittest_discover"
+        if all(not item.startswith("-") and re.fullmatch(r"[A-Za-z0-9_.]+", item) for item in args):
+            return "python.unittest"
     if modality == "lint":
         if executable == "ruff" and len(argv) >= 2 and argv[1] in {"check", "format"}:
             return f"python.ruff_{argv[1]}"
@@ -137,7 +162,14 @@ def _python_profile(modality: str, argv: tuple[str, ...]) -> str:
     if modality == "entrypoint" and executable in {"python", "python3", "py"} and len(argv) >= 2:
         if argv[1] not in {"-c", "-m"} and argv[1].endswith(".py"):
             return "python.script_entrypoint"
-        if len(argv) >= 3 and argv[1] == "-m" and argv[2] not in {"pip", "pytest", "ruff", "compileall"}:
+        if len(argv) >= 3 and argv[1] == "-m" and argv[2] not in {
+            "compileall",
+            "pip",
+            "pytest",
+            "ruff",
+            "unittest",
+            "venv",
+        }:
             return "python.module_entrypoint"
     return ""
 
@@ -330,6 +362,13 @@ def evaluate_builtin_proof(
     if normalized_profile in {"python.pytest", "pytest"}:
         matches = re.findall(r"(?:^|\s)(\d+)\s+passed(?:\s|,|$)", output, flags=re.IGNORECASE)
         return any(int(value) > 0 for value in matches) and "no tests ran" not in output.casefold()
+    if normalized_profile in {"python.unittest", "python.unittest_discover"}:
+        matches = re.findall(r"(?m)^Ran\s+(\d+)\s+tests?\s+in\s+", output)
+        return (
+            any(int(value) > 0 for value in matches)
+            and bool(re.search(r"(?m)^OK(?:\s|$)", output))
+            and not bool(re.search(r"(?m)^FAILED(?:\s|$)", output))
+        )
     if normalized_profile in {"rust.cargo.test", "cargo.test"}:
         matches = re.findall(r"test result:\s*ok\.\s*(\d+)\s+passed", output, flags=re.IGNORECASE)
         return any(int(value) > 0 for value in matches)

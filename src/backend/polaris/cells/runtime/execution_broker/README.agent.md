@@ -51,11 +51,14 @@ directly.
     `control_plane.verifier_policy` decision hash.
 11. Transient spawn failures use bounded attempt leases. Expired or retryable
     attempts may advance to a new fenced attempt; one live attempt cannot spawn
-    twice and semantic/policy failures remain fail-closed. Execution id, PID,
-    and Linux process start token are persisted before wait; an expired exact
-    process is terminated before a replacement attempt is reserved. An
-    attempt-private sandbox launch gate prevents target argv from executing
-    until that durable process fence is committed.
+    twice and semantic/policy failures remain fail-closed. A completed physical
+    attempt whose profile proof failed remains immutable failed evidence, but a
+    later explicit run command may open a bounded new attempt; passive receipt
+    queries never retry. Execution id, PID, and Linux process start token are
+    persisted before wait; an expired exact process is terminated before a
+    replacement attempt is reserved. An attempt-private sandbox launch gate
+    prevents target argv from executing until that durable process fence is
+    committed.
 12. Physical verifier commands run only in the fail-closed Bubblewrap adapter.
     Platform config/runtime authority and workspace-local `.polaris` are hidden,
     HOME is disposable, the environment is cleared then rebuilt from a narrow

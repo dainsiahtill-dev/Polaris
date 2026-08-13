@@ -671,6 +671,22 @@ class GetFactoryChainProjectionQueryV1:
 
 
 @dataclass(frozen=True, slots=True)
+class GetFactoryTerminalTaskRuntimeProjectionQueryV1:
+    """Exact read query for the TaskRuntime authority frozen by Factory drain."""
+
+    workspace: str
+    factory_run_id: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_exact_str("workspace", self.workspace))
+        object.__setattr__(
+            self,
+            "factory_run_id",
+            _require_exact_str("factory_run_id", self.factory_run_id),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class FactoryChainProjectionV1:
     """Read-only Factory-owned chain projection for one workspace run.
 
@@ -1155,6 +1171,7 @@ __all__ = [
     "FactoryWorkspaceRunLeaseV1",
     "GetFactoryChainProjectionQueryV1",
     "GetFactoryRunStatusQueryV1",
+    "GetFactoryTerminalTaskRuntimeProjectionQueryV1",
     "IFactoryPipeline",
     "IFactoryProjectionLab",
     "ListFactoryRunsQueryV1",

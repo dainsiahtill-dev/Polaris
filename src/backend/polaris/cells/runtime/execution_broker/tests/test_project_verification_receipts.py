@@ -561,8 +561,11 @@ def test_query_validates_full_receipt_identity_not_only_input_hash(
 
     def _forged_row(workspace: str, effect_key: str):
         del workspace
-        return "completed", effect_key.removeprefix("command:"), forged_hash, authority_module._canonical_json(
-            forged_payload
+        return (
+            "completed",
+            effect_key.removeprefix("command:"),
+            forged_hash,
+            authority_module._canonical_json(forged_payload),
         )
 
     monkeypatch.setattr(authority_module, "_read_row", _forged_row)
@@ -633,10 +636,7 @@ def test_arbitrary_public_command_and_runner_injection_are_rejected(
     command = _verification_command(tmp_path)
     with pytest.raises(ValueError, match="owner-sealed"):
         ConsumeProjectVerificationCapabilityCommandV1(
-            **{
-                name: getattr(command, name)
-                for name in ProjectVerificationExecutionAuthorityV1.__dataclass_fields__
-            },
+            **{name: getattr(command, name) for name in ProjectVerificationExecutionAuthorityV1.__dataclass_fields__},
             effect_key="command:" + "1" * 64,
             attempt_id="2" * 64,
         )
@@ -987,6 +987,44 @@ def test_zero_exit_without_profile_proof_is_a_failed_receipt(
     assert result.receipt is not None
     assert result.receipt.proof_satisfied is False
     assert result.receipt.succeeded is False
+
+
+def test_explicit_run_retries_failed_proof_and_preserves_receipt_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "src" / "main.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("print('ok')\n", encoding="utf-8")
+    command = _verification_command(tmp_path)
+    runner = _Runner(output=b"no tests ran in 0.01s\n")
+    _bind_runner(monkeypatch, runner)
+
+    failed = run_project_verification(command)
+    assert failed.receipt is not None
+    assert failed.receipt.proof_satisfied is False
+
+    runner.output = b"1 passed in 0.01s\n"
+    recovered = run_project_verification(command)
+
+    assert runner.calls == 2
+    assert recovered.spawned is True
+    assert recovered.receipt is not None
+    assert recovered.receipt.succeeded is True
+    assert recovered.receipt.receipt_hash != failed.receipt.receipt_hash
+    assert query_project_verification_receipt(_verification_query(command)) == recovered.receipt
+
+    connection = authority_module._connect(str(tmp_path))
+    try:
+        events = authority_module._read_authenticated_events(connection, workspace=str(tmp_path))
+    finally:
+        connection.close()
+    completed = tuple(event for event in events if event.get("kind") == "command" and event.get("state") == "completed")
+    assert tuple(event.get("attempt_number") for event in completed) == (1, 2)
+    assert tuple(event.get("receipt_hash") for event in completed) == (
+        failed.receipt.receipt_hash,
+        recovered.receipt.receipt_hash,
+    )
 
 
 def test_concurrent_same_effect_executes_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

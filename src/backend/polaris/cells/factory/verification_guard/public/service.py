@@ -22,6 +22,8 @@ from polaris.cells.factory.verification_guard.public.contracts import (
     ProjectCompletionDiagnosticsV1,
     ProjectCompletionOwnerObservationV1Error,
     QueryProjectCompletionDiagnosticsV1,
+    RunProjectCompletionEvidenceBatchCommandV1,
+    RunProjectCompletionEvidenceBatchResultV1,
     RunProjectCompletionEvidenceCommandV1,
     RunProjectCompletionEvidenceResultV1,
     VerificationStatus,
@@ -71,6 +73,18 @@ class VerificationGuardService(IVerificationGuardService):
 
         return _run_project_completion_evidence(command)
 
+    def run_project_completion_evidence_batch(
+        self,
+        command: RunProjectCompletionEvidenceBatchCommandV1,
+    ) -> RunProjectCompletionEvidenceBatchResultV1:
+        """Materialize ordered obligation effects from one owner snapshot."""
+
+        from polaris.cells.factory.verification_guard.internal.project_physical_evidence import (
+            run_project_completion_evidence_batch,
+        )
+
+        return run_project_completion_evidence_batch(command)
+
 
 _SERVICE_SINGLETON: VerificationGuardService | None = None
 
@@ -110,11 +124,20 @@ def run_project_completion_evidence(
     return get_verification_guard_service().run_project_completion_evidence(command)
 
 
+def run_project_completion_evidence_batch(
+    command: RunProjectCompletionEvidenceBatchCommandV1,
+) -> RunProjectCompletionEvidenceBatchResultV1:
+    """Materialize ordered obligation effects through the default service."""
+
+    return get_verification_guard_service().run_project_completion_evidence_batch(command)
+
+
 __all__ = [
     "VerificationGuardService",
     "get_verification_guard_service",
     "query_project_completion_diagnostics",
     "reset_verification_guard_service",
     "run_project_completion_evidence",
+    "run_project_completion_evidence_batch",
     "verify_completion",
 ]

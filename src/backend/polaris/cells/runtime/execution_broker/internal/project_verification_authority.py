@@ -219,7 +219,9 @@ def _require_exact_command_authority(
 
 
 def _require_executable_identity(
-    command: ProjectVerificationExecutionAuthorityV1 | QueryProjectVerificationReceiptV1 | RunProjectVerificationCommandV1,
+    command: ProjectVerificationExecutionAuthorityV1
+    | QueryProjectVerificationReceiptV1
+    | RunProjectVerificationCommandV1,
 ) -> str:
     selected = Path(command.executable_path)
     realpath = selected.resolve(strict=True)
@@ -461,6 +463,7 @@ def _reserve(
     kind: str,
     request_hash: str,
     lease_seconds: float = 30.0,
+    retry_completed_failed_proof: bool = False,
 ) -> _EffectReservation:
     connection = _connect(workspace)
     try:
@@ -486,6 +489,31 @@ def _reserve(
         if stored_request_hash != request_hash or event.get("kind") != kind:
             raise ValueError("project verification effect key collided with a different request")
         attempt_number = int(event.get("attempt_number") or 0)
+        receipt_payload = event.get("receipt_payload")
+        if (
+            state == "completed"
+            and retry_completed_failed_proof
+            and kind == "command"
+            and isinstance(receipt_payload, dict)
+            and receipt_payload.get("proof_satisfied") is False
+            and attempt_number < _MAX_TRANSIENT_ATTEMPTS
+        ):
+            # A completed physical attempt whose verifier proof failed is an
+            # immutable failed-evidence fact, not a permanently reusable
+            # success. A later explicit execution request may open a bounded,
+            # newly fenced attempt. The old receipt stays in the authenticated
+            # append-only history; passive receipt queries never trigger work.
+            next_attempt = attempt_number + 1
+            started = _started_event(
+                effect_key=effect_key,
+                kind=kind,
+                request_hash=request_hash,
+                attempt_number=next_attempt,
+                lease_seconds=lease_seconds,
+            )
+            _append_authenticated_event(connection, workspace=workspace, payload=started)
+            connection.execute("COMMIT")
+            return _EffectReservation("reserved", str(started["attempt_id"]), next_attempt)
         if state == "started" and not _lease_is_live(event):
             process_pid = event.get("process_pid")
             process_start_token = event.get("process_start_token")
@@ -958,7 +986,9 @@ def _require_sandbox_matches_snapshot(
     prepared: PreparedProjectVerificationSandbox,
     snapshots: tuple[ProjectVerificationArtifactSnapshotV1, ...],
 ) -> None:
-    observed = tuple((str(original.relative_to(prepared.workspace)), digest) for original, _copy, digest in prepared.snapshots)
+    observed = tuple(
+        (str(original.relative_to(prepared.workspace)), digest) for original, _copy, digest in prepared.snapshots
+    )
     expected = tuple((item.path, item.artifact_hash) for item in snapshots)
     if observed != expected:
         raise ValueError("immutable verifier sandbox does not match authoritative input snapshot")
@@ -1221,6 +1251,7 @@ def run_project_verification(
         kind="command",
         request_hash=request_hash,
         lease_seconds=command.timeout_seconds + 30.0,
+        retry_completed_failed_proof=True,
     )
     if reservation.state == "completed":
         receipt = query_project_verification_receipt(_query_from_command(command))
@@ -1257,28 +1288,28 @@ def run_project_verification(
     try:
         consumption = port.consume_project_verification_execution_capability(
             ConsumeProjectVerificationCapabilityCommandV1(
-            workspace=command.workspace,
-            project_id=command.project_id,
-            run_id=command.run_id,
-            completion_contract_hash=command.completion_contract_hash,
-            obligation_id=command.obligation_id,
-            owner_task_id=command.owner_task_id,
-            modality=command.modality,
-            argv=command.argv,
-            cwd=command.cwd,
-            command_authority_hash=command.command_authority_hash,
-            input_artifacts=command.input_artifacts,
-            timeout_seconds=command.timeout_seconds,
-            job_token_id=command.job_token_id,
-            job_token_set_hash=command.job_token_set_hash,
-            execution_policy_hash=command.execution_policy_hash,
-            authority_revision=command.authority_revision,
-            policy_profile_id=command.policy_profile_id,
-            policy_decision_hash=command.policy_decision_hash,
-            executable_path=command.executable_path,
-            executable_realpath=command.executable_realpath,
-            executable_hash=command.executable_hash,
-            effect_key=effect_key,
+                workspace=command.workspace,
+                project_id=command.project_id,
+                run_id=command.run_id,
+                completion_contract_hash=command.completion_contract_hash,
+                obligation_id=command.obligation_id,
+                owner_task_id=command.owner_task_id,
+                modality=command.modality,
+                argv=command.argv,
+                cwd=command.cwd,
+                command_authority_hash=command.command_authority_hash,
+                input_artifacts=command.input_artifacts,
+                timeout_seconds=command.timeout_seconds,
+                job_token_id=command.job_token_id,
+                job_token_set_hash=command.job_token_set_hash,
+                execution_policy_hash=command.execution_policy_hash,
+                authority_revision=command.authority_revision,
+                policy_profile_id=command.policy_profile_id,
+                policy_decision_hash=command.policy_decision_hash,
+                executable_path=command.executable_path,
+                executable_realpath=command.executable_realpath,
+                executable_hash=command.executable_hash,
+                effect_key=effect_key,
                 attempt_id=attempt_id,
                 _authority_token=_CAPABILITY_COMMAND_SEAL,
             )
@@ -1433,8 +1464,12 @@ def query_project_verification_receipt(
         )
     except (RuntimeError, TypeError, ValueError):
         return None
-    expected_current = tuple(getattr(query, name) for name in ProjectVerificationExecutionAuthorityV1.__dataclass_fields__)
-    observed_current = tuple(getattr(current, name) for name in ProjectVerificationExecutionAuthorityV1.__dataclass_fields__)
+    expected_current = tuple(
+        getattr(query, name) for name in ProjectVerificationExecutionAuthorityV1.__dataclass_fields__
+    )
+    observed_current = tuple(
+        getattr(current, name) for name in ProjectVerificationExecutionAuthorityV1.__dataclass_fields__
+    )
     if observed_current != expected_current:
         return None
     try:

@@ -15,10 +15,12 @@ from polaris.cells.factory.verification_guard.internal import (
 from polaris.cells.factory.verification_guard.public import (
     ProjectCompletionOwnerObservationV1,
     ProjectCompletionOwnerObservationV1Error,
+    RunProjectCompletionEvidenceBatchCommandV1,
     RunProjectCompletionEvidenceCommandV1,
     bind_project_completion_owner_observation_port,
     bind_project_completion_physical_evidence_port,
     run_project_completion_evidence,
+    run_project_completion_evidence_batch,
 )
 from polaris.cells.factory.verification_guard.public.bootstrap import (
     build_project_completion_contract_observation,
@@ -307,6 +309,44 @@ def test_artifact_dispatch_is_derived_from_exact_contract(tmp_path: Path) -> Non
     assert intent.owner_task_id == "task-1"
     assert intent.artifact_path == "src/main.py"
     assert intent.argv == ()
+
+
+def test_batch_reads_owner_once_and_preserves_obligation_order(tmp_path: Path) -> None:
+    contract = _contract()
+    physical = _PhysicalPort()
+
+    class _CountingOwner(_OwnerPort):
+        calls = 0
+
+        def observe_project_completion(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            return super().observe_project_completion(**kwargs)
+
+    owner = _CountingOwner(tmp_path, contract)
+    bind_project_completion_owner_observation_port(owner)
+    bind_project_completion_physical_evidence_port(physical)
+
+    result = run_project_completion_evidence_batch(
+        RunProjectCompletionEvidenceBatchCommandV1(
+            workspace=str(tmp_path.resolve()),
+            project_id=contract.project_id,
+            run_id=contract.run_id,
+            completion_contract_hash=contract.contract_hash,
+            obligation_ids=("artifact.main", "verify.test", "entrypoint.cli"),
+        )
+    )
+
+    assert owner.calls == 1
+    assert [item.obligation_id for item in result.effects] == [
+        "artifact.main",
+        "verify.test",
+        "entrypoint.cli",
+    ]
+    assert [item.obligation_id for item in physical.intents] == [
+        "artifact.main",
+        "verify.test",
+        "entrypoint.cli",
+    ]
 
 
 def test_verifier_dispatch_pins_canonical_argv_cwd_and_inputs(tmp_path: Path) -> None:

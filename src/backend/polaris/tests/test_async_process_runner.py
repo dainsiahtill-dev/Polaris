@@ -233,17 +233,9 @@ async def test_terminate_stops_running_process(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_stream_stdout_lines(tmp_path: Path) -> None:
-    """stream() yields lines from the subprocess stdout."""
+    """stream() drains every line even when the subprocess exits in one burst."""
     runner = SubprocessAsyncRunner()
-    # Use Python to avoid Windows cmd.exe buffering issues with pipe output.
-    script = ";".join(
-        [
-            "import sys",
-            "for i in range(1, 4):",
-            "    print(f'line{i}')",
-            "    sys.stdout.flush()",
-        ]
-    )
+    script = "import sys; [print(f'line{i}') for i in range(80)]; sys.stdout.flush()"
     cmd = ["python", "-c", script]
 
     handle = await runner.spawn(cmd, timeout=10, cwd=str(tmp_path))
@@ -252,9 +244,7 @@ async def test_stream_stdout_lines(tmp_path: Path) -> None:
         async for chunk in handle.stream():
             if chunk.line:
                 lines.append(chunk.line)
-            if len(lines) >= 3:
-                break
-        assert len(lines) >= 1
+        assert lines == [f"line{i}" for i in range(80)]
 
 
 @pytest.mark.asyncio
@@ -337,6 +327,28 @@ async def test_merge_two_streams_yields_both_sources() -> None:
     sources = {c.source for c in results if c.line}
     assert ProcessStreamSource.STDOUT in sources
     assert ProcessStreamSource.STDERR in sources
+
+
+@pytest.mark.asyncio
+async def test_merge_two_streams_drains_burst_before_both_eof_sentinels() -> None:
+    """Producer completion must not discard lines already queued before EOF."""
+
+    async def burst(prefix: str, source: ProcessStreamSource) -> AsyncIterator[StreamChunk]:
+        for index in range(50):
+            yield StreamChunk(line=f"{prefix}-{index}", source=source)
+
+    results = [
+        chunk
+        async for chunk in _merge_two_streams(
+            burst("out", ProcessStreamSource.STDOUT),
+            burst("err", ProcessStreamSource.STDERR),
+        )
+    ]
+
+    assert {chunk.line for chunk in results} == {
+        *(f"out-{index}" for index in range(50)),
+        *(f"err-{index}" for index in range(50)),
+    }
 
 
 # =============================================================================

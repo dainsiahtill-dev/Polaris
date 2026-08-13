@@ -17,6 +17,7 @@ from polaris.cells.chief_engineer.blueprint.public import (
     VerificationObligationV1,
 )
 from polaris.cells.control_plane.run_ledger.public import RunLedgerProjectionResultV1
+from polaris.cells.factory.pipeline.public import FactoryTerminalTaskRuntimeProjectionV1
 from polaris.cells.runtime.projection.public import (
     DeliveryAxisV1,
     ProjectOutcomeNonFactoryOwnerObservationV1,
@@ -353,9 +354,49 @@ def _install_owner_queries(
         return completion_contract or _completion_contract()
 
     monkeypatch.setattr(adapter_module, "query_observable_task_rows", query_tasks)
+    monkeypatch.setattr(adapter_module, "get_factory_terminal_task_runtime_projection", lambda query: None)
     monkeypatch.setattr(adapter_module, "read_run_ledger_projection", query_ledger)
     monkeypatch.setattr(adapter_module, "query_project_completion_contract", query_completion_contract)
     return task_queries, ledger_queries, completion_queries
+
+
+@pytest.mark.asyncio
+async def test_adapter_uses_frozen_terminal_task_runtime_after_live_rows_are_drained(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.bootstrap import runtime_projection_project_outcome_owner as adapter_module
+
+    terminal_authority = _task_runtime_projection(tmp_path).to_authority_dict(factory_run_id=_RUN_ID)
+    frozen = FactoryTerminalTaskRuntimeProjectionV1(
+        workspace=str(tmp_path.resolve()),
+        factory_run_id=_RUN_ID,
+        captured_at="2026-08-14T00:00:00+00:00",
+        projection=terminal_authority,
+    )
+    _install_owner_queries(
+        monkeypatch,
+        task_runtime=_task_runtime_projection(tmp_path, factory_run_id="another-run"),
+        run_ledger=_run_ledger_projection(tmp_path),
+    )
+    monkeypatch.setattr(
+        adapter_module,
+        "get_factory_terminal_task_runtime_projection",
+        lambda query: frozen,
+    )
+
+    observation = (
+        await adapter_module.ProjectOutcomeNonFactoryOwnerObservationAdapter().observe_project_outcome_non_factory(
+            workspace=str(tmp_path),
+            project_id=_PROJECT_ID,
+            run_id=_RUN_ID,
+            completion_contract_hash=_CONTRACT_HASH,
+        )
+    )
+
+    assert observation.task_runtime is TaskRuntimeAxisV1.CONVERGED
+    assert observation.task_count == 1
+    assert observation.completed_task_count == 1
 
 
 @pytest.mark.asyncio

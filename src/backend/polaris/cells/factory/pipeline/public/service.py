@@ -77,6 +77,7 @@ from .contracts import (
     FactoryRunResultV1,
     FactoryRunStartedEventV1,
     FactoryStageExecutionClaimV1,
+    FactoryTerminalTaskRuntimeProjectionV1,
     FactoryWorkspaceReleaseEvidenceV1,
     FactoryWorkspaceRunLeaseConflictError,
     FactoryWorkspaceRunLeaseStateV1,
@@ -84,6 +85,7 @@ from .contracts import (
     FactoryWorkspaceRunLeaseV1,
     GetFactoryChainProjectionQueryV1,
     GetFactoryRunStatusQueryV1,
+    GetFactoryTerminalTaskRuntimeProjectionQueryV1,
     IFactoryPipeline,
     IFactoryProjectionLab,
     ListFactoryRunsQueryV1,
@@ -132,6 +134,20 @@ class _FactoryChainProjectionReader:
         payload = await self._store.read_strict_run_snapshot(run_id)
         return FactoryRun.from_dict(payload)
 
+    def get_run_sync(self, run_id: str) -> FactoryRun | None:
+        """Descriptor-safe strict read for synchronous owner adapters."""
+
+        if self._store is None:
+            return None
+        logical_ref = self._store.run_snapshot_ref(run_id)
+        snapshot_path = self._store.base_dir / logical_ref.removeprefix("runtime/")
+        try:
+            snapshot_path.lstat()
+        except FileNotFoundError:
+            return None
+        payload = self._store._read_strict_snapshot_sync(logical_ref)
+        return FactoryRun.from_dict(payload)
+
     async def get_authoritative_run_events(self, run_id: str) -> Sequence[Mapping[str, Any]]:
         if self._store is None:
             return ()
@@ -146,6 +162,56 @@ def get_factory_workspace_run_lease(workspace: str) -> FactoryWorkspaceRunLeaseV
     """Return the durable Factory admission projection for one workspace."""
 
     return FactoryWorkspaceRunAdmission(workspace).current()
+
+
+def get_factory_terminal_task_runtime_projection(
+    query: GetFactoryTerminalTaskRuntimeProjectionQueryV1,
+) -> FactoryTerminalTaskRuntimeProjectionV1 | None:
+    """Read Factory's exact frozen TaskRuntime authority without mutating state."""
+
+    if type(query) is not GetFactoryTerminalTaskRuntimeProjectionQueryV1:
+        raise TypeError("query must be an exact GetFactoryTerminalTaskRuntimeProjectionQueryV1 instance")
+    workspace = str(Path(query.workspace).expanduser().resolve())
+    reader = _create_factory_chain_projection_reader(workspace)
+    if str(reader.workspace) != workspace:
+        raise FactoryPipelineError(
+            "Factory terminal projection reader is bound to another workspace",
+            code="factory_workspace_binding_mismatch",
+            details={"requested_workspace": workspace, "factory_run_id": query.factory_run_id},
+        )
+    run = reader.get_run_sync(query.factory_run_id)
+    if run is None:
+        return None
+    if run.id != query.factory_run_id:
+        raise FactoryPipelineError(
+            "Factory run identity does not match terminal projection query",
+            code="factory_terminal_task_runtime_projection_run_identity_mismatch",
+            details={"requested_run_id": query.factory_run_id, "owner_run_id": run.id},
+        )
+    payload = run.metadata.get("factory_terminal_task_runtime_projection")
+    if payload is None:
+        return None
+    if not isinstance(payload, Mapping):
+        raise FactoryPipelineError(
+            "Factory terminal TaskRuntime projection is not a mapping",
+            code="factory_terminal_task_runtime_projection_invalid",
+            details={"factory_run_id": query.factory_run_id},
+        )
+    try:
+        projection = FactoryTerminalTaskRuntimeProjectionV1.from_dict(payload)
+    except (TypeError, ValueError) as exc:
+        raise FactoryPipelineError(
+            "Factory terminal TaskRuntime projection is invalid",
+            code="factory_terminal_task_runtime_projection_invalid",
+            details={"factory_run_id": query.factory_run_id, "error": str(exc)[:300]},
+        ) from exc
+    if Path(projection.workspace).expanduser().resolve() != Path(workspace):
+        raise FactoryPipelineError(
+            "Factory terminal TaskRuntime projection workspace does not match query",
+            code="factory_terminal_task_runtime_projection_workspace_mismatch",
+            details={"factory_run_id": query.factory_run_id},
+        )
+    return projection
 
 
 def _normalize_owner_stage_tuple(values: object, field_name: str) -> tuple[str, ...]:
@@ -440,6 +506,7 @@ __all__ = [
     "FactorySettlementRuntime",
     "FactorySettlementRuntimeError",
     "FactoryStageExecutionClaimV1",
+    "FactoryTerminalTaskRuntimeProjectionV1",
     "FactoryWorkspaceReleaseEvidenceV1",
     "FactoryWorkspaceRunLeaseConflictError",
     "FactoryWorkspaceRunLeaseStateV1",
@@ -447,6 +514,7 @@ __all__ = [
     "FactoryWorkspaceRunLeaseV1",
     "GetFactoryChainProjectionQueryV1",
     "GetFactoryRunStatusQueryV1",
+    "GetFactoryTerminalTaskRuntimeProjectionQueryV1",
     "IFactoryPipeline",
     "IFactoryProjectionLab",
     "JobToken",
@@ -468,6 +536,7 @@ __all__ = [
     "build_run_ledger_projection",
     "create_factory_settlement_runtime",
     "get_factory_chain_projection",
+    "get_factory_terminal_task_runtime_projection",
     "get_factory_workspace_run_lease",
     "load_run_ledger_projection",
     "persist_real_run_gate_ledger",

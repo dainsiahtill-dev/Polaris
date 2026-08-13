@@ -807,12 +807,16 @@ class ProjectCompletionConvergenceEngineV1:
     ) -> ProjectCompletionDiagnosticsV1 | ProjectCompletionAdvanceResultV1:
         try:
             diagnostics = await self._diagnostics_port.query_project_completion_diagnostics(identity)
-        except Exception:  # noqa: BLE001 -- owner boundary failures must fail closed
+        except Exception as exc:  # noqa: BLE001 -- owner boundary failures must fail closed
+            owner_error_code = str(getattr(exc, "error_code", "") or "").strip()
+            reason_codes = ["project_completion_diagnostics_owner_query_failed"]
+            if owner_error_code:
+                reason_codes.append(owner_error_code)
             return self._result(
                 identity,
                 workflow_id,
                 status="control_plane_blocked",
-                reason_codes=("project_completion_diagnostics_owner_query_failed",),
+                reason_codes=tuple(reason_codes),
                 event_seq=event_seq,
             )
         if type(diagnostics) is not ProjectCompletionDiagnosticsV1:

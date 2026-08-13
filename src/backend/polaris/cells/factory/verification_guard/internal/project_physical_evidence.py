@@ -18,6 +18,8 @@ from polaris.cells.factory.verification_guard.public.contracts import (
     ProjectEntrypointObligationObservationV1,
     ProjectVerificationObligationObservationV1,
     QueryProjectCompletionDiagnosticsV1,
+    RunProjectCompletionEvidenceBatchCommandV1,
+    RunProjectCompletionEvidenceBatchResultV1,
     RunProjectCompletionEvidenceCommandV1,
     RunProjectCompletionEvidenceResultV1,
 )
@@ -269,6 +271,28 @@ def run_project_completion_evidence(
             "invalid_project_completion_evidence_command_type",
             "Command must be an exact RunProjectCompletionEvidenceCommandV1",
         )
+    batch = run_project_completion_evidence_batch(
+        RunProjectCompletionEvidenceBatchCommandV1(
+            workspace=command.workspace,
+            project_id=command.project_id,
+            run_id=command.run_id,
+            completion_contract_hash=command.completion_contract_hash,
+            obligation_ids=(command.obligation_id,),
+        )
+    )
+    return batch.effects[0]
+
+
+def run_project_completion_evidence_batch(
+    command: RunProjectCompletionEvidenceBatchCommandV1,
+) -> RunProjectCompletionEvidenceBatchResultV1:
+    """Materialize ordered obligation effects from one owner observation."""
+
+    if type(command) is not RunProjectCompletionEvidenceBatchCommandV1:
+        raise ProjectCompletionOwnerObservationV1Error(
+            "invalid_project_completion_evidence_batch_command_type",
+            "Command must be an exact RunProjectCompletionEvidenceBatchCommandV1",
+        )
     workspace = str(Path(command.workspace).expanduser().resolve())
     bundle = observe_project_completion_owner(
         QueryProjectCompletionDiagnosticsV1(
@@ -278,27 +302,34 @@ def run_project_completion_evidence(
             completion_contract_hash=command.completion_contract_hash,
         )
     )
-    intent = build_project_completion_physical_evidence_intent(
-        bundle.contract,
-        command.obligation_id,
-        workspace=workspace,
-    )
-    effect = _bound_physical_port().materialize_project_completion_evidence(intent)
-    if type(effect) is not ProjectCompletionPhysicalEvidenceEffectV1:
-        raise ProjectCompletionOwnerObservationV1Error(
-            "invalid_project_completion_physical_effect_type",
-            "Physical owner port must return an exact ProjectCompletionPhysicalEvidenceEffectV1",
+    port = _bound_physical_port()
+    results: list[RunProjectCompletionEvidenceResultV1] = []
+    for obligation_id in command.obligation_ids:
+        intent = build_project_completion_physical_evidence_intent(
+            bundle.contract,
+            obligation_id,
+            workspace=workspace,
         )
-    return RunProjectCompletionEvidenceResultV1(
-        code=effect.code,
-        obligation_id=intent.obligation_id,
-        spawned=effect.spawned,
-        receipt_ref=effect.receipt_ref,
-    )
+        effect = port.materialize_project_completion_evidence(intent)
+        if type(effect) is not ProjectCompletionPhysicalEvidenceEffectV1:
+            raise ProjectCompletionOwnerObservationV1Error(
+                "invalid_project_completion_physical_effect_type",
+                "Physical owner port must return an exact ProjectCompletionPhysicalEvidenceEffectV1",
+            )
+        results.append(
+            RunProjectCompletionEvidenceResultV1(
+                code=effect.code,
+                obligation_id=intent.obligation_id,
+                spawned=effect.spawned,
+                receipt_ref=effect.receipt_ref,
+            )
+        )
+    return RunProjectCompletionEvidenceBatchResultV1(effects=tuple(results))
 
 
 __all__ = [
     "bind_project_completion_physical_evidence_port",
     "build_project_completion_physical_evidence_intent",
     "run_project_completion_evidence",
+    "run_project_completion_evidence_batch",
 ]

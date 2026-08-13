@@ -512,10 +512,8 @@ class _AsyncioProcessHandle:
 
         # Concurrently drain both streams using pump tasks + queue（有界队列防止内存泄漏）
         queue: asyncio.Queue[StreamChunk | None] = asyncio.Queue(maxsize=500)
-        active = 2
 
         async def pump(reader: asyncio.StreamReader, source: ProcessStreamSource) -> None:
-            nonlocal active
             try:
                 async for raw in reader:
                     await queue.put(
@@ -529,7 +527,6 @@ class _AsyncioProcessHandle:
                 _logger.warning("kernelone.process.async_contracts.stream.pump failed: %s", exc, exc_info=True)
             finally:
                 await queue.put(None)  # Signal EOF
-                active -= 1
 
         pump_stdout_task = asyncio.create_task(
             pump(self.proc.stdout, ProcessStreamSource.STDOUT)  # type: ignore[arg-type]
@@ -539,9 +536,11 @@ class _AsyncioProcessHandle:
         )
 
         try:
-            while active > 0:
+            remaining_streams = 2
+            while remaining_streams > 0:
                 item = await queue.get()
                 if item is None:
+                    remaining_streams -= 1
                     continue
                 yield item
         finally:
@@ -673,10 +672,7 @@ async def _merge_two_streams(
     in the order they are put into the queue (approximate arrival order).
     """
     queue: asyncio.Queue[StreamChunk | None] = asyncio.Queue(maxsize=500)
-    active = 2  # two source streams
-
     async def pump(src: AsyncIterator[StreamChunk]) -> None:
-        nonlocal active
         try:
             async for chunk in src:
                 await queue.put(chunk)
@@ -684,16 +680,17 @@ async def _merge_two_streams(
             pass
         finally:
             await queue.put(None)
-            active -= 1
 
     pump_stdout_task = asyncio.create_task(pump(stdout_it))
     pump_stderr_task = asyncio.create_task(pump(stderr_it))
 
     try:
-        while active > 0:
+        remaining_streams = 2
+        while remaining_streams > 0:
             item = await queue.get()
             if item is None:
-                continue  # One stream finished; keep going until both done
+                remaining_streams -= 1
+                continue
             yield item
     finally:
         pump_stdout_task.cancel()
