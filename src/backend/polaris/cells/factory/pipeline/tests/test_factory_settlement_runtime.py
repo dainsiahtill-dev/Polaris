@@ -221,6 +221,23 @@ def _runtime_wake_payload(
     ).encode("utf-8")
 
 
+def _ledger_wake_payload(*, run_id: str = "factory-1") -> bytes:
+    return _runtime_wake_payload(
+        "control_plane_ledger_projection_update",
+        payload={"run_id": run_id, "projection": {"run_id": run_id}},
+    )
+
+
+def _task_runtime_wake_payload(*, fact_event_id: str = "fact-1") -> bytes:
+    return _runtime_wake_payload(
+        "task_runtime_execution",
+        payload={
+            "fact_stream": "task_runtime.execution",
+            "fact_event_id": fact_event_id,
+        },
+    )
+
+
 class RecordingConsumerInfo:
     def __init__(self, config: ConsumerConfig) -> None:
         self.config = config
@@ -1177,7 +1194,7 @@ async def test_durable_wake_bridge_remains_healthy_while_idle() -> None:
 async def test_durable_wake_bridge_withholds_ack_when_replay_is_not_ack_safe() -> None:
     subscription = RecordingJetStreamSubscription()
     jetstream = RecordingJetStreamContext(subscription)
-    message = AckTrackingMessage()
+    message = AckTrackingMessage(data=_task_runtime_wake_payload())
     decision = SettlementDecision(
         source_fact_event_id="fact-1",
         source_fact_seq=1,
@@ -1196,6 +1213,7 @@ async def test_durable_wake_bridge_withholds_ack_when_replay_is_not_ack_safe() -
         subject="hp.runtime.workspace.>",
         durable_name="factory-settlement-workspace",
         wake=wake,
+        wake_by_source_fact=lambda _: wake(),
     )
     await bridge.start()
     try:
@@ -1213,7 +1231,7 @@ async def test_durable_wake_bridge_withholds_ack_when_replay_is_not_ack_safe() -
 @pytest.mark.asyncio
 async def test_durable_wake_bridge_replays_open_barrier_once_per_delivery() -> None:
     subscription = RecordingJetStreamSubscription()
-    first = AckTrackingMessage()
+    first = AckTrackingMessage(data=_task_runtime_wake_payload(fact_event_id="fact-open"))
     call_times: list[float] = []
     open_decision = SettlementDecision(
         source_fact_event_id="fact-open",
@@ -1234,6 +1252,7 @@ async def test_durable_wake_bridge_replays_open_barrier_once_per_delivery() -> N
         subject="hp.runtime.workspace.>",
         durable_name="factory-settlement-workspace",
         wake=wake,
+        wake_by_source_fact=lambda _: wake(),
         replay_backoff_seconds=0.05,
     )
     await bridge.start()
@@ -1251,8 +1270,8 @@ async def test_durable_wake_bridge_replays_open_barrier_once_per_delivery() -> N
 @pytest.mark.asyncio
 async def test_durable_wake_bridge_retryable_error_does_not_block_next_delivery() -> None:
     subscription = RecordingJetStreamSubscription()
-    first = AckTrackingMessage()
-    second = AckTrackingMessage()
+    first = AckTrackingMessage(data=_task_runtime_wake_payload(fact_event_id="fact-1"))
+    second = AckTrackingMessage(data=_task_runtime_wake_payload(fact_event_id="fact-2"))
     call_times: list[float] = []
 
     async def wake() -> SettlementReplayReport:
@@ -1269,6 +1288,7 @@ async def test_durable_wake_bridge_retryable_error_does_not_block_next_delivery(
         subject="hp.runtime.workspace.>",
         durable_name="factory-settlement-workspace",
         wake=wake,
+        wake_by_source_fact=lambda _: wake(),
         replay_backoff_seconds=0.05,
     )
     await bridge.start()
@@ -1287,8 +1307,8 @@ async def test_durable_wake_bridge_retryable_error_does_not_block_next_delivery(
 @pytest.mark.asyncio
 async def test_durable_wake_bridge_open_barrier_does_not_block_later_deliveries() -> None:
     subscription = RecordingJetStreamSubscription()
-    first = AckTrackingMessage()
-    later = [AckTrackingMessage() for _ in range(10)]
+    first = AckTrackingMessage(data=_ledger_wake_payload())
+    later = [AckTrackingMessage(data=_ledger_wake_payload()) for _ in range(10)]
     wake_calls = 0
     open_decision = SettlementDecision(
         source_fact_event_id="fact-open",
@@ -1323,14 +1343,14 @@ async def test_durable_wake_bridge_open_barrier_does_not_block_later_deliveries(
         await asyncio.wait_for(later[-1].acked.wait(), timeout=1.0)
 
         assert wake_calls == 11
-        assert first.ack_calls == 0
+        assert first.ack_calls == 1
         assert all(message.ack_calls == 1 for message in later)
     finally:
         await bridge.stop()
 
 
 @pytest.mark.asyncio
-async def test_durable_wake_bridge_keeps_unidentified_deliveries_fail_closed() -> None:
+async def test_durable_wake_bridge_acks_unidentified_deliveries_without_replay() -> None:
     subscription = RecordingJetStreamSubscription()
     messages = [AckTrackingMessage() for _ in range(10)]
     for message in messages:
@@ -1352,7 +1372,7 @@ async def test_durable_wake_bridge_keeps_unidentified_deliveries_fail_closed() -
     try:
         await asyncio.wait_for(messages[-1].acked.wait(), timeout=1.0)
 
-        assert wake_calls == len(messages)
+        assert wake_calls == 0
         assert subscription.next_message_calls >= len(messages)
         assert all(message.ack_calls == 1 for message in messages)
     finally:
@@ -1437,12 +1457,51 @@ async def test_durable_wake_bridge_acks_llm_telemetry_without_replay() -> None:
         await bridge.stop()
 
 
+@pytest.mark.parametrize(
+    ("kind", "channel"),
+    [
+        ("file_edit", "event.file_edit"),
+        ("workflow_state_update", "status.workflow"),
+        ("stage_heartbeat", "event.factory:factory-1"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_durable_wake_bridge_acks_observer_events_without_replay(
+    kind: str,
+    channel: str,
+) -> None:
+    subscription = RecordingJetStreamSubscription()
+    payload = json.loads(_runtime_wake_payload(kind).decode("utf-8"))
+    payload["channel"] = channel
+    message = AckTrackingMessage(data=json.dumps(payload).encode("utf-8"))
+    wake_calls = 0
+
+    async def wake() -> SettlementReplayReport:
+        nonlocal wake_calls
+        wake_calls += 1
+        return SettlementReplayReport(decisions=())
+
+    bridge = DurableJetStreamSettlementWakeBridge(
+        client=RecordingWakeClient(RecordingJetStreamContext(subscription)),
+        subject="hp.runtime.workspace.>",
+        durable_name="factory-settlement-workspace",
+        wake=wake,
+    )
+    await bridge.start()
+    try:
+        subscription.deliver(message)
+        await asyncio.wait_for(message.acked.wait(), timeout=1.0)
+
+        assert wake_calls == 0
+        assert message.ack_calls == 1
+    finally:
+        await bridge.stop()
+
+
 @pytest.mark.asyncio
 async def test_durable_wake_bridge_rechecks_control_plane_once() -> None:
     subscription = RecordingJetStreamSubscription()
-    message = AckTrackingMessage(
-        data=_runtime_wake_payload("control_plane_ledger_projection_update")
-    )
+    message = AckTrackingMessage(data=_ledger_wake_payload())
     wake_calls = 0
     open_decision = SettlementDecision(
         source_fact_event_id="fact-open",
@@ -1482,7 +1541,7 @@ async def test_durable_wake_bridge_rechecks_control_plane_once() -> None:
 async def test_durable_wake_bridge_acks_after_ack_safe_replay() -> None:
     subscription = RecordingJetStreamSubscription()
     jetstream = RecordingJetStreamContext(subscription)
-    message = AckTrackingMessage()
+    message = AckTrackingMessage(data=_task_runtime_wake_payload())
 
     async def wake() -> SettlementReplayReport:
         return SettlementReplayReport(decisions=())
@@ -1492,6 +1551,7 @@ async def test_durable_wake_bridge_acks_after_ack_safe_replay() -> None:
         subject="hp.runtime.workspace.>",
         durable_name="factory-settlement-workspace",
         wake=wake,
+        wake_by_source_fact=lambda _: wake(),
     )
     await bridge.start()
     try:
@@ -1551,7 +1611,7 @@ async def test_durable_wake_bridge_surfaces_nats_ack_failure_without_acknowledgi
 async def test_durable_wake_bridge_stop_waits_for_active_replay() -> None:
     subscription = RecordingJetStreamSubscription()
     jetstream = RecordingJetStreamContext(subscription)
-    message = AckTrackingMessage()
+    message = AckTrackingMessage(data=_task_runtime_wake_payload())
     replay_started = asyncio.Event()
     release_replay = asyncio.Event()
 
@@ -1565,6 +1625,7 @@ async def test_durable_wake_bridge_stop_waits_for_active_replay() -> None:
         subject="hp.runtime.workspace.>",
         durable_name="factory-settlement-workspace",
         wake=wake,
+        wake_by_source_fact=lambda _: wake(),
     )
     await bridge.start()
     subscription.deliver(message)

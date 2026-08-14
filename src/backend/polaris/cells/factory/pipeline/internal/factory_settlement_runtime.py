@@ -194,47 +194,79 @@ class _SettlementWakeDirective:
     ack_after_replay: bool = False
 
 
+_NON_AUTHORITATIVE_WAKE_KINDS: Final[frozenset[str]] = frozenset(
+    {
+        "file_edit",
+        "instance_registry_update",
+        "process_exit",
+        "resident_status_update",
+        "workflow_state_update",
+    }
+)
+_NON_AUTHORITATIVE_WAKE_CHANNEL_PREFIXES: Final[tuple[str, ...]] = (
+    "event.factory:",
+    "event.file_edit",
+    "status.instances",
+    "status.resident",
+    "status.workflow",
+)
+
+
 def _settlement_wake_directive(message: SettlementWakeMessage) -> _SettlementWakeDirective:
     """Route a wake without treating transport payload as settlement authority.
 
     TaskRuntime notifications carry the authoritative FactStream event id and
     therefore select the consumer's exact-fact replay path.  Run Ledger updates
     request one canonical full replay because they may close a pending barrier.
-    LLM telemetry cannot affect settlement and is acknowledged without replay.
-    Unknown or malformed payloads conservatively retain the legacy full replay.
+    Observer telemetry cannot affect settlement and is acknowledged without
+    replay. Unknown or malformed payloads are also acknowledged without replay:
+    transport is notification-only, so replaying an untrusted poison message is
+    a denial-of-service vector, not a fail-closed authority check. Only the two
+    explicit authoritative wake shapes below may schedule settlement work.
     """
 
     raw = getattr(message, "data", b"")
     if not isinstance(raw, bytes) or not raw:
-        return _SettlementWakeDirective(replay_required=True)
+        return _SettlementWakeDirective(replay_required=False)
     try:
         envelope = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
-        return _SettlementWakeDirective(replay_required=True)
+        return _SettlementWakeDirective(replay_required=False)
     if not isinstance(envelope, dict) or envelope.get("schema_version") != "runtime.v2":
-        return _SettlementWakeDirective(replay_required=True)
+        return _SettlementWakeDirective(replay_required=False)
 
     kind = str(envelope.get("kind") or "").strip()
     if kind == "task_runtime_execution":
         payload = envelope.get("payload")
         if not isinstance(payload, dict):
-            return _SettlementWakeDirective(replay_required=True)
+            return _SettlementWakeDirective(replay_required=False)
         fact_stream = str(payload.get("fact_stream") or "").strip()
         fact_event_id = str(payload.get("fact_event_id") or "").strip()
         if fact_stream != "task_runtime.execution" or not fact_event_id:
-            return _SettlementWakeDirective(replay_required=True)
+            return _SettlementWakeDirective(replay_required=False)
         return _SettlementWakeDirective(
             replay_required=True,
             source_fact_event_id=fact_event_id,
         )
     if kind == "control_plane_ledger_projection_update":
+        payload = envelope.get("payload")
+        if not isinstance(payload, dict):
+            return _SettlementWakeDirective(replay_required=False)
+        run_id = str(payload.get("run_id") or envelope.get("run_id") or "").strip()
+        if not run_id or not isinstance(payload.get("projection"), dict):
+            return _SettlementWakeDirective(replay_required=False)
         return _SettlementWakeDirective(
             replay_required=True,
             ack_after_replay=True,
         )
-    if kind.startswith("llm."):
+    channel = str(envelope.get("channel") or "").strip()
+    if (
+        kind.startswith("llm.")
+        or kind in _NON_AUTHORITATIVE_WAKE_KINDS
+        or channel.startswith(_NON_AUTHORITATIVE_WAKE_CHANNEL_PREFIXES)
+    ):
         return _SettlementWakeDirective(replay_required=False)
-    return _SettlementWakeDirective(replay_required=True)
+    return _SettlementWakeDirective(replay_required=False)
 
 
 class SettlementWakeSubscription(Protocol):

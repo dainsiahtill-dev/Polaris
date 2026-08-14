@@ -38,6 +38,25 @@ Chief Engineer, Director, QA, ContextOS, ReceiptStore, or Run Ledger.
 
 ## Workspace Binding
 
+The workspace is a process-startup authority, not mutable desktop state. The
+canonical backend CLI records the resolved startup workspace in both the
+legacy `KERNELONE_WORKSPACE` value and the immutable
+`KERNELONE_INSTANCE_WORKSPACE` binding. Once that binding exists:
+
+- `POST /v2/settings` must reject a different workspace with
+  `INSTANCE_WORKSPACE_REBIND_FORBIDDEN`.
+- `POST /v2/factory/runs` must reject a different workspace with
+  `INSTANCE_WORKSPACE_BINDING_MISMATCH`, including requests that set
+  `persist_workspace=false`.
+- `/v2/runtime/process-identity` and `/v2/runtime/fingerprint` must report the
+  startup binding as `workspace`, the mutable settings projection as
+  `active_workspace`, and their relationship as `workspace_binding_match`.
+
+This prevents a bench/settings request from poisoning the main backend while
+its PID, registry record, port, and command line still claim the Polaris source
+checkout. A mismatch is a P0 control-plane integrity defect; it must be exposed
+and rejected rather than silently synchronized.
+
 Opening an instance workspace from the Launcher must carry an explicit binding:
 
 - `instance`: registry identifier for observability and diagnostics.
@@ -89,10 +108,11 @@ instance modes:
   that project's Factory chain against the instance backend. Use this for
   parallel multi-agent bench work, because each project gets its own workspace,
   runtime root, WebSocket stream, and ContextOS surface.
-- `observed`: register a `bench_project` record pointing at the shared backend
-  after switching that backend to the project workspace. This exists only for
-  explicit lightweight observation and backwards-compatible serial testing. It
-  is not safe for multiple concurrent bench agents sharing one backend.
+- `observed`: register a read-only `bench_project` observation record for an
+  already matching unbound compatibility backend. A CLI-started backend with
+  `KERNELONE_INSTANCE_WORKSPACE` must never be switched to the project
+  workspace; a mismatch must fail closed. This mode is not safe for concurrent
+  bench agents and cannot reuse the bound main backend.
 
 ```bash
 python src/backend/scripts/factory_bench/run_factory_bench.py \
@@ -239,3 +259,24 @@ Enable backend `--reload` only for a single developer's focused backend
 debugging session. In shared multi-agent pressure testing it can create reload
 storms: unrelated edits under `src/backend` restart the main backend while
 operators are observing Launcher, ContextOS, and runtime WebSocket streams.
+
+## Startup Workspace Authority
+
+`KERNELONE_INSTANCE_WORKSPACE` is the immutable workspace authority for a
+backend process. Runtime HTTP guards are insufficient by themselves: a stale
+settings object can otherwise bind resident services and projection owners to
+another workspace before the first request arrives.
+
+`create_app()` must therefore pin settings to the process-bound workspace
+before initializing any resident service. A healthy instance requires all of
+these values to agree:
+
+- backend CLI `--workspace`
+- Instance Registry `workspace`
+- `/v2/settings.workspace`
+- `/v2/runtime/fingerprint.workspace`
+- `/v2/runtime/fingerprint.active_workspace`
+- `workspace_binding_match=true`
+
+Any mismatch is a P0 authority defect even when both ports and `/live` return
+success.

@@ -1197,9 +1197,18 @@ class TestWorkspaceQualityDeterministicRepairExecution:
         assert summary["task_runtime_repair_attempt"] == {
             "task_id": "TASK-3",
             "session_id": "quality-repair-session",
-            "settled": True,
-            "outcome": "completed",
+            "settled": False,
+            "outcome": "pending_revalidation",
         }
+        assert summary["_pending_task_runtime_repair_attempt"]["execution_attempt"] == identity
+        settled = await factory_workspace_quality_impl._settle_pending_workspace_quality_repair_attempt(
+            executor,
+            summary.pop("_pending_task_runtime_repair_attempt"),
+            accepted=True,
+            reason="test_post_repair_verifier_passed",
+        )
+        assert settled is not None
+        assert settled["outcome"] == "completed"
 
     @pytest.mark.asyncio
     async def test_deterministic_repair_heartbeat_failure_invalidates_committed_receipt(

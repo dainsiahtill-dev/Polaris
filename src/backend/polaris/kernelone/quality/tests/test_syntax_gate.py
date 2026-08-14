@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from polaris.kernelone.quality.syntax_gate import (
+    check_content_syntax,
     check_file_syntax,
     first_syntax_failure,
     syntax_checker_for,
@@ -233,6 +234,13 @@ class TestGoSyntax:
         assert result.checked is True
         assert result.ok is False
         assert result.error
+
+    def test_candidate_content_is_checked_without_workspace_write(self, tmp_path: Path) -> None:
+        result = check_content_syntax("engine/rules.go", "package engine\n\nfunc cast() {}na < cost {\n")
+        assert result.path == "engine/rules.go"
+        assert result.checked is True
+        assert result.ok is False
+        assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.skipif(not _HAS_RUSTC, reason="rustc not available")

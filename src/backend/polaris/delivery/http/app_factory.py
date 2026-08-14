@@ -353,6 +353,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings is None:
         settings = get_settings()
 
+    # The process CLI workspace is the instance authority.  Correct stale
+    # settings before any resident service, projection owner, or runtime
+    # adapter can bind to a foreign bench workspace.  Runtime HTTP guards are
+    # too late for this startup failure mode.
+    from polaris.delivery.http.workspace import enforce_process_bound_workspace
+
+    if enforce_process_bound_workspace(settings):
+        logger.error(
+            "Corrected startup workspace drift to process-bound workspace: %s",
+            settings.workspace,
+        )
+
     from polaris.bootstrap.project_completion_diagnostics_owner import (
         configure_project_completion_diagnostics_owner,
     )

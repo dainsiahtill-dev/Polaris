@@ -284,6 +284,25 @@ async def test_v2_runtime_fingerprint_has_explicit_empty_instance_id_without_pro
     assert response.json()["instance_id"] == ""
 
 
+@pytest.mark.asyncio
+async def test_v2_runtime_fingerprint_exposes_workspace_binding_drift(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KERNELONE_INSTANCE_WORKSPACE", "/srv/polaris/main")
+    with patch(
+        "polaris.delivery.http.routers.system._active_workspace_from_request",
+        return_value="/tmp/bench-project",
+    ):
+        response = await client.get("/v2/runtime/fingerprint")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["workspace"] == "/srv/polaris/main"
+    assert data["active_workspace"] == "/tmp/bench-project"
+    assert data["workspace_binding_match"] is False
+
+
 # ---------------------------------------------------------------------------
 # GET /v2/settings
 # ---------------------------------------------------------------------------
@@ -368,6 +387,25 @@ async def test_v2_update_settings(client: AsyncClient, mock_settings: Settings) 
         data = response.json()
         assert data["workspace"] == "."
         mock_settings.apply_update.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_v2_update_settings_rejects_instance_workspace_rebind(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KERNELONE_INSTANCE_WORKSPACE", "/srv/polaris/main")
+
+    response = await client.post(
+        "/v2/settings",
+        json={"workspace": "/tmp/bench-project"},
+    )
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["code"] == "INSTANCE_WORKSPACE_REBIND_FORBIDDEN"
+    assert error["details"]["bound_workspace"] == "/srv/polaris/main"
+    assert error["details"]["requested_workspace"] == "/tmp/bench-project"
 
 
 @pytest.mark.asyncio

@@ -1717,7 +1717,7 @@ async def test_retry_stale_edit_violation_switches_to_bootstrap_read_path(monkey
     state_machine = TurnStateMachine(turn_id="turn_retry_stale_bootstrap")
     ledger = TurnLedger(turn_id="turn_retry_stale_bootstrap")
     context = [{"role": "user", "content": "请直接修改 README.md 并写入操作说明"}]
-    captured: dict[str, object] = {"execute_calls": 0}
+    captured: dict[str, object] = {"execute_calls": 0, "executed_batch_ids": []}
 
     async def _fake_call_llm_for_decision(
         ctx,
@@ -1762,6 +1762,8 @@ async def test_retry_stale_edit_violation_switches_to_bootstrap_read_path(monkey
         execute_calls = int(captured["execute_calls"]) + 1
         captured["execute_calls"] = execute_calls
         captured.setdefault("allowed_tool_names", []).append(set(allowed_tool_names or set()))
+        tool_batch = decision.get("tool_batch") or {}
+        cast(list[str], captured["executed_batch_ids"]).append(str(tool_batch.get("batch_id") or ""))
         if execute_calls == 1:
             raise RuntimeError(
                 "single_batch_contract_violation: stale_edit blocked write invocation; requires_bootstrap_read"
@@ -1810,6 +1812,10 @@ async def test_retry_stale_edit_violation_switches_to_bootstrap_read_path(monkey
 
     assert result["kind"] == "tool_batch_with_receipt"
     assert captured["execute_calls"] == 2
+    assert captured["executed_batch_ids"] == [
+        "turn_retry_stale_bootstrap:mutation-retry:1",
+        "turn_retry_stale_bootstrap:bootstrap-followup:2",
+    ]
     bootstrap_batch = captured["bootstrap_tool_batch"]
     if isinstance(bootstrap_batch, dict):
         bootstrap_invocations = list(bootstrap_batch.get("invocations", []))
@@ -2688,5 +2694,4 @@ def test_build_decision_messages_includes_benchmark_required_tools_hint() -> Non
 
     assert any("Contract-required tools are mandatory in this single batch" in text for text in system_messages)
     assert any("repo_rg, search_replace" in text for text in system_messages)
-
 

@@ -53,6 +53,7 @@ from polaris.delivery.http.schemas import (
     FactoryRunAuditBundleResponse,
     FactoryRunEventsResponse,
 )
+from polaris.delivery.http.workspace import workspace_binding_conflict
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
@@ -734,6 +735,18 @@ async def _start_factory_run_core(
     state: AppState,
 ) -> FactoryRunStatusContract:
     workspace = _resolve_workspace(state, payload.workspace)
+    binding_conflict = workspace_binding_conflict(workspace)
+    if binding_conflict is not None:
+        bound_workspace, requested_workspace = binding_conflict
+        raise StructuredHTTPException(
+            status_code=409,
+            code="INSTANCE_WORKSPACE_BINDING_MISMATCH",
+            message="Factory run workspace does not belong to this backend instance",
+            details={
+                "bound_workspace": bound_workspace,
+                "requested_workspace": requested_workspace,
+            },
+        )
     run_state: Any = state
     if payload.persist_workspace:
         state.settings.workspace = Path(workspace)

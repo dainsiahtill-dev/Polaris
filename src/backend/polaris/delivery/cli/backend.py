@@ -9,7 +9,12 @@ from pathlib import Path
 
 def _apply_env(args: argparse.Namespace) -> None:
     if args.workspace:
-        os.environ["KERNELONE_WORKSPACE"] = str(Path(args.workspace).expanduser().resolve())
+        workspace = str(Path(args.workspace).expanduser().resolve())
+        os.environ["KERNELONE_WORKSPACE"] = workspace
+        # Single-backend/single-workspace is a process-startup invariant.  Keep
+        # an immutable binding separate from KERNELONE_WORKSPACE, which legacy
+        # settings synchronization may still update at runtime.
+        os.environ["KERNELONE_INSTANCE_WORKSPACE"] = workspace
     if args.runtime_root:
         runtime_root = str(Path(args.runtime_root).expanduser().resolve())
         os.environ["KERNELONE_RUNTIME_ROOT"] = runtime_root

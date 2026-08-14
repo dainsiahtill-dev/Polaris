@@ -691,6 +691,106 @@ async def test_repeated_open_barrier_wake_reuses_pending_journal_event(tmp_path:
     assert factory_runs.settle_calls == ["factory-run-1"]
 
 
+def test_stale_replay_snapshots_reuse_concurrent_waiting_barrier(tmp_path: Path) -> None:
+    """A concurrent stale snapshot must converge on the first pending fact."""
+
+    workspace = _workspace(tmp_path)
+    fact_stream = FactStreamAdapter()
+    source = _append_source_fact(fact_stream, workspace)
+    source_event = fact_stream.query(
+        QueryFactEventsV1(
+            workspace=workspace,
+            stream=TASK_RUNTIME_EXECUTION_STREAM,
+            limit=1,
+        )
+    ).events[0]
+    journal = FactorySettlementJournal(workspace=workspace, fact_stream=fact_stream)
+    first_snapshot = journal.open_replay_snapshot(
+        source_stream=TASK_RUNTIME_EXECUTION_STREAM,
+        source_events={1: source_event},
+    )
+    stale_snapshot = journal.open_replay_snapshot(
+        source_stream=TASK_RUNTIME_EXECUTION_STREAM,
+        source_events={1: source_event},
+    )
+    identity = SettlementIdentity(workspace, source.event_id, "factory-run-1", 7)
+
+    first = journal.append_waiting_barrier(
+        identity,
+        source_fact_seq=1,
+        barrier_hash="barrier-1",
+        evidence_refs=("evidence:1",),
+        snapshot=first_snapshot,
+    )
+    recovered = journal.append_waiting_barrier(
+        identity,
+        source_fact_seq=1,
+        barrier_hash="barrier-2",
+        evidence_refs=("evidence:2",),
+        snapshot=stale_snapshot,
+    )
+
+    assert recovered.event_id == first.event_id
+    pending = [
+        record
+        for record in journal.records()
+        if record.status is SettlementJournalStatus.PENDING
+    ]
+    assert len(pending) == 1
+    assert pending[0].payload["barrier_hash"] == "barrier-1"
+
+
+def test_stale_snapshot_reloads_when_another_identity_wins_cas(tmp_path: Path) -> None:
+    """A foreign settlement append must not create a replay-snapshot sequence gap."""
+
+    workspace = _workspace(tmp_path)
+    fact_stream = FactStreamAdapter()
+    first_source = _append_source_fact(fact_stream, workspace, factory_run_id="factory-run-1")
+    second_source = _append_source_fact(
+        fact_stream,
+        workspace,
+        factory_run_id="factory-run-2",
+        suffix="2",
+    )
+    source_rows = fact_stream.query(
+        QueryFactEventsV1(
+            workspace=workspace,
+            stream=TASK_RUNTIME_EXECUTION_STREAM,
+            limit=10,
+        )
+    ).events
+    source_events = {index + 1: row for index, row in enumerate(source_rows)}
+    journal = FactorySettlementJournal(workspace=workspace, fact_stream=fact_stream)
+    stale_snapshot = journal.open_replay_snapshot(
+        source_stream=TASK_RUNTIME_EXECUTION_STREAM,
+        source_events=source_events,
+    )
+    foreign_identity = SettlementIdentity(workspace, second_source.event_id, "factory-run-2", 7)
+    target_identity = SettlementIdentity(workspace, first_source.event_id, "factory-run-1", 7)
+
+    foreign = journal.append_waiting_barrier(
+        foreign_identity,
+        source_fact_seq=2,
+        barrier_hash="foreign-barrier",
+        evidence_refs=("foreign",),
+    )
+    target = journal.append_waiting_barrier(
+        target_identity,
+        source_fact_seq=1,
+        barrier_hash="target-barrier",
+        evidence_refs=("target",),
+        snapshot=stale_snapshot,
+    )
+
+    assert foreign.appended_seq == 1
+    assert target.appended_seq == 2
+    assert stale_snapshot.current_seq == 2
+    assert {record.event_id for record in stale_snapshot.records} == {
+        foreign.event_id,
+        target.event_id,
+    }
+
+
 @pytest.mark.asyncio
 async def test_repeated_retryable_apply_uses_claim_scoped_pending_identity(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)

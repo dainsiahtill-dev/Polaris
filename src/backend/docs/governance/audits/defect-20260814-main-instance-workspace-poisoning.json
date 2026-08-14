@@ -1,0 +1,57 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "DEFECT-20260814-MAIN-INSTANCE-WORKSPACE-POISONING",
+  "severity": "P0",
+  "status": "CLOSED_VERIFIED",
+  "observed_at": "2026-08-14T11:39:00+08:00",
+  "surface": "http://127.0.0.1:5173/launcher",
+  "symptom": "Launcher processes and HTTP endpoints were alive, but the main backend settings and runtime fingerprint had silently changed to an isolated L1-04 bench workspace.",
+  "evidence": {
+    "main_backend_port": 49977,
+    "main_frontend_port": 5173,
+    "main_backend_pid": 16333,
+    "declared_process_workspace": "/home/dains/Documents/polaris",
+    "poisoned_active_workspace": "/tmp/factory-bench-l1-04-r51/workspaces/8ce91e5364dc-6caf30f05b9c3b1d/L1-04-94fd04a84e09b5de/e2826410ee7625bd7c4aa967",
+    "launcher_http_status": 200,
+    "browser_console_errors": 0,
+    "child_instance_preserved": "factory-bench-l1-04-r51-l1-04-run-8ce91e5364dc-22f786560213976d"
+  },
+  "root_cause": {
+    "category": "control_plane_authority_violation",
+    "summary": "The backend CLI originally lacked an immutable startup workspace. The first fix rejected runtime Settings and Factory rebinds, but omitted a startup boundary: a stale settings object could still bind resident services to a bench workspace before HTTP guards existed. create_app now pins settings to KERNELONE_INSTANCE_WORKSPACE before any service owner is initialized.",
+    "impact": "A single backend became logically multi-workspace despite the one-backend/one-workspace invariant, making Launcher, ContextOS, receipts, and runtime projections appear hung or point at the wrong project."
+  },
+  "fix": {
+    "startup_binding_env": "KERNELONE_INSTANCE_WORKSPACE",
+    "settings_rejection_code": "INSTANCE_WORKSPACE_REBIND_FORBIDDEN",
+    "factory_rejection_code": "INSTANCE_WORKSPACE_BINDING_MISMATCH",
+    "identity_fields": [
+      "workspace",
+      "active_workspace",
+      "workspace_binding_match"
+    ],
+    "files": [
+      "src/backend/polaris/delivery/cli/backend.py",
+      "src/backend/polaris/delivery/http/app_factory.py",
+      "src/backend/polaris/delivery/http/workspace.py",
+      "src/backend/polaris/delivery/http/routers/system.py",
+      "src/backend/polaris/delivery/http/routers/_factory_handlers/runtime.py"
+    ]
+  },
+  "verification": {
+    "unit_tests": "72 original targeted tests plus 33 startup-binding regression tests passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "live_recovery": "Main backend restarted as PID 16333. Its first fingerprint and settings response both reported /home/dains/Documents/polaris with workspace_binding_match=true; a hostile cross-workspace Settings request returned 409 without drift.",
+    "settings_cross_workspace_status": 409,
+    "factory_cross_workspace_status": 409,
+    "launcher_browser_status": 200,
+    "launcher_console_errors": 0,
+    "launcher_page_errors": 0,
+    "launcher_request_failures": 0,
+    "launcher_runtime_stream": "WS live",
+    "screenshot": "/tmp/polaris-launcher-startup-binding-fixed.png",
+    "residual": "The separate L1-04 backend still owns port 49978 but is independently overloaded/unresponsive; it was preserved and is not a main Launcher authority regression."
+  },
+  "automatic_detection_rule": "Treat workspace_binding_match=false on a registered instance as P0 and never describe that instance as healthy solely because /health or its ports respond. At create_app startup, correct settings to the process-bound workspace before resident services initialize."
+}

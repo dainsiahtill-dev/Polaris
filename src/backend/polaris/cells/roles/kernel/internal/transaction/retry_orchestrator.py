@@ -123,6 +123,44 @@ def _is_transient_llm_provider_exception(exc: BaseException) -> bool:
     return any(marker in text for marker in _TRANSIENT_LLM_PROVIDER_ERROR_MARKERS)
 
 
+def _with_retry_batch_identity(
+    decision: TurnDecision,
+    *,
+    turn_id: str,
+    phase: str,
+    ordinal: int,
+) -> TurnDecision:
+    """Give each physical retry inventory its own deterministic batch identity.
+
+    The decoder intentionally derives the default batch id from ``turn_id``.
+    That is correct for a single decision, but a mutation-contract recovery can
+    produce several *different* write inventories in the same turn: the first
+    edit may fail as stale, a bootstrap read refreshes the file, and the next
+    model call emits a new edit.  Reusing ``<turn>_batch`` makes the immutable
+    DEO parent treat the refreshed inventory as drift and fail it with
+    ``inventory_seal_conflict`` before the tool can execute.
+
+    The retry-call ordinal is stable inside one transaction.  Exact replay of
+    the same attempt keeps the same id, while a new provider decision receives
+    a new parent inventory.  This preserves fail-closed inventory sealing; it
+    does not weaken or bypass the DEO guard.
+    """
+
+    tool_batch = decision.get("tool_batch")
+    if tool_batch is None:
+        return decision
+    batch_id = BatchId(f"{turn_id}:{phase}:{ordinal}")
+    if isinstance(tool_batch, ToolBatch):
+        rebound_batch: ToolBatch | dict[str, Any] = tool_batch.model_copy(update={"batch_id": batch_id})
+    elif isinstance(tool_batch, Mapping):
+        rebound_batch = {**dict(tool_batch), "batch_id": batch_id}
+    else:
+        return decision
+    if isinstance(decision, TurnDecision):
+        return decision.model_copy(update={"tool_batch": rebound_batch})
+    return cast("TurnDecision", {**dict(decision), "tool_batch": rebound_batch})
+
+
 __all__ = [
     "DevelopmentRuntimeProtocol",
     "RetryOrchestrator",
@@ -708,6 +746,12 @@ class RetryOrchestrator:
                         attempt_index + 1,
                         normalization_events,
                     )
+            retry_decision = _with_retry_batch_identity(
+                retry_decision,
+                turn_id=turn_id,
+                phase="mutation-retry",
+                ordinal=retry_llm_call_ordinal,
+            )
             ledger.replace_decision(retry_decision)
             if retry_decision.get("kind") != TurnDecisionKind.TOOL_BATCH:
                 if not raw_native_names and escalated_definitions is not None:
@@ -1014,6 +1058,12 @@ class RetryOrchestrator:
                         "single_batch_contract_violation_retry_failed: bootstrap follow-up did not materialize response"
                     )
                 followup_decision = self.decoder.decode(followup_response, TurnId(turn_id))
+                followup_decision = _with_retry_batch_identity(
+                    followup_decision,
+                    turn_id=turn_id,
+                    phase="bootstrap-followup",
+                    ordinal=retry_llm_call_ordinal,
+                )
                 ledger.replace_decision(followup_decision)
                 if followup_decision.get("kind") != TurnDecisionKind.TOOL_BATCH:
                     deterministic_result = await self._execute_deterministic_bootstrap_followup_write_fallback(

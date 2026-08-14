@@ -277,6 +277,43 @@ def _validate_source_write_content_shape(*, rel_path: str, content: str) -> dict
     }
 
 
+def _precommit_source_syntax_guard(
+    *,
+    rel_path: str,
+    before_content: str | None,
+    after_content: str,
+) -> dict[str, Any]:
+    """Reject only a definite newly introduced parse failure before disk mutation."""
+
+    from polaris.kernelone.quality import check_content_syntax
+
+    after = check_content_syntax(rel_path, after_content)
+    if not after.checked or after.ok:
+        return {"ok": True}
+    if before_content is not None:
+        before = check_content_syntax(rel_path, before_content)
+        # Preserve progressive repair: if the file was already unparsable, the
+        # verifier/convergence loop decides whether the edit improved it.
+        if before.checked and not before.ok:
+            return {"ok": True, "preexisting_syntax_failure": True}
+    return {
+        "ok": False,
+        "blocked": True,
+        "retryable": True,
+        "error_type": "source_syntax_regression",
+        "error": (
+            f"Edit rejected before commit because it introduces a syntax error in {rel_path}: "
+            f"{str(after.error or 'parse failure')[:400]}"
+        ),
+        "suggestion": (
+            "Read the current file again, then issue one narrower edit whose complete replacement "
+            "preserves token boundaries and parses. The workspace file was not changed."
+        ),
+        "file": rel_path,
+        "syntax_check": "failed_precommit",
+    }
+
+
 def _validate_or_repair_json_config_content(
     *,
     rel_path: str,
@@ -590,6 +627,13 @@ class DirectorToolExecutor:
             source_shape_result = _validate_source_write_content_shape(rel_path=rel_path, content=text)
             if not source_shape_result.get("ok"):
                 return source_shape_result
+            syntax_guard = _precommit_source_syntax_guard(
+                rel_path=rel_path,
+                before_content=existing_content,
+                after_content=text,
+            )
+            if not syntax_guard.get("ok"):
+                return syntax_guard
 
             policy_result = self._validate_director_policy_for_write(
                 workspace=workspace,
@@ -797,6 +841,13 @@ class DirectorToolExecutor:
             final_content = str(
                 json_config_result.get("content") if json_config_result.get("content") is not None else new_content
             )
+            syntax_guard = _precommit_source_syntax_guard(
+                rel_path=rel_path,
+                before_content=content,
+                after_content=final_content,
+            )
+            if not syntax_guard.get("ok"):
+                return syntax_guard
             policy_result = self._validate_director_policy_for_write(
                 workspace=workspace,
                 rel_path=rel_path,
@@ -937,6 +988,13 @@ class DirectorToolExecutor:
             final_content = str(
                 json_config_result.get("content") if json_config_result.get("content") is not None else new_content
             )
+            syntax_guard = _precommit_source_syntax_guard(
+                rel_path=rel_path,
+                before_content=content,
+                after_content=final_content,
+            )
+            if not syntax_guard.get("ok"):
+                return syntax_guard
             policy_result = self._validate_director_policy_for_write(
                 workspace=workspace,
                 rel_path=rel_path,

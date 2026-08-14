@@ -1,0 +1,55 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "director-stale-edit-deo-batch-identity-20260814",
+  "status": "UNIT_VERIFIED_LIVE_PENDING",
+  "severity": "P0",
+  "owner_cell": "roles.kernel",
+  "symptom": "A QA-local Director repair emitted native edit_file calls but produced no physical effect; the bootstrap follow-up failed before tool execution with deo_inventory_seal_failed:inventory_seal_conflict:result_not_ok,unexpected_code:inventory_seal_conflict,projection_missing.",
+  "first_failing_owner": "roles.kernel mutation-contract retry orchestration",
+  "root_cause": "TurnDecisionDecoder derives every tool batch in one turn as <turn_id>_batch. After a stale edit seals the first immutable DEO inventory, the refreshed bootstrap follow-up emits a different edit under the same parent batch identity. DEO correctly rejects the changed inventory as drift.",
+  "not_root_causes": [
+    "LLM refusal or read-only response",
+    "provider latency",
+    "QA policy strictness",
+    "PM or Chief Engineer restart"
+  ],
+  "runtime_evidence": {
+    "factory_run_id": "factory_87c10610b465",
+    "task_id": "TASK-2",
+    "provider_call_ids": [
+      "645ae78b5e9a4522ae485959468f9ac0",
+      "998980999cb44dccbe3d575bad527728",
+      "5e1cc90d4e2946bab78f20e46dc80a7a"
+    ],
+    "native_tool": "edit_file",
+    "initial_error": "single_batch_contract_violation: write tool batch produced no effects and requires a new invocation within the authorized target scope; error_types=stale_edit",
+    "terminal_error": "deo_inventory_seal_failed:inventory_seal_conflict:result_not_ok,unexpected_code:inventory_seal_conflict,projection_missing",
+    "provider_latency_observation": "The first provider response was HTTP 200 in approximately 5.7 seconds; the dominant delay was local context/runtime processing."
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py",
+    "mechanism": "Rebind each mutation retry and bootstrap follow-up to a deterministic phase-and-ordinal batch id. Exact replay retains its id; a new provider decision receives a distinct immutable inventory.",
+    "guardrail": "DEO inventory sealing remains fail-closed and unchanged."
+  },
+  "verification": {
+    "targeted": "3 passed",
+    "facade_a": "60 passed as part of combined run",
+    "combined": "90 passed, 2 unrelated pre-existing split-fallout failures",
+    "source_ruff": "passed",
+    "source_mypy": "passed",
+    "pre_existing_failures": [
+      "test_transaction_kernel_facadeb.py::_StubFinalizationInvoker NameError",
+      "test_transaction_kernel_facadeb.py expects removed transaction/tool_batch_executor.py monolith"
+    ]
+  },
+  "live_acceptance": {
+    "status": "pending",
+    "requirements": [
+      "same-run QA-local retry does not call PM or Chief Engineer",
+      "stale edit bootstrap follow-up seals a distinct inventory",
+      "edit_file produces unequal before/after hashes",
+      "only the failed go test verifier reruns",
+      "ProjectArtifactReceiptV1 and TaskRuntime settlement remain authoritative"
+    ]
+  }
+}

@@ -253,6 +253,11 @@ class SettlementJournalReplaySnapshot:
             )
         if event_id in self._event_ids:
             return
+        if event_seq != self._current_seq + 1:
+            raise SettlementJournalValidationError(
+                "journal append receipt would create a replay snapshot sequence gap",
+                code="replay_snapshot_non_contiguous_append",
+            )
         record = SettlementJournalRecord(
             event_id=event_id,
             event_seq=event_seq,
@@ -471,13 +476,54 @@ class FactorySettlementJournal:
             evidence_refs=evidence_refs,
         )
         payload["phase"] = SettlementPendingPhase.WAITING_BARRIER.value
-        return self._append(
-            status=SettlementJournalStatus.PENDING,
-            payload=payload,
-            identity=identity,
-            idempotency_suffix="pending:waiting_barrier",
-            snapshot=snapshot,
-        )
+        expected_seq = snapshot.current_seq + 1 if snapshot is not None else None
+        try:
+            return self._append(
+                status=SettlementJournalStatus.PENDING,
+                payload=payload,
+                identity=identity,
+                idempotency_suffix="pending:waiting_barrier",
+                expected_seq=expected_seq,
+                snapshot=snapshot,
+            )
+        except FactStreamError as exc:
+            if exc.code not in {"expected_seq_drift", "idempotency_conflict"}:
+                raise
+
+            # Two replay workers may open snapshots before either appends the
+            # stable WAITING_BARRIER fact.  The first append wins; the second
+            # then sees the same idempotency key with a newer live barrier
+            # projection.  That is a stale-snapshot race, not semantic drift.
+            # Reload once and reuse only an exact pending state for this
+            # settlement identity.  Terminal/other-phase conflicts remain
+            # fail-closed.
+            if snapshot is not None:
+                self._reload_replay_snapshot_after_drift(snapshot)
+            existing = self.state_for(identity, snapshot=snapshot)
+            if (
+                existing is not None
+                and existing.status is SettlementJournalStatus.PENDING
+                and existing.pending_phase is SettlementPendingPhase.WAITING_BARRIER
+            ):
+                return self._append(
+                    status=SettlementJournalStatus.PENDING,
+                    payload=existing.payload,
+                    identity=identity,
+                    idempotency_suffix="pending:waiting_barrier",
+                )
+            if exc.code != "expected_seq_drift" or snapshot is None:
+                raise
+            # Another settlement identity won the CAS.  Retry once from the
+            # reloaded head; a second race remains a typed retryable drift for
+            # the caller rather than silently skipping journal records.
+            return self._append(
+                status=SettlementJournalStatus.PENDING,
+                payload=payload,
+                identity=identity,
+                idempotency_suffix="pending:waiting_barrier",
+                expected_seq=snapshot.current_seq + 1,
+                snapshot=snapshot,
+            )
 
     def append_waiting_retry(
         self,
@@ -661,6 +707,7 @@ class FactorySettlementJournal:
                 source=FACTORY_SETTLEMENT_SOURCE,
                 correlation_id=event_id,
                 idempotency_key=f"factory-settlement:{settlement_key}:dead_letter:{reason}",
+                expected_seq=(snapshot.current_seq + 1 if snapshot is not None else None),
             )
         )
         if snapshot is not None:
@@ -826,6 +873,9 @@ class FactorySettlementJournal:
         expected_seq: int | None = None,
         snapshot: SettlementJournalReplaySnapshot | None = None,
     ) -> FactEventAppendedV1:
+        effective_expected_seq = expected_seq
+        if effective_expected_seq is None and snapshot is not None:
+            effective_expected_seq = snapshot.current_seq + 1
         appended = self._fact_stream.append(
             AppendFactEventCommandV1(
                 workspace=self._workspace,
@@ -836,7 +886,7 @@ class FactorySettlementJournal:
                 run_id=identity.factory_run_id,
                 correlation_id=identity.source_fact_event_id,
                 idempotency_key=(f"factory-settlement:{identity.digest}:{idempotency_suffix}"),
-                expected_seq=expected_seq,
+                expected_seq=effective_expected_seq,
             )
         )
         if snapshot is not None:

@@ -36,6 +36,7 @@ from polaris.cells.runtime.task_runtime.public.contracts import (
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.delivery.http.app_factory import create_app
 from polaris.delivery.http.routers import factory as factory_router_module
+from polaris.delivery.http.routers._shared import StructuredHTTPException
 from polaris.kernelone.quality import (
     matching_owner_handoff_request,
     owner_handoff_identifier_tokens,
@@ -805,6 +806,24 @@ def test_factory_director_context_defaults_to_auto_rounds() -> None:
     assert context["director_dispatch_timeout_seconds"] == 1800
     assert context["llm_call_timeout_seconds"] == 1800
     assert context["director_llm_timeout_seconds"] == 1800
+
+
+def test_factory_start_rejects_workspace_outside_instance_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KERNELONE_INSTANCE_WORKSPACE", "/srv/polaris/main")
+    payload = FactoryStartRequest(workspace="/tmp/bench-project")
+    state = SimpleNamespace(settings=Settings(workspace="/srv/polaris/main"))
+
+    with pytest.raises(StructuredHTTPException) as exc_info:
+        asyncio.run(factory_router_module._start_factory_run_core(payload, state))
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "INSTANCE_WORKSPACE_BINDING_MISMATCH"
+    assert exc_info.value.structured_details == {
+        "bound_workspace": "/srv/polaris/main",
+        "requested_workspace": "/tmp/bench-project",
+    }
 
 
 def test_factory_director_context_uses_director_timeout_env(monkeypatch: pytest.MonkeyPatch) -> None:

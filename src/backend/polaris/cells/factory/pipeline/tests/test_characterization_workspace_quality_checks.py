@@ -888,6 +888,24 @@ class TestRunWorkspaceQualityChecks:
         )
         assert (
             classify(
+                before_signature=("old:a", "old:b"),
+                after_signature=("new:hard",),
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "regression"
+        )
+        assert (
+            classify(
+                before_signature=("old:a", "old:b"),
+                after_signature=("old:a",),
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "progress"
+        )
+        assert (
+            classify(
                 before_signature=("ts7015:a",),
                 after_signature=("ts7015:a",),
                 verifier_passed=False,
@@ -895,6 +913,100 @@ class TestRunWorkspaceQualityChecks:
             )
             == "no_op"
         )
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_attempt_settles_success_only_after_verifier_passes(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-post-verifier-settlement",
+            config=FactoryConfig(name="quality-post-verifier-settlement"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-14T00:00:00+00:00",
+        )
+        identity = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=str(tmp_path),
+            task_id=7,
+            external_task_id="TASK-1",
+            session_id="quality-repair-session",
+            attempt=1,
+            role_id="director",
+            worker_id="director",
+            run_id=run.id,
+            lease_expires_at="2026-08-14T00:05:00+00:00",
+        )
+        timeline: list[str] = []
+        command_calls = 0
+
+        def run_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            nonlocal command_calls
+            del command, timeout_seconds
+            command_calls += 1
+            timeline.append(f"verifier:{command_calls}")
+            return {
+                "command": ["go", "test", "./..."],
+                "exit_code": 1 if command_calls == 1 else 0,
+                "passed": command_calls > 1,
+                "stdout_tail": "rules_test.go: failed" if command_calls == 1 else "ok",
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def apply_repair(**_kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            timeline.append("mutation")
+            return (
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {
+                            "file": "engine/rules.go",
+                            "operation": "modify",
+                            "before_sha256": "a" * 64,
+                            "after_sha256": "b" * 64,
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "write_tool_evidence": True,
+                    "_pending_task_runtime_repair_attempt": {
+                        "task_id": "TASK-1",
+                        "task_row_id": "7",
+                        "execution_attempt": identity,
+                    },
+                    "task_runtime_repair_attempt": {
+                        "task_id": "TASK-1",
+                        "session_id": identity.session_id,
+                        "settled": False,
+                        "outcome": "pending_revalidation",
+                    },
+                },
+            )
+
+        def settle(**kwargs: object) -> dict[str, object]:
+            timeline.append(f"settle:{kwargs['stage_status']}")
+            return {"success": True}
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["go", "test", "./..."]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", run_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_deterministic_repairs", apply_repair)
+        monkeypatch.setattr(executor, "_settle_director_stage_materialization_attempt", settle)
+
+        passed, _artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 1},
+        )
+
+        assert passed is True
+        assert timeline == ["verifier:1", "mutation", "verifier:2", "settle:success"]
 
     @pytest.mark.asyncio
     async def test_workspace_quality_no_mutation_retries_director_without_rerunning_verifier(
@@ -1310,9 +1422,17 @@ class TestRunWorkspaceQualityChecks:
         assert summary["task_runtime_repair_attempt"] == {
             "task_id": captured["target_task_id"],
             "session_id": execution_attempt.session_id,
-            "settled": True,
-            "outcome": "completed",
+            "settled": False,
+            "outcome": "pending_revalidation",
         }
+        settled = await factory_workspace_quality_impl._settle_pending_workspace_quality_repair_attempt(
+            executor,
+            summary.pop("_pending_task_runtime_repair_attempt"),
+            accepted=True,
+            reason="test_post_repair_verifier_passed",
+        )
+        assert settled is not None
+        assert settled["outcome"] == "completed"
         task_rows = TaskRuntimeService(str(tmp_path)).list_task_rows(include_terminal=True)
         owner_row = next(row for row in task_rows if row["metadata"].get("external_task_id") == "TASK-1")
         assert owner_row["status"] == "completed"

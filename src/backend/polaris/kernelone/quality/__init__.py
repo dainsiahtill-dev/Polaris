@@ -64,6 +64,7 @@ from polaris.kernelone.quality.scope_authority import (
 )
 from polaris.kernelone.quality.syntax_gate import (
     SyntaxCheckResult,
+    check_content_syntax,
     check_file_syntax,
     first_syntax_failure,
 )
@@ -94,6 +95,7 @@ __all__ = [
     "build_owner_handoff_index",
     "build_scope_authority_decision",
     "build_symbol_index_snapshot",
+    "check_content_syntax",
     "check_file_syntax",
     "check_package_scripts",
     "check_source_file_syntax",

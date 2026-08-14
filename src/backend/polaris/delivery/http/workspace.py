@@ -27,6 +27,7 @@ def _is_case_insensitive_platform() -> bool:
 
 
 _CASE_INSENSITIVE_FS = _is_case_insensitive_platform()
+INSTANCE_WORKSPACE_BINDING_ENV = "KERNELONE_INSTANCE_WORKSPACE"
 
 
 def _workspace_text(value: Any) -> str:
@@ -126,10 +127,51 @@ def workspace_values_match(left: Any, right: Any) -> bool:
     return left_value == right_value
 
 
+def process_bound_workspace() -> str:
+    """Return immutable workspace selected when this backend process started."""
+
+    return _workspace_text(os.environ.get(INSTANCE_WORKSPACE_BINDING_ENV, ""))
+
+
+def workspace_binding_conflict(requested: Any) -> tuple[str, str] | None:
+    """Return ``(bound, requested)`` when a request crosses process ownership."""
+
+    bound = process_bound_workspace()
+    requested_text = _workspace_text(requested)
+    if not bound or not requested_text or workspace_values_match(bound, requested_text):
+        return None
+    return bound, requested_text
+
+
+def enforce_process_bound_workspace(settings: Any) -> bool:
+    """Pin a settings object to the backend process workspace.
+
+    ``KERNELONE_INSTANCE_WORKSPACE`` is the instance authority.  A stale
+    settings object must never initialize a backend against another
+    workspace: resident services would bind to that foreign workspace before
+    the HTTP rebind guards can run.  Return whether a correction was applied.
+    """
+
+    bound = process_bound_workspace()
+    if not bound:
+        return False
+    active = active_workspace_value(settings)
+    if active and workspace_values_match(bound, active):
+        return False
+    settings.workspace = Path(bound)
+    if hasattr(settings, "workspace_path"):
+        with suppress(AttributeError, TypeError, ValueError):
+            settings.workspace_path = bound
+    return True
+
+
 __all__ = [
     "active_workspace_value",
     "comparable_workspace_value",
+    "enforce_process_bound_workspace",
+    "process_bound_workspace",
     "requested_or_active_workspace",
     "settings_with_workspace_override",
+    "workspace_binding_conflict",
     "workspace_values_match",
 ]

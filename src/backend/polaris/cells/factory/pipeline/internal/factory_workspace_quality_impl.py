@@ -101,6 +101,46 @@ async def _stop_workspace_quality_repair_heartbeat(
     await heartbeat_task
 
 
+async def _settle_pending_workspace_quality_repair_attempt(
+    executor,
+    pending: Mapping[str, Any] | None,
+    *,
+    accepted: bool,
+    reason: str,
+) -> dict[str, Any] | None:
+    """Settle one repair attempt only after its verifier-owned decision."""
+
+    if not isinstance(pending, Mapping):
+        return None
+    task_row_id = str(pending.get("task_row_id") or "").strip()
+    execution_attempt = pending.get("execution_attempt")
+    task_id = str(pending.get("task_id") or "").strip()
+    if not task_row_id or execution_attempt is None:
+        return None
+    heartbeat_task = pending.get("heartbeat_task")
+    heartbeat_stop = pending.get("heartbeat_stop")
+    heartbeat_failures = pending.get("heartbeat_failures")
+    if isinstance(heartbeat_task, asyncio.Task) and isinstance(heartbeat_stop, asyncio.Event):
+        await _stop_workspace_quality_repair_heartbeat(heartbeat_task, heartbeat_stop)
+    failures = heartbeat_failures if isinstance(heartbeat_failures, list) else []
+    if failures:
+        accepted = False
+        reason = f"workspace_quality_repair_lease_heartbeat_failed:{failures[0].get('code', 'unknown')}"
+    settle_result = executor._settle_director_stage_materialization_attempt(
+        task_row_id=task_row_id,
+        execution_attempt=execution_attempt,
+        stage_status="success" if accepted else "failed",
+        summary=reason,
+    )
+    return {
+        "task_id": task_id,
+        "session_id": str(getattr(execution_attempt, "session_id", "") or ""),
+        "settled": bool(settle_result.get("success")),
+        "outcome": "completed" if accepted else "failed",
+        "success_authority": "post_repair_verifier" if accepted else "repair_attempt_failure",
+    }
+
+
 def _is_deferred_declared_test_entrypoint_issue(
     issue: Any,
     *,
@@ -642,9 +682,6 @@ async def _apply_workspace_quality_deterministic_repairs(
             "repair_mode": "director_deterministic",
             "error": f"workspace_quality_deterministic_commit_failed:{type(exc).__name__}:{exc}",
         }
-    finally:
-        await _stop_workspace_quality_repair_heartbeat(heartbeat_task, heartbeat_stop)
-
     if heartbeat_failures:
         summary["execution_attempt_heartbeat_failures"] = heartbeat_failures
         summary.setdefault(
@@ -662,16 +699,36 @@ async def _apply_workspace_quality_deterministic_repairs(
     # lands after heartbeat rejection/expiry cannot complete the task because
     # this Director no longer proves exclusive ownership of the attempt.
     mutation_committed = bool(successful_receipts) and not heartbeat_failures
-    settle_result = executor._settle_director_stage_materialization_attempt(
-        task_row_id=task_row_id,
-        execution_attempt=execution_attempt,
-        stage_status="success" if mutation_committed else "failed",
-        summary=(
-            "workspace_quality_deterministic_repair_committed"
-            if mutation_committed
-            else str(summary.get("error") or "workspace_quality_deterministic_repair_no_commit")
-        ),
-    )
+    pending_attempt: dict[str, Any] | None = None
+    if mutation_committed:
+        pending_attempt = {
+            "task_id": task_id,
+            "task_row_id": task_row_id,
+            "execution_attempt": execution_attempt,
+            "heartbeat_task": heartbeat_task,
+            "heartbeat_stop": heartbeat_stop,
+            "heartbeat_failures": heartbeat_failures,
+        }
+        task_runtime_attempt = {
+            "task_id": task_id,
+            "session_id": execution_attempt.session_id,
+            "settled": False,
+            "outcome": "pending_revalidation",
+        }
+    else:
+        task_runtime_attempt = await _settle_pending_workspace_quality_repair_attempt(
+            executor,
+            {
+                "task_id": task_id,
+                "task_row_id": task_row_id,
+                "execution_attempt": execution_attempt,
+                "heartbeat_task": heartbeat_task,
+                "heartbeat_stop": heartbeat_stop,
+                "heartbeat_failures": heartbeat_failures,
+            },
+            accepted=False,
+            reason=str(summary.get("error") or "workspace_quality_deterministic_repair_no_commit"),
+        ) or {}
     evidence = (
         [f"deferred_commit:successful={len(successful_receipts)};failed={len(failed_receipts)}"]
         if mutation_committed
@@ -687,14 +744,11 @@ async def _apply_workspace_quality_deterministic_repairs(
             "failed_receipt_count": len(failed_receipts),
             "write_tool_evidence": mutation_committed,
             "evidence": evidence,
-            "task_runtime_repair_attempt": {
-                "task_id": task_id,
-                "session_id": execution_attempt.session_id,
-                "settled": bool(settle_result.get("success")),
-                "outcome": "completed" if mutation_committed else "failed",
-            },
+            "task_runtime_repair_attempt": task_runtime_attempt,
         }
     )
+    if pending_attempt is not None:
+        summary["_pending_task_runtime_repair_attempt"] = pending_attempt
     return results, summary
 
 
@@ -873,8 +927,6 @@ async def _apply_workspace_quality_llm_repairs(
             "source_tools": ["director_materialization_quality_repair_error"],
             "tool_results": 0,
         }
-    finally:
-        await _stop_workspace_quality_repair_heartbeat(heartbeat_task, heartbeat_stop)
     normalized_summary = dict(summary)
     if heartbeat_failures:
         normalized_summary["execution_attempt_heartbeat_failures"] = heartbeat_failures
@@ -896,22 +948,38 @@ async def _apply_workspace_quality_llm_repairs(
         for item in results
         if isinstance(item, Mapping)
     )
-    settle_result = executor._settle_director_stage_materialization_attempt(
-        task_row_id=repair_task_row_id,
-        execution_attempt=execution_attempt,
-        stage_status="success" if mutation_committed else "failed",
-        summary=(
-            "workspace_quality_repair_mutation_committed"
-            if mutation_committed
-            else str(normalized_summary.get("error") or "workspace_quality_repair_no_mutation")
-        ),
-    )
-    normalized_summary["task_runtime_repair_attempt"] = {
-        "task_id": repair_task_id,
-        "session_id": execution_attempt.session_id,
-        "settled": bool(settle_result.get("success")),
-        "outcome": "completed" if mutation_committed else "failed",
-    }
+    if mutation_committed:
+        normalized_summary["_pending_task_runtime_repair_attempt"] = {
+            "task_id": repair_task_id,
+            "task_row_id": repair_task_row_id,
+            "execution_attempt": execution_attempt,
+            "heartbeat_task": heartbeat_task,
+            "heartbeat_stop": heartbeat_stop,
+            "heartbeat_failures": heartbeat_failures,
+        }
+        normalized_summary["task_runtime_repair_attempt"] = {
+            "task_id": repair_task_id,
+            "session_id": execution_attempt.session_id,
+            "settled": False,
+            "outcome": "pending_revalidation",
+        }
+    else:
+        normalized_summary["task_runtime_repair_attempt"] = (
+            await _settle_pending_workspace_quality_repair_attempt(
+                executor,
+                {
+                    "task_id": repair_task_id,
+                    "task_row_id": repair_task_row_id,
+                    "execution_attempt": execution_attempt,
+                    "heartbeat_task": heartbeat_task,
+                    "heartbeat_stop": heartbeat_stop,
+                    "heartbeat_failures": heartbeat_failures,
+                },
+                accepted=False,
+                reason=str(normalized_summary.get("error") or "workspace_quality_repair_no_mutation"),
+            )
+            or {}
+        )
     return [dict(item) for item in results], normalized_summary
 
 
@@ -1313,6 +1381,10 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 round_summary["source_tools"] = round_summary_tools
             repair_results.extend(round_repair_results)
             normalized_round_summary = dict(round_summary)
+            pending_round_attempt = normalized_round_summary.pop(
+                "_pending_task_runtime_repair_attempt",
+                None,
+            )
             round_source_tools = [
                 str(item) for item in normalized_round_summary.get("source_tools", []) if str(item or "").strip()
             ]
@@ -1349,6 +1421,14 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     round_payload["task_boundary_triage_required"] = True
             repair_rounds.append(round_payload)
             if round_requires_task_boundary_triage:
+                settled_attempt = await _settle_pending_workspace_quality_repair_attempt(
+                    executor,
+                    pending_round_attempt,
+                    accepted=False,
+                    reason="workspace_quality_repair_task_boundary_triage_required",
+                )
+                if settled_attempt is not None:
+                    normalized_round_summary["task_runtime_repair_attempt"] = settled_attempt
                 convergence_stop_reason = "task_boundary_triage_required"
                 break
             if not round_write_tool_evidence:
@@ -1375,6 +1455,14 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     projected_summary["success"] = False
                     projected_summary["success_authority"] = "post_repair_verifier"
                     projected_summary["verifier_effect"] = "no_op"
+                settled_attempt = await _settle_pending_workspace_quality_repair_attempt(
+                    executor,
+                    pending_round_attempt,
+                    accepted=False,
+                    reason="workspace_quality_repair_no_mutation",
+                )
+                if settled_attempt is not None and isinstance(projected_summary_raw, dict):
+                    projected_summary_raw["task_runtime_repair_attempt"] = settled_attempt
                 consecutive_stagnant_rounds += 1
                 if consecutive_stagnant_rounds >= 2:
                     convergence_stop_reason = "two_consecutive_no_mutation_repairs"
@@ -1389,6 +1477,12 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             for command in prepare_commands:
                 result, deadline_detail = await run_workspace_quality_command_with_deadline(command, prepare_phase)
                 if deadline_detail:
+                    await _settle_pending_workspace_quality_repair_attempt(
+                        executor,
+                        pending_round_attempt,
+                        accepted=False,
+                        reason="workspace_quality_repair_verifier_deadline_insufficient",
+                    )
                     return write_workspace_validation_failure(
                         "factory_quality_gate_workspace_checks_deadline_insufficient",
                         deadline_detail,
@@ -1417,6 +1511,12 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 for command in run_commands:
                     result, deadline_detail = await run_workspace_quality_command_with_deadline(command, phase)
                     if deadline_detail:
+                        await _settle_pending_workspace_quality_repair_attempt(
+                            executor,
+                            pending_round_attempt,
+                            accepted=False,
+                            reason="workspace_quality_repair_verifier_deadline_insufficient",
+                        )
                         return write_workspace_validation_failure(
                             "factory_quality_gate_workspace_checks_deadline_insufficient",
                             deadline_detail,
@@ -1443,6 +1543,12 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 verifier_passed=verifier_passed,
                 write_tool_evidence=round_write_tool_evidence,
             )
+            settled_attempt = await _settle_pending_workspace_quality_repair_attempt(
+                executor,
+                pending_round_attempt,
+                accepted=repair_effect in {"resolved", "progress"},
+                reason=f"workspace_quality_repair_{repair_effect}",
+            )
             round_payload.update(
                 {
                     "verifier_effect": repair_effect,
@@ -1459,6 +1565,8 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 projected_summary["success"] = verifier_passed
                 projected_summary["success_authority"] = "post_repair_verifier"
                 projected_summary["verifier_effect"] = repair_effect
+                if settled_attempt is not None:
+                    projected_summary["task_runtime_repair_attempt"] = settled_attempt
             if repair_effect in {"resolved", "progress"}:
                 consecutive_stagnant_rounds = 0
             else:

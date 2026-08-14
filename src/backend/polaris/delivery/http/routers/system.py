@@ -46,6 +46,7 @@ from polaris.kernelone.storage import normalize_ramdisk_root
 from polaris.kernelone.storage.io_paths import normalize_artifact_rel_path, workspace_has_docs
 from polaris.kernelone.utils.time_utils import utc_now_str
 
+from ..workspace import process_bound_workspace, workspace_binding_conflict, workspace_values_match
 from ._shared import StructuredHTTPException, get_state, require_auth
 
 logger = logging.getLogger(__name__)
@@ -156,6 +157,9 @@ def _build_runtime_process_identity_response(request: Request | None = None) -> 
 
     backend_root = _backend_source_root()
     fingerprint = _SERVER_STARTUP_SOURCE_FINGERPRINT
+    bound_workspace = process_bound_workspace()
+    active_workspace = _active_workspace_from_request(request)
+    workspace = bound_workspace or active_workspace
     return {
         "ok": bool(fingerprint),
         "fingerprint": fingerprint,
@@ -163,7 +167,11 @@ def _build_runtime_process_identity_response(request: Request | None = None) -> 
         "startup_time": _SERVER_STARTUP_TIME,
         "uptime_seconds": round(max(0.0, time.monotonic() - _SERVER_START_MONOTONIC), 3),
         "instance_id": _current_process_instance_id(),
-        "workspace": _active_workspace_from_request(request),
+        "workspace": workspace,
+        "active_workspace": active_workspace,
+        "workspace_binding_match": bool(
+            not bound_workspace or not active_workspace or workspace_values_match(bound_workspace, active_workspace)
+        ),
         "backend_root": str(backend_root),
         "source": "runtime/fingerprint:process_startup",
     }
@@ -281,6 +289,19 @@ async def _update_settings_internal(request: Request, payload: SettingsUpdate) -
         raw_workspace = str(raw_payload.get("workspace") or "").strip()
         if raw_workspace:
             payload.workspace = raw_workspace
+    binding_conflict = workspace_binding_conflict(payload.workspace)
+    if binding_conflict is not None:
+        bound_workspace, requested_workspace = binding_conflict
+        raise StructuredHTTPException(
+            status_code=409,
+            code="INSTANCE_WORKSPACE_REBIND_FORBIDDEN",
+            message="backend instance workspace is immutable; start or open the matching instance instead",
+            details={
+                "instance_id": _current_process_instance_id(),
+                "bound_workspace": bound_workspace,
+                "requested_workspace": requested_workspace,
+            },
+        )
     previous_workspace = str(state.settings.workspace or DEFAULT_WORKSPACE).strip()
     target_self_upgrade_mode = (
         bool(payload.self_upgrade_mode)

@@ -47,6 +47,7 @@ _SYNTAX_CHECKERS: dict[tuple[str, ...], list[str]] = {
 }
 
 _DEFAULT_TIMEOUT_SECONDS = 20
+_CONTENT_PRECOMMIT_EXTENSIONS = frozenset({".go", ".js", ".mjs", ".cjs", ".py", ".ts", ".tsx"})
 _TS_PARSE_DIAGNOSTICS_SCRIPT = r"""
 const ts = require(process.argv[1]);
 const fs = require("fs");
@@ -164,6 +165,52 @@ def check_file_syntax(path: str, *, timeout_seconds: int = _DEFAULT_TIMEOUT_SECO
     raw_error = (proc.stderr or proc.stdout or "").strip()
     error = "" if ok else raw_error[:500]
     return SyntaxCheckResult(path=path, checked=True, ok=ok, error=error, reason="")
+
+
+def check_content_syntax(
+    filename: str,
+    content: str,
+    *,
+    timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS,
+) -> SyntaxCheckResult:
+    """Parse candidate UTF-8 source bytes without changing the workspace.
+
+    This is intentionally limited to checkers whose single-file invocation is
+    parse-only (or effectively parse-only).  C/C++/Rust/Java are excluded here:
+    compiling an isolated temporary file can report missing project imports or
+    modules and would reject valid edits for semantic, not syntax, reasons.
+    """
+
+    suffix = os.path.splitext(str(filename or ""))[1].lower()
+    if suffix not in _CONTENT_PRECOMMIT_EXTENSIONS:
+        return SyntaxCheckResult(
+            path=str(filename),
+            checked=False,
+            ok=True,
+            error="",
+            reason="no safe precommit checker for extension",
+        )
+    try:
+        with tempfile.TemporaryDirectory(prefix="polaris-syntax-candidate-") as temp_dir:
+            candidate = os.path.join(temp_dir, f"candidate{suffix}")
+            with open(candidate, "w", encoding="utf-8", newline="") as handle:
+                handle.write(str(content))
+            result = check_file_syntax(candidate, timeout_seconds=timeout_seconds)
+    except (OSError, UnicodeError) as exc:
+        return SyntaxCheckResult(
+            path=str(filename),
+            checked=False,
+            ok=True,
+            error="",
+            reason=str(exc),
+        )
+    return SyntaxCheckResult(
+        path=str(filename),
+        checked=result.checked,
+        ok=result.ok,
+        error=result.error,
+        reason=result.reason,
+    )
 
 
 def first_syntax_failure(

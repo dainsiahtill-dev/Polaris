@@ -370,6 +370,32 @@ def test_r195_edit_file_empty_search_is_non_fatal_no_op(tmp_path) -> None:
     assert result.get("error") is None
 
 
+def test_edit_file_rejects_new_go_syntax_failure_before_commit(tmp_path) -> None:
+    """L1-04 r51: partial exact replacement must not corrupt a parseable file."""
+
+    target = tmp_path / "engine" / "rules.go"
+    target.parent.mkdir(parents=True)
+    original = "package engine\n\nfunc Cast() int {\n\treturn 1\n}\n"
+    target.write_text(original, encoding="utf-8")
+    executor = _create_director_tool_executor(str(tmp_path))
+
+    result = executor.execute_tool(
+        "edit_file",
+        {
+            "file": "engine/rules.go",
+            "search": "\treturn 1\n}",
+            "replace": "\treturn 2\n}na < spellCost {",
+            "target_files": ["engine/rules.go"],
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["error_type"] == "source_syntax_regression"
+    assert result["retryable"] is True
+    assert result["syntax_check"] == "failed_precommit"
+    assert target.read_text(encoding="utf-8") == original
+
+
 def test_r195_compound_command_block_is_non_fatal_no_op(tmp_path) -> None:
     """Layer 2 / R195-pattern: a blocked compound/restricted command must not break
     canonical_execution.

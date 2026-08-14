@@ -1597,16 +1597,17 @@ class _Mixin02:
             return "resolved"
         if not write_tool_evidence:
             return "no_op"
-        if len(after_signature) < len(before_signature):
+        before = set(before_signature)
+        after = set(after_signature)
+        if after < before:
             return "progress"
-        if len(after_signature) > len(before_signature):
-            return "regression"
-        if after_signature == before_signature:
+        if after == before:
             return "stagnant"
-        # An equal-count diagnostic swap is not demonstrated progress.  Treat it
-        # as stagnation so a model cannot burn the full budget by trading one
-        # compiler error for another indefinitely.
-        return "equal_count_swap"
+        if after - before:
+            if len(after) == len(before):
+                return "equal_count_swap"
+            return "regression"
+        return "stagnant"
 
     def _workspace_quality_repair_issue_payloads(
         self,

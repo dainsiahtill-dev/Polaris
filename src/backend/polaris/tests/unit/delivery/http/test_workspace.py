@@ -7,10 +7,34 @@ import pytest
 from polaris.delivery.http import workspace as workspace_module
 from polaris.delivery.http.workspace import (
     active_workspace_value,
+    enforce_process_bound_workspace,
     requested_or_active_workspace,
     settings_with_workspace_override,
     workspace_values_match,
 )
+
+
+def test_enforce_process_bound_workspace_corrects_stale_settings_before_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = MagicMock()
+    settings.workspace = "/tmp/stale-bench"
+    settings.workspace_path = "/tmp/stale-bench"
+    monkeypatch.setenv("KERNELONE_INSTANCE_WORKSPACE", "/srv/polaris/main")
+
+    assert enforce_process_bound_workspace(settings) is True
+    assert active_workspace_value(settings) == "/srv/polaris/main"
+
+
+def test_enforce_process_bound_workspace_preserves_matching_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = MagicMock(spec=["workspace"])
+    settings.workspace = Path("/srv/polaris/main")
+    monkeypatch.setenv("KERNELONE_INSTANCE_WORKSPACE", "/srv/polaris/main")
+
+    assert enforce_process_bound_workspace(settings) is False
+    assert settings.workspace == Path("/srv/polaris/main")
 
 
 def test_active_workspace_ignores_mock_placeholder_and_falls_back_to_workspace() -> None:
