@@ -170,6 +170,38 @@ def test_batch_authoritative_success_requires_success_pending_or_effect_receipt(
     assert _batch_has_authoritative_success([{"pending_async_count": 1}]) is True
 
 
+def test_no_effect_write_receipt_is_not_authoritative_success_and_requires_replan() -> None:
+    receipt = {
+        "results": [
+            {
+                "tool_name": "edit_file",
+                "status": "success",
+                "result": {
+                    "ok": True,
+                    "no_op": True,
+                    "reason": "edit_file_empty_search",
+                },
+                "effect_receipt": {
+                    "authoritative": True,
+                    "receipt_outcome": "succeeded",
+                },
+            }
+        ],
+        "effect_receipts": [
+            {
+                "authoritative": True,
+                "receipt_outcome": "succeeded",
+            }
+        ],
+        "success_count": 1,
+        "failure_count": 0,
+    }
+
+    assert _batch_has_authoritative_success([receipt]) is False
+    assert batch_write_failure_error_types(receipt) == ("director_write_no_effect",)
+    assert batch_write_failures_require_llm_replan(receipt) is True
+
+
 def test_scope_denied_write_requires_new_llm_invocation_without_widening_scope() -> None:
     receipt = {
         "results": [

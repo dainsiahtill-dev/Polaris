@@ -1235,6 +1235,7 @@ def _publish_run_ledger_projection_update(
                 max_runs=1,
             )
         ).projection
+        transport_projection = _project_run_ledger_projection_for_transport(projection)
         now = datetime.now(timezone.utc)
         event_id = str(event.get("event_id") or event.get("append_id") or int(now.timestamp() * 1000)).strip()
         transport_event = _project_run_ledger_event_for_transport(event)
@@ -1249,7 +1250,7 @@ def _publish_run_ledger_projection_update(
             "cursor": 0,
             "trace_id": str(event.get("trace_id") or ""),
             "payload": {
-                "projection": projection,
+                "projection": transport_projection,
                 "ledger_event": transport_event,
                 "run_id": str(run_id or event.get("run_id") or ""),
             },
@@ -1262,6 +1263,63 @@ def _publish_run_ledger_projection_update(
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         logger.debug("Run Ledger projection JetStream publish failed: %s", exc)
         return False
+
+
+def _project_run_ledger_projection_for_transport(projection: dict[str, Any]) -> dict[str, Any]:
+    """Build the bounded runtime.v2 read model; HTTP keeps full authority.
+
+    The durable projection contains TaskRuntime/tool-lifecycle history and a
+    nested run projection. Long same-run recovery can grow those fields beyond
+    NATS' 1 MiB payload limit. Runtime subscribers only require the platform
+    summary represented by ``ControlPlaneProjection``; detailed evidence stays
+    addressable through the HTTP projection and durable evidence refs.
+    """
+
+    scalar_fields = (
+        "schema_version",
+        "source",
+        "available",
+        "ok",
+        "status",
+        "audit_path",
+        "compat_ledgers_included",
+        "migration_ledgers_included",
+        "total",
+        "projected",
+        "missing",
+        "failed",
+        "missing_required_modalities",
+        "failed_required_modalities",
+        "failed_control_plane_events",
+        "failed_evidence_details",
+        "detail",
+        "evidence_policy",
+        "evidence_modalities",
+    )
+    bounded = {key: projection.get(key) for key in scalar_fields if key in projection}
+    project_fields = (
+        "project_id",
+        "ok",
+        "integrity_ok",
+        "outcome_ok",
+        "gate_count",
+        "failed_gate_count",
+        "latest_token_id",
+        "detail",
+        "missing",
+        "missing_required_modalities",
+        "failed_required_modalities",
+        "failed_evidence_details",
+        "evidence_policy",
+        "evidence_modalities",
+    )
+    projects = projection.get("projects")
+    bounded["projects"] = [
+        {key: project.get(key) for key in project_fields if key in project}
+        for project in projects or []
+        if isinstance(project, dict)
+    ][:32]
+    return bounded
 
 
 def _project_run_ledger_event_for_transport(event: dict[str, Any]) -> dict[str, Any]:

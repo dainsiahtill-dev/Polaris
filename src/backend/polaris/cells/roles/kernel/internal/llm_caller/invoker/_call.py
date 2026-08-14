@@ -35,7 +35,7 @@ from ..factory_dispatch_propagation import (
     enforce_factory_aware_final_request_evidence_coverage,
 )
 from ..final_request_metrics import validated_final_context_evidence
-from ..final_request_tool_surface import assert_tool_in_final_request_surface
+from ..final_request_tool_surface import assert_native_tool_call_in_final_request_surface
 from ..helpers import (
     build_native_tool_call_envelope_payloads,
     extract_native_tool_calls,
@@ -562,13 +562,8 @@ class _InvokerCallMixin:
             elif text_fallback_requested:
                 text_tool_recovery_metadata["failure_class"] = "required_tool_text_fallback_not_dispatched"
         for native_tool_call in native_tool_calls:
-            function = native_tool_call.get("function") if isinstance(native_tool_call, dict) else None
-            raw_name = function.get("name") if isinstance(function, dict) else (
-                native_tool_call.get("name") if isinstance(native_tool_call, dict) else ""
-            )
-            assert_tool_in_final_request_surface(
-                tool_name=raw_name,
-                tool_arguments=(function.get("arguments") if isinstance(function, dict) else None),
+            assert_native_tool_call_in_final_request_surface(
+                native_tool_call=native_tool_call,
                 active_request=active_request,
                 prepared=prepared,
             )

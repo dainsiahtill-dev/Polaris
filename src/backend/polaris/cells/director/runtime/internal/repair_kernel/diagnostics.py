@@ -125,6 +125,15 @@ _UNITTEST_FAILURE_HEADER_RE = re.compile(
 )
 _UNITTEST_SUMMARY_BOUNDARY_RE = re.compile(r"(?m)^-{20,}\s*\nRan\s+\d+\s+tests?\b", re.IGNORECASE)
 _UNITTEST_FAILURE_DIAGNOSTIC_LIMIT = 12
+_GO_TEST_FAILURE_HEADER_RE = re.compile(
+    r"(?m)^\s*---\s+FAIL:\s+(?P<name>\S+)\s+\((?P<duration>[^)]+)\)\s*$",
+    re.IGNORECASE,
+)
+_GO_TEST_LOCATION_RE = re.compile(
+    r"(?m)^\s*(?P<path>[^:\s]+\.go):(?P<line>\d+):\s*(?P<message>.+?)\s*$",
+    re.IGNORECASE,
+)
+_GO_TEST_FAILURE_DIAGNOSTIC_LIMIT = 24
 _VERIFIER_LOCATION_RE = re.compile(
     r"(?P<path>(?:file://)?(?:[A-Za-z]:)?[^\s()'\"]+\.(?:js|mjs|cjs|ts|tsx|jsx|py|go|rs|java|cc|cpp|cxx))"
     r":(?P<line>\d+):(?P<column>\d+)",
@@ -243,6 +252,16 @@ def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
         # causal diagnostic per FAIL/ERROR block so convergence is measured
         # from verifier facts rather than command-row count.
         return unittest_failures
+    go_test_failures = _normalize_go_test_failures(blob)
+    if go_test_failures:
+        # ``go test`` also emits one command transcript containing multiple
+        # causal FAIL blocks. Keeping it as one wrapper made a real reduction
+        # in failing tests look like a one-to-one diagnostic swap, so Factory
+        # stopped the same-Director repair before its remaining correction
+        # round. Preserve each leaf test/subtest as an independent verifier
+        # fact; parent FAIL rows that only summarize failing subtests are not
+        # duplicated.
+        return go_test_failures
     rust_location = _RUST_LOCATION_RE.search(blob)
     if rust_location and re.search(r"(?m)^\s*(?:error|warning):", blob, re.IGNORECASE):
         # Rust diagnostics without an E-code (parser errors and warnings) are
@@ -394,6 +413,62 @@ def _normalize_unittest_failures(text: str) -> list[RepairDiagnostic]:
                 column=normalized.column,
                 raw=failure_block,
                 metadata=metadata,
+            )
+        )
+    return diagnostics
+
+
+def _normalize_go_test_failures(text: str) -> list[RepairDiagnostic]:
+    """Project Go ``go test`` FAIL blocks into causal leaf diagnostics."""
+
+    blob = str(text or "")
+    matches = list(_GO_TEST_FAILURE_HEADER_RE.finditer(blob))
+    if not matches:
+        return []
+
+    candidates: list[tuple[re.Match[str], str, re.Match[str] | None]] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(blob)
+        block = blob[match.start() : end].strip()
+        name = str(match.group("name") or "test").strip()
+        next_name = (
+            str(matches[index + 1].group("name") or "").strip()
+            if index + 1 < len(matches)
+            else ""
+        )
+        location = _GO_TEST_LOCATION_RE.search(block)
+        if location is None and next_name.startswith(f"{name}/"):
+            # Parent row only summarizes one or more failing subtests.
+            continue
+        candidates.append((match, block, location))
+
+    total_failure_count = len(candidates)
+    truncated_failure_count = max(0, total_failure_count - _GO_TEST_FAILURE_DIAGNOSTIC_LIMIT)
+    source_blob_sha256 = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+    diagnostics: list[RepairDiagnostic] = []
+    for match, failure_block, location in candidates[:_GO_TEST_FAILURE_DIAGNOSTIC_LIMIT]:
+        name = str(match.group("name") or "test").strip()
+        message = (
+            str(location.group("message") or "").strip()
+            if location is not None
+            else f"Test failed: {name}"
+        )
+        diagnostics.append(
+            RepairDiagnostic(
+                source="verifier",
+                code="verifier_test_failure",
+                message=message,
+                path=str(location.group("path") or "").strip() if location is not None else None,
+                line=_to_int(location.group("line")) if location is not None else None,
+                raw=failure_block,
+                metadata={
+                    "framework": "go_test",
+                    "test_name": name,
+                    "duration": str(match.group("duration") or "").strip(),
+                    "total_failure_count": total_failure_count,
+                    "truncated_failure_count": truncated_failure_count,
+                    "source_blob_sha256": source_blob_sha256,
+                },
             )
         )
     return diagnostics

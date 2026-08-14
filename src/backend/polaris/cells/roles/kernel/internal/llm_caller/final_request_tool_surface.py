@@ -127,9 +127,7 @@ def final_request_allowed_tool_names(*, active_request: Any, prepared: Any) -> f
     if not names and "tools" not in options and "tools" not in fallback_options:
         names = _tool_names(getattr(prepared, "native_tool_schemas", None))
 
-    forced = _forced_tool_name(options.get("tool_choice")) or _forced_tool_name(
-        fallback_options.get("tool_choice")
-    )
+    forced = _forced_tool_name(options.get("tool_choice")) or _forced_tool_name(fallback_options.get("tool_choice"))
     if forced:
         # A named provider tool choice is a stricter authority than merely
         # exposing several definitions.  A response using another tool must
@@ -161,8 +159,37 @@ def assert_tool_in_final_request_surface(
         return
     rendered_allowed = ",".join(sorted(allowed)) if allowed else "<none>"
     raise RuntimeError(
-        f"{_PROVIDER_TOOL_SURFACE_VIOLATION_PREFIX} "
-        f"requested={requested or '<empty>'}; allowed={rendered_allowed}"
+        f"{_PROVIDER_TOOL_SURFACE_VIOLATION_PREFIX} requested={requested or '<empty>'}; allowed={rendered_allowed}"
+    )
+
+
+def assert_native_tool_call_in_final_request_surface(
+    *,
+    native_tool_call: Any,
+    active_request: Any,
+    prepared: Any,
+) -> None:
+    """Validate name and arguments for every supported native-call envelope.
+
+    OpenAI-compatible providers normally nest data under ``function``. Some
+    normalized/recovered calls use top-level ``name`` and ``arguments``. The
+    latter previously passed ``None`` as arguments and bypassed the no-effect
+    edit guard.
+    """
+
+    call = native_tool_call if isinstance(native_tool_call, Mapping) else {}
+    function = call.get("function")
+    if isinstance(function, Mapping):
+        raw_name = function.get("name")
+        raw_arguments = function.get("arguments")
+    else:
+        raw_name = call.get("name") or call.get("tool")
+        raw_arguments = call.get("arguments") if "arguments" in call else call.get("args")
+    assert_tool_in_final_request_surface(
+        tool_name=raw_name,
+        tool_arguments=raw_arguments,
+        active_request=active_request,
+        prepared=prepared,
     )
 
 
@@ -189,6 +216,7 @@ def is_provider_tool_surface_violation(value: Any) -> bool:
 
 
 __all__ = [
+    "assert_native_tool_call_in_final_request_surface",
     "assert_tool_in_final_request_surface",
     "final_request_allowed_tool_names",
     "is_provider_tool_surface_violation",

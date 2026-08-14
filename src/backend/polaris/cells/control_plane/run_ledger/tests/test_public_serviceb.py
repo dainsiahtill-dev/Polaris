@@ -1093,6 +1093,77 @@ def test_projection_transport_does_not_embed_full_durable_ledger_event(tmp_path:
     assert len(encoded) < 64_000
 
 
+def test_projection_transport_drops_unbounded_runtime_history(tmp_path: Path, monkeypatch) -> None:
+    class FakePublisher:
+        def __init__(self) -> None:
+            self.payload: dict[str, object] = {}
+
+        def publish(self, *, subject: str, payload: dict[str, object]) -> bool:
+            del subject
+            self.payload = payload
+            return True
+
+    publisher = FakePublisher()
+    monkeypatch.setenv("KERNELONE_JETSTREAM_PUBLISH", "1")
+    monkeypatch.setattr(run_ledger_service, "get_log_jetstream_publisher", lambda: publisher)
+    monkeypatch.setattr(
+        run_ledger_service,
+        "resolve_storage_roots",
+        lambda workspace: SimpleNamespace(workspace_key="workspace-key"),
+    )
+    huge_history = {"events": ["x" * 8_000 for _ in range(160)]}
+    projection = {
+        "schema_version": 1,
+        "source": "run_ledger_projection",
+        "available": True,
+        "ok": False,
+        "status": "blocked",
+        "total": 1,
+        "projected": 1,
+        "missing": 0,
+        "failed": 1,
+        "detail": "one failed project",
+        "tool_lifecycle": huge_history,
+        "run_projection": huge_history,
+        "projects": [
+            {
+                "project_id": "P1",
+                "ok": False,
+                "integrity_ok": True,
+                "outcome_ok": False,
+                "gate_count": 1,
+                "failed_gate_count": 1,
+                "latest_token_id": "token-1",
+                "detail": "verifier failed",
+                "missing": [],
+                "tool_lifecycle": huge_history,
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        run_ledger_service,
+        "read_run_ledger_projection",
+        lambda _query: SimpleNamespace(projection=projection),
+    )
+
+    assert run_ledger_service._publish_run_ledger_projection_update(
+        workspace=tmp_path,
+        run_id="run-1",
+        event={"event_id": "event-1", "event_type": "gate_evaluated"},
+    )
+
+    encoded = json.dumps(publisher.payload, ensure_ascii=False).encode("utf-8")
+    event_payload = publisher.payload["payload"]
+    assert isinstance(event_payload, dict)
+    transported = event_payload["projection"]
+    assert isinstance(transported, dict)
+    assert "tool_lifecycle" not in transported
+    assert "run_projection" not in transported
+    assert "tool_lifecycle" not in transported["projects"][0]
+    assert transported["projects"][0]["project_id"] == "P1"
+    assert len(encoded) < 64_000
+
+
 def test_append_run_ledger_event_publish_failure_is_visible_and_retry_is_idempotent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

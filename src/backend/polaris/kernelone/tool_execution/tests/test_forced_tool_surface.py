@@ -29,6 +29,12 @@ def test_build_forced_tool_surface_quality_repair_set_is_registry_faithful() -> 
     tools = build_forced_tool_surface(("edit_file", "write_file", "execute_command"))
     names = [item["function"]["name"] for item in tools]
     assert names == ["edit_file", "write_file", "execute_command"]
+    edit_parameters = tools[0]["function"]["parameters"]
+    assert edit_parameters["anyOf"] == [
+        {"required": ["blocks"]},
+        {"required": ["search", "replace"]},
+        {"required": ["start_line", "end_line", "content"]},
+    ]
     assert_registry_faithful_tool_surface(tools)
 
 

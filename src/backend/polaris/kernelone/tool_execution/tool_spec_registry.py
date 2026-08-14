@@ -81,7 +81,6 @@ class ToolSpec:
     def to_anthropic_tool(self) -> dict[str, Any]:
         """转换为Anthropic native tool格式"""
         schema = deepcopy(self.parameters)
-        schema.pop("required", [])
         return {
             "name": self.canonical_name,
             "description": self.description,
@@ -1550,6 +1549,16 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
             {"name": "regex", "type": "boolean", "required": False, "default": False},
         ],
         "response_format_hint": "Edit confirmation with lines changed or blocks applied",
+        # Provider-facing contract: ``file`` alone is not a mutation.  At least
+        # one complete edit mode must be present before a native tool call can
+        # enter authorization/DEO.  Runtime aliases remain accepted by the
+        # normalizer, while the canonical schema steers providers toward a
+        # physically executable call.
+        "parameter_any_of": [
+            {"required": ["blocks"]},
+            {"required": ["search", "replace"]},
+            {"required": ["start_line", "end_line", "content"]},
+        ],
         "required_any": [("file",)],
         "required_doc": "args.file required; use (start_line+end_line) or (search+replace) or blocks",
     },
@@ -1777,6 +1786,9 @@ def _build_tool_spec_from_dict(tool_name: str, spec_dict: dict[str, Any]) -> Too
     }
     if required:
         parameters["required"] = required
+    parameter_any_of = spec_dict.get("parameter_any_of")
+    if isinstance(parameter_any_of, list) and parameter_any_of:
+        parameters["anyOf"] = deepcopy(parameter_any_of)
 
     return ToolSpec(
         canonical_name=tool_name,

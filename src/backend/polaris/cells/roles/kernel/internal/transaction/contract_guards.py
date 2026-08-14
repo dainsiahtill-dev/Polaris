@@ -1051,6 +1051,7 @@ def batch_write_results_all_failed_on_argument_shape(batch_receipt: Mapping[str,
 
 _REPLANNABLE_WRITE_ERROR_TYPES = frozenset(
     {
+        "director_write_no_effect",
         "director_write_policy_denied",
         "invalid_arg",
         "invalid_args",
@@ -1094,7 +1095,11 @@ def _structured_write_failure_error_type(item: Mapping[str, Any]) -> str:
     payload = item.get("result")
     sources = (item, payload) if isinstance(payload, Mapping) else (item,)
     for source in sources:
-        error_type = str(source.get("error_type") or source.get("handler_error_type") or "").strip().lower()
+        error_type = (
+            str(source.get("error_type") or source.get("handler_error_type") or source.get("physical_error_type") or "")
+            .strip()
+            .lower()
+        )
         if error_type:
             return error_type
 
@@ -1121,6 +1126,10 @@ def batch_write_failure_error_types(batch_receipt: Mapping[str, Any]) -> tuple[s
     error_types: list[str] = []
     for item in list(batch_receipt.get("results") or []):
         if not isinstance(item, Mapping) or not is_write_tool_name(str(item.get("tool_name") or "")):
+            continue
+        payload = item.get("result")
+        if bool(item.get("no_op")) or (isinstance(payload, Mapping) and bool(payload.get("no_op"))):
+            error_types.append("director_write_no_effect")
             continue
         if str(item.get("status") or "").strip().lower() == "success":
             continue

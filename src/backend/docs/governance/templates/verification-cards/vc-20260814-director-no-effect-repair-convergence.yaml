@@ -1,0 +1,51 @@
+card_id: vc-20260814-director-no-effect-repair-convergence
+classification: structural
+status: implementation_active
+scope:
+  cells:
+    - roles.kernel
+    - roles.adapters
+  platform_only: true
+  target_project_edits: forbidden
+assumption_register:
+  - id: A1
+    claim: The L1-04 retry emitted four edit_file calls with empty search arguments.
+    evidence: >-
+      session_snapshot_tx-f3de1991eae444398b03a637bffb3625.json records
+      edit_file_empty_search for engine/rules.go, engine/service.go, main.go,
+      and models/state.go.
+  - id: A2
+    claim: No target file content changed.
+    evidence: >-
+      Physical results contain no_op=true and unchanged workspace hashes/times;
+      rerun go test diagnostics are identical.
+  - id: A3
+    claim: Platform nevertheless committed authoritative success.
+    evidence: >-
+      director-physical-effect-5ea20cf95c7289a22d69f832 and sibling receipts
+      have receipt_outcome=succeeded; turn projection reports success_count=4.
+pre_mortem:
+  most_likely_wrong_fix: >-
+    Loosening QA or trusting ok=true would preserve false success. Rejecting the
+    entire task would also waste completed PM/CE/Director work.
+  containment: >-
+    Keep QA/verifier semantics unchanged. Fix native argument validation,
+    directed-effect receipt truth, and bounded same-turn replan classification.
+verification_plan:
+  unit:
+    - Top-level native edit_file empty search is rejected before dispatch.
+    - Physical no-op produces no successful effect receipt.
+    - No-op batch is not authoritative success and is same-turn replannable.
+    - Genuine effect receipts and pending async work remain authoritative.
+  static:
+    - ruff check and format changed Python files
+    - mypy changed Python files
+  live:
+    - Restart only isolated L1-04 instance after code gates pass.
+    - Retry only quality_gate on factory_87c10610b465.
+    - Prove PM, Chief Engineer, and Director stage artifacts are reused.
+    - Require effective edit hashes and reduced failed Go diagnostics.
+sign_off:
+  owner: Codex /root
+  started_at: "2026-08-14"
+  closed_at: null

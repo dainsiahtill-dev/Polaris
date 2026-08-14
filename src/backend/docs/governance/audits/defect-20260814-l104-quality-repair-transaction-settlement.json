@@ -1,7 +1,7 @@
 {
   "schema_version": "polaris.platform_defect.v1",
   "defect_id": "P0-20260814-L104-QUALITY-REPAIR-TRANSACTION",
-  "status": "LIVE_REVALIDATION_RUNNING",
+  "status": "PLATFORM_FIX_VERIFIED_UNIT_LIVE_PENDING",
   "severity": "P0",
   "project_probe": "L1-04",
   "factory_run_id": "factory_87c10610b465",
@@ -34,6 +34,8 @@
     "settlement_error": "append_fact_event failed: idempotency conflict: key='factory-settlement:...:pending:waiting_barrier' fields=payload",
     "settlement_journal": "/home/dains/.cache/kernelone/.polaris/projects/e2826410ee7625bd7c4aa967-3f6c7b00539f/runtime/events/factory.settlement.jsonl",
     "no_op_edit_receipt": {
+      "session_snapshot": "/home/dains/.cache/kernelone/.polaris/projects/e2826410ee7625bd7c4aa967-3f6c7b00539f/runtime/sessions/session_snapshot_tx-f3de1991eae444398b03a637bffb3625.json",
+      "turn_id": "factory_87c10610b465--TASK-2--attempt-txi_e8c64f7b3b4c6289c1c19aab-0",
       "provider_tool_call_id": "call_019fff24c9b67c00a76bbb9d",
       "file": "engine/rules.go",
       "physical_result": {
@@ -45,6 +47,11 @@
       "incorrect_receipt_outcome": "succeeded",
       "before_after_hashes": "both absent",
       "effect": "unchanged verifier was rerun and the parent settled failed"
+    },
+    "native_envelope_guard_gap": {
+      "nested_openai_shape": "function.name plus function.arguments was fully validated",
+      "normalized_top_level_shape": "name was validated but top-level arguments were passed as null",
+      "effect": "non-stream same-turn retry bypassed empty-search validation before DEO"
     },
     "bootstrap_classification_failure": {
       "error": "deo_tool_classification_mismatch: execution_mode",
@@ -114,6 +121,14 @@
     {
       "owner": "factory stage persistence",
       "cause": "process cancellation after the durable stage_completed event and strict checkpoint pointer but before the commit marker ACK created cancelled_before_commit_ack quarantine that no later exact retry could discharge"
+    },
+    {
+      "owner": "roles.kernel final-request authority and roles.adapters DEO mutation port",
+      "cause": "non-stream normalized native calls validated only nested function.arguments; top-level empty edit arguments bypassed the guard, and a physical ok=true/no_op=true result was committed and counted as an authoritative successful mutation"
+    },
+    {
+      "owner": "kernelone ToolSpecRegistry provider schema",
+      "cause": "edit_file declared only file as required and did not encode that blocks, search+replace, or start_line+end_line+content must exist; the forced Anthropic-compatible request therefore admitted a file-only native call that could never mutate. The alternate direct Anthropic schema projection also removed required entirely"
     }
   ],
   "fixes": [
@@ -208,13 +223,29 @@
     {
       "file": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py and factory_run_service/_service_stage.py",
       "change": "classify only an exact cancelled_before_commit_ack event as recoverable, prove event/intent/checkpoint/pointer identity, restore the strict checkpoint, append the missing canonical commit marker, and clear only that exact cancellation quarantine before same-stage reentry"
+    },
+    {
+      "file": "polaris/cells/roles/kernel/internal/llm_caller/final_request_tool_surface.py and invoker/_call.py",
+      "change": "validate tool name and arguments identically for nested OpenAI and normalized top-level native envelopes; empty-search edit calls are rejected before DEO and stay in bounded same-turn Director recovery"
+    },
+    {
+      "file": "polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py",
+      "change": "terminalize a proven physical no-op without committing receipt_outcome=succeeded"
+    },
+    {
+      "file": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor/_helpers.py and contract_guards.py",
+      "change": "exclude explicit no-op rows from authoritative mutation success and classify director_write_no_effect as bounded same-turn replannable"
+    },
+    {
+      "file": "polaris/kernelone/tool_execution/tool_spec_registry.py",
+      "change": "preserve required in Anthropic-native schemas and project edit_file anyOf constraints so file-only calls are invalid at the physical provider boundary"
     }
   ],
   "verification": {
     "workspace_quality_tests": "51 passed",
     "settlement_tests": "96 passed",
     "syntax_and_execution_tool_tests": "42 passed, 2 skipped",
-    "final_request_tool_surface_tests": "11 passed including stream pre-dispatch rejection, empty-search rejection, valid edit acceptance, and same-turn mutation recovery",
+    "final_request_tool_surface_tests": "81 focused tests passed across final-request envelope validation, same-turn recovery, transaction receipt classification, execution tools, and DEO mutation settlement",
     "transaction_and_settlement_regression": "106 focused tests passed across provider surface, retry routing, settlement consumer, and event sourcing",
     "settlement_head_performance": "live 38.6 MB task_runtime.execution head query: approximately 1095 ms before bounded tail read; 6-7 ms warm after fix; current checkpoint replay performs zero source page reads",
     "task_runtime_projection_performance": "dynamic /proc evidence: old backend reread approximately 88 MiB in 2 seconds with no stream append; head-bound cache regression proves identical-head observers reuse one projection and a new fact invalidates it",
@@ -222,15 +253,16 @@
     "event_store_cache_tests": "70/70 sourcing-store tests passed; regression proves repeated non-strict query plus subsequent append/query require one historical parse total and advance sequences correctly",
     "bootstrap_recovery_tests": "43/43 bootstrap and weak-model recovery tests passed; live legacy readonly_serial mismatch reproduced before fix",
     "provider_surface_recovery_tests": "4/4 passed including invoker-wrapped guard error classification",
+    "tool_spec_effect_contract_tests": "115/115 focused ToolSpec, forced-surface, final-request, retry, batch-receipt, and DEO mutation tests passed; edit_file anyOf survives registry-faithful forced surface",
     "cancelled_stage_commit_recovery_tests": "28/28 reducer tests plus 5/5 focused service tests passed; exact cancellation cut recovers, publish failure remains non-authoritative, and unrelated persistence quarantine remains fail-closed",
-    "mypy": "all changed tool-surface and bootstrap source files passed",
-    "ruff": "changed source files and focused settlement/tool/syntax tests passed",
+    "mypy": "all 5 changed no-effect convergence source files passed",
+    "ruff": "all 8 changed no-effect convergence source/test files passed and were formatted",
     "known_unrelated_lint_debt": "characterization test split currently has pre-existing duplicate/unused imports; runtime tests execute successfully"
   },
   "live_acceptance": {
     "required": true,
-    "started_at": "2026-08-14T07:32:44Z",
-    "factory_run_status": "recovering",
+    "started_at": "2026-08-14T09:30:00Z",
+    "factory_run_status": "first same-run QA retry failed after four correctly rejected director_write_no_effect calls; ToolSpec effect-mode fix verified and second same-run QA retry pending",
     "retry_scope": "same L1-04 quality/Director owner only",
     "forbidden": [
       "restart PM",

@@ -138,6 +138,37 @@ FAILED (failures=1, errors=2)
     assert len({item.raw for item in diagnostics}) == 3
 
 
+def test_go_test_output_preserves_leaf_failures_for_convergence() -> None:
+    raw = """?   \tascii-pet-terminal/engine\t[no test files]
+--- FAIL: TestTeach_ErrorPaths (0.00s)
+    --- FAIL: TestTeach_ErrorPaths/zero_level (0.00s)
+        main_test.go:269: Teach(\"spark\",0) succeeded; want error
+    --- FAIL: TestTeach_ErrorPaths/negative_level (0.00s)
+        main_test.go:269: Teach(\"spark\",-2) succeeded; want error
+--- FAIL: TestQuickDemo_Invariants (0.00s)
+    main_test.go:383: QuickDemo must end on mood=joyful, got \"curious pet\"
+FAIL
+FAIL\tascii-pet-terminal\t0.347s
+FAIL
+"""
+
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    assert [item.code for item in diagnostics] == [
+        "verifier_test_failure",
+        "verifier_test_failure",
+        "verifier_test_failure",
+    ]
+    assert [item.metadata["test_name"] for item in diagnostics] == [
+        "TestTeach_ErrorPaths/zero_level",
+        "TestTeach_ErrorPaths/negative_level",
+        "TestQuickDemo_Invariants",
+    ]
+    assert all(item.metadata["total_failure_count"] == 3 for item in diagnostics)
+    assert [item.path for item in diagnostics] == ["main_test.go", "main_test.go", "main_test.go"]
+    assert [item.line for item in diagnostics] == [269, 269, 383]
+
+
 def test_javascript_node_smoke_test_uses_source_entrypoint_for_plain_javascript_package() -> None:
     content = build_javascript_node_smoke_test_content(
         "tests/product.test.js",

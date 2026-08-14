@@ -2063,6 +2063,142 @@ class TestQualityRepairMissingTargetContractB:
         assert "preserve already-passing behavior" in adapter.repair_message
 
     @pytest.mark.asyncio
+    async def test_go_test_failure_forces_same_task_edit_contract(
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A Go test failure is the same mutation obligation as TAP/JUnit."""
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        monkeypatch.delenv("KERNELONE_DIRECTOR_REPAIR_FORCE_EXISTING_WRITE", raising=False)
+
+        class _Execution:
+            def __init__(self) -> None:
+                self.allowed_tool_names: set[str] | None = None
+                self.allow_patch_fallback: bool | None = None
+
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                del result
+                return []
+
+            async def execute_tools(
+                self,
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **kwargs: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                self.allowed_tool_names = kwargs.get("allowed_tool_names")
+                self.allow_patch_fallback = kwargs.get("allow_patch_fallback")
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self._execution = _Execution()
+                self.repair_context: dict[str, Any] = {}
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, timeout_seconds, stage_label
+                self.repair_context = context
+                return {"content": ""}
+
+        (tmp_path / "main_test.go").write_text(
+            "package main_test\nfunc TestTeach_Monotonic(t *testing.T) {}\n",
+            encoding="utf-8",
+        )
+        # The QA convergence layer passes one causal leaf, not the original
+        # ``go test`` command wrapper.  Target discovery must therefore use
+        # the runtime diagnostic path instead of language-specific wrapper
+        # text.
+        failure = (
+            "--- FAIL: TestTeach_Monotonic (0.00s)\n"
+            '    main_test.go:216: Teach(spark, lower) returned error: invalid affinity level\n'
+            "FAIL\n"
+        )
+
+        adapter = _Adapter()
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["main_test.go"]},
+            target_task_id="TASK-3",
+            run_id="run-go-test-repair",
+            context={},
+            original_message="Repair the generated Go tests against the authoritative contract.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[failure],
+            changed_files=["main_test.go"],
+        )
+
+        assert summary["repair_target_files"] == ["main_test.go"]
+        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
+        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
+            "type": "function",
+            "function": {"name": "edit_file"},
+        }
+        assert adapter.repair_context["metadata"]["tool_contract"]["mutation_required"] is True
+        assert adapter.repair_context["metadata"]["tool_contract"]["mutation_reason"] == (
+            "verifier_test_failure"
+        )
+        assert adapter._execution.allowed_tool_names == {"edit_file"}
+        assert adapter._execution.allow_patch_fallback is False
+
+    @pytest.mark.asyncio
+    async def test_go_test_failure_does_not_expand_task_write_scope(self, tmp_path) -> None:
+        """A verifier path remains evidence-only for a task that does not own it."""
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Adapter:
+            workspace = str(tmp_path)
+
+            async def _invoke_role_dialogue_with_timeout(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+                del args, kwargs
+                raise AssertionError("out-of-scope verifier target must not reach the provider")
+
+        (tmp_path / "main_test.go").write_text(
+            "package main_test\nfunc TestTeach_Monotonic(t *testing.T) {}\n",
+            encoding="utf-8",
+        )
+        failure = (
+            "--- FAIL: TestTeach_Monotonic (0.00s)\n"
+            "    main_test.go:216: invalid affinity level\n"
+            "FAIL\n"
+        )
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["engine/rules.go"]},
+            target_task_id="TASK-2",
+            run_id="run-go-test-scope-fence",
+            context={},
+            original_message="Repair engine rules only.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[failure],
+            changed_files=["main_test.go"],
+        )
+
+        assert summary["stage"] == "task_boundary_repair_targets_deferred"
+        assert summary["repair_target_files"] == []
+        assert summary["task_boundary_scope_filter"]["out_of_scope_repair_target_files"] == ["main_test.go"]
+        assert summary["llm_fallback_blocked"] is True
+
+    @pytest.mark.asyncio
     async def test_semantic_quality_single_changed_file_repair_forces_write_context(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,

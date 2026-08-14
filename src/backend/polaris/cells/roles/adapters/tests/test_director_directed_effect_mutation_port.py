@@ -556,6 +556,49 @@ async def test_public_port_revalidates_then_consumes_then_executes(
 
 
 @pytest.mark.asyncio
+async def test_physical_no_op_never_commits_authoritative_success_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Transport-safe no-op must dead-letter its DEO operation, not claim mutation."""
+
+    context, fence, workspace = _context()
+    events: list[str] = []
+
+    def reject_false_receipt(*_args: object, **_kwargs: object) -> DirectedEffectOperationResultV1:
+        raise AssertionError("a physical no-op must not commit a successful effect receipt")
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.adapters.internal.director.directed_effect_mutation_port._commit_physical_effect_receipt",
+        reject_false_receipt,
+    )
+    physical = _PhysicalSpy(
+        events,
+        result={
+            "ok": True,
+            "no_op": True,
+            "reason": "edit_file_empty_search",
+            "file": "src/a.py",
+        },
+    )
+    port, _ = _port(
+        monkeypatch,
+        events=events,
+        context=context,
+        fence=fence,
+        workspace=workspace,
+        physical=physical,
+    )
+
+    result = await port.execute_mutation(context, "write_file", _ARGUMENTS)  # type: ignore[union-attr]
+
+    assert result.status == "failed"
+    assert result.error_code == "deo_physical_execution_failed"
+    assert result.tool_result is not None
+    assert events == ["revalidate", "consume", "physical"]
+    assert physical.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_receipt_commit_failure_marks_recovery_without_reexecuting_effect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

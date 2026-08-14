@@ -238,10 +238,18 @@ async def _run_materialization_quality_repair_retry(
                 repair_quality_errors,
                 workspace_root,
             )
-    explicit_quality_target_files = _explicit_artifact_quality_repair_target_files(
-        artifact_quality_errors=repair_quality_errors,
-        changed_files=changed_files,
-        workspace_full=workspace_full,
+    explicit_quality_target_files = _dedupe_preserve_order(
+        [
+            *_explicit_artifact_quality_repair_target_files(
+                artifact_quality_errors=repair_quality_errors,
+                changed_files=changed_files,
+                workspace_full=workspace_full,
+            ),
+            *_verifier_test_failure_target_files(
+                artifact_quality_errors=repair_quality_errors,
+                workspace_full=workspace_full,
+            ),
+        ]
     )
     explicit_missing_quality_targets = _dedupe_preserve_order(
         [
@@ -599,10 +607,10 @@ async def _run_materialization_quality_repair_retry(
             "temporary_staging_forbidden": True,
             "path_scope_denial_is_not_mutation": True,
         }
-    tap_assertion_requires_edit = bool(
+    verifier_test_failure_requires_edit = bool(
         existing_repair_target_files
         and not missing_repair_target_files
-        and any(_TAP_FAILED_TEST_RE.search(str(error or "")) for error in prompt_artifact_quality_errors)
+        and _contains_verifier_test_failure(prompt_artifact_quality_errors)
     )
     if repair_target_files:
         if missing_repair_target_files and not existing_repair_target_files:
@@ -618,7 +626,7 @@ async def _run_materialization_quality_repair_retry(
                 _quality_repair_write_file_tool_definition()
             ]
             repair_context["_transaction_kernel_force_exact_tools"] = True
-        elif tap_assertion_requires_edit:
+        elif verifier_test_failure_requires_edit:
             # A verifier assertion against existing code is a mutation task,
             # not another exploration turn.  r46 exposed the full TAP failure
             # and current source bodies but the auto tool surface still let the
@@ -739,7 +747,9 @@ async def _run_materialization_quality_repair_retry(
         if repair_target_files and not existing_repair_target_files:
             allowed_tool_names = {"write_file"}
             allow_patch_fallback = False
-        elif tap_assertion_requires_edit or (repair_target_files and _director_repair_force_existing_write_enabled()):
+        elif verifier_test_failure_requires_edit or (
+            repair_target_files and _director_repair_force_existing_write_enabled()
+        ):
             allowed_tool_names = {"edit_file"}
             allow_patch_fallback = False
         elif repair_target_files:
@@ -1417,6 +1427,69 @@ _FAILED_TEST_TITLE_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 _TAP_FAILED_TEST_RE = re.compile(r"^\s*not\s+ok\s+\d+\b", re.IGNORECASE | re.MULTILINE)
+
+
+def _contains_verifier_test_failure(errors: Iterable[str]) -> bool:
+    """Use runtime-owned diagnostic semantics for every test framework.
+
+    The quality-repair transaction is intentionally single-turn.  A failed
+    verifier against an existing task-owned file therefore must request a real
+    edit immediately; allowing another read-only turn returns control to QA
+    with zero effects.  The former TAP-only regex made Node tests strict while
+    Go/Python/JUnit failures silently stayed read-only.  Runtime diagnostic
+    normalization is the cross-language authority for this decision.
+    """
+
+    from polaris.cells.director.runtime.public import normalize_director_repair_diagnostics
+
+    normalized_errors = tuple(str(error or "") for error in errors if str(error or "").strip())
+    try:
+        diagnostics = normalize_director_repair_diagnostics(normalized_errors)
+    except (ImportError, RuntimeError, TypeError, ValueError):
+        # Keep the already-supported TAP behavior if diagnostic discovery is
+        # temporarily unavailable; never widen the fallback into a pass.
+        return any(_TAP_FAILED_TEST_RE.search(error) for error in normalized_errors)
+    return any(str(diagnostic.code or "").strip() == "verifier_test_failure" for diagnostic in diagnostics)
+
+
+def _verifier_test_failure_target_files(
+    *,
+    artifact_quality_errors: Iterable[str],
+    workspace_full: str,
+) -> list[str]:
+    """Return concrete task-scope candidates from runtime verifier facts.
+
+    Framework-specific parsers may split one command transcript into causal
+    leaf diagnostics before the quality-repair target selector runs.  The leaf
+    rows intentionally omit the original ``go test``/``pytest`` command
+    wrapper, so language regexes cannot be the authority for path discovery.
+    Use the runtime-owned normalized diagnostic path instead.  The caller's
+    task-scope partition remains the write authority: an external/hidden test
+    path is evidence only unless the current Director task explicitly owns it.
+    """
+
+    from polaris.cells.director.runtime.public import normalize_director_repair_diagnostics
+
+    workspace_root = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
+    if workspace_root is None or not workspace_root.is_dir():
+        return []
+    normalized_errors = tuple(str(error or "") for error in artifact_quality_errors if str(error or "").strip())
+    try:
+        diagnostics = normalize_director_repair_diagnostics(normalized_errors)
+    except (ImportError, RuntimeError, TypeError, ValueError):
+        return []
+    targets: list[str] = []
+    for diagnostic in diagnostics:
+        if str(diagnostic.code or "").strip() != "verifier_test_failure":
+            continue
+        rel = _normalize_declared_task_path(str(diagnostic.path or ""))
+        if not rel or Path(rel).suffix.lower() not in _SOURCE_REPAIR_EXTENSIONS:
+            continue
+        if _workspace_path_exists_case_insensitive(workspace_root, rel):
+            targets.append(rel)
+    return _dedupe_preserve_order(targets)
+
+
 _TEST_SUMMARY_FAIL_RE = re.compile(r"^\s*#?\s*fail\s+(?P<count>\d+)\s*$", re.IGNORECASE | re.MULTILINE)
 _PYTHON_UNITTEST_RESULT_LINE_RE = re.compile(
     r"^\s*\S+\s+\((?P<module>[^)]+)\)"

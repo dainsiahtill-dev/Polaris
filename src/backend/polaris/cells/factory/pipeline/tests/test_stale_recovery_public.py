@@ -91,6 +91,24 @@ async def test_public_recovery_returns_typed_released_lease(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_public_recovery_accepts_single_restart_replay_fence_increment(tmp_path: Path) -> None:
+    """A restarted service may fence the stale token before releasing it."""
+
+    service, admission, _, run_id, fencing_token = await _create_service(tmp_path, stale=True)
+    service._physical_attempt_coordinators.clear()
+
+    result = await recover_stale_factory_workspace_owner(
+        _command(service.workspace, run_id, fencing_token),
+        service_factory=lambda _workspace: service,
+    )
+
+    assert result.expected_fencing_token == fencing_token
+    assert result.lease.fencing_token == fencing_token + 1
+    assert result.lease.state is FactoryWorkspaceRunLeaseStateV1.RELEASED
+    assert admission.current() == result.lease
+
+
+@pytest.mark.asyncio
 async def test_public_recovery_preserves_wrong_fencing_token_error(tmp_path: Path) -> None:
     service, _, _, run_id, fencing_token = await _create_service(tmp_path, stale=True)
 

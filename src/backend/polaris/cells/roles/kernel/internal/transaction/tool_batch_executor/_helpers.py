@@ -1135,26 +1135,35 @@ def _batch_has_authoritative_success(receipts: list[Any]) -> bool:
     session rejecting all writes.
     """
 
-    if _effect_receipts_from_batch_receipts(receipts):
-        return True
     for receipt in normalize_batch_receipts(receipts):
         if int(receipt.get("pending_async_count") or 0) > 0 or bool(receipt.get("has_pending_async")):
             return True
-        for key in ("results", "raw_results"):
-            rows = receipt.get(key)
-            if not isinstance(rows, list):
-                continue
-            for item in rows:
-                if not isinstance(item, dict):
-                    continue
-                if str(item.get("status") or "").strip().lower() == "success":
-                    return True
-                effect_receipt = item.get("effect_receipt")
-                if isinstance(effect_receipt, dict):
-                    return True
-                result = item.get("result")
-                if isinstance(result, dict) and isinstance(result.get("effect_receipt"), dict):
-                    return True
+        rows = receipt.get("results")
+        if not isinstance(rows, list):
+            rows = receipt.get("raw_results")
+        normalized_rows = [item for item in rows or [] if isinstance(item, dict)]
+        non_no_effect_rows = []
+        for item in normalized_rows:
+            result = item.get("result")
+            no_effect = bool(item.get("no_op")) or (isinstance(result, dict) and bool(result.get("no_op")))
+            if not no_effect:
+                non_no_effect_rows.append(item)
+        for item in non_no_effect_rows:
+            if str(item.get("status") or "").strip().lower() == "success":
+                return True
+            effect_receipt = item.get("effect_receipt")
+            if isinstance(effect_receipt, dict):
+                return True
+            result = item.get("result")
+            if isinstance(result, dict) and isinstance(result.get("effect_receipt"), dict):
+                return True
+        top_level_effects = receipt.get("effect_receipts")
+        if (
+            isinstance(top_level_effects, list)
+            and top_level_effects
+            and (not normalized_rows or bool(non_no_effect_rows))
+        ):
+            return True
     return False
 
 

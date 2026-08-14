@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 from polaris.cells.roles.kernel.internal.llm_caller.final_request_tool_surface import (
+    assert_native_tool_call_in_final_request_surface,
     assert_tool_in_final_request_surface,
     final_request_allowed_tool_names,
 )
@@ -31,9 +32,7 @@ def test_physical_forced_tool_overrides_broad_semantic_surface() -> None:
         }
     )
 
-    assert final_request_allowed_tool_names(active_request=active_request, prepared=prepared) == {
-        "edit_file"
-    }
+    assert final_request_allowed_tool_names(active_request=active_request, prepared=prepared) == {"edit_file"}
     assert_tool_in_final_request_surface(
         tool_name="edit_file",
         active_request=active_request,
@@ -88,6 +87,34 @@ def test_edit_file_empty_search_is_rejected_before_physical_execution() -> None:
         assert_tool_in_final_request_surface(
             tool_name="edit_file",
             tool_arguments={"file": "engine/rules.go", "search": "", "replace": "fixed"},
+            active_request=active_request,
+            prepared=prepared,
+        )
+
+
+def test_top_level_native_edit_file_empty_search_is_rejected_before_physical_execution() -> None:
+    """Normalized top-level envelopes receive the same argument guard as OpenAI envelopes."""
+
+    prepared = SimpleNamespace(request_options={}, native_tool_schemas=[])
+    active_request = SimpleNamespace(
+        options={
+            "tools": [_tool("edit_file")],
+            "tool_choice": {"type": "function", "function": {"name": "edit_file"}},
+        }
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            r"provider_tool_surface_violation: requested=edit_file; "
+            r"allowed=edit_file; invalid=empty_search"
+        ),
+    ):
+        assert_native_tool_call_in_final_request_surface(
+            native_tool_call={
+                "name": "edit_file",
+                "arguments": {"file": "engine/rules.go", "search": "", "replace": "fixed"},
+            },
             active_request=active_request,
             prepared=prepared,
         )
@@ -183,8 +210,7 @@ async def test_stream_rejects_out_of_surface_call_before_emitting_tool_event() -
     )
 
     with patch(
-        "polaris.cells.roles.kernel.internal.llm_caller.stream_engine."
-        "build_final_request_context_audit_for_request",
+        "polaris.cells.roles.kernel.internal.llm_caller.stream_engine.build_final_request_context_audit_for_request",
         return_value={"final_request_token_estimate": 16},
     ):
         events = [

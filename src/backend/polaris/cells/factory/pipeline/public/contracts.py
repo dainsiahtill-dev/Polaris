@@ -597,8 +597,18 @@ class RecoverStaleFactoryWorkspaceOwnerResultV1:
             raise ValueError("lease workspace must match result workspace")
         if self.lease.run_id != self.run_id:
             raise ValueError("lease run_id must match result run_id")
-        if self.lease.fencing_token != self.expected_fencing_token:
-            raise ValueError("lease fencing_token must match expected_fencing_token")
+        # Restart recovery deliberately acquires one replay fence before
+        # releasing the stale owner.  The command token proves which stale
+        # owner may be recovered; the returned lease may therefore carry that
+        # exact token (same-process recovery) or its single fenced successor
+        # (restart recovery).  Any larger jump remains fail-closed.
+        if self.lease.fencing_token not in {
+            self.expected_fencing_token,
+            self.expected_fencing_token + 1,
+        }:
+            raise ValueError(
+                "lease fencing_token must match expected_fencing_token or its single replay-fence successor"
+            )
         if self.lease.state is not FactoryWorkspaceRunLeaseStateV1.RELEASED:
             raise ValueError("stale-owner recovery result requires a released lease")
         object.__setattr__(

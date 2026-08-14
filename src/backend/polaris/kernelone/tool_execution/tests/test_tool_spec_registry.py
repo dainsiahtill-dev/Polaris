@@ -78,6 +78,7 @@ class TestToolSpec:
         assert anthropic_tool["name"] == "my_tool"
         assert anthropic_tool["description"] == "My tool description"
         assert anthropic_tool["input_schema"]["type"] == "object"
+        assert anthropic_tool["input_schema"]["required"] == ["arg1"]
 
     def test_category_helpers(self) -> None:
         """Test is_read_tool, is_write_tool, is_exec_tool helpers."""
@@ -678,6 +679,19 @@ class TestMigrationFromContracts:
         assert "diff" not in required
         for key in ("diff", "patch", "patch_text", "unified_diff", "diff_text"):
             assert key in parameters["properties"]
+
+    def test_edit_file_provider_schema_requires_a_physical_edit_mode(self) -> None:
+        """A provider must not be allowed to emit ``edit_file(file=...)`` only."""
+        spec = ToolSpecRegistry.get("edit_file")
+        assert spec is not None
+
+        parameters = spec.parameters
+        assert parameters["required"] == ["file"]
+        assert parameters["anyOf"] == [
+            {"required": ["blocks"]},
+            {"required": ["search", "replace"]},
+            {"required": ["start_line", "end_line", "content"]},
+        ]
 
 
 class TestEffectiveToolSpecSnapshots:

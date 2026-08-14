@@ -740,6 +740,26 @@ class _DirectorDirectedEffectMutationPort:
                 physical_error=nested_error,
                 physical_error_type=nested_type,
             )
+        if raw_result.get("no_op") is True:
+            reason = str(raw_result.get("reason") or "physical mutation produced no effect").strip()
+            recovery = _attempt_physical_effect_recovery(
+                prepared.context,
+                reason="physical executor returned a proven no-effect result after fence consumption",
+                evidence=(
+                    ("context_id", prepared.context.context_id),
+                    ("failure_kind", "physical_result_no_effect"),
+                    ("no_effect_reason", reason[:200]),
+                    ("physical_executor_invoked", True),
+                ),
+                terminalize_declared_failure=True,
+                terminal_reason="physical mutation produced no effect",
+            )
+            return None, _failed(
+                recovery,
+                failure_kind="physical_result_no_effect",
+                physical_error=reason,
+                physical_error_type="director_write_no_effect",
+            )
         return raw_result, None
 
     async def _observe_post_state(
