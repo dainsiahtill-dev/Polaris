@@ -198,7 +198,12 @@ def _parse_typescript_missing_props_diagnostic(
         line = line or int(primary.group("line") or 0)
         col = col or int(primary.group("col") or 0)
     props_match = _TS_MISSING_PROPS_FROM_TYPE_RE.search(raw)
-    if props_match is None and code not in {"typescript_ts2345", "typescript_ts2739"}:
+    if props_match is None and code not in {
+        "typescript_ts2345",
+        "typescript_ts2739",
+        "typescript_ts2740",
+        "ts2740",
+    }:
         return None
     if props_match is None:
         return None

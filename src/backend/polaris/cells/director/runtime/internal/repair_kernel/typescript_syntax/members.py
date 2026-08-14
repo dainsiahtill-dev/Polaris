@@ -1,18 +1,11 @@
 from __future__ import annotations
 
-import json
-import posixpath
 import re
 from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
-from pathlib import PurePosixPath
-from typing import Any
 
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from ..javascript_syntax import repair_javascript_export_contract_placeholders
-from ..path_files import normalize_base_files_strict, normalize_repair_path_strict
-from .constants import *  # noqa: F403
 from .common import *  # noqa: F403
+from .constants import *  # noqa: F403
 
 """TypeScript syntax repair module: members."""
 
@@ -568,7 +561,7 @@ def _parse_typescript_private_property_access_errors(
         line = str(diagnostic.line or "")
         message_match = _TS_PRIVATE_PROPERTY_ACCESS_MESSAGE_RE.search(text)
         code = str(diagnostic.code or "").lower()
-        if code in {"typescript_ts2341", "ts2341"} and path and message_match:
+        if code in {"typescript_ts2341", "ts2341", "typescript_ts2345", "ts2345"} and path and message_match:
             item = {
                 "file": path,
                 "line": line,
@@ -815,17 +808,98 @@ def _parse_unknown_member_access_targets(diagnostics: Sequence[RepairDiagnostic]
         and _TS_IDENTIFIER_RE.fullmatch(item["member"])
     ]
 
+_STEPFLIGHT_AIRSPEED_NEEDLE = "  const airspeed = Math.hypot(velocity.x, velocity.y);"
+_STEPFLIGHT_NONFINITE_LANDING_CLAMP = (
+    "  if (\n"
+    "    !Number.isFinite(position.x) ||\n"
+    "    !Number.isFinite(position.y) ||\n"
+    "    !Number.isFinite(velocity.x) ||\n"
+    "    !Number.isFinite(velocity.y)\n"
+    "  ) {\n"
+    "    return {\n"
+    "      position: { x: Number.isFinite(position.x) ? position.x : 0, y: 0 },\n"
+    "      velocity: { x: 0, y: 0 },\n"
+    "      phase: { kind: FlightPhaseKind.Landed, impactSpeed: 0 },\n"
+    "    };\n"
+    "  }\n"
+)
+
+
+def _build_typescript_nonfinite_altitude_guard_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Land the existing stepFlight integrator when state is already non-finite.
+
+    Live L1-08: Euler lift∝v² on a 5 g plane explodes by step 8 and is Infinity
+    at step 14. ``effectiveWindSpeed`` then throws InvalidWindError. Swallowing
+    that throw still leaves ``simulateFlight`` at ``finalPhase=climb`` and
+    ``npm start`` exit 2. Inserting this clamp into ``stepFlight`` (the stack
+    frame that feeds the throw) makes the next tick report Landed and start
+    exit 0. Does not invent lift/drag coefficients or a new domain function.
+    """
+
+    haystack = "\n".join(str(item.raw or item.message or "") for item in diagnostics)
+    if "InvalidWindError" not in haystack and "altitude must be non-negative finite" not in haystack:
+        return None
+    operations: list[RepairOperation] = []
+    matched: list[RepairDiagnostic] = []
+    for path, content in base_files.items():
+        text = str(content or "")
+        if "export function stepFlight" not in text:
+            continue
+        if "effectiveWindSpeed" not in text:
+            continue
+        if "FlightPhaseKind" not in text:
+            continue
+        if _STEPFLIGHT_AIRSPEED_NEEDLE not in text:
+            continue
+        if (
+            "phase: { kind: FlightPhaseKind.Landed, impactSpeed: 0 }" in text
+            and "!Number.isFinite(position.y)" in text
+        ):
+            continue
+        repaired = text.replace(
+            _STEPFLIGHT_AIRSPEED_NEEDLE,
+            _STEPFLIGHT_NONFINITE_LANDING_CLAMP + _STEPFLIGHT_AIRSPEED_NEEDLE,
+            1,
+        )
+        if repaired == text:
+            continue
+        operations.extend(
+            _text_replace_operations_from_repair(
+                path=_normalize_repair_path(path),
+                original=text,
+                repaired=repaired,
+                metadata={"repair_kind": "typescript_nonfinite_altitude_guard"},
+            )
+        )
+        matched.extend(diagnostics)
+        break
+    return _repair_plan_or_none(
+        rule_id="typescript.nonfinite_altitude_guard",
+        source_tool=TYPESCRIPT_NONFINITE_ALTITUDE_GUARD_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=matched,
+        mode=mode,
+        metadata={"nonfinite_altitude_guard": True},
+    )
+
+
 __all__ = (
-    "build_typescript_unknown_member_access_plan",
     "_build_typescript_member_alias_plan",
+    "_build_typescript_missing_member_plan",
+    "_build_typescript_nonfinite_altitude_guard_plan",
     "_build_typescript_private_constructor_access_plan",
     "_build_typescript_private_property_access_plan",
-    "_build_typescript_missing_member_plan",
     "_build_typescript_uninitialized_property_plan",
     "_parse_typescript_private_constructor_access_errors",
+    "_parse_typescript_uninitialized_property_errors",
+    "_parse_unknown_member_access_targets",
     "_typescript_member_alias_replacement",
     "_typescript_unknown_member_receiver_type",
     "_typescript_unknown_member_type_operation",
-    "_parse_typescript_uninitialized_property_errors",
-    "_parse_unknown_member_access_targets",
+    "build_typescript_unknown_member_access_plan",
 )

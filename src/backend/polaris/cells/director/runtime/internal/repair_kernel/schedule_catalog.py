@@ -399,6 +399,7 @@ _MATERIALIZATION_TARGET_RUNTIME_SOURCE_TOOLS = (
     "deterministic_javascript_dom_global_runtime_guard_repair",
     "deterministic_javascript_missing_method_runtime_repair",
     "deterministic_typescript_html_container_selector_repair",
+    "deterministic_typescript_nonfinite_altitude_guard_repair",
 )
 
 

@@ -211,16 +211,7 @@ def build_typescript_argument_shape_adapter_plan(
         )
         if op is None or not op.content or op.content == content:
             continue
-        repaired = str(op.content)
-        updated[path] = repaired
-        operations.extend(
-            _text_replace_operations_from_repair(
-                path=path,
-                original=content,
-                repaired=repaired,
-                metadata=dict(op.metadata or {}),
-            )
-        )
+        updated[path] = str(op.content)
         matched.append(diagnostic)
         adapters.append(
             {
@@ -229,6 +220,28 @@ def build_typescript_argument_shape_adapter_plan(
                 "props": list(props),
                 "line": line,
             }
+        )
+    for path, content in list(updated.items()):
+        phase_repaired = _typescript_replace_incompatible_phase_object_with_public_getter(
+            content=content,
+            diagnostics=diagnostics,
+            path=path,
+            base_files=updated,
+        )
+        if phase_repaired and phase_repaired != content:
+            updated[path] = phase_repaired
+            adapters.append({"file": path, "rewrite": "public_phase_getter"})
+    for path, repaired in updated.items():
+        original = str(normalized_base.get(path) or "")
+        if not repaired or repaired == original:
+            continue
+        operations.extend(
+            _text_replace_operations_from_repair(
+                path=path,
+                original=original,
+                repaired=repaired,
+                metadata={"repair_kind": "typescript_argument_shape_adapter"},
+            )
         )
     return _repair_plan_or_none(
         rule_id="typescript.argument_shape_adapter",
@@ -451,13 +464,42 @@ def _typescript_adapt_argument_shape_operation(
         expr_start = original_line.find(expr)
     if expr_start < 0:
         return None
-    adapter = _typescript_build_argument_shape_adapter(
-        expr=expr,
-        missing_props=missing_props,
+    ctor_match = re.search(r"new\s+FlightController\s*\((?P<inner>[^;]+)\)", original_line)
+    inner = str(ctor_match.group("inner") or "").strip() if ctor_match else expr
+    if _typescript_can_adapt_via_build_scenario(
+        content=content,
         source_type=source_type,
-        target_shape=target_shape,
+        missing_props=missing_props,
         base_files=base_files,
-    )
+    ):
+        adapter = _typescript_build_scenario_controller_adapter(inner or expr)
+        content = _typescript_ensure_named_import(content, module_hint="simulation", symbol="buildScenario")
+        content = _typescript_rewrite_reconfigure_from_simulation_config(content)
+        ctor = re.compile(r"new\s+FlightController\s*\((?P<inner>[^;]+)\)")
+        repaired, _replaced = ctor.subn(f"new FlightController({adapter})", content, count=1)
+        if repaired == content:
+            return None
+        return RepairOperation(
+            kind="write_file",
+            path=path,
+            content=repaired,
+            before_hash=sha256_text(content),
+            metadata={
+                "repair_kind": "typescript_argument_shape_adapter",
+                "write_file_reason": "ts2345_simulation_config_via_build_scenario",
+                "source_type": source_type,
+                "missing_props": list(missing_props),
+                "line": line,
+            },
+        )
+    else:
+        adapter = _typescript_build_argument_shape_adapter(
+            expr=expr,
+            missing_props=missing_props,
+            source_type=source_type,
+            target_shape=target_shape,
+            base_files=base_files,
+        )
     if not adapter or adapter == expr:
         return None
     repaired_line = original_line[:expr_start] + adapter + original_line[expr_start + len(expr) :]
@@ -523,3 +565,148 @@ def _typescript_build_argument_shape_adapter(
     if not parts:
         return ""
     return "{ " + ", ".join(parts) + " }"
+
+
+def _typescript_can_adapt_via_build_scenario(
+    *,
+    content: str,
+    source_type: str,
+    missing_props: Sequence[str],
+    base_files: Mapping[str, str],
+) -> bool:
+    if source_type != "SimulationConfig":
+        return False
+    needed = {"plane", "wind", "launchAngle"}
+    if not needed.issubset({str(item) for item in missing_props}):
+        return False
+    if "createPlane" not in content or "createWind" not in content or "createAngle" not in content:
+        return False
+    return any("export function buildScenario" in str(body or "") for body in base_files.values())
+
+
+def _typescript_build_scenario_controller_adapter(expr: str) -> str:
+    token = str(expr or "").strip()
+    if not token:
+        return ""
+    return (
+        "((cfg) => { const scenario = buildScenario(cfg, { "
+        "createPlaneFn: createPlane, createWindFn: createWind, createAngleFn: createAngle }); "
+        "return { plane: scenario.plane, wind: scenario.wind, "
+        "launchAngle: scenario.launch.angle, launchSpeedMs: cfg.launchSpeedMs, "
+        "maxSteps: cfg.maxSteps }; })(" + token + ")"
+    )
+
+
+def _typescript_rewrite_reconfigure_from_simulation_config(content: str) -> str:
+    pattern = re.compile(
+        r"reconfigure\(\{\s*plane:\s*(?P<id>[A-Za-z_$][\w$]*)\.plane,\s*"
+        r"wind:\s*(?P=id)\.wind,\s*launchAngle:\s*(?P=id)\.launchAngle,\s*"
+        r"launchSpeedMs:\s*(?P=id)\.launchSpeedMs,?\s*\}\)",
+        re.S,
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        return "reconfigure(" + _typescript_build_scenario_controller_adapter(match.group("id")) + ")"
+
+    return pattern.sub(_replace, content)
+
+
+def _typescript_ensure_named_import(content: str, *, module_hint: str, symbol: str) -> str:
+    if re.search(rf"import\s*\{{[^}}]*\b{re.escape(symbol)}\b", content, re.S):
+        return content
+    pattern = re.compile(
+        rf"(import\s*\{{)([^}}]*)(\}}\s*from\s*['\"][^'\"]*{re.escape(module_hint)}[^'\"]*['\"])",
+        re.S,
+    )
+    match = pattern.search(content)
+    if match is None:
+        return content
+    names = match.group(2)
+    if re.search(rf"\b{re.escape(symbol)}\b", names):
+        return content
+    stripped = names.rstrip()
+    if stripped.endswith(","):
+        new_names = stripped + (f"\n  {symbol}\n" if "\n" in names else f" {symbol} ")
+    elif "\n" in names:
+        new_names = stripped + f",\n  {symbol}\n"
+    elif stripped.strip():
+        new_names = stripped + f", {symbol} "
+    else:
+        new_names = f" {symbol} "
+    return content[: match.start(2)] + new_names + content[match.end(2) :]
+
+
+def _typescript_replace_incompatible_phase_object_with_public_getter(
+    *,
+    content: str,
+    diagnostics: Sequence[RepairDiagnostic],
+    path: str,
+    base_files: Mapping[str, str],
+) -> str | None:
+    """Replace hand-built phase objects with an existing public FlightPhase getter.
+
+    Live L1-08: web.ts assigned ``{ kind: string }`` / incomplete landed objects
+    to ``finalPhase: FlightPhase``. FlightController already exposes
+    ``currentLastPhase``.
+    """
+
+    relevant = False
+    for diagnostic in diagnostics:
+        if str(diagnostic.path or "") and _normalize_repair_path(str(diagnostic.path or "")) != path:
+            if path not in str(diagnostic.raw or ""):
+                continue
+        text = str(diagnostic.raw or diagnostic.message or "")
+        code = str(diagnostic.code or "").lower()
+        if code in {"typescript_ts2322", "ts2322"} or "TS2322" in text:
+            if "FlightPhase" in text or "climb" in text.lower() or "finalPhase" in content:
+                relevant = True
+                break
+    if not relevant:
+        return None
+    has_getter = any(
+        re.search(
+            r"\bget\s+currentLastPhase\s*\([^)]*\)\s*:\s*(?:import\s*\([^)]*\)\s*\.)?FlightPhase\b",
+            str(body or ""),
+        )
+        for body in base_files.values()
+    )
+    if not has_getter:
+        return None
+    replaced = _typescript_replace_final_phase_expressions(content, "controller.currentLastPhase")
+    if replaced == content:
+        return None
+    return replaced
+
+
+def _typescript_replace_final_phase_expressions(content: str, replacement: str) -> str:
+    """Replace ``finalPhase: <expr>`` values using brace depth, not a greedy regex."""
+
+    out = content
+    key = "finalPhase:"
+    start = 0
+    while True:
+        idx = out.find(key, start)
+        if idx < 0:
+            break
+        cursor = idx + len(key)
+        while cursor < len(out) and out[cursor] in " \t\n":
+            cursor += 1
+        if not (out.startswith("{", cursor) or out.startswith("controller.status", cursor)):
+            start = cursor
+            continue
+        depth = 0
+        end = cursor
+        while end < len(out):
+            char = out[end]
+            if char in "{[(":
+                depth += 1
+            elif char in "}])":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif char == "," and depth == 0:
+                break
+            end += 1
+        out = out[:idx] + f"finalPhase: {replacement}" + out[end:]
+        start = idx + len(f"finalPhase: {replacement}")
+    return out

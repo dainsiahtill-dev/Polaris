@@ -743,6 +743,28 @@ def build_typescript_object_literal_missing_props_plan(
         if not path or path not in updated or line <= 0 or not props:
             continue
         content = str(updated.get(path) or "")
+        annotation_repaired = _typescript_rewrite_class_return_annotation(
+            content=content,
+            line=line,
+            type_name=type_name,
+            base_files=updated,
+        )
+        if annotation_repaired and annotation_repaired != content:
+            operations.extend(
+                _text_replace_operations_from_repair(
+                    path=path,
+                    original=content,
+                    repaired=annotation_repaired,
+                    metadata={
+                        "repair_kind": "typescript_object_literal_class_return_annotation",
+                        "type_name": type_name,
+                    },
+                )
+            )
+            updated[path] = annotation_repaired
+            matched.append(diagnostic)
+            repairs.append({"file": path, "type": type_name, "rewrite": "constructor_parameters"})
+            continue
         op = _typescript_inject_missing_object_props_operation(
             path=path,
             content=content,
@@ -773,6 +795,48 @@ def build_typescript_object_literal_missing_props_plan(
         mode=mode,
         metadata={"object_literal_missing_props_repairs": repairs},
     )
+
+def _typescript_exported_class_exists(base_files: Mapping[str, str], type_name: str) -> bool:
+    if not re.fullmatch(r"[A-Za-z_$][\w$]*", type_name or ""):
+        return False
+    class_re = re.compile(rf"\b(?:export\s+)?class\s+{re.escape(type_name)}\b")
+    return any(class_re.search(str(content or "")) for content in base_files.values())
+
+
+def _typescript_rewrite_class_return_annotation(
+    *,
+    content: str,
+    line: int,
+    type_name: str,
+    base_files: Mapping[str, str],
+) -> str | None:
+    """Rewrite ``): Class {`` when a function returns a plain object, not a class instance.
+
+    Live L1-08: ``buildConfig(): FlightController { return { plane, wind, ... } }``
+    is TS2740. Inventing FlightController fields is forbidden; the object already
+    matches the constructor bag. Use ``ConstructorParameters<typeof Class>[0]``.
+    """
+
+    if not _typescript_exported_class_exists(base_files, type_name):
+        return None
+    lines = content.splitlines(keepends=True)
+    if line < 1 or line > len(lines):
+        return None
+    header_re = re.compile(
+        rf"(?P<prefix>\)\s*:\s*){re.escape(type_name)}(?P<suffix>\s*\{{?\s*(?:\r?\n)?)$"
+    )
+    replacement = f"ConstructorParameters<typeof {type_name}>[0]"
+    for index in range(line - 1, -1, -1):
+        current = lines[index]
+        match = header_re.search(current)
+        if match is None:
+            if re.search(r"\bfunction\b|\b=>\b", current) and index < line - 8:
+                return None
+            continue
+        lines[index] = current[: match.start("prefix")] + match.group("prefix") + replacement + match.group("suffix")
+        return "".join(lines)
+    return None
+
 
 def _typescript_object_prop_stub_expression(prop: str) -> str:
     known = _TS_KNOWN_METHOD_STUBS.get(prop)

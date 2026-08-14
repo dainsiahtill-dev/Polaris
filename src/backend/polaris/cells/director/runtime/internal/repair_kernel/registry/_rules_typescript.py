@@ -32,6 +32,7 @@ from ..typescript_syntax import (
     TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
     TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
     TYPESCRIPT_MISSING_RELATIVE_MODULE_SOURCE_TOOL,
+    TYPESCRIPT_NONFINITE_ALTITUDE_GUARD_SOURCE_TOOL,
     TYPESCRIPT_NUMBER_PROPERTY_CALL_SOURCE_TOOL,
     TYPESCRIPT_NUMBER_TO_STRING_ARGUMENT_SOURCE_TOOL,
     TYPESCRIPT_OBJECT_ASSIGN_ASSERTION_SOURCE_TOOL,
@@ -421,8 +422,8 @@ def typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             phase="quality_repair",
             archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
             priority=1,
-            diagnostic_codes=("typescript_ts2341",),
-            message_terms=("property", "private", "only accessible within class"),
+            diagnostic_codes=("typescript_ts2341", "typescript_ts2345"),
+            message_terms=("property", "private"),
             risk_level="low",
             description=(
                 "Unprivates an existing class field when another owner file reads it "
@@ -430,6 +431,24 @@ def typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             ),
             runtime_plan_available=True,
             metadata=_executable_runtime_metadata(scope="private_property_modifier_text_replace"),
+        ),
+        RepairRuleDefinition(
+            rule_id="typescript.nonfinite_altitude_guard",
+            source_tool=TYPESCRIPT_NONFINITE_ALTITUDE_GUARD_SOURCE_TOOL,
+            language="typescript",
+            phase="target_runtime",
+            archetype=RepairArchetype.RUNTIME_CONTRACT,
+            priority=1,
+            diagnostic_codes=("artifact_quality_error", "workspace_validation_failed"),
+            message_terms=("invalidwinderror", "altitude", "non-negative finite"),
+            risk_level="low",
+            description=(
+                "When npm start dies because stepFlight fed non-finite altitude into "
+                "effectiveWindSpeed, insert a Landed clamp at the existing integrator "
+                "entry so simulateFlight can exit 0 without inventing aerodynamics."
+            ),
+            runtime_plan_available=True,
+            metadata=_executable_runtime_metadata(scope="nonfinite_altitude_guard_text_replace"),
         ),
         RepairRuleDefinition(
             rule_id="typescript.object_literal_missing_member_implementation",
@@ -1269,12 +1288,14 @@ def typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             phase="quality_repair",
             archetype=RepairArchetype.NULLABLE_TYPE_MISMATCH,
             priority=1,
-            diagnostic_codes=("typescript_ts2345", "typescript_ts2739"),
+            diagnostic_codes=("typescript_ts2345", "typescript_ts2739", "typescript_ts2740"),
             message_terms=("missing the following properties from type",),
             risk_level="low",
             description=(
-                "Injects stub methods/fields into object literals missing required interface "
-                "properties (R170 incomplete CompilerHost for ts.createProgram)."
+                "For TS2740 object literals returned from a function annotated as a class, "
+                "rewrites the return type to ConstructorParameters<typeof Class>[0] instead of "
+                "inventing class fields. Otherwise injects stub methods/fields into object "
+                "literals missing required interface properties (R170 CompilerHost)."
             ),
             runtime_plan_available=True,
             metadata=_executable_runtime_metadata(scope="object_literal_missing_props_text_replace"),
@@ -1303,8 +1324,8 @@ def typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             phase="quality_repair",
             archetype=RepairArchetype.NULLABLE_TYPE_MISMATCH,
             priority=1,
-            diagnostic_codes=("typescript_ts2345",),
-            message_terms=("argument of type", "missing the following properties", "parameter of type"),
+            diagnostic_codes=("typescript_ts2345", "typescript_ts2322", "typescript_ts2339"),
+            message_terms=("argument of type", "parameter of type"),
             risk_level="low",
             description=(
                 "Adapts call-site arguments that miss required object properties "

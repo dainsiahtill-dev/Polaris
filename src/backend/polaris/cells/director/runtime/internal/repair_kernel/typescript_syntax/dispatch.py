@@ -57,6 +57,7 @@ def build_typescript_runtime_plan_for_source_tool(
         TYPESCRIPT_INVALID_MODULE_AUGMENTATION_SOURCE_TOOL: _build_typescript_invalid_module_augmentation_plan,
         TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL: _build_typescript_private_constructor_access_plan,
         TYPESCRIPT_PRIVATE_PROPERTY_ACCESS_SOURCE_TOOL: _build_typescript_private_property_access_plan,
+        TYPESCRIPT_NONFINITE_ALTITUDE_GUARD_SOURCE_TOOL: _build_typescript_nonfinite_altitude_guard_plan,
         TYPESCRIPT_NUMBER_PROPERTY_CALL_SOURCE_TOOL: build_typescript_number_property_call_plan,
         TYPESCRIPT_EXPORT_AMBIGUITY_SOURCE_TOOL: _build_typescript_export_ambiguity_plan,
         TYPESCRIPT_REEXPORT_SOURCE_TOOL: _build_typescript_reexport_plan,

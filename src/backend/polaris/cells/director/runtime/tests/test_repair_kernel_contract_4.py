@@ -2,30 +2,14 @@
 
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
-from polaris.cells.control_plane.run_ledger.public import TaskBoundaryFailureClassV1
 from polaris.cells.director.runtime.internal.repair_kernel import (
     PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL,
-    PatchComposer,
-    RepairAdvisorNote,
-    RepairArchetype,
-    RepairConvergenceScheduler,
     RepairDiagnostic,
     RepairOperation,
-    RepairPlan,
-    RepairPolicyContext,
-    RepairPolicyGate,
-    RepairReceipt,
-    RepairRevalidationEvidence,
     RepairRuleDefinition,
-    RepairRuleRegistry,
-    RepairVerifierSnapshot,
-    TransactionalRepairExecutor,
     build_cpp_failing_smoke_translation_unit_plan,
     build_cpp_include_path_plan,
     build_cpp_missing_private_members_plan,
@@ -39,37 +23,10 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     build_go_nested_import_plan,
     build_go_subpath_import_plan,
     build_go_unused_import_plan,
-    build_java_accessor_alias_plan,
-    build_patch_residue_cleanup_plan,
     build_python_readme_required_token_plan,
-    build_repair_coverage_report,
-    build_repair_receipt_context,
-    build_rust_dependency_plan,
-    build_rust_missing_binary_entrypoint_plan,
-    build_typescript_canvas_scale_return_type_plan,
-    build_typescript_duplicate_object_property_plan,
-    build_typescript_enum_member_separator_plan,
-    build_typescript_hyphenated_identifier_plan,
-    build_typescript_missing_closing_brace_plan,
-    build_typescript_nullable_canvas_context_plan,
-    build_typescript_number_property_call_plan,
-    build_typescript_number_to_string_argument_plan,
-    build_typescript_object_literal_comma_plan,
-    build_typescript_readonly_assignment_plan,
-    build_typescript_shorthand_property_scope_plan,
-    build_typescript_string_literal_suggestion_plan,
     default_repair_rule_registry,
-    deterministic_repair_source_tool_known,
-    javascript_syntax as js_syntax,
     normalize_artifact_quality_errors,
-    order_repair_plans,
     plan_runtime_repair,
-    plan_typescript_canvas_scale_return_type_repair,
-    plan_typescript_duplicate_object_property_repair,
-    plan_typescript_enum_member_separator_repair,
-    plan_typescript_nullable_canvas_context_repair,
-    plan_typescript_object_literal_comma_repair,
-    remove_patch_residue_lines,
     repair_cpp_failing_smoke_translation_unit_text,
     repair_cpp_include_paths_text,
     repair_cpp_invalid_placeholder_declarations_text,
@@ -78,120 +35,25 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     repair_cpp_struct_getter_field_access_text,
     repair_go_bare_import_strings_text,
     repair_go_nested_import_keywords_text,
-    repair_java_common_accessor_aliases_text,
-    repair_typescript_missing_closing_braces,
-    repair_typescript_nullable_canvas_context_guards,
-    repair_typescript_object_literal_commas,
-    run_materialization_quality_repair_schedule_callbacks,
-    run_post_execution_repair_schedule_callbacks,
     run_runtime_repair,
-    runtime_dispatch as runtime_dispatch_module,
     runtime_repair_bindings,
     runtime_repair_source_tools,
     typescript_syntax as ts_syntax,
 )
-from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy import (
-    FORBIDDEN_REPAIR_ADVISORY_METADATA_FIELDS,
-    FORBIDDEN_REPAIR_ADVISORY_SUGGESTED_RULE_FIELDS,
-)
 from polaris.cells.director.runtime.internal.repair_kernel.contracts import (
     FILE_ABSENT_HASH,
-    ComposedPatch,
-    CompositionResult,
     sha256_text,
 )
-from polaris.cells.director.runtime.internal.repair_kernel.generic_hygiene_syntax import (
-    SCAFFOLD_MARKER_QUALITY_CLEANUP_SOURCE_TOOL,
-    build_scaffold_marker_cleanup_plan,
-)
-from polaris.cells.director.runtime.internal.repair_kernel.java_syntax import (
-    build_java_eof_truncation_plan,
-    build_java_test_dependency_plan,
-    repair_java_eof_truncation_text,
-)
-from polaris.cells.director.runtime.internal.repair_kernel.rust_syntax import (
-    build_rust_crate_import_rewrite_plan,
-    build_rust_field_rename_suggestion_plan,
-    build_rust_incompatible_copy_derive_plan,
-    build_rust_line_suggestion_plan,
-    build_rust_method_self_signature_plan,
-    build_rust_missing_trait_derive_plan,
-    build_rust_serde_derive_plan,
-    build_rust_trait_import_plan,
-    build_rust_unresolved_pub_use_plan,
-    build_rust_unused_import_plan,
-    build_rust_wrong_crate_path_plan,
-)
 from polaris.cells.director.runtime.public import (
-    AttachDirectorRepairRevalidationEvidenceV1,
-    CompareDirectorRepairShadowRunV1,
-    DirectorRepairAdvisoryPolicyResultV1,
-    DirectorRepairAdvisoryValidationResultV1,
-    DirectorRepairCoverageReportV1,
-    DirectorRepairEffectPlanV1,
-    DirectorRepairEffectV1,
-    DirectorRepairKernelSummaryProjectionResultV1,
-    DirectorRepairLanguageSlotsResultV1,
-    DirectorRepairLanguageSlotV1,
-    DirectorRepairMaterializationAllowedPathsResultV1,
-    DirectorRepairMaterializationPlanProbeResultV1,
-    DirectorRepairMaterializationQualityFacadeResultV1,
-    DirectorRepairMaterializationQualityScheduleResultV1,
-    DirectorRepairMetricsResultV1,
-    DirectorRepairPlanningResultV1,
-    DirectorRepairPostExecutionScheduleResultV1,
-    DirectorRepairRevalidationProjectionResultV1,
-    DirectorRepairShadowComparisonResultV1,
-    EvaluateDirectorRepairCutoverReadinessV1,
     PlanDirectorRepairCommandV1,
-    ProjectDirectorRepairKernelSummaryV1,
-    ProjectDirectorRepairMaterializationBridgeMetadataV1,
-    ProjectDirectorRepairMetricsV1,
-    QueryDirectorRepairAdvisoryPolicyV1,
-    QueryDirectorRepairAdvisoryValidationV1,
     QueryDirectorRepairCoverageV1,
-    QueryDirectorRepairLanguageSlotsV1,
-    QueryDirectorRepairMaterializationAllowedPathsV1,
-    QueryDirectorRepairMaterializationPlanProbeV1,
-    QueryDirectorRepairMaterializationQualityScheduleV1,
     QueryDirectorRepairPlanProbeV1,
-    QueryDirectorRepairPostExecutionScheduleV1,
-    QueryDirectorRepairStrategyCatalogV1,
-    RepairAdvisoryV1,
-    RepairDiagnosticV1,
-    RepairReceiptV1,
     RunDirectorRepairCommandV1,
-    attach_director_repair_revalidation_evidence,
-    build_director_repair_kernel_summary,
-    compare_director_repair_shadow_run,
-    evaluate_director_repair_cutover_readiness,
-    hash_director_repair_effect_plan,
-    normalize_director_repair_issue_diagnostics,
     plan_director_repair,
-    project_director_repair_kernel_summary,
-    project_director_repair_materialization_bridge_metadata,
-    project_director_repair_metrics,
-    project_director_repair_revalidation_evidence,
-    query_director_repair_advisory_policy,
     query_director_repair_coverage,
-    query_director_repair_language_slots,
-    query_director_repair_materialization_allowed_paths,
-    query_director_repair_materialization_plan_probe,
-    query_director_repair_materialization_quality_schedule,
     query_director_repair_plan_probe,
-    query_director_repair_post_execution_schedule,
-    query_director_repair_strategy_catalog,
-    run_director_materialization_quality_repair_facade,
     run_director_repair,
-    service as runtime_public_service,
-    validate_director_repair_advisory,
 )
-from polaris.cells.director.runtime.public.directed_effect_contracts import hash_directed_effect_arguments
-from polaris.cells.director.runtime.public.service import normalize_director_repair_diagnostics
-from polaris.kernelone.quality import artifact_quality_issues_from_errors
-from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
-
-
 
 
 def test_public_typescript_unresolved_identifier_repairs_parameter_alias() -> None:
@@ -1251,6 +1113,164 @@ def test_typescript_private_property_access_unprivates_existing_field() -> None:
     assert "private trajectory" not in after
     assert "readonly windSpeedMs" in after
     assert "trajectory: number[]" in after
+
+
+def test_typescript_private_property_unprivates_ts2345_assignability() -> None:
+    """Live L1-08: new FlightController(config) TS2345 when launchSpeedMs is private."""
+
+    consumer = (
+        "import { FlightController } from './engine/simulation.js';\n"
+        "export function start(config: FlightController): FlightController {\n"
+        "  return new FlightController(config);\n"
+        "}\n"
+    )
+    owner = (
+        "export class FlightController {\n"
+        "  public readonly plane = {};\n"
+        "  private readonly launchSpeedMs: number;\n"
+        "  public constructor(_config: { readonly launchSpeedMs: number }) {\n"
+        "    this.launchSpeedMs = _config.launchSpeedMs;\n"
+        "  }\n"
+        "}\n"
+    )
+    diagnostic = (
+        "src/web.ts(3,29): error TS2345: Argument of type 'FlightController' is not assignable "
+        "to parameter of type '{ readonly launchSpeedMs: number; }'.\n"
+        "  Property 'launchSpeedMs' is private in type 'FlightController' but not in type "
+        "'{ readonly launchSpeedMs: number; }'."
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool="deterministic_typescript_private_property_access_repair",
+            base_files={"src/web.ts": consumer, "src/engine/simulation.ts": owner},
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+    assert planning["planned"] is True
+    after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "private readonly launchSpeedMs" not in after
+    assert "readonly launchSpeedMs" in after
+
+
+def test_typescript_object_literal_class_return_uses_constructor_parameters() -> None:
+    """Live L1-08: buildConfig(): FlightController { return { plane, wind } } is TS2740."""
+
+    consumer = (
+        "import { FlightController } from './engine/simulation.js';\n"
+        "function buildConfig(): FlightController {\n"
+        "  return { plane: {}, wind: {}, launchAngle: {}, launchSpeedMs: 1 };\n"
+        "}\n"
+    )
+    owner = "export class FlightController {\n  public constructor(_config: { launchSpeedMs: number }) {}\n}\n"
+    diagnostic = (
+        "src/web.ts(3,3): error TS2740: Type '{ plane: {}; wind: {}; launchAngle: {}; launchSpeedMs: number; }' "
+        "is missing the following properties from type 'FlightController': scenario, maxSteps, windSpeedMs, position"
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool="deterministic_typescript_object_literal_missing_props_repair",
+            base_files={"src/web.ts": consumer, "src/engine/simulation.ts": owner},
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "function buildConfig(): ConstructorParameters<typeof FlightController>[0] {" in after
+    assert "scenario:" not in after
+
+
+def test_typescript_argument_shape_uses_build_scenario_and_phase_getter() -> None:
+    """Live L1-08: SimulationConfig passed to FlightController; finalPhase object TS2322."""
+
+    consumer = (
+        "import { createAngle, createPlane, createWind } from './models/index.js';\n"
+        "import { FlightController, SimulationConfig } from './engine/simulation.js';\n"
+        "function start(config: SimulationConfig, controller: FlightController): void {\n"
+        "  const next = new FlightController(config);\n"
+        "  controller.reconfigure({ plane: next.plane, wind: next.wind, launchAngle: next.launchAngle, launchSpeedMs: next.launchSpeedMs });\n"
+        "  render({ finalPhase: { kind: controller['phaseKind' as keyof FlightController] as unknown as string } });\n"
+        "  void next;\n"
+        "}\n"
+        "function render(_scene: { finalPhase: import('./models/index.js').FlightPhase }): void {}\n"
+    )
+    owner = (
+        "export interface SimulationConfig { readonly launchSpeedMs: number; readonly maxSteps: number }\n"
+        "export function buildScenario(config: SimulationConfig, _deps: object): "
+        "{ plane: object; wind: object; launch: { angle: object } } { return config as never; }\n"
+        "export class FlightController {\n"
+        "  public constructor(_config: { readonly plane: object; readonly wind: object; "
+        "readonly launchAngle: object; readonly launchSpeedMs: number }) {}\n"
+        "  public get currentLastPhase(): import('./models/index.js').FlightPhase { return { kind: 'cruise' } as never; }\n"
+        "}\n"
+    )
+    diagnostics = (
+        "src/web.ts(4,36): error TS2345: Argument of type 'SimulationConfig' is not assignable "
+        "to parameter of type '{ readonly plane: object; readonly wind: object; readonly launchAngle: object; "
+        "readonly launchSpeedMs: number; }'.\n"
+        "  Type 'SimulationConfig' is missing the following properties from type "
+        "'{ readonly plane: object; readonly wind: object; readonly launchAngle: object; "
+        "readonly launchSpeedMs: number; }': plane, wind, launchAngle",
+        "src/web.ts(5,19): error TS2322: Type 'string' is not assignable to type '\"climb\" | \"cruise\" | \"descent\" | \"landed\"'.",
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool="deterministic_typescript_argument_shape_adapter_repair",
+            base_files={"src/web.ts": consumer, "src/engine/simulation.ts": owner},
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+    assert planning["planned"] is True
+    after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "buildScenario" in after
+    assert "finalPhase: controller.currentLastPhase" in after
+    assert "as unknown as string" not in after
+
+
+def test_typescript_nonfinite_altitude_guard_lands_step_flight() -> None:
+    """Live L1-08: InvalidWindError from Infinity altitude; Wind swallow still exit 2."""
+
+    flight = (
+        "import { FlightPhaseKind } from './types.js';\n"
+        "import { effectiveWindSpeed } from './Wind.js';\n"
+        "export function stepFlight(\n"
+        "  scenario: { wind: { speedMs: number } },\n"
+        "  position: { x: number; y: number },\n"
+        "  velocity: { x: number; y: number },\n"
+        "  dt: number,\n"
+        "): { position: { x: number; y: number }; velocity: { x: number; y: number }; "
+        "phase: { kind: string } } {\n"
+        "  const airspeed = Math.hypot(velocity.x, velocity.y);\n"
+        "  const wind = effectiveWindSpeed(scenario.wind, position.y);\n"
+        "  void airspeed;\n"
+        "  void wind;\n"
+        "  void dt;\n"
+        "  return { position, velocity, phase: { kind: FlightPhaseKind.Climb } };\n"
+        "}\n"
+    )
+    diagnostic = (
+        "InvalidWindError: altitude must be non-negative finite meters, got NaN\n"
+        "    at effectiveWindSpeed (src/models/Wind.ts:63:11)\n"
+        "    at stepFlight (src/models/Flight.ts:118:16)\n"
+        "    at simulateFlight (src/models/Flight.ts:179:18)"
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool="deterministic_typescript_nonfinite_altitude_guard_repair",
+            base_files={"src/models/Flight.ts": flight, "src/models/Wind.ts": "export function effectiveWindSpeed() {}"},
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+    assert planning["planned"] is True
+    after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "Number.isFinite(position.y)" in after
+    assert "FlightPhaseKind.Landed" in after
+    assert "const airspeed = Math.hypot(velocity.x, velocity.y);" in after
+    assert after.index("Number.isFinite(position.y)") < after.index("const airspeed")
 
 
 def test_typescript_unresolved_identifier_does_not_alias_type_position_to_local_function() -> None:

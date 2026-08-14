@@ -486,39 +486,46 @@ def _run_materialization_typescript_runtime_repair(
         collect_unmatched_diagnostic_paths=collect_unmatched_diagnostic_paths,
         task=task,
     )
-    # R160: member-alias / init-property repairs need type declaration files
-    # (e.g. Firefly class with get position()) even when diagnostics only name
-    # the consumer path (web.ts). Bound the scan so we do not pull node_modules.
-    if artifact_quality_errors or artifact_quality_issues:
-        _add_bounded_workspace_materialization_base_files(
-            base_files,
-            workspace_path,
-            # Coverage diagnostics produced from artifact-quality strings may
-            # legitimately have ``path=None`` even though the matched runtime
-            # rule owns an HTML entrypoint repair.  Keep physical HTML inputs
-            # in the bounded base-file set so an executable repair such as
-            # ``deterministic_html_typescript_module_script_repair`` can plan
-            # and edit the real entrypoint instead of falling through to an
-            # unnecessary LLM quality-repair turn.
-            allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".html", ".htm", ".json"),
-            max_files=256,
-        )
     quality_issues = tuple(dict(item) for item in artifact_quality_issues)
     if not base_files or (not artifact_quality_errors and not quality_issues):
         return []
-    return run_runtime_repair_with_director_tools(
-        adapter,
-        workspace_path=workspace_path,
-        task_id=task_id,
-        source_tool=source_tool,
-        base_files=base_files,
-        artifact_quality_errors=artifact_quality_errors,
-        artifact_quality_issues=quality_issues,
-        allowed_paths=_materialization_runtime_allowed_paths(base_files, source_tool=source_tool),
-        use_editor=True,
-        convergence_verifier=convergence_verifier,
-        execution_attempt=execution_attempt,
+
+    def _plan_with(files: dict[str, str]) -> list[dict[str, Any]]:
+        return run_runtime_repair_with_director_tools(
+            adapter,
+            workspace_path=workspace_path,
+            task_id=task_id,
+            source_tool=source_tool,
+            base_files=files,
+            artifact_quality_errors=artifact_quality_errors,
+            artifact_quality_issues=quality_issues,
+            allowed_paths=_materialization_runtime_allowed_paths(files, source_tool=source_tool),
+            use_editor=True,
+            convergence_verifier=convergence_verifier,
+            execution_attempt=execution_attempt,
+        )
+
+    # Diagnostic + task files are enough for TS2341 unprivate (class body in
+    # simulation.ts, access in web.ts). Live L1-08: dumping 70+ `.polaris`
+    # session/QA JSON files into base_files made plan_director_repair return
+    # ok=False/planned=False with no error_code, so the compiler step returned
+    # [] and QA fell through to LLM.
+    planned = _plan_with(base_files)
+    if planned:
+        return planned
+    # R160: member-alias / init-property repairs need type declaration files
+    # even when diagnostics only name the consumer path. Expand only after the
+    # precise set failed to plan, and never ingest audit/session dumps.
+    expanded = dict(base_files)
+    _add_bounded_workspace_materialization_base_files(
+        expanded,
+        workspace_path,
+        allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".html", ".htm", ".json"),
+        max_files=256,
     )
+    if expanded.keys() - base_files.keys():
+        return _plan_with(expanded)
+    return planned
 
 
 def _run_materialization_node_manifest(
@@ -762,6 +769,46 @@ def _materialization_allowed_paths_from_runtime_public_plan(
     return result.allowed_paths
 
 
+_BOUNDED_SCAN_IGNORED_PARTS = frozenset(
+    {
+        "node_modules",
+        "dist",
+        "build",
+        "coverage",
+        ".git",
+        ".venv",
+        "venv",
+        "__pycache__",
+        "runtime",
+        "logs",
+        "playwright-report",
+        "test-results",
+    }
+)
+
+
+def _should_skip_bounded_materialization_path(relative_path: str) -> bool:
+    """Reject audit/cache/runtime dumps that poison TS repair planners.
+
+    Live L1-08: a 256-file scan ingested `.polaris/cognitive_sessions/*.json`
+    that quoted `private trajectory`. The TS2341 planner then fail-closed
+    (`ok=False`, `planned=False`, no error_code) even though simulation.ts
+    plus web.ts planned cleanly.
+    """
+
+    parts = [part for part in str(relative_path or "").replace("\\", "/").split("/") if part]
+    if not parts:
+        return True
+    if any(part in _BOUNDED_SCAN_IGNORED_PARTS or part.startswith(".") for part in parts):
+        return True
+    name = parts[-1].lower()
+    return (
+        name.endswith(".json")
+        and name != "package.json"
+        and not (name.startswith("tsconfig") and name.endswith(".json"))
+    )
+
+
 def _add_bounded_workspace_materialization_base_files(
     base_files: dict[str, str],
     workspace_path: Path,
@@ -771,7 +818,6 @@ def _add_bounded_workspace_materialization_base_files(
 ) -> None:
     if not workspace_path.is_dir():
         return
-    ignored_parts = {"node_modules", "dist", "build", "coverage", ".git", ".venv", "venv", "__pycache__"}
     for candidate in sorted(workspace_path.rglob("*")):
         if len(base_files) >= max_files:
             return
@@ -781,7 +827,7 @@ def _add_bounded_workspace_materialization_base_files(
             relative = candidate.relative_to(workspace_path).as_posix()
         except ValueError:
             continue
-        if any(part in ignored_parts for part in relative.split("/")):
+        if _should_skip_bounded_materialization_path(relative):
             continue
         _add_existing_materialization_base_file(base_files, workspace_path, relative)
 

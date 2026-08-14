@@ -99,6 +99,7 @@ KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS: frozenset[str] = frozenset(
         "deterministic_typescript_missing_member_repair",
         "deterministic_typescript_missing_relative_module_repair",
         "deterministic_typescript_invalid_module_augmentation_repair",
+        "deterministic_typescript_nonfinite_altitude_guard_repair",
         "deterministic_typescript_nullable_canvas_context_repair",
         "deterministic_typescript_number_property_call_repair",
         "deterministic_typescript_number_to_string_argument_repair",

@@ -86,6 +86,7 @@ TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL = "deterministic_typescript_missing_member
 TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL = "deterministic_typescript_private_constructor_access_repair"
 
 TYPESCRIPT_PRIVATE_PROPERTY_ACCESS_SOURCE_TOOL = "deterministic_typescript_private_property_access_repair"
+TYPESCRIPT_NONFINITE_ALTITUDE_GUARD_SOURCE_TOOL = "deterministic_typescript_nonfinite_altitude_guard_repair"
 
 TYPESCRIPT_EXPORT_AMBIGUITY_SOURCE_TOOL = "deterministic_typescript_export_ambiguity_repair"
 
@@ -346,16 +347,17 @@ _TS_PRIVATE_CONSTRUCTOR_ACCESS_MESSAGE_RE = re.compile(
 )
 
 _TS_PRIVATE_PROPERTY_ACCESS_RAW_RE = re.compile(
-    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2341:\s*"
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS(?:2341|2345):\s*"
+    r"(?:Argument of type '[^']+' is not assignable to parameter of type '[^']+'\.\s*)?"
     r"Property\s+['\"](?P<property>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+"
-    r"is\s+private\s+and\s+only\s+accessible\s+within\s+class\s+"
+    r"is\s+private(?:\s+and\s+only\s+accessible\s+within\s+class|\s+in\s+type)\s+"
     r"['\"](?P<class>[A-Za-z_$][A-Za-z0-9_$]*)['\"]",
     re.IGNORECASE,
 )
 
 _TS_PRIVATE_PROPERTY_ACCESS_MESSAGE_RE = re.compile(
     r"Property\s+['\"](?P<property>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+"
-    r"is\s+private\s+and\s+only\s+accessible\s+within\s+class\s+"
+    r"is\s+private(?:\s+and\s+only\s+accessible\s+within\s+class|\s+in\s+type)\s+"
     r"['\"](?P<class>[A-Za-z_$][A-Za-z0-9_$]*)['\"]",
     re.IGNORECASE,
 )
@@ -845,7 +847,7 @@ _TS_MISSING_PROPS_FROM_TYPE_RE = re.compile(
 )
 
 _TS_MISSING_PROPS_PRIMARY_RE = re.compile(
-    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS(?:2345|2739):\s*"
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS(?:2345|2739|2740):\s*"
     r"(?P<body>[^\n]*(?:\n[ \t]+[^\n]+)*)",
     re.IGNORECASE,
 )
@@ -955,6 +957,7 @@ __all__ = (
     "TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL",
     "TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL",
     "TYPESCRIPT_PRIVATE_PROPERTY_ACCESS_SOURCE_TOOL",
+    "TYPESCRIPT_NONFINITE_ALTITUDE_GUARD_SOURCE_TOOL",
     "TYPESCRIPT_EXPORT_AMBIGUITY_SOURCE_TOOL",
     "TYPESCRIPT_REEXPORT_SOURCE_TOOL",
     "TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL",
