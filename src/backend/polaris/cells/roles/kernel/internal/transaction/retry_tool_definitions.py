@@ -455,10 +455,21 @@ def _extract_file_schema_from_tool_definition(definition: Mapping[str, Any]) -> 
 
 
 def _build_scoped_write_file_tool_definition(tool_definitions: list[dict]) -> dict[str, Any]:
-    file_schema: dict[str, Any] = {
-        "type": "string",
-        "description": "Workspace-relative path of the file to write.",
-    }
+    """Build write_file from ToolSpecRegistry; pin path enums only.
+
+    Live L1-08 quality-repair invented a slim schema (custom description, no
+    aliases). Final-provider qualification raised
+    ``tool_registry_function_contract_drift`` and the repair turn never called
+    the provider. Path enums remain qualification-safe on write_file only.
+    """
+
+    from polaris.kernelone.tool_execution.forced_tool_surface import (
+        pin_write_file_paths,
+        resolve_registry_tool_schema,
+    )
+
+    schema = resolve_registry_tool_schema("write_file")
+    targets: list[str] = []
     for raw_definition in tool_definitions:
         if not isinstance(raw_definition, Mapping):
             continue
@@ -467,35 +478,11 @@ def _build_scoped_write_file_tool_definition(tool_definitions: list[dict]) -> di
             continue
         enum_values = candidate.get("enum")
         if isinstance(enum_values, list) and enum_values:
-            file_schema["enum"] = list(enum_values)
+            targets.extend(str(value).strip() for value in enum_values if str(value or "").strip())
             break
-    return {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": (
-                "Write the complete UTF-8 file body to the scoped target file. "
-                "Use only when replacing a small generated leaf target after reading it."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file": file_schema,
-                    "content": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "Complete non-empty UTF-8 file content.",
-                    },
-                    "encoding": {
-                        "type": "string",
-                        "enum": ["utf-8"],
-                        "default": "utf-8",
-                    },
-                },
-                "required": ["file", "content"],
-            },
-        },
-    }
+    if targets:
+        return pin_write_file_paths(schema, targets)
+    return schema
 
 
 _BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS: tuple[str, ...] = (

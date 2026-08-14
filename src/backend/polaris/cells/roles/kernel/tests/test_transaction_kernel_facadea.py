@@ -1,17 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from polaris.cells.roles.kernel.internal.interaction_contract import TurnIntent, infer_turn_intent
-from polaris.cells.roles.kernel.internal.kernel.prompt_assembly import resolve_prompt_layer_options
-from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import (
-    tool_contract_requires_no_tools,
-)
-from polaris.cells.roles.kernel.internal.llm_caller.finalization_caller import FinalizationCaller
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     resolve_mutation_target_guard_violation,
 )
@@ -57,8 +50,6 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnId,
     classify_tool_invocation,
 )
-from polaris.cells.roles.profile.public.service import RoleTurnRequest
-from polaris.kernelone.context.contracts import TurnEngineContextRequest
 
 _WRITE_TOOL_NAMES = frozenset({"edit_blocks", "edit_file", "write_file"})
 
@@ -203,8 +194,6 @@ async def test_transaction_kernel_execute_forwards_tool_choice_override_to_provi
     assert llm.await_args is not None
     assert llm.await_args.args[0]["tools"] == tool_definitions
     assert llm.await_args.args[0]["tool_choice"] == forced_choice
-
-
 
 
 async def test_transaction_kernel_executes_single_transaction_turn() -> None:
@@ -510,6 +499,55 @@ def test_forced_edit_blocks_retry_adds_scoped_write_file_companion() -> None:
     assert strict_names == {"edit_blocks", "write_file", "execute_command"}
     file_schema = write_file_definition["function"]["parameters"]["properties"]["file"]
     assert file_schema["enum"] == ["calculator.py"]
+
+
+def test_scoped_write_file_companion_stays_registry_faithful_except_path_enums() -> None:
+    """Live L1-08: invented slim write_file blocked quality-repair qualification.
+
+    MiniMax omitted package.json. The repair turn forced write_file+edit_file, but
+    `_build_scoped_write_file_tool_definition` rewrote description and dropped
+    aliases. Final-provider qualification raised tool_registry_function_contract_drift
+    and the turn never called the provider (llm_calls=0).
+    """
+
+    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+    tool_definitions = [
+        {
+            "type": "function",
+            "function": {
+                "name": "edit_file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"file": {"type": "string", "enum": ["package.json"]}},
+                    "required": ["file"],
+                },
+            },
+        }
+    ]
+    strict_definitions = build_forced_write_only_retry_tool_definitions(
+        tool_definitions,
+        "edit_file",
+        include_verification_tools=False,
+        include_mutation_companion_tools=True,
+    )
+    write_file_definition = next(
+        item for item in strict_definitions if item.get("function", {}).get("name") == "write_file"
+    )
+    expected = ToolSpecRegistry.get_llm_schema(
+        "write_file",
+        include_arg_aliases=True,
+        deterministic=True,
+    )
+    assert expected is not None
+    assert write_file_definition["function"]["name"] == expected["function"]["name"]
+    assert write_file_definition["function"]["description"] == expected["function"]["description"]
+    actual_props = write_file_definition["function"]["parameters"]["properties"]
+    expected_props = expected["function"]["parameters"]["properties"]
+    assert set(actual_props) == set(expected_props)
+    assert actual_props["file"]["enum"] == ["package.json"]
+    assert actual_props["path"]["enum"] == ["package.json"]
+    assert "enum" not in expected_props["file"]
 
 
 def test_forced_edit_blocks_retry_can_disable_write_file_companion_for_scoped_repair() -> None:
@@ -2694,4 +2732,3 @@ def test_build_decision_messages_includes_benchmark_required_tools_hint() -> Non
 
     assert any("Contract-required tools are mandatory in this single batch" in text for text in system_messages)
     assert any("repo_rg, search_replace" in text for text in system_messages)
-
