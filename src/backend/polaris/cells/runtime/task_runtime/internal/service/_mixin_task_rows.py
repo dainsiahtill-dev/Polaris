@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from polaris.cells.events.fact_stream.public.contracts import (
@@ -44,6 +45,11 @@ if TYPE_CHECKING:
     from polaris.cells.runtime.task_runtime.public.contracts import (
         ObservableTaskRowsProjectionV1,
     )
+
+
+_EXECUTION_FACT_ROWS_PROJECTION_CACHE: ContextVar[
+    dict[tuple[str, int], tuple[dict[str, Any], ...]] | None
+] = ContextVar("task_runtime_execution_fact_rows_projection_cache", default=None)
 
 
 class _TaskRowsMixin(_ServiceMixinBase):
@@ -1219,6 +1225,10 @@ class _TaskRowsMixin(_ServiceMixinBase):
         """
 
         event_limit = max(1, int(limit))
+        cache = _EXECUTION_FACT_ROWS_PROJECTION_CACHE.get()
+        cache_key = (self.workspace, event_limit)
+        if cache is not None and cache_key in cache:
+            return [dict(row) for row in cache[cache_key]]
         try:
             result = self._query_execution_fact_events(limit=event_limit)
             if result.total > len(result.events):
@@ -1244,6 +1254,8 @@ class _TaskRowsMixin(_ServiceMixinBase):
             if str(row.get("execution_state") or row.get("status") or "").strip().lower() != "removed"
         ]
         rows.sort(key=self._row_sort_key)
+        if cache is not None:
+            cache[cache_key] = tuple(dict(row) for row in rows)
         return rows
 
     def _find_latest_execution_fact_row_for_task(
@@ -1377,22 +1389,29 @@ class _TaskRowsMixin(_ServiceMixinBase):
             ObservableTaskRowsProjectionV1,
         )
 
-        readiness = self.task_row_read_model_cutover_readiness()
-        authoritative = readiness.get("ready") is True
-        if authoritative:
-            rows = self._fact_only_task_row_read_model_rows()
-            source = "task_runtime.execution_fact"
-        else:
-            rows = self._transitional_task_row_read_model_rows()
-            source = "task_runtime.transitional_file_fallback"
-        return ObservableTaskRowsProjectionV1(
-            workspace=self.workspace,
-            source=source,
-            authoritative=authoritative,
-            degraded=not authoritative,
-            rows=tuple(rows),
-            readiness=readiness,
-        )
+        cache_token: Token[dict[tuple[str, int], tuple[dict[str, Any], ...]] | None] | None = None
+        if _EXECUTION_FACT_ROWS_PROJECTION_CACHE.get() is None:
+            cache_token = _EXECUTION_FACT_ROWS_PROJECTION_CACHE.set({})
+        try:
+            readiness = self.task_row_read_model_cutover_readiness()
+            authoritative = readiness.get("ready") is True
+            if authoritative:
+                rows = self._fact_only_task_row_read_model_rows()
+                source = "task_runtime.execution_fact"
+            else:
+                rows = self._transitional_task_row_read_model_rows()
+                source = "task_runtime.transitional_file_fallback"
+            return ObservableTaskRowsProjectionV1(
+                workspace=self.workspace,
+                source=source,
+                authoritative=authoritative,
+                degraded=not authoritative,
+                rows=tuple(rows),
+                readiness=readiness,
+            )
+        finally:
+            if cache_token is not None:
+                _EXECUTION_FACT_ROWS_PROJECTION_CACHE.reset(cache_token)
 
     def _project_observable_task_rows(
         self,

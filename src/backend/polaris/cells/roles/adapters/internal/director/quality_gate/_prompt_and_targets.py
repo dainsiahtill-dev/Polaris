@@ -1308,6 +1308,17 @@ def _build_materialization_quality_repair_message(
                 "Do not list directories. Do not explore. Do not explain.\n"
             )
     prompt_repair_target_files = [*(missing_target_files or []), *existing_repair_target_files]
+    authorized_tool_path_block = ""
+    if prompt_repair_target_files:
+        authorized_path_lines = "\n".join(f"- {item}" for item in prompt_repair_target_files[:12])
+        authorized_tool_path_block = (
+            "DIRECT TOOL PATH CONTRACT (fail-closed):\n"
+            "- Every write_file/edit_file file argument MUST equal one exact workspace-relative path listed below.\n"
+            "- Never use an absolute path, /tmp path, repair_* staging path, scratch file, or renamed temporary copy.\n"
+            "- Apply SEARCH/REPLACE directly to the authorized project file; do not stage corrected source elsewhere.\n"
+            "Authorized tool target paths:\n"
+            f"{authorized_path_lines}\n"
+        )
     repair_context_block = _repair_target_context_block(
         workspace_full=workspace_full,
         repair_target_files=prompt_repair_target_files,
@@ -1530,6 +1541,7 @@ def _build_materialization_quality_repair_message(
         f"{single_missing_block}"
         f"{existing_repair_block}"
         f"{single_existing_repair_block}"
+        f"{authorized_tool_path_block}"
         f"{repair_context_block}"
         f"{verifier_source_context_block}"
         f"{coherence_block}"

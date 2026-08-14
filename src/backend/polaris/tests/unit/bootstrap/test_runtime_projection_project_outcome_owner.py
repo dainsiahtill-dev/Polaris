@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +40,43 @@ _RUN_ID = "factory-run-1"
 _PROJECT_ID = "project-1"
 _TASK_ID = "TASK-1"
 _CHILD_RUN_ID = "director-run-1"
+
+
+@pytest.mark.asyncio
+async def test_adapter_keeps_event_loop_responsive_during_blocking_owner_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.bootstrap import runtime_projection_project_outcome_owner as adapter_module
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking_contract_query(_query: object) -> object:
+        entered.set()
+        release.wait(timeout=1)
+        raise RuntimeError("owner-query-finished")
+
+    monkeypatch.setattr(adapter_module, "query_project_completion_contract", blocking_contract_query)
+    adapter = adapter_module.ProjectOutcomeNonFactoryOwnerObservationAdapter()
+    observation = asyncio.create_task(
+        adapter.observe_project_outcome_non_factory(
+            workspace=str(tmp_path),
+            project_id=_PROJECT_ID,
+            run_id=_RUN_ID,
+            completion_contract_hash=_CONTRACT_HASH,
+        )
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        heartbeat = asyncio.Event()
+        asyncio.get_running_loop().call_soon(heartbeat.set)
+        await asyncio.wait_for(heartbeat.wait(), timeout=0.05)
+    finally:
+        release.set()
+
+    with pytest.raises(RuntimeError, match="owner-query-finished"):
+        await observation
 
 
 def _completion_contract(*, pm_contract_hash: str = _PM_CONTRACT_HASH) -> ProjectCompletionContractV1:

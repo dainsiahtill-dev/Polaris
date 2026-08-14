@@ -719,11 +719,33 @@ _connect_failure_cooldown_sec: float = 5.0
 
 @asynccontextmanager
 async def _acquire_default_client_lock() -> AsyncIterator[None]:
-    """Cross-loop safe guard for default NATS client state."""
-    await asyncio.to_thread(_default_client_lock.acquire)
+    """Cross-loop safe guard without queueing uncontended startup on the executor."""
+    task = asyncio.current_task()
+    task_name = task.get_name() if task is not None else "unknown"
+    started_at = time.monotonic()
+    # Fast-path the overwhelmingly common uncontended case.  Sending every
+    # acquire through ``asyncio.to_thread`` made backend readiness depend on
+    # default-executor capacity: model/bootstrap work could occupy that pool
+    # and delay this no-op lock acquisition by ~34 seconds even though NATS
+    # connected in 5 ms.  Preserve cross-loop safety by falling back to the
+    # blocking acquire in a worker only when another caller actually owns it.
+    if not _default_client_lock.acquire(blocking=False):
+        await asyncio.to_thread(_default_client_lock.acquire)
+    waited_ms = int((time.monotonic() - started_at) * 1000)
+    logger.warning(
+        "[nats.default_client] phase=lock_acquire duration_ms=%d task=%s",
+        waited_ms,
+        task_name,
+    )
+    held_started_at = time.monotonic()
     try:
         yield
     finally:
+        logger.warning(
+            "[nats.default_client] phase=lock_release held_ms=%d task=%s",
+            int((time.monotonic() - held_started_at) * 1000),
+            task_name,
+        )
         _default_client_lock.release()
 
 
@@ -750,8 +772,18 @@ async def get_default_client(
         if _default_client is None:
             candidate = NATSClient(config)
             try:
+                started_at = time.monotonic()
                 await candidate.connect()
+                logger.warning(
+                    "[nats.default_client] phase=initial_connect duration_ms=%d",
+                    int((time.monotonic() - started_at) * 1000),
+                )
             except (RuntimeError, ValueError) as exc:
+                logger.warning(
+                    "[nats.default_client] phase=initial_connect status=failed duration_ms=%d error=%s",
+                    int((time.monotonic() - started_at) * 1000),
+                    exc,
+                )
                 _last_connect_failure_at = time.monotonic()
                 _last_connect_failure_error = exc
                 with suppress(Exception):
@@ -762,7 +794,12 @@ async def get_default_client(
             _last_connect_failure_at = 0.0
         elif not _default_client.is_connected:
             try:
+                started_at = time.monotonic()
                 await _default_client.connect()
+                logger.warning(
+                    "[nats.default_client] phase=reconnect duration_ms=%d",
+                    int((time.monotonic() - started_at) * 1000),
+                )
             except (RuntimeError, ValueError) as exc:
                 _last_connect_failure_at = time.monotonic()
                 _last_connect_failure_error = exc

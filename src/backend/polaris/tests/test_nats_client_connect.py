@@ -108,6 +108,22 @@ def test_nats_config_numeric_fields_follow_environment(
     assert config.connect_timeout == 0.5
 
 
+def test_default_client_lock_uncontended_does_not_queue_on_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _run() -> None:
+        async def _unexpected_to_thread(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("uncontended default-client lock must not use the executor")
+
+        monkeypatch.setattr(nats_client_module.asyncio, "to_thread", _unexpected_to_thread)
+        async with nats_client_module._acquire_default_client_lock():
+            assert nats_client_module._default_client_lock.locked() is True
+
+        assert nats_client_module._default_client_lock.locked() is False
+
+    asyncio.run(_run())
+
+
 def test_default_nats_client_disabled_policy_does_not_connect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

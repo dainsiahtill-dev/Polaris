@@ -577,12 +577,28 @@ async def _run_materialization_quality_repair_retry(
         repair_context["required_evidence"] = required_evidence
     if repair_target_files:
         repair_context["repair_target_files"] = repair_target_files[:12]
+        # Provider-native tool schemas remain registry-faithful, so turn-local
+        # path authority is projected as structured context instead of mutating
+        # ToolSpecRegistry. Live L1-04 r51 emitted a valid ``edit_file`` with
+        # the complete SEARCH/REPLACE body but targeted
+        # ``/tmp/repair_engine_rules.go``. DEO correctly rejected it as
+        # ``deo_path_scope_denied``; without this explicit contract, the next
+        # attempt repeated the whole 23k-token repair context with no effect.
+        repair_context["director_quality_repair"]["authorized_tool_target_files"] = repair_target_files[:12]
     repair_metadata = repair_context.get("metadata")
     if not isinstance(repair_metadata, dict):
         repair_metadata = {}
         repair_context["metadata"] = repair_metadata
     repair_metadata["delivery_mode"] = "materialize_changes"
     repair_metadata["task_id"] = target_task_id
+    if repair_target_files:
+        repair_metadata["tool_path_contract"] = {
+            "schema_version": "director.quality_repair.tool_path_contract.v1",
+            "allowed_target_files": repair_target_files[:12],
+            "workspace_relative_only": True,
+            "temporary_staging_forbidden": True,
+            "path_scope_denial_is_not_mutation": True,
+        }
     tap_assertion_requires_edit = bool(
         existing_repair_target_files
         and not missing_repair_target_files

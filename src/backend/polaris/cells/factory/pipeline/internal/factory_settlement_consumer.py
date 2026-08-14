@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import threading
+import time
 import weakref
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -33,6 +35,8 @@ from .factory_settlement_journal import (
 _FACT_STREAM_ENVELOPE_VERSION = 1
 _SOURCE_PAGE_SIZE = 1000
 _TASK_RUNTIME_SCHEMA_PREFIX = "task-runtime.execution-fact/"
+
+logger = logging.getLogger(__name__)
 
 
 class FactorySettlementConsumerError(RuntimeError):
@@ -384,6 +388,7 @@ class FactorySettlementConsumer:
         self._lifecycle_lock = asyncio.Lock()
         self._started = False
         self._stopped = False
+        self._journal_snapshot: SettlementJournalReplaySnapshot | None = None
 
     @property
     def workspace(self) -> str:
@@ -438,6 +443,7 @@ class FactorySettlementConsumer:
         async with self._lifecycle_lock:
             self._stopped = True
             self._started = False
+            self._journal_snapshot = None
 
     def _require_running(self) -> None:
         if not self._started or self._stopped:
@@ -447,14 +453,60 @@ class FactorySettlementConsumer:
             )
 
     async def _replay_locked(self, *, recover_applying: bool) -> tuple[SettlementDecision, ...]:
-        source_snapshot = self._read_source_replay_snapshot()
-        journal_snapshot = self._journal.open_replay_snapshot(
-            source_stream=TASK_RUNTIME_EXECUTION_STREAM,
-            source_events=source_snapshot.events_by_offset,
+        journal_snapshot = self._journal_snapshot
+        if journal_snapshot is None:
+            source_started_at = time.monotonic()
+            logger.warning("[settlement.startup] phase=source_snapshot status=started")
+            source_snapshot = self._read_source_replay_snapshot()
+            logger.warning(
+                "[settlement.startup] phase=source_snapshot status=completed duration_ms=%d events=%d",
+                int((time.monotonic() - source_started_at) * 1000),
+                len(source_snapshot.events),
+            )
+            journal_started_at = time.monotonic()
+            logger.warning("[settlement.startup] phase=journal_snapshot status=started")
+            journal_snapshot = self._journal.open_replay_snapshot(
+                source_stream=TASK_RUNTIME_EXECUTION_STREAM,
+                source_events=source_snapshot.events_by_offset,
+            )
+            logger.warning(
+                "[settlement.startup] phase=journal_snapshot status=completed duration_ms=%d",
+                int((time.monotonic() - journal_started_at) * 1000),
+            )
+            checkpoint = journal_snapshot.latest_checkpoint_offset(source_stream=TASK_RUNTIME_EXECUTION_STREAM)
+            replay_events = source_snapshot.events[checkpoint:]
+        else:
+            # The first startup replay has already validated the complete
+            # source and checkpoint chains.  The bridge-start catch-up must
+            # close only the race window after that head; re-reading the full
+            # 32 MiB TaskRuntime stream and 5.7 MiB settlement journal blocked
+            # L1-04 readiness long enough for the Launcher identity timeout.
+            # Rebuild the in-memory snapshot from its already-validated
+            # records plus the durable source tail.  Appends during this
+            # lifecycle continue to update the replacement snapshot.
+            checkpoint = journal_snapshot.latest_checkpoint_offset(source_stream=TASK_RUNTIME_EXECUTION_STREAM)
+            source_snapshot = self._read_source_replay_snapshot(start_offset=checkpoint)
+            source_events = dict(journal_snapshot.source_events)
+            source_events.update(source_snapshot.events_by_offset)
+            journal_snapshot = SettlementJournalReplaySnapshot.create(
+                source_stream=TASK_RUNTIME_EXECUTION_STREAM,
+                source_events=source_events,
+                records=journal_snapshot.records,
+                current_seq=journal_snapshot.current_seq,
+                checkpoint_chain=journal_snapshot.checkpoint_chain(
+                    source_stream=TASK_RUNTIME_EXECUTION_STREAM
+                ),
+            )
+            replay_events = source_snapshot.events
+        self._journal_snapshot = journal_snapshot
+        replay_started_at = time.monotonic()
+        logger.warning(
+            "[settlement.startup] phase=decision_replay status=started events=%d checkpoint=%d",
+            len(replay_events),
+            checkpoint,
         )
         decisions: list[SettlementDecision] = []
-        checkpoint = journal_snapshot.latest_checkpoint_offset(source_stream=TASK_RUNTIME_EXECUTION_STREAM)
-        for source_offset, event in enumerate(source_snapshot.events[checkpoint:], start=checkpoint):
+        for source_offset, event in enumerate(replay_events, start=checkpoint):
             decision = await self._process_source_event(
                 event,
                 recover_applying=recover_applying,
@@ -469,6 +521,11 @@ class FactorySettlementConsumer:
                 source_event=event,
                 journal_snapshot=journal_snapshot,
             )
+        logger.warning(
+            "[settlement.startup] phase=decision_replay status=completed duration_ms=%d decisions=%d",
+            int((time.monotonic() - replay_started_at) * 1000),
+            len(decisions),
+        )
         return tuple(decisions)
 
     async def _process_source_event(
@@ -945,13 +1002,15 @@ class FactorySettlementConsumer:
                 )
             offset = page.next_offset
 
-    def _read_source_replay_snapshot(self) -> _SourceReplaySnapshot:
+    def _read_source_replay_snapshot(self, *, start_offset: int = 0) -> _SourceReplaySnapshot:
         """Read task-runtime FactStream pages once and index immutable events."""
 
+        if start_offset < 0:
+            raise ValueError("start_offset must be non-negative")
         events: list[Mapping[str, Any]] = []
         events_by_offset: dict[int, Mapping[str, Any]] = {}
         events_by_id: dict[str, tuple[Mapping[str, Any], int]] = {}
-        offset = 0
+        offset = start_offset
         while True:
             page = self._fact_stream.query(
                 QueryFactEventsV1(
@@ -962,6 +1021,11 @@ class FactorySettlementConsumer:
                 )
             )
             self._validate_source_page(page.workspace, page.stream)
+            if page.total < start_offset:
+                raise FactorySettlementConsumerError(
+                    "task_runtime.execution is shorter than the validated checkpoint",
+                    code="task_runtime_execution_checkpoint_beyond_head",
+                )
             for index, raw_event in enumerate(page.events):
                 event = MappingProxyType(dict(raw_event))
                 source_offset = offset + index

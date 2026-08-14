@@ -1365,7 +1365,14 @@ class InstanceSupervisor:
             headers={"Authorization": f"Bearer {record.token}"},
         )
         try:
-            with urllib.request.urlopen(
+            # Instance backends are local control-plane children.  Never let
+            # process-wide HTTP_PROXY settings redirect their identity probe
+            # through an external proxy.  In particular, Python urllib does
+            # not treat a common ``NO_PROXY=127.*`` entry as a wildcard, so a
+            # healthy child could answer direct requests while the supervisor
+            # repeatedly contacted the proxy and eventually killed it as
+            # "identity timed out".
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
                 request,
                 timeout=BACKEND_IDENTITY_REQUEST_TIMEOUT_SECONDS,
             ) as response:
@@ -1527,7 +1534,10 @@ class InstanceSupervisor:
     def _http_ok(url: str, token: str) -> bool:
         request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
         try:
-            with urllib.request.urlopen(request, timeout=1.0) as response:
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+                request,
+                timeout=1.0,
+            ) as response:
                 return 200 <= int(response.status) < 300
         except (urllib.error.URLError, TimeoutError, OSError):
             return False

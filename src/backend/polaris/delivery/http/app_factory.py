@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import secrets as _secrets
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
@@ -30,6 +31,21 @@ _token_was_auto_generated: bool = False
 
 SyncCleanupCallback = Callable[[], None]
 AsyncCleanupCallback = Callable[[], Awaitable[None]]
+
+
+def _startup_phase_started(phase: str) -> float:
+    """Emit a durable boundary before a potentially blocking startup phase."""
+    logger.warning("[startup.phase] phase=%s status=started", phase)
+    return time.monotonic()
+
+
+def _startup_phase_completed(phase: str, started_at: float) -> None:
+    """Emit phase latency so identity timeouts have a first failing owner."""
+    logger.warning(
+        "[startup.phase] phase=%s status=completed duration_ms=%d",
+        phase,
+        int((time.monotonic() - started_at) * 1000),
+    )
 
 
 def _run_sync_cleanup_callbacks(
@@ -121,7 +137,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     reset_container()
     reset_resident_services()
+    phase_started_at = _startup_phase_started("container.get")
     container = await get_container()
+    _startup_phase_completed("container.get", phase_started_at)
     os.environ.setdefault("KERNELONE_JETSTREAM_PUBLISH", "1")
     install_file_event_broadcaster_publisher()
     install_context_retrieve_receipt_lookup()
@@ -131,7 +149,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     nats_required = bool(getattr(nats_settings, "required", True))
     if nats_enabled:
         try:
+            phase_started_at = _startup_phase_started("nats.ensure_local_runtime")
             await ensure_local_nats_runtime(str(getattr(nats_settings, "url", "") or ""))
+            _startup_phase_completed("nats.ensure_local_runtime", phase_started_at)
         except (OSError, RuntimeError, ValueError) as exc:
             log_method = logger.critical if nats_required else logger.warning
             log_method(
@@ -151,7 +171,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Wrap in an explicit error boundary: a failed bootstrap must never leave
     # the application in a half-initialised state silently accepting requests.
     try:
+        phase_started_at = _startup_phase_started("core_services.assemble")
         assemble_core_services(container, settings=app.state.settings)
+        _startup_phase_completed("core_services.assemble", phase_started_at)
     except (OSError, RuntimeError, ValueError) as exc:
         logger.critical(
             "[startup] Bootstrap assembly failed – application cannot start safely: %s",
@@ -189,7 +211,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     workspace = str(getattr(app.state.settings, "workspace", "") or "").strip()
     if workspace:
+        phase_started_at = _startup_phase_started("terminate_external_loop_pm_processes")
         stale_pids = terminate_external_loop_pm_processes(workspace)
+        _startup_phase_completed("terminate_external_loop_pm_processes", phase_started_at)
         if stale_pids:
             logger.info(
                 f"[startup] terminated stale PM loop processes for workspace={workspace}: {stale_pids}",
@@ -202,6 +226,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     factory_run_driver_runtime = None
     try:
         if workspace:
+            phase_started_at = _startup_phase_started("bootstrap_fact_stream_workspace")
             bootstrap_fact_stream_workspace(
                 BootstrapFactStreamWorkspaceCommandV1(
                     workspace=workspace,
@@ -209,6 +234,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     maintenance_reason="http_app_lifespan_startup",
                 )
             )
+            _startup_phase_completed("bootstrap_fact_stream_workspace", phase_started_at)
         # Opt-in unattended ignition for the Resident autonomy loop (default off).
         resident_autotick_task = maybe_start_resident_autotick(workspace)
         instance_watchdog_task = maybe_start_instance_watchdog()
@@ -228,15 +254,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 configure_project_verification_clients,
             )
 
+            phase_started_at = _startup_phase_started("configure_project_runtime_services")
             configure_managed_process_receipt_owner()
             configure_project_verification_clients()
             project_completion_runtime = configure_project_completion_convergence_runtime(workspace)
+            _startup_phase_completed("configure_project_runtime_services", phase_started_at)
+            phase_started_at = _startup_phase_started("project_completion_runtime.start")
             await project_completion_runtime.start()
+            _startup_phase_completed("project_completion_runtime.start", phase_started_at)
+            phase_started_at = _startup_phase_started("factory_settlement_runtime.start")
             await start_factory_settlement_runtime(
                 workspace,
                 enable_wake_bridge=nats_enabled,
                 wake_bridge_required=nats_enabled and nats_required,
             )
+            _startup_phase_completed("factory_settlement_runtime.start", phase_started_at)
             settlement_runtime_started = True
             from polaris.delivery.http.routers.factory import (
                 _build_retry_start_request,
@@ -253,7 +285,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 recover_committed_run_ids=lambda: recover_committed_factory_run_ids(workspace),
             )
             bind_factory_run_driver_runtime(factory_run_driver_runtime)
+            phase_started_at = _startup_phase_started("factory_run_driver_runtime.start")
             await factory_run_driver_runtime.start()
+            _startup_phase_completed("factory_run_driver_runtime.start", phase_started_at)
 
         yield
     finally:

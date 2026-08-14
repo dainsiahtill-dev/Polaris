@@ -495,6 +495,37 @@ async def test_replay_reads_source_and_journal_once_per_page(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_same_consumer_catch_up_reads_only_source_tail_and_reuses_validated_journal(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    fact_stream = CountingFactStreamAdapter()
+    for index in range(3):
+        _append_source_fact(
+            fact_stream,
+            workspace,
+            factory_run_id=None,
+            suffix=f"tail-{index}",
+        )
+    consumer, _ = _build_consumer(
+        workspace=workspace,
+        fact_stream=fact_stream,
+        barrier=MutableBarrier(workspace=workspace, fencing_token=7),
+        factory_runs=RecordingFactoryRuns(),
+    )
+
+    started = await consumer.start()
+    assert len(started.decisions) == 3
+    fact_stream.reset_query_counts()
+    fact_stream.queries.clear()
+
+    caught_up = await consumer.replay()
+
+    assert caught_up.decisions == ()
+    assert fact_stream.query_counts == {TASK_RUNTIME_EXECUTION_STREAM: 1}
+    assert len(fact_stream.queries) == 1
+    assert fact_stream.queries[0].offset == 3
+
+
+@pytest.mark.asyncio
 async def test_non_factory_terminal_fact_is_ignored_checkpointed_and_does_not_block_factory_fact(
     tmp_path: Path,
 ) -> None:

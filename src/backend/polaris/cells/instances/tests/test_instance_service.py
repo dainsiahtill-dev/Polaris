@@ -650,6 +650,39 @@ def test_backend_process_identity_probe_matches_and_persists_attestation(
     assert "token" not in attestation
 
 
+def test_backend_process_identity_probe_bypasses_process_http_proxy(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """Local child identity probes must never be redirected by HTTP_PROXY.
+
+    Python urllib does not interpret ``NO_PROXY=127.*`` as a loopback
+    wildcard.  The production launcher inherited exactly that environment and
+    sent every child identity probe to the configured proxy, then killed the
+    healthy backend after a false timeout.  A deliberately dead proxy here
+    proves the supervisor reaches the local child directly.
+    """
+
+    record = _backend_identity_record(tmp_path)
+    payload = _backend_identity_payload(record)
+    server, thread, requests = _start_backend_identity_endpoint(payload)
+    record.backend_port = int(server.server_port)
+    record.backend_url = f"http://{instance_service.DEFAULT_HOST}:{record.backend_port}"
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        monkeypatch.setenv(key, "http://127.0.0.1:1")
+    for key in ("NO_PROXY", "no_proxy"):
+        monkeypatch.setenv(key, "")
+
+    try:
+        _WAIT_FOR_BACKEND_IDENTITY(InstanceSupervisor(), record, timeout_seconds=1.0)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+
+    assert requests == [("/v2/runtime/process-identity", "Bearer identity-probe-token")]
+
+
 def test_backend_process_identity_probe_accepts_bounded_slow_fingerprint_response(
     tmp_path: Path,
     monkeypatch: Any,

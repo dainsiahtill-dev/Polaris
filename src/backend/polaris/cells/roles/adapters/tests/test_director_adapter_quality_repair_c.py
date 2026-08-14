@@ -633,4 +633,3 @@ class TestQualityRepairMissingTargetContractC:
         # original task contract may still legitimately name the target path.
         assert "1 file(s) were already written and failed quality gates" in message
 
-

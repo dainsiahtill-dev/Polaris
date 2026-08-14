@@ -146,8 +146,30 @@ Automatic port allocation must avoid every port already declared by another
 registry record, including stopped internal test records. Operators should
 delete stale internal records before intentionally reusing their ports. After a
 backend process starts, Launcher must verify identity through
-`/settings.workspace` using that instance's token; `/health` alone is not enough
-because it can accidentally hit an older backend still bound to the same port.
+`/v2/runtime/process-identity` using that instance's token; `/health` alone is
+not enough because it can accidentally hit an older backend still bound to the
+same port.
+
+All child-instance identity and health probes are local control-plane traffic
+and must explicitly bypass process-wide HTTP/HTTPS proxies. Do not rely on
+environment entries such as `NO_PROXY=127.*`: Python `urllib` does not treat
+that form as a loopback wildcard. A proxied identity probe can produce a
+dangerous false timeout: the child backend is healthy and answers direct HTTP,
+but Launcher never contacts it and then terminates it as a failed start. The
+required implementation is a proxy-free opener (for example
+`ProxyHandler({})`) at the probe boundary. Regression tests must force a dead
+`HTTP_PROXY`, clear `NO_PROXY`, and still prove that the actual local identity
+endpoint receives the authenticated request.
+
+When diagnosing `backend identity check timed out`, compare both sides before
+increasing any timeout:
+
+1. Probe `/v2/runtime/process-identity` directly with the instance token.
+2. Check the child backend access log for the Supervisor's probe.
+3. Inspect `urllib.request.proxy_bypass("127.0.0.1")` in the controlling
+   process environment.
+4. Treat "direct probe succeeds but no Supervisor request is logged" as a
+   control-plane transport defect, not slow child startup.
 
 ## Bench Boundary
 

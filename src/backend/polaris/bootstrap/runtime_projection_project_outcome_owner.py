@@ -8,6 +8,7 @@ binder.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import Mapping
@@ -426,6 +427,25 @@ class ProjectOutcomeNonFactoryOwnerObservationAdapter:
 
     async def observe_project_outcome_non_factory(
         self,
+        *,
+        workspace: str,
+        project_id: str,
+        run_id: str,
+        completion_contract_hash: str,
+    ) -> ProjectOutcomeNonFactoryOwnerObservationV1:
+        # Every owner query below is a synchronous filesystem/projection read.
+        # Running it on the asyncio event loop starves unrelated startup work
+        # (notably NATS connect and /identity) while large FactStreams parse.
+        return await asyncio.to_thread(
+            self._observe_project_outcome_non_factory_sync,
+            workspace=workspace,
+            project_id=project_id,
+            run_id=run_id,
+            completion_contract_hash=completion_contract_hash,
+        )
+
+    @staticmethod
+    def _observe_project_outcome_non_factory_sync(
         *,
         workspace: str,
         project_id: str,

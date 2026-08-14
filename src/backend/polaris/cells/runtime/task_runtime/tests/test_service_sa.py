@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from queue import Empty
+from types import SimpleNamespace
 from typing import Any, Callable, NamedTuple, NoReturn, cast
 
 import pytest
@@ -1898,6 +1899,37 @@ def test_observable_task_rows_projection_marks_file_fallback_degraded(
     assert projection.readiness == readiness
 
 
+def test_observable_task_rows_projection_reads_execution_fact_stream_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    query_calls = 0
+
+    def query_execution_facts(*, limit: int = 500, offset: int = 0) -> SimpleNamespace:
+        nonlocal query_calls
+        query_calls += 1
+        assert limit == 500
+        assert offset == 0
+        return SimpleNamespace(total=0, events=())
+
+    monkeypatch.setattr(service, "_query_execution_fact_events", query_execution_facts)
+    monkeypatch.setattr(service, "_list_file_task_rows", lambda *args, **kwargs: [])
+
+    projection = service.query_observable_task_rows_projection()
+
+    assert projection.authoritative is True
+    assert projection.rows == ()
+    assert query_calls == 1
+
+    # Cache is projection-scoped: a separate authority query must observe the
+    # stream again instead of reusing stale cross-query state.
+    service.query_observable_task_rows_projection()
+    assert query_calls == 2
+
+
 def test_task_row_read_model_fallback_coverage_reports_full_file_coverage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2117,5 +2149,4 @@ def test_task_row_read_model_projection_parity_coverage_prefers_fact_over_stale_
         fact_only_row_ids=[],
         row_ids_with_projection_mismatch=[],
     )
-
 

@@ -621,11 +621,17 @@ class DurableJetStreamSettlementWakeBridge:
             raise RuntimeError("JetStream is unavailable for Factory settlement")
         consumer_config = self._consumer_config()
         try:
+            phase_started_at = asyncio.get_running_loop().time()
+            logger.warning("[settlement.bridge.startup] phase=subscribe status=started")
             subscription = await jetstream.subscribe(
                 self._subject,
                 durable=self._durable_name,
                 config=consumer_config,
                 manual_ack=True,
+            )
+            logger.warning(
+                "[settlement.bridge.startup] phase=subscribe status=completed duration_ms=%d",
+                int((asyncio.get_running_loop().time() - phase_started_at) * 1000),
             )
         except (NatsError, JetStreamError, OSError, RuntimeError, TypeError, ValueError) as exc:
             failure = FactorySettlementWakeBridgeError(
@@ -641,7 +647,13 @@ class DurableJetStreamSettlementWakeBridge:
             raise failure from exc
 
         try:
+            phase_started_at = asyncio.get_running_loop().time()
+            logger.warning("[settlement.bridge.startup] phase=consumer_info status=started")
             consumer_info = await subscription.consumer_info()
+            logger.warning(
+                "[settlement.bridge.startup] phase=consumer_info status=completed duration_ms=%d",
+                int((asyncio.get_running_loop().time() - phase_started_at) * 1000),
+            )
         except (NatsError, JetStreamError, OSError, RuntimeError, TypeError, ValueError) as exc:
             failure = FactorySettlementWakeBridgeError(
                 "Factory settlement JetStream consumer configuration could not be read",
@@ -933,12 +945,30 @@ class FactorySettlementRuntime:
             if self._running:
                 self._assert_wake_bridge_healthy()
                 return SettlementReplayReport(decisions=(), already_started=True)
+            phase_started_at = asyncio.get_running_loop().time()
+            logger.warning("[settlement.runtime.startup] phase=consumer.start status=started")
             report = await self._consumer.start()
+            logger.warning(
+                "[settlement.runtime.startup] phase=consumer.start status=completed duration_ms=%d",
+                int((asyncio.get_running_loop().time() - phase_started_at) * 1000),
+            )
             bridge = self._wake_bridge
             if bridge is not None:
                 try:
+                    phase_started_at = asyncio.get_running_loop().time()
+                    logger.warning("[settlement.runtime.startup] phase=bridge.start status=started")
                     await bridge.start()
+                    logger.warning(
+                        "[settlement.runtime.startup] phase=bridge.start status=completed duration_ms=%d",
+                        int((asyncio.get_running_loop().time() - phase_started_at) * 1000),
+                    )
+                    phase_started_at = asyncio.get_running_loop().time()
+                    logger.warning("[settlement.runtime.startup] phase=consumer.catch_up status=started")
                     catch_up = await self._consumer.wake()
+                    logger.warning(
+                        "[settlement.runtime.startup] phase=consumer.catch_up status=completed duration_ms=%d",
+                        int((asyncio.get_running_loop().time() - phase_started_at) * 1000),
+                    )
                     self._assert_wake_bridge_healthy()
                 except (NatsError, JetStreamError, OSError, RuntimeError, ValueError) as exc:
                     await bridge.stop()
@@ -1066,7 +1096,13 @@ class FactorySettlementRuntimeRegistry:
             current = self._runtimes.get(key)
             if current is not None:
                 return await current.start()
+            phase_started_at = asyncio.get_running_loop().time()
+            logger.warning("[settlement.registry.startup] phase=runtime_factory status=started")
             runtime = await runtime_factory(key)
+            logger.warning(
+                "[settlement.registry.startup] phase=runtime_factory status=completed duration_ms=%d",
+                int((asyncio.get_running_loop().time() - phase_started_at) * 1000),
+            )
             if _canonical_workspace(runtime.workspace) != key:
                 raise FactorySettlementRuntimeError(
                     "Factory settlement runtime factory returned another workspace",
@@ -1154,6 +1190,8 @@ async def create_factory_settlement_runtime(
     if wake_bridge_required and not enable_wake_bridge:
         raise ValueError("wake_bridge_required requires enable_wake_bridge")
 
+    phase_started_at = asyncio.get_running_loop().time()
+    logger.warning("[settlement.factory.startup] phase=fact_stream_bootstrap status=started")
     bootstrap_fact_stream_workspace(
         BootstrapFactStreamWorkspaceCommandV1(
             workspace=canonical_workspace,
@@ -1161,12 +1199,23 @@ async def create_factory_settlement_runtime(
             maintenance_reason="factory_settlement_runtime_startup",
         )
     )
+    logger.warning(
+        "[settlement.factory.startup] phase=fact_stream_bootstrap status=completed duration_ms=%d",
+        int((asyncio.get_running_loop().time() - phase_started_at) * 1000),
+    )
 
+    phase_started_at = asyncio.get_running_loop().time()
+    logger.warning("[settlement.factory.startup] phase=directed_effect_recovery status=started")
     recovery = directed_effect_recovery_handler(
         ReconcileAmbiguousDirectedEffectsCommandV1(
             workspace=canonical_workspace,
             reason="factory settlement startup recovery",
         )
+    )
+    logger.warning(
+        "[settlement.factory.startup] phase=directed_effect_recovery status=completed duration_ms=%d items=%d",
+        int((asyncio.get_running_loop().time() - phase_started_at) * 1000),
+        len(recovery.items),
     )
     if not recovery.ok:
         raise FactorySettlementRuntimeError(
@@ -1252,7 +1301,13 @@ async def create_factory_settlement_runtime(
     bridge: DurableJetStreamSettlementWakeBridge | None = None
     if enable_wake_bridge:
         try:
+            phase_started_at = asyncio.get_running_loop().time()
+            logger.warning("[settlement.factory.startup] phase=wake_client_factory status=started")
             client = wake_client if wake_client is not None else await wake_client_factory()
+            logger.warning(
+                "[settlement.factory.startup] phase=wake_client_factory status=completed duration_ms=%d",
+                int((asyncio.get_running_loop().time() - phase_started_at) * 1000),
+            )
             subject, durable_name = _wake_binding(canonical_workspace)
             bridge = DurableJetStreamSettlementWakeBridge(
                 client=client,
