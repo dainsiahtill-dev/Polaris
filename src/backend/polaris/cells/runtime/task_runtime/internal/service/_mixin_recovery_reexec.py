@@ -19,6 +19,7 @@ from polaris.kernelone.storage import resolve_runtime_path
 from ..execution_session import (
     TaskExecutionSession,
     _coerce_fact_event_seq,
+    is_terminal_task_row_status,
     project_task_row_execution_event,
     sanitize_summary,
 )
@@ -1223,14 +1224,48 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         token = str(external_id or "").strip()
         if not token:
             return None
+        matches: list[dict[str, Any]] = []
         for row in self.list_observable_task_rows():
             if not isinstance(row, dict):
                 continue
             raw_metadata = row.get("metadata")
             metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
             if self._metadata_matches_external_task_id(metadata, token):
-                return dict(row)
-        return None
+                matches.append(dict(row))
+        return self._prefer_live_external_task_row(matches)
+
+    @staticmethod
+    def _prefer_live_external_task_row(matches: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
+        """Prefer a rematerialized pending/ready row over a stale terminal sibling.
+
+        Live L1-10: factory drain reset left TASK-1's numeric row ``1`` terminal
+        in the fact overlay, then rematerialized pending row ``6`` with the same
+        ``external_task_id``. First-match lookup claimed ``1`` and failed with
+        ``task_terminal``.
+        """
+
+        if not matches:
+            return None
+
+        def sort_key(row: dict[str, Any]) -> tuple[int, int]:
+            seq = row.get("fact_event_seq")
+            seq_n = int(seq) if isinstance(seq, int) and not isinstance(seq, bool) else 0
+            row_id = row.get("id")
+            id_n = int(row_id) if isinstance(row_id, int) and not isinstance(row_id, bool) else 0
+            return (seq_n, id_n)
+
+        live = [
+            row for row in matches if not is_terminal_task_row_status(row.get("execution_state") or row.get("status"))
+        ]
+        pool: list[dict[str, Any]] = live or list(matches)
+        chosen = pool[0]
+        chosen_key = sort_key(chosen)
+        for row in pool[1:]:
+            key = sort_key(row)
+            if key > chosen_key:
+                chosen = row
+                chosen_key = key
+        return dict(chosen)
 
     @staticmethod
     def _execution_fact_factory_run_id(task_row: Mapping[str, Any]) -> str:
@@ -1559,13 +1594,17 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
 
         external_token = str(task_id or "").strip()
         if external_token:
+            matches: list[dict[str, Any]] = []
             for row in observable_rows:
                 if not isinstance(row, dict):
                     continue
                 raw_metadata = row.get("metadata")
                 metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
                 if self._metadata_matches_external_task_id(metadata, external_token):
-                    return dict(row)
+                    matches.append(dict(row))
+            preferred = self._prefer_live_external_task_row(matches)
+            if preferred is not None:
+                return preferred
 
         normalized = self.normalize_task_id(task_id)
         if normalized is not None:

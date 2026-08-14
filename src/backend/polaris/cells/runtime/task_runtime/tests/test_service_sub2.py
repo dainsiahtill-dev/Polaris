@@ -663,10 +663,6 @@ def _assert_terminal_reconcile_result_shape(
     return row, error, event
 
 
-
-
-
-
 def test_get_task_returns_fact_overlaid_status_for_external_task_id(tmp_path: Path) -> None:
     """``get_task(external_task_id)`` must surface the latest
     ``task_runtime.execution`` fact overlay for an external token such as
@@ -746,6 +742,91 @@ def test_get_task_returns_fact_overlaid_status_for_external_task_id(tmp_path: Pa
     assert str(overlaid["metadata"].get("source_task_id") or "") == external_id
     assert overlaid["metadata"].get("source") == "task_runtime.execution_fact"
     assert "previous_status" not in overlaid["metadata"]
+
+
+def test_get_task_prefers_rematerialized_pending_row_over_stale_terminal_sibling(
+    tmp_path: Path,
+) -> None:
+    """Same-run factory retry rematerializes a new numeric row for TASK-1.
+
+    Live L1-10: drain left row 1 terminal, then created pending row 6 with the
+    same external id. Lookup must claim the live row, not ``task_terminal``.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    external_id = "TASK-1"
+    stale = service.create_task_row(
+        subject="stale terminal owner",
+        metadata={"external_task_id": external_id, "pm_task_id": external_id, "source_task_id": external_id},
+    )
+    stale_id = int(stale["id"])
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="completed",
+            source="runtime.task_runtime",
+            task_id=str(stale_id),
+            run_id="run-stale-terminal",
+            payload={
+                "task_id": str(stale_id),
+                "run_id": "run-stale-terminal",
+                "event_type": "completed",
+                "status": "completed",
+                "execution_state": "completed",
+                "fact_event_seq": 10,
+                "task_row_snapshot": {
+                    "id": stale_id,
+                    "task_id": str(stale_id),
+                    "metadata": {
+                        "external_task_id": external_id,
+                        "pm_task_id": external_id,
+                        "source_task_id": external_id,
+                    },
+                },
+            },
+        )
+    )
+    live = service.create_task_row(
+        subject="rematerialized pending owner",
+        metadata={"external_task_id": external_id, "pm_task_id": external_id, "source_task_id": external_id},
+    )
+    live_id = int(live["id"])
+    assert live_id != stale_id
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="created",
+            source="runtime.task_runtime",
+            task_id=str(live_id),
+            run_id="run-live-pending",
+            payload={
+                "task_id": str(live_id),
+                "run_id": "run-live-pending",
+                "event_type": "created",
+                "status": "pending",
+                "execution_state": "pending",
+                "fact_event_seq": 20,
+                "task_row_snapshot": {
+                    "id": live_id,
+                    "task_id": str(live_id),
+                    "metadata": {
+                        "external_task_id": external_id,
+                        "pm_task_id": external_id,
+                        "source_task_id": external_id,
+                    },
+                },
+            },
+        )
+    )
+
+    resolved = service.get_task(external_id)
+    assert isinstance(resolved, dict)
+    assert resolved["id"] == live_id
+    assert resolved["status"] == "pending"
 
 
 # ---------------------------------------------------------------------------
@@ -1492,20 +1573,26 @@ def test_prepare_same_task_local_rework_reopens_exact_factory_owner_and_reclaims
     owner_id = int(owner["id"])
     unrelated_id = int(unrelated["id"])
     unrelated_before_status = str(unrelated.get("status") or "")
-    assert service.bind_task_to_factory_run(
-        BindRuntimeTaskToFactoryRunCommandV1(
-            workspace=str(workspace),
-            task_id=str(owner_id),
-            factory_run_id="factory-current",
-        )
-    ).ok is True
-    assert service.bind_task_to_factory_run(
-        BindRuntimeTaskToFactoryRunCommandV1(
-            workspace=str(workspace),
-            task_id=str(unrelated_id),
-            factory_run_id="factory-current",
-        )
-    ).ok is True
+    assert (
+        service.bind_task_to_factory_run(
+            BindRuntimeTaskToFactoryRunCommandV1(
+                workspace=str(workspace),
+                task_id=str(owner_id),
+                factory_run_id="factory-current",
+            )
+        ).ok
+        is True
+    )
+    assert (
+        service.bind_task_to_factory_run(
+            BindRuntimeTaskToFactoryRunCommandV1(
+                workspace=str(workspace),
+                task_id=str(unrelated_id),
+                factory_run_id="factory-current",
+            )
+        ).ok
+        is True
+    )
     claimed = service.claim_execution(
         owner_id,
         worker_id="director-initial",
@@ -1580,13 +1667,16 @@ def test_prepare_same_task_local_rework_rejects_cross_run_claim(tmp_path: Path) 
     workspace.mkdir()
     service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.ensure_task_row(external_task_id="TASK-1", subject="owner")
-    assert service.bind_task_to_factory_run(
-        BindRuntimeTaskToFactoryRunCommandV1(
-            workspace=str(workspace),
-            task_id=str(created["id"]),
-            factory_run_id="factory-current",
-        )
-    ).ok is True
+    assert (
+        service.bind_task_to_factory_run(
+            BindRuntimeTaskToFactoryRunCommandV1(
+                workspace=str(workspace),
+                task_id=str(created["id"]),
+                factory_run_id="factory-current",
+            )
+        ).ok
+        is True
+    )
     result = service.prepare_same_task_local_rework(
         PrepareSameTaskLocalReworkCommandV1(
             schema_version=SAME_TASK_LOCAL_REWORK_AUTHORIZATION_SCHEMA_V1,
@@ -1662,5 +1752,3 @@ def test_claim_execution_threaded_contenders_have_one_session_winner(tmp_path: P
     assert losers[0]["reason"] == "lease_conflict"
     assert winners[0]["session"]["session_id"] == losers[0]["session"]["session_id"]
     assert winners[0]["execution_attempt"]["session_id"] == winners[0]["session"]["session_id"]
-
-
