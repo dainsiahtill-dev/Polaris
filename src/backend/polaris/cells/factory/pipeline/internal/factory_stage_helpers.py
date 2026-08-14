@@ -37,8 +37,33 @@ _DECLARED_FILE_TOKEN_RE = re.compile(
 )
 _COMMAND_FAILURE_MARKER_RE = re.compile(
     r"(?im)^(?:not ok\b|fail(?:ed)?(?:\s|:)|error(?:\s|:)|traceback\b)|"
-    r"\b(?:AssertionError|ERR_ASSERTION|failureType|error TS\d+|error\[E\d+\])\b"
+    r"\b(?:AssertionError|ERR_ASSERTION|failureType|error TS\d+|error\[E\d+\])\b|"
+    # Compiler diagnostics put ``error:`` mid-line after the path anchor
+    # (``src/engine/generator.hpp:52:52: error: ...`` for g++/clang/javac);
+    # the line-start alternative alone missed them, so the failure excerpt
+    # was dropped and the byte tail sliced a path in half (live L1-06:
+    # ``ne/generator.hpp`` became the only parseable diagnostic).
+    r"(?<![>\w])error:"
 )
+
+
+def _align_slice_to_line_start(body: str, start: int) -> int:
+    """Advance a byte offset to the next line boundary.
+
+    A preserved segment that opens mid-line turns its first (partial) line
+    into garbage — for compiler output that can truncate a path prefix and
+    poison every downstream diagnostic parser.  Offsets already at a line
+    boundary (or 0 / end-of-text) pass through unchanged.
+    """
+
+    if start <= 0 or start >= len(body):
+        return max(0, start)
+    newline = body.find("\n", start)
+    # A body with no further newline cannot be aligned; keep the byte offset
+    # so single-line (or no-newline) output still preserves its tail slice.
+    return start if newline == -1 else newline + 1
+
+
 _FILE_AS_DIRECTORY_SUFFIXES = frozenset(
     {
         ".css",
@@ -825,22 +850,22 @@ def trim_command_output(text: str, limit: int = _WORKSPACE_VALIDATION_OUTPUT_MAX
     if len(body) <= limit:
         return body
     if limit < 256:
-        return body[-limit:]
+        return body[_align_slice_to_line_start(body, len(body) - limit) :]
     marker = _COMMAND_FAILURE_MARKER_RE.search(body)
     if marker is None or marker.start() >= len(body) - limit:
-        return body[-limit:]
+        return body[_align_slice_to_line_start(body, len(body) - limit) :]
     failure_separator = "\n... [failure excerpt preserved] ...\n"
     tail_separator = "\n... [output tail preserved] ...\n"
     head_budget = max(64, limit // 10)
     tail_budget = max(128, limit // 4)
     excerpt_budget = max(1, limit - head_budget - tail_budget - len(failure_separator) - len(tail_separator))
-    excerpt_start = max(0, marker.start() - min(512, excerpt_budget // 5))
+    excerpt_start = _align_slice_to_line_start(body, max(0, marker.start() - min(512, excerpt_budget // 5)))
     # Keep all slices disjoint.  Earlier code always emitted ``body[:head]``
     # and then restarted the failure excerpt at (often) offset zero, duplicating
     # TAP failures in the downstream diagnostic input.  That inflated one
     # verifier failure into repeated repair work and wasted provider tokens.
     head_end = min(head_budget, excerpt_start)
-    tail_start = max(head_end, len(body) - tail_budget)
+    tail_start = _align_slice_to_line_start(body, max(head_end, len(body) - tail_budget))
     excerpt_end = min(tail_start, excerpt_start + excerpt_budget)
     return "".join(
         (

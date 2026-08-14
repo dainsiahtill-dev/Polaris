@@ -1032,6 +1032,37 @@ class TestRunWorkspaceQualityCommand:
         assert "assert.ok(keywords.includes('火焰'))" in trimmed
         assert "# fail 1" in trimmed
 
+    def test_trim_command_output_slices_never_cut_a_diagnostic_line_in_half(self) -> None:
+        """Preserved segments must start on line boundaries.
+
+        Live L1-06: the g++ failure excerpt slice landed inside
+        ``src/engi|ne/generator.hpp:52:52`` and the mangled first line became
+        the only diagnostic the runtime normalizer accepted, so the repair
+        claim found no canonical owner and the gate failed without a single
+        LLM repair round.  A byte-exact slice that opens mid-line is never
+        valid verifier evidence.
+        """
+
+        filler_line = "ok 99 - unrelated passing test with a fairly long body for budget pressure\n"
+        head_filler = "compiling translation units\n" * 6
+        error_block = (
+            "src/engine/generator.hpp:52:52: error: 'StampError' has not been declared\n"
+            "   52 |                           StampError stamp_error = StampError::Ok);\n"
+            "src/engine/generator.hpp:97:42: error: 'Moon' in namespace 'moonpost' does not name a type\n"
+        )
+        # Marker (first "error" line) sits well past the head budget, and the
+        # tail budget lands mid-filler, so every slice boundary is exercised.
+        output = head_filler + filler_line * 400 + error_block + filler_line * 200 + "# fail 3\n"
+
+        trimmed = OrchestrationStageExecutor._trim_command_output(output, limit=2_000)
+
+        assert len(trimmed) <= 2_000
+        # The diagnostic path must survive intact, never a mid-path fragment.
+        assert "src/engine/generator.hpp:52:52:" in trimmed
+        for line in trimmed.splitlines():
+            if "generator.hpp" in line or "has not been declared" in line:
+                assert not line.startswith("ne/") and not line.startswith("gine")
+
 
 class TestWorkspaceQualityDeterministicRepairExecution:
     def test_synthetic_repair_task_id_is_event_store_safe(self) -> None:

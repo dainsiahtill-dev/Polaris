@@ -114,6 +114,44 @@ _task_boundary_scope_filter_evidence: Any
 _tool_receipt_safe_quality_errors: Any
 
 
+def _materialized_task_declared_target_files(task: Mapping[str, Any], workspace_full: str) -> list[str]:
+    """Return the claimed task's declared targets that exist on disk.
+
+    Repeat repair attempts widen authorization to this set (still partitioned
+    by task write-scope by the caller).  A diagnostic anchors the first batch
+    on the failing file while the legal fix — declaring a missing symbol in
+    its natural owner header — may live in another file the same task owns.
+    Only materialized files qualify so the widened prompt stays honest.
+    """
+
+    raw_paths: list[Any] = []
+    for source in (task, task.get("metadata") if isinstance(task, dict) else None):
+        if not isinstance(source, Mapping):
+            continue
+        for key in ("target_files", "scope_paths"):
+            value = source.get(key)
+            if isinstance(value, str):
+                raw_paths.append(value)
+            elif isinstance(value, list | tuple | set):
+                raw_paths.extend(value)
+    workspace = str(workspace_full or "").strip()
+    targets: list[str] = []
+    for item in raw_paths:
+        rel = str(item or "").strip().replace("\\", "/")
+        while rel.startswith("./"):
+            rel = rel[2:]
+        if not rel:
+            continue
+        if workspace:
+            try:
+                if not (Path(workspace) / rel).is_file():
+                    continue
+            except OSError:
+                continue
+        targets.append(rel)
+    return _dedupe_preserve_order(targets)
+
+
 async def _run_materialization_quality_repair_retry(
     adapter: Any,
     *,
@@ -321,6 +359,34 @@ async def _run_materialization_quality_repair_retry(
         repair_target_files,
         task=task,
     )
+    if repair_attempt >= 2:
+        # Repeat attempt for a residual the narrow diagnostic batch failed to
+        # resolve: widen authorization to the claimed task's own materialized
+        # declared targets (still task write-scope partitioned).  Live L1-06:
+        # g++ "'MoonError' has not been declared" anchored every round on
+        # generator.hpp while the legal fix — declaring the enum in
+        # moon.hpp — was never among the authorized edit paths, so six real
+        # edits circled the use site.  Same-task escalation only; the
+        # partition below keeps cross-task files out.  Candidate sources
+        # intentionally include the factory-passed target set and the run's
+        # changed files — both are materialized, and the partition is the
+        # ownership authority, not the candidate list.
+        context_target_files = context.get("target_files") if isinstance(context, Mapping) else None
+        widened_candidates = [
+            *in_scope_repair_target_files,
+            *_materialized_task_declared_target_files(task, workspace_full),
+            *([str(item) for item in context_target_files] if isinstance(context_target_files, list) else []),
+            *[str(item or "") for item in (changed_files or [])],
+        ]
+        widened, out_of_scope_widened = _partition_paths_by_task_write_scope(
+            _dedupe_preserve_order(widened_candidates),
+            task=task,
+        )
+        in_scope_repair_target_files = widened[:_QUALITY_REPAIR_TARGET_BATCH_LIMIT]
+        out_of_scope_repair_target_files = _dedupe_preserve_order(
+            [*out_of_scope_repair_target_files, *out_of_scope_widened]
+        )
+        repair_target_files = in_scope_repair_target_files
     task_boundary_discrepancy_evidence: dict[str, Any] = {}
     if out_of_scope_repair_target_files:
         merged_out_of_scope = [

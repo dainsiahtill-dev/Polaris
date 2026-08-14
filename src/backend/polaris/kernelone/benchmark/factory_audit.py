@@ -768,10 +768,21 @@ def _check_cpp_compile(workspace: str) -> tuple[bool, str]:
     compiler = shutil.which("g++") or shutil.which("c++")
     if not compiler:
         return False, _tool_unavailable_detail("g++/c++", "C++", len(cpp_files))
+    # Conventional CMake include roots (workspace root, src/, include/) so the
+    # audit matches how generated projects actually include headers
+    # (``#include "engine/generator.hpp"`` with src/ as the declared include
+    # root) — parity with the platform workspace-quality command.  Without
+    # these flags the gate misreports resolved headers as missing files
+    # (live L1-06) and hides the real cross-file symbol defects.
+    include_flags: list[str] = []
+    for root_name in (".", "src", "include"):
+        root = Path(workspace) / root_name
+        if root.is_dir():
+            include_flags += ["-I", str(root_name)]
     failures: list[str] = []
     for rel in _rel_paths(workspace, cpp_files[:80]):
         proc = subprocess.run(
-            [compiler, "-std=c++17", "-fsyntax-only", rel],
+            [compiler, "-std=c++17", "-fsyntax-only", *include_flags, rel],
             cwd=workspace,
             capture_output=True,
             text=True,

@@ -891,6 +891,51 @@ def test_explicit_quality_repair_extracts_rust_compile_target_files(tmp_path: An
     assert all(target.endswith(".rs") for target in targets)
 
 
+def test_explicit_quality_repair_extracts_cpp_and_java_compile_target_files(tmp_path: Any) -> None:
+    """g++/javac diagnostics must name their owning source files.
+
+    Live L1-06: g++ errors ('StampError' has not been declared) matched no
+    hint, so the explicit extractor returned [] and the forced-edit branch
+    never armed — the same dead-extractor shape the Rust E0432 case exposed.
+    """
+
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _explicit_artifact_quality_repair_target_files,
+    )
+
+    src = tmp_path / "src" / "engine"
+    src.mkdir(parents=True)
+    (src / "generator.hpp").write_text("#pragma once\n", encoding="utf-8")
+    (src / "generator.cpp").write_text('#include "engine/generator.hpp"\n', encoding="utf-8")
+    (tmp_path / "Main.java").write_text("public class Main {}\n", encoding="utf-8")
+    cpp_error = (
+        "Workspace validation failed: src/engine/generator.hpp:52:52: error: 'StampError' has not been declared\n"
+        "   52 |                           StampError stamp_error = StampError::Ok);\n"
+        "      |                                                    ^~~~~~~~~~\n"
+        "src/engine/generator.cpp:11:10: fatal error: engine/generator.hpp: No such file or directory\n"
+    )
+    java_error = (
+        "javac -d build Main.java\n"
+        "Main.java:7: error: cannot find symbol\n"
+        "        Stamp stamp = new Stamp();\n"
+        "  symbol: class Stamp\n"
+    )
+
+    cpp_targets = _explicit_artifact_quality_repair_target_files(
+        artifact_quality_errors=[cpp_error],
+        changed_files=["src/engine/generator.cpp", "src/engine/generator.hpp"],
+        workspace_full=str(tmp_path),
+    )
+    java_targets = _explicit_artifact_quality_repair_target_files(
+        artifact_quality_errors=[java_error],
+        changed_files=["Main.java"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "src/engine/generator.hpp" in cpp_targets
+    assert "Main.java" in java_targets
+
+
 def test_javascript_test_repair_expands_barrel_import_to_owner_modules(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.quality_gate import (
         _explicit_artifact_quality_repair_target_files,

@@ -1186,6 +1186,15 @@ _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS: tuple[str, ...] = (
     "cargo check",
     "cargo build",
     "cargo test",
+    # g++/clang diagnostics (live L1-06): the failure phrases are distinctive
+    # enough that they cannot fire on passing verifier output, and the path
+    # regexes below only promote paths that exist in the workspace.
+    "has not been declared",
+    "was not declared in this scope",
+    "does not name a type",
+    "fatal error:",
+    # javac diagnostics (L1-07 Java projects).
+    "cannot find symbol",
 )
 
 
