@@ -109,6 +109,18 @@ _COMPILER_ERROR_CODE_RES = re.compile(
     r"error\s*\[\s*(?P<rust>E\d{3,5})\s*\]|(?<![\w])TS(?P<ts>\d{4})(?![\w])",
     re.IGNORECASE,
 )
+_CPP_MISSING_MEMBER_RE = re.compile(
+    r"has no member named\s+[`'‘\"](?P<name>[A-Za-z_]\w*)[`'’\"]",
+    re.IGNORECASE,
+)
+_CPP_DIAGNOSTIC_KIND_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("cpp_undeclared", ("has not been declared", "was not declared in this scope", "does not name a type")),
+    ("cpp_redefinition", ("multiple definition", "different underlying type", "redefinition of")),
+    ("cpp_missing_member", ("has no member named", "is not a member of")),
+    ("cpp_ambiguous", ("call of overloaded", "ambiguous")),
+    ("cpp_no_matching", ("no matching function",)),
+    ("cpp_invalid_this", ("invalid use of 'this'", "invalid use of this", "invalid use of ‘this’")),
+)
 
 
 def _compiler_error_code_from_match(match: re.Match[str]) -> str:
@@ -1712,7 +1724,24 @@ class _Mixin02:
         codes: set[str] = set()
         for item in signature:
             text = str(item or "")
-            codes.update(_compiler_error_code_from_match(match) for match in _COMPILER_ERROR_CODE_RES.finditer(text))
+            structured = {
+                code
+                for match in _COMPILER_ERROR_CODE_RES.finditer(text)
+                if (code := _compiler_error_code_from_match(match))
+            }
+            if structured:
+                codes.update(structured)
+                continue
+            # g++/clang do not emit rustc/tsc codes. Live L1-06 advanced from
+            # "'MoonError' has not been declared" to "has no member named
+            # last_error" with a real edit, but the one-blob signature kept
+            # equal_count_swap and tripped the two-round breaker. Phrase
+            # classes plus missing-member names are the C++ phase tokens.
+            lowered = text.lower()
+            for kind, hints in _CPP_DIAGNOSTIC_KIND_HINTS:
+                if any(hint in lowered for hint in hints):
+                    codes.add(kind)
+            codes.update(f"cpp_member_{match.group('name').lower()}" for match in _CPP_MISSING_MEMBER_RE.finditer(text))
         return codes
 
     @classmethod
@@ -1768,6 +1797,18 @@ class _Mixin02:
                 and len(before_rust) == len(before_codes)
                 and len(after_rust) == len(after_codes)
                 and not (before_rust & after_rust)
+            ):
+                return "forward_unmask"
+            before_cpp = {code for code in before_codes if code.startswith("cpp_")}
+            after_cpp = {code for code in after_codes if code.startswith("cpp_")}
+            # Phase change (undeclared -> missing member) or a strict
+            # reduction of missing-member names. Adding new kinds without
+            # dropping old ones stays a swap.
+            if (
+                before_cpp
+                and after_cpp
+                and before_cpp != after_cpp
+                and (not (before_cpp & after_cpp) or after_cpp < before_cpp)
             ):
                 return "forward_unmask"
             return "equal_count_swap"

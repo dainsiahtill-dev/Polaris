@@ -904,9 +904,12 @@ def test_explicit_quality_repair_extracts_cpp_and_java_compile_target_files(tmp_
     )
 
     src = tmp_path / "src" / "engine"
+    models = tmp_path / "src" / "models"
     src.mkdir(parents=True)
+    models.mkdir(parents=True)
     (src / "generator.hpp").write_text("#pragma once\n", encoding="utf-8")
     (src / "generator.cpp").write_text('#include "engine/generator.hpp"\n', encoding="utf-8")
+    (models / "stamp.hpp").write_text("#pragma once\nnamespace moonpost { struct Stamp {}; }\n", encoding="utf-8")
     (tmp_path / "Main.java").write_text("public class Main {}\n", encoding="utf-8")
     cpp_error = (
         "Workspace validation failed: src/engine/generator.hpp:52:52: error: 'StampError' has not been declared\n"
@@ -933,7 +936,32 @@ def test_explicit_quality_repair_extracts_cpp_and_java_compile_target_files(tmp_
     )
 
     assert "src/engine/generator.hpp" in cpp_targets
+    assert "src/models/stamp.hpp" in cpp_targets
     assert "Main.java" in java_targets
+
+
+def test_cpp_undeclared_type_maps_to_existing_owner_header(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate._language_targets import (
+        _cpp_type_declaration_file_stems,
+        _cpp_undeclared_type_declaration_target_files,
+    )
+
+    models = tmp_path / "src" / "models"
+    models.mkdir(parents=True)
+    (models / "moon.hpp").write_text("#pragma once\n", encoding="utf-8")
+    (models / "stamp.hpp").write_text("#pragma once\n", encoding="utf-8")
+    text = (
+        "src/engine/generator.hpp:57:27: error: ‘MoonError’ has not been declared\n"
+        "src/engine/generator.hpp:103:42: error: ‘Moon’ in namespace ‘moonpost’ does not name a type\n"
+        "src/engine/generator.hpp:58:27: error: ‘StampError’ has not been declared\n"
+        "src/engine/generator.cpp:159:22: error: ‘const struct moonpost::Moon’ has no member named ‘last_error’\n"
+    )
+
+    assert "moon" in _cpp_type_declaration_file_stems("MoonError")
+    assert "stamp" in _cpp_type_declaration_file_stems("StampError")
+    assert "stamp" in _cpp_type_declaration_file_stems("validate_stamp")
+    targets = _cpp_undeclared_type_declaration_target_files(text, tmp_path)
+    assert set(targets) == {"src/models/moon.hpp", "src/models/stamp.hpp"}
 
 
 def test_javascript_test_repair_expands_barrel_import_to_owner_modules(tmp_path: Any) -> None:

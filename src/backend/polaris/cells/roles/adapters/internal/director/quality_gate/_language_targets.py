@@ -1192,10 +1192,104 @@ _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS: tuple[str, ...] = (
     "has not been declared",
     "was not declared in this scope",
     "does not name a type",
+    "multiple definition",
+    "different underlying type",
+    "redefinition of",
+    "has no member named",
     "fatal error:",
     # javac diagnostics (L1-07 Java projects).
     "cannot find symbol",
 )
+
+_CPP_UNDECLARED_IDENTIFIER_RE = re.compile(
+    r"[`'‘\"](?P<name>[A-Za-z_]\w*)[`'’\"]"
+    r"(?: has not been declared| was not declared in this scope"
+    r"| in namespace .+? does not name a type)",
+    re.IGNORECASE,
+)
+_CPP_MISSING_MEMBER_TYPE_RE = re.compile(
+    r"(?:struct|class)\s+(?:[\w:]+::)*(?P<type>[A-Za-z_]\w*)['’\"]?\s+has no member named",
+    re.IGNORECASE,
+)
+_CPP_DECL_FILE_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"})
+_CPP_DECL_HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx"})
+
+
+def _cpp_type_declaration_file_stems(name: str) -> set[str]:
+    """Map an undeclared C++ identifier onto likely owner-file stems.
+
+    ``MoonError`` / ``StampDenomination`` live in ``moon.hpp`` / ``stamp.hpp``.
+    CamelCase first token plus the raw lowered name are enough to find those
+    headers without inventing new files.
+    """
+
+    token = str(name or "").strip()
+    if not token:
+        return set()
+    stems = {token.lower()}
+    parts = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])", token)
+    if parts:
+        stems.add(parts[0].lower())
+        stems.add(parts[-1].lower())
+        stems.add("".join(part.lower() for part in parts))
+    for piece in token.replace("-", "_").split("_"):
+        if piece:
+            stems.add(piece.lower())
+    for suffix in ("error", "result", "status", "code"):
+        trimmed = {stem[: -len(suffix)] for stem in stems if stem.endswith(suffix) and len(stem) > len(suffix)}
+        stems.update(trimmed)
+    return {stem for stem in stems if stem}
+
+
+def _cpp_undeclared_type_declaration_target_files(text: str, workspace_root: Path) -> list[str]:
+    """Return existing headers that should own undeclared g++ identifiers.
+
+    Live L1-06: ``'MoonError' has not been declared`` is anchored on
+    ``generator.hpp`` (use site). The legal declaration belongs in
+    ``src/models/moon.hpp`` (TASK-1-source-models). Path regexes never see
+    that header, so the owner file never entered the repair candidate set.
+    """
+
+    names = [match.group("name") for match in _CPP_UNDECLARED_IDENTIFIER_RE.finditer(str(text or ""))]
+    names.extend(match.group("type") for match in _CPP_MISSING_MEMBER_TYPE_RE.finditer(str(text or "")))
+    if not names:
+        return []
+    wanted_stems: set[str] = set()
+    for name in names:
+        wanted_stems.update(_cpp_type_declaration_file_stems(name))
+    if not wanted_stems:
+        return []
+    search_roots = [path for path in (workspace_root / "src", workspace_root / "include") if path.is_dir()]
+    if not search_roots:
+        search_roots = [workspace_root]
+    ignored_parts = {"build", "cmake-build", ".git", ".polaris"}
+    headers: list[str] = []
+    sources: list[str] = []
+    seen: set[str] = set()
+    for root in search_roots:
+        try:
+            iterator = root.rglob("*")
+        except OSError:
+            continue
+        for path in iterator:
+            try:
+                if not path.is_file() or path.suffix.lower() not in _CPP_DECL_FILE_SUFFIXES:
+                    continue
+                if any(part in ignored_parts for part in path.parts):
+                    continue
+                if path.stem.lower() not in wanted_stems:
+                    continue
+                rel = path.resolve().relative_to(workspace_root.resolve()).as_posix()
+            except (OSError, ValueError):
+                continue
+            if rel in seen:
+                continue
+            seen.add(rel)
+            if path.suffix.lower() in _CPP_DECL_HEADER_SUFFIXES:
+                headers.append(rel)
+            else:
+                sources.append(rel)
+    return _dedupe_preserve_order([*headers, *sources])
 
 
 def _explicit_artifact_quality_repair_target_files(
@@ -1253,6 +1347,8 @@ def _explicit_artifact_quality_repair_target_files(
         if _looks_like_javascript_module_system_failure(text) and "package.json" in changed_source_set:
             candidates.append("package.json")
             priority_candidates.append("package.json")
+        cpp_declaration_targets = _cpp_undeclared_type_declaration_target_files(text, workspace_root)
+        candidates.extend(cpp_declaration_targets)
         explicit_paths = [match.group("path") for match in _SEMANTIC_QUALITY_EXPLICIT_PATH_RE.finditer(text)]
         if _looks_like_python_test_behavior_failure(text):
             symbol_owner_targets = _python_test_failure_symbol_owner_target_files(text, workspace_root)
@@ -1655,6 +1751,8 @@ __all__ = [
     "_artifact_quality_failed_test_count",
     "_changed_source_repair_target_files",
     "_compiled_javascript_stack_source_candidates",
+    "_cpp_type_declaration_file_stems",
+    "_cpp_undeclared_type_declaration_target_files",
     "_embedded_rust_compile_repair_target_files",
     "_explicit_artifact_quality_repair_target_files",
     "_failed_test_title_target_files",

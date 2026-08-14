@@ -185,7 +185,17 @@ def workspace_quality_deferred_owner_targets(summary: dict[str, Any]) -> list[st
     raw_targets = scope_filter.get("out_of_scope_repair_target_files")
     if not isinstance(raw_targets, list | tuple | set):
         return []
-    return _dedupe_workspace_repair_paths([str(item or "") for item in raw_targets if str(item or "").strip()])
+    skipped_parts = {".git", ".polaris", "runtime", "node_modules", "__pycache__"}
+    cleaned: list[str] = []
+    for item in raw_targets:
+        rel = str(item or "").strip().replace("\\", "/")
+        if not rel:
+            continue
+        parts = Path(rel).parts
+        if any(part.startswith(".") or part in skipped_parts for part in parts):
+            continue
+        cleaned.append(rel)
+    return _dedupe_workspace_repair_paths(cleaned)
 
 
 def workspace_quality_interface_discrepancy_evidence(
@@ -269,9 +279,7 @@ def workspace_quality_interface_discrepancy_evidence(
     raw_owner_evidence = summary.get("task_boundary_owner_evidence")
     owner_evidence = dict(raw_owner_evidence) if isinstance(raw_owner_evidence, Mapping) else {}
     owner_target_files = _dedupe_workspace_repair_paths(owner_evidence.get("owner_target_files") or [])
-    diagnostic_target_files = _dedupe_workspace_repair_paths(
-        owner_evidence.get("diagnostic_target_files") or []
-    )
+    diagnostic_target_files = _dedupe_workspace_repair_paths(owner_evidence.get("diagnostic_target_files") or [])
     in_scope_diagnostic_target_files = _dedupe_workspace_repair_paths(
         owner_evidence.get("in_scope_diagnostic_target_files") or []
     )
@@ -435,11 +443,9 @@ def workspace_quality_repair_summary_projection(
 def _bounded_ledger_strings(value: Any) -> list[str]:
     if not isinstance(value, (list, tuple, set)):
         return []
-    return [
-        str(item or "").strip()[:_LEDGER_REPAIR_TEXT_LIMIT]
-        for item in value
-        if str(item or "").strip()
-    ][:_LEDGER_REPAIR_LIST_LIMIT]
+    return [str(item or "").strip()[:_LEDGER_REPAIR_TEXT_LIMIT] for item in value if str(item or "").strip()][
+        :_LEDGER_REPAIR_LIST_LIMIT
+    ]
 
 
 def _compact_repair_probe(value: Any) -> dict[str, Any]:

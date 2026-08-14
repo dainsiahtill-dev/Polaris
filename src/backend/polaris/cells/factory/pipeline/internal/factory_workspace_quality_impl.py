@@ -610,8 +610,15 @@ async def _apply_workspace_quality_deterministic_repairs(
     # because TASK-1 owned more files.  That erased same-task locality and made
     # ordinary Director code repair look like a cross-task CE contract gap.
     diagnostic_target_files = executor._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors)
-    claim_target_files = diagnostic_target_files or executor._director_stage_materialization_settle_target_files(
-        diagnostics=artifact_quality_errors
+    # One g++ blob lists every residual path. Scoring all of them reopened
+    # TASK-1-source-models-2 (poem.hpp) while the leading error was
+    # Moon.status on generator.cpp (live L1-06). Claim the first diagnostic
+    # path's owner; later residuals select the next owner after revalidation.
+    primary_diagnostic_targets = list(diagnostic_target_files[:1])
+    claim_target_files = (
+        primary_diagnostic_targets
+        or diagnostic_target_files
+        or executor._director_stage_materialization_settle_target_files(diagnostics=artifact_quality_errors)
     )
     try:
         task_id, task_row_id, execution_attempt, repair_task = executor._claim_workspace_quality_repair_attempt(
@@ -824,6 +831,11 @@ async def _apply_workspace_quality_llm_repairs(
         if owner_target_files
         else diagnostic_target_files or materialized_declared_targets or changed_files
     )
+    claim_target_files = (
+        _dedupe_workspace_repair_paths(owner_target_files)
+        if owner_target_files
+        else list(diagnostic_target_files[:1]) or target_files
+    )
     repair_context: dict[str, Any] = {
         "delivery_mode": "materialize_changes",
         "target_files": (target_files or changed_files)[:80],
@@ -918,7 +930,7 @@ async def _apply_workspace_quality_llm_repairs(
         ) = executor._claim_workspace_quality_repair_attempt(
             run=run,
             repair_attempt=repair_attempt,
-            target_files=target_files or changed_files,
+            target_files=claim_target_files or target_files or changed_files,
         )
         from polaris.cells.runtime.task_runtime.public import (
             create_task_runtime_execution_attempt_authority,
@@ -1242,6 +1254,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
         task_boundary_triage_summary: dict[str, Any] = {}
         consecutive_stagnant_rounds = 0
         last_nonprogress_effect = ""
+        last_nonprogress_task_id = ""
         convergence_stop_reason = ""
         seen_diagnostic_error_codes: set[str] = set()
 
@@ -1292,7 +1305,11 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             if not repair_errors:
                 break
             before_signature = executor._workspace_quality_diagnostic_signature(repair_errors)
-            seen_diagnostic_error_codes.update(executor._workspace_quality_diagnostic_error_codes(before_signature))
+            # Oscillation uses AFTER codes from completed rounds only.
+            # Seeding `seen` with this round's before-set made C++
+            # forward_unmask (undeclared -> missing-member, kinds still
+            # overlapping) look like a return to an already-seen code and
+            # tripped the breaker after two real unmasks (live L1-06).
             round_repair_results, round_summary = await executor._apply_workspace_quality_deterministic_repairs(
                 run=run,
                 artifact_quality_errors=repair_errors,
@@ -1672,15 +1689,25 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             forward_unmask_advances = repair_effect == "forward_unmask" and not (
                 after_codes & seen_diagnostic_error_codes
             )
+            round_task_id = ""
+            projected_for_task = round_payload.get("repair_summary")
+            if isinstance(projected_for_task, Mapping):
+                round_task_id = str(projected_for_task.get("task_id") or "").strip()
             if repair_effect in {"resolved", "progress"} or forward_unmask_advances:
                 consecutive_stagnant_rounds = 0
                 last_nonprogress_effect = ""
+                last_nonprogress_task_id = ""
+            elif (
+                repair_effect == last_nonprogress_effect and round_task_id and round_task_id == last_nonprogress_task_id
+            ):
+                # Live L1-06: poem.hpp swap then moon.cpp swap are different
+                # owners. Counting them as one breaker trip aborted a still
+                # advancing multi-task residual.
+                consecutive_stagnant_rounds += 1
             else:
-                if repair_effect == last_nonprogress_effect:
-                    consecutive_stagnant_rounds += 1
-                else:
-                    consecutive_stagnant_rounds = 1
-                    last_nonprogress_effect = repair_effect
+                consecutive_stagnant_rounds = 1
+                last_nonprogress_effect = repair_effect
+                last_nonprogress_task_id = round_task_id
             seen_diagnostic_error_codes.update(after_codes)
             if verifier_passed:
                 convergence_stop_reason = "verifier_passed"

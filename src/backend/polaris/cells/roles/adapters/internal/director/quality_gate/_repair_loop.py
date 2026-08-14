@@ -152,6 +152,22 @@ def _materialized_task_declared_target_files(task: Mapping[str, Any], workspace_
     return _dedupe_preserve_order(targets)
 
 
+def _compiler_diagnostic_anchor_files(artifact_quality_errors: list[str]) -> list[str]:
+    """Return paths that a compiler named as the diagnostic site (path:line)."""
+
+    anchors: list[str] = []
+    for item in artifact_quality_errors:
+        text = str(item or "")
+        for match in _SEMANTIC_QUALITY_EXPLICIT_PATH_RE.finditer(text):
+            trailing = text[match.end() : match.end() + 8]
+            if not trailing.startswith(":") or not trailing[1:2].isdigit():
+                continue
+            rel = _normalize_declared_task_path(match.group("path"))
+            if rel:
+                anchors.append(rel)
+    return _dedupe_preserve_order(anchors)
+
+
 async def _run_materialization_quality_repair_retry(
     adapter: Any,
     *,
@@ -359,7 +375,15 @@ async def _run_materialization_quality_repair_retry(
         repair_target_files,
         task=task,
     )
-    if repair_attempt >= 2:
+    factory_quality = context.get("director_quality_repair") if isinstance(context, Mapping) else None
+    factory_forced_targets: list[str] = []
+    if isinstance(factory_quality, Mapping):
+        raw_forced = factory_quality.get("repair_target_files")
+        if isinstance(raw_forced, list):
+            factory_forced_targets = _dedupe_preserve_order(
+                [str(item or "").strip().replace("\\", "/") for item in raw_forced if str(item or "").strip()]
+            )
+    if factory_forced_targets or repair_attempt >= 2:
         # Repeat attempt for a residual the narrow diagnostic batch failed to
         # resolve: widen authorization to the claimed task's own materialized
         # declared targets (still task write-scope partitioned).  Live L1-06:
@@ -367,17 +391,27 @@ async def _run_materialization_quality_repair_retry(
         # generator.hpp while the legal fix — declaring the enum in
         # moon.hpp — was never among the authorized edit paths, so six real
         # edits circled the use site.  Same-task escalation only; the
-        # partition below keeps cross-task files out.  Candidate sources
-        # intentionally include the factory-passed target set and the run's
-        # changed files — both are materialized, and the partition is the
-        # ownership authority, not the candidate list.
+        # partition below keeps cross-task files out.
+        #
+        # Factory owner-rebind already names the precise declaration homes in
+        # director_quality_repair.repair_target_files. Dumping the whole
+        # workspace changed_files set back into that batch re-authorized
+        # stamp.hpp on a MoonError residual (live R4/R5) and the model edited
+        # the wrong sibling. Keep rebound batches on the factory-forced set.
         context_target_files = context.get("target_files") if isinstance(context, Mapping) else None
-        widened_candidates = [
-            *in_scope_repair_target_files,
-            *_materialized_task_declared_target_files(task, workspace_full),
-            *([str(item) for item in context_target_files] if isinstance(context_target_files, list) else []),
-            *[str(item or "") for item in (changed_files or [])],
-        ]
+        if factory_forced_targets:
+            widened_candidates = [
+                *in_scope_repair_target_files,
+                *factory_forced_targets,
+            ]
+        else:
+            widened_candidates = [
+                *in_scope_repair_target_files,
+                *_materialized_task_declared_target_files(task, workspace_full),
+                *explicit_quality_target_files,
+                *([str(item) for item in context_target_files] if isinstance(context_target_files, list) else []),
+                *[str(item or "") for item in (changed_files or [])],
+            ]
         widened, out_of_scope_widened = _partition_paths_by_task_write_scope(
             _dedupe_preserve_order(widened_candidates),
             task=task,
@@ -431,6 +465,59 @@ async def _run_materialization_quality_repair_retry(
                 "llm_fallback_blocked": True,
             }
         repair_target_files = in_scope_repair_target_files
+    from polaris.cells.roles.adapters.internal.director.quality_gate._language_targets import (
+        _cpp_undeclared_type_declaration_target_files,
+    )
+
+    # Declaration homes are derived from the diagnostic text, not from the
+    # current authorized batch. Live L1-06: factory_forced repair_target_files
+    # listed only generator.cpp (the g++ use site), so moon.hpp never entered
+    # out_of_scope and source-core kept inventing Moon.status / Moon.error.
+    cpp_declaration_homes: list[str] = []
+    if workspace_full:
+        workspace_root = Path(workspace_full)
+        if workspace_root.is_dir():
+            for item in repair_quality_errors:
+                cpp_declaration_homes.extend(_cpp_undeclared_type_declaration_target_files(item, workspace_root))
+    cpp_declaration_homes = _dedupe_preserve_order(cpp_declaration_homes)
+    in_scope_set = set(in_scope_repair_target_files)
+    anchor_files = set(_compiler_diagnostic_anchor_files(repair_quality_errors))
+    owns_diagnostic_anchor = any(path in anchor_files for path in in_scope_repair_target_files)
+    unbound_homes = [path for path in cpp_declaration_homes if path not in in_scope_set and path not in anchor_files]
+    if unbound_homes and (owns_diagnostic_anchor or not in_scope_repair_target_files):
+        header_suffixes = {".h", ".hh", ".hpp", ".hxx"}
+        header_homes = [path for path in unbound_homes if Path(path).suffix.lower() in header_suffixes]
+        primary_pool = header_homes or unbound_homes
+        primary_stem = Path(primary_pool[0]).stem.lower()
+        declaration_homes = [
+            path
+            for path in primary_pool
+            if Path(path).stem.lower() == primary_stem and Path(path).suffix.lower() in header_suffixes
+        ] or [path for path in primary_pool if Path(path).stem.lower() == primary_stem]
+        task_scope_filter_evidence = _task_boundary_scope_filter_evidence(
+            task,
+            target_files=declaration_homes,
+            reason="quality_repair_targets_outside_current_task_target_files",
+            workspace=workspace_full,
+            cache_root=cache_root_full,
+        )
+        return [], {
+            "stage": "task_boundary_repair_targets_deferred",
+            "attempted": True,
+            "attempt": repair_attempt,
+            "success": False,
+            "success_reason": "repair_targets_outside_current_task_target_files",
+            "tool_results": 0,
+            "write_tool_evidence": False,
+            "missing_target_files": missing_target_files[:12],
+            "runtime_smoke_target_files": runtime_smoke_target_files[:12],
+            "semantic_quality_target_files": semantic_quality_target_files[:12],
+            "explicit_quality_target_files": explicit_quality_target_files[:12],
+            "repair_target_files": [],
+            "rotated_repair_targets": False,
+            "task_boundary_scope_filter": task_scope_filter_evidence,
+            "llm_fallback_blocked": True,
+        }
     if task_scope_filter_evidence and not repair_target_files:
         return [], {
             "stage": "task_boundary_repair_targets_deferred",
@@ -1625,6 +1712,7 @@ __all__ = [
     "_TS_TYPE_ONLY_VALUE_QUALITY_RE",
     "_TS_UNKNOWN_VALUE_QUALITY_RE",
     "_annotate_current_task_missing_target_continuation",
+    "_compiler_diagnostic_anchor_files",
     "_context_float_value",
     "_extract_task_interface_contract",
     "_filter_materialization_quality_errors_for_repair_targets",

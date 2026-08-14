@@ -919,6 +919,34 @@ class TestRunWorkspaceQualityChecks:
             )
             == "equal_count_swap"
         )
+        # Live L1-06: g++ is one residual blob. Resolving MoonError unmasked
+        # missing-member diagnostics; that is phase advancement, not a swap.
+        assert (
+            classify(
+                before_signature=(
+                    "src/engine/generator.hpp:56:27: error: ‘MoonError’ has not been declared\n",
+                ),
+                after_signature=(
+                    "src/engine/generator.cpp:159:22: error: ‘const struct moonpost::Moon’ "
+                    "has no member named ‘last_error’\n"
+                    "src/engine/generator.cpp:201:16: error: ‘struct moonpost::Stamp’ "
+                    "has no member named ‘is_valid’\n",
+                ),
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "forward_unmask"
+        )
+        # Same missing-member names with only wording churn stay a swap.
+        assert (
+            classify(
+                before_signature=("src/x.cpp:1:1: error: ‘struct Moon’ has no member named ‘last_error’\n",),
+                after_signature=("src/x.cpp:2:1: error: ‘struct Moon’ has no member named ‘last_error’\n",),
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "equal_count_swap"
+        )
         # A read-only turn never earns forward progress regardless of codes.
         assert (
             classify(
@@ -2623,3 +2651,27 @@ class TestRunWorkspaceQualityChecks:
 # ---------------------------------------------------------------------------
 # Director-evidence truth tables
 # ---------------------------------------------------------------------------
+
+
+def test_deferred_owner_targets_drop_runtime_and_dotfile_noise() -> None:
+    from polaris.cells.factory.pipeline.internal.factory_workspace_quality_evidence import (
+        workspace_quality_deferred_owner_targets,
+    )
+
+    targets = workspace_quality_deferred_owner_targets(
+        {
+            "stage": "task_boundary_repair_targets_deferred",
+            "task_boundary_scope_filter": {
+                "out_of_scope_repair_target_files": [
+                    ".catalog_meta.json",
+                    ".polaris.kernelone.tags.cache.v1/b40656d3e6561377.json",
+                    "readme.md",
+                    "runtime/signals/pm_planning.pm.signals.json",
+                    "src/models/moon.hpp",
+                    "src/models/stamp.hpp",
+                ]
+            },
+        }
+    )
+
+    assert targets == ["readme.md", "src/models/moon.hpp", "src/models/stamp.hpp"]
