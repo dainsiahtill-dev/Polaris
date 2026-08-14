@@ -935,14 +935,12 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
         check_summary = "; ".join(deterministic_checks[:8]) if deterministic_checks else "go_compile; go test ./..."
         model_targets = [
             "go.mod",
-            "models/capsule.go",
-            "models/exhibit.go",
-            "models/gallery.go",
+            "models/entity.go",
+            "models/state.go",
         ]
         engine_targets = [
-            "engine/museum.go",
-            "engine/riddle.go",
-            "engine/unlock.go",
+            "engine/rules.go",
+            "engine/service.go",
             "main.go",
         ]
         verification_targets = [
@@ -970,14 +968,14 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "title": f"实现 {domain_label} Go 模块与领域模型",
                     "goal": f"在工作区根交付 {domain_label} 的 go.mod 与项目级 Go 领域模型源码。",
                     "description": (
-                        "创建 go.mod 与 models/ 下的 Go 源文件，定义时间胶囊、展品和展厅布局等领域实体，"
+                        f"创建 go.mod 与 models/ 下的 Go 源文件，定义 {domain_label} 的领域实体、状态和校验契约，"
                         f"确保 .go 源码覆盖需求关键词：{keyword_summary}。"
                     ),
                     "scope": model_targets,
                     "target_files": model_targets,
                     "steps": [
                         "创建 go.mod，声明可被 `go test ./...` 加载的本地 Go module",
-                        "实现 models/capsule.go、models/exhibit.go 与 models/gallery.go，封装领域数据结构和校验规则",
+                        "实现 models/entity.go 与 models/state.go，封装当前需求的领域数据、状态和校验规则",
                         f"Go 源码中必须真实使用或保留验收关键词：{keyword_summary}",
                         "执行 `go test ./...` 或等价命令验证模块可编译",
                     ],
@@ -995,7 +993,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 {
                     "id": "TASK-2",
                     "title": f"实现 {domain_label} Go 规则引擎与 CLI 入口",
-                    "goal": f"实现 {domain_label} 的解锁规则、谜语验证、展厅布局和可执行 Go 入口。",
+                    "goal": f"实现 {domain_label} 的核心规则、状态转换和可执行 Go 入口。",
                     "description": (
                         "补齐 engine/ 下的核心规则与 main.go，"
                         f"让 `go run .` 执行真实领域流程并输出覆盖需求关键词的结果：{keyword_summary}。"
@@ -1003,9 +1001,8 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "scope": [*model_targets, *engine_targets],
                     "target_files": [*model_targets, *engine_targets],
                     "steps": [
-                        "实现 engine/museum.go，组织展厅布局与展品查询流程",
-                        "实现 engine/riddle.go，封装谜语校验和提示规则",
-                        "实现 engine/unlock.go，封装未来时间锁定和解锁判定",
+                        "实现 engine/rules.go，表达当前需求的正常、边界和无效输入规则",
+                        "实现 engine/service.go，组织领域模型、状态转换和可复用业务流程",
                         "实现 main.go，调用 models/ 与 engine/ 的公开 API，提供可执行 CLI 或文本入口",
                         "入口必须运行真实核心规则，不能只打印静态占位文本",
                     ],
@@ -1032,7 +1029,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "target_files": verification_targets,
                     "context_files": [*model_targets, *engine_targets],
                     "steps": [
-                        "实现 main_test.go，使用 Go testing 包覆盖 capsule、museum、riddle、unlock 核心规则",
+                        "实现 main_test.go，使用 Go testing 包覆盖领域模型、规则引擎、正常路径、边界路径和错误路径",
                         "README 记录依赖要求、`go test ./...`、`go run .` 和原生验收步骤",
                         f"验证脚本覆盖确定性检查：{check_summary}",
                     ],

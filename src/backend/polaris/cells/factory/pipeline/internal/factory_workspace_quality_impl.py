@@ -1351,20 +1351,36 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             if round_requires_task_boundary_triage:
                 convergence_stop_reason = "task_boundary_triage_required"
                 break
-            if not round_repair_results:
+            if not round_write_tool_evidence:
+                # A provider/tool result is attempt evidence, not delivery
+                # progress.  In r51 an ``edit_file`` turn produced no physical
+                # mutation, but the non-empty result list still caused
+                # ``go test`` and ``go run`` to execute again.  The failed
+                # attempt was then reopened for the next round, projecting an
+                # active TaskRuntime row with an older failed settlement.
+                #
+                # Do not spend verifier budget until an authoritative effect
+                # receipt proves a write.  Give the same Director task one
+                # more edit opportunity, then stop after two consecutive
+                # no-mutation rounds.  PM/CE are never restarted here.
                 round_payload["verifier_effect"] = "no_op"
                 round_payload["verifier_authoritative_success"] = False
                 round_payload["diagnostic_count_before"] = len(before_signature)
                 round_payload["diagnostic_count_after"] = len(before_signature)
+                round_payload["residual_errors_after"] = repair_errors[:10]
                 projected_summary_raw = round_payload.get("repair_summary")
                 if isinstance(projected_summary_raw, dict):
                     projected_summary: dict[str, Any] = projected_summary_raw
                     projected_summary["claimed_success_before_revalidation"] = bool(projected_summary.get("success"))
                     projected_summary["success"] = False
                     projected_summary["success_authority"] = "post_repair_verifier"
+                    projected_summary["verifier_effect"] = "no_op"
                 consecutive_stagnant_rounds += 1
-                convergence_stop_reason = "repair_produced_no_effect"
-                break
+                if consecutive_stagnant_rounds >= 2:
+                    convergence_stop_reason = "two_consecutive_no_mutation_repairs"
+                    break
+                convergence_stop_reason = "repair_produced_no_effect_retry_same_director_task"
+                continue
             latest_check_results = []
             rerun_prepare_results = []
             rerun_results = []

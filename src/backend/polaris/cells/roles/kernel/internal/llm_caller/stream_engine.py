@@ -351,6 +351,8 @@ class StreamEngine:
         def _build_stream_error_metadata(*, elapsed_ms: float, error_type: str = "") -> dict[str, Any]:
             payload: dict[str, Any] = {
                 "stream": True,
+                "provider_id": str(getattr(profile, "provider_id", "") or "").strip(),
+                "model": model,
                 "native_tool_mode": active_native_tool_mode,
                 "tool_protocol": active_tool_protocol,
                 "native_tool_calling_fallback": False,
@@ -580,8 +582,12 @@ class StreamEngine:
                             retry_error_category = error_category
                             break
                         elapsed_ms = (time.perf_counter() - start_time) * 1000
-                        metadata.setdefault("error", error_message)
-                        metadata.update(_current_slo(elapsed_ms))
+                        error_metadata = {
+                            **metadata,
+                            **_build_stream_error_metadata(elapsed_ms=elapsed_ms),
+                            "error": error_message,
+                            "stream_reconnect_attempt": reconnect_count,
+                        }
                         self._emit_call_error(
                             event_emitter=event_emitter,
                             role=role_id,
@@ -593,13 +599,15 @@ class StreamEngine:
                             error_message=error_message,
                             call_id=call_id,
                             elapsed_ms=elapsed_ms,
-                            metadata={
-                                **_build_stream_error_metadata(elapsed_ms=elapsed_ms),
-                                "stream_reconnect_attempt": reconnect_count,
-                            },
+                            metadata=error_metadata,
                         )
                         yield_started_at = time.perf_counter()
-                        yield {"type": "error", "error": error_message, "metadata": metadata, "iteration": turn_round}
+                        yield {
+                            "type": "error",
+                            "error": error_message,
+                            "metadata": error_metadata,
+                            "iteration": turn_round,
+                        }
                         total_backpressure_wait_ms += (time.perf_counter() - yield_started_at) * 1000
                         return
 

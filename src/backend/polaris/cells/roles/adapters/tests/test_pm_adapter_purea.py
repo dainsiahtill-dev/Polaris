@@ -310,8 +310,6 @@ class _DedupCancelExecutionEventFailureTaskRuntime(_RowWriteOnlyTaskRuntime):
 # ---------------------------------------------------------------------------
 
 
-
-
 class TestBuildPmMessage:
     def test_includes_directive(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -1185,11 +1183,10 @@ ts_syntax
         assert len(contracts) == 3
         assert "go.mod" in targets
         assert "main.go" in targets
-        assert "models/capsule.go" in targets
-        assert "models/exhibit.go" in targets
-        assert "engine/museum.go" in targets
-        assert "engine/riddle.go" in targets
-        assert "engine/unlock.go" in targets
+        assert "models/entity.go" in targets
+        assert "models/state.go" in targets
+        assert "engine/rules.go" in targets
+        assert "engine/service.go" in targets
         assert "main_test.go" in targets
         assert "tests/test_product.py" not in targets
         assert "README.md" in targets
@@ -1201,8 +1198,8 @@ ts_syntax
         assert "go run ." in serialized
         assert "python -m unittest" not in serialized
         assert contracts[2]["target_files"] == ["main_test.go", "README.md"]
-        assert "engine/unlock.go" in contracts[2]["context_files"]
-        assert "models/capsule.go" in contracts[2]["context_files"]
+        assert "engine/service.go" in contracts[2]["context_files"]
+        assert "models/entity.go" in contracts[2]["context_files"]
         assert "capsule" in serialized
         assert "museum" in serialized
         assert "riddle" in serialized
@@ -1219,6 +1216,28 @@ ts_syntax
         assert all(set(row) == {"modality", "argv", "cwd"} for row in command_rows)
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
+
+    def test_go_fallback_does_not_inject_another_projects_domain(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        contracts = adapter._synthesize_go_workspace_contracts(
+            directive=(
+                "用 Go 实现 ASCII 魔法宠物终端。\n"
+                "- content_any:pet|spell|mood|ascii\n"
+                "- go_compile\n"
+                "- source_target_coverage:**/*.go"
+            ),
+            domain_label="ASCII 魔法宠物终端",
+            source_metadata={},
+        )
+        serialized = json.dumps(contracts, ensure_ascii=False).lower()
+        targets = [target for item in contracts for target in item.get("target_files", [])]
+
+        assert "models/entity.go" in targets
+        assert "models/state.go" in targets
+        assert "engine/rules.go" in targets
+        assert "engine/service.go" in targets
+        assert all(token in serialized for token in ("pet", "spell", "mood", "ascii"))
+        assert all(token not in serialized for token in ("capsule", "museum", "riddle", "unlock"))
 
     def test_go_contract_preserves_explicit_html_deterministic_check(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -2790,5 +2809,3 @@ class TestExtractProjectionContractHint:
             directive="",
         )
         assert result == {}
-
-

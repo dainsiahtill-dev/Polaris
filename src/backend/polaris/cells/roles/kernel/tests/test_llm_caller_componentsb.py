@@ -2285,4 +2285,3 @@ class TestStreamEngineRunStream:
         assert error_metadata["native_tool_calling_fallback"] is False
         assert error_metadata["final_request_context_audit"]["tool_schema_count"] == 1
 
-

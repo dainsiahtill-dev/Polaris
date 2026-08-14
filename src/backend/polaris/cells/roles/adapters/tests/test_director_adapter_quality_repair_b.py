@@ -1015,6 +1015,29 @@ class TestQualityRepairMissingTargetContractB:
 
         assert targets == ["models/gallery.go"]
 
+    def test_raw_go_test_build_failure_targets_reported_test_file(self, tmp_path) -> None:
+        """Raw ``go test`` output need not repeat the command prefix."""
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _go_runtime_smoke_repair_target_files,
+        )
+
+        (tmp_path / "main_test.go").write_text(
+            "package main\n\nfunc TestProduct(t *testing.T) {}\n",
+            encoding="utf-8",
+        )
+
+        targets = _go_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[
+                "# ascii-pet-terminal\n"
+                "./main_test.go:106:16: undefined: models.MustPet\n"
+                "FAIL ascii-pet-terminal [build failed]"
+            ],
+            changed_files=[],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["main_test.go"]
+
     def test_go_missing_field_compile_failure_also_targets_type_definition_file(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
             _go_runtime_smoke_repair_target_files,

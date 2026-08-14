@@ -307,6 +307,76 @@ def _bootstrap_read_content_total_chars() -> int:
     return _read_positive_int_env(_BOOTSTRAP_READ_TOTAL_CHARS_ENV, _DEFAULT_BOOTSTRAP_READ_CONTENT_TOTAL_CHARS)
 
 
+_GENERIC_DIAGNOSTIC_SOURCE_RE = re.compile(
+    r"(?P<path>(?:[A-Za-z]:)?(?:\.{0,2}[/\\])?[^\s:()'\"]+\.[A-Za-z0-9_+-]+)"
+    r"(?::(?P<line>\d+)(?::\d+)?|\((?P<paren_line>\d+)(?:,\d+)?\))"
+)
+
+
+def _normalized_diagnostic_path(value: str) -> str:
+    normalized = str(value or "").strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def _diagnostic_line_numbers(message: str, resolved_file: str) -> list[int]:
+    expected = _normalized_diagnostic_path(resolved_file)
+    if not expected:
+        return []
+    line_numbers: list[int] = []
+    for match in _GENERIC_DIAGNOSTIC_SOURCE_RE.finditer(str(message or "")):
+        candidate = _normalized_diagnostic_path(match.group("path"))
+        if candidate != expected and not candidate.endswith(f"/{expected}"):
+            continue
+        raw_line = match.group("line") or match.group("paren_line")
+        line_number = int(raw_line)
+        if line_number > 0 and line_number not in line_numbers:
+            line_numbers.append(line_number)
+    return sorted(line_numbers)
+
+
+def _diagnostic_centered_bootstrap_excerpt(
+    *,
+    content: str,
+    line_numbers: list[int],
+    budget: int,
+) -> str:
+    """Keep import/declaration head and failing use-site in one bounded view."""
+
+    lines = content.splitlines()
+    valid_lines = sorted({line for line in line_numbers if 1 <= line <= len(lines)})
+    if not lines or not valid_lines or budget <= 0:
+        return ""
+
+    head_budget = min(1200, max(256, int(budget * 0.60)))
+    head_body = "\n".join(lines[:40])
+    if len(head_body) > head_budget:
+        head_body = head_body[:head_budget]
+    head = f"[file head lines 1-{min(40, len(lines))} of {len(lines)}]\n{head_body}"
+    diagnostic_budget = max(0, budget - len(head) - 1)
+
+    for radius in (16, 12, 8, 4, 2, 0):
+        windows: list[tuple[int, int]] = []
+        for line_number in valid_lines:
+            start = max(1, line_number - radius)
+            end = min(len(lines), line_number + radius)
+            if windows and start <= windows[-1][1] + 1:
+                windows[-1] = (windows[-1][0], max(windows[-1][1], end))
+            else:
+                windows.append((start, end))
+        rendered = "\n".join(
+            f"[diagnostic excerpt lines {start}-{end} of {len(lines)}]\n" + "\n".join(lines[start - 1 : end])
+            for start, end in windows
+        )
+        if len(rendered) <= diagnostic_budget:
+            return head + "\n" + rendered
+
+    line_number = valid_lines[0]
+    marker = f"[diagnostic excerpt line {line_number} of {len(lines)}]\n"
+    return head + "\n" + marker + lines[line_number - 1][: max(0, diagnostic_budget - len(marker))]
+
+
 def build_retry_write_after_bootstrap_context(
     *,
     original_context: list[dict],
@@ -327,6 +397,19 @@ def build_retry_write_after_bootstrap_context(
         tool_name = str(item.get("tool_name") or "unknown").strip()
         status = str(item.get("status") or "").strip().lower()
         payload = item.get("result")
+        resolved_file = ""
+        if isinstance(payload, Mapping):
+            resolved_file = str(payload.get("file") or payload.get("path") or "").strip()
+            if not resolved_file:
+                inner = payload.get("result")
+                if isinstance(inner, Mapping):
+                    resolved_file = str(inner.get("file") or inner.get("path") or "").strip()
+        if not resolved_file:
+            from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+                extract_target_file_from_invocation_args,
+            )
+
+            resolved_file = extract_target_file_from_invocation_args({"arguments": item.get("arguments")})
         # Prefer the REAL file content for read receipts: the model must be able
         # to transcribe exact lines into its write call.
         file_content = ""
@@ -343,7 +426,14 @@ def build_retry_write_after_bootstrap_context(
                 bootstrap_max_chars,
                 bootstrap_total_chars - content_chars_used,
             )
-            if len(file_content) > budget:
+            diagnostic_excerpt = _diagnostic_centered_bootstrap_excerpt(
+                content=file_content,
+                line_numbers=_diagnostic_line_numbers(latest_user, resolved_file),
+                budget=budget,
+            )
+            if diagnostic_excerpt:
+                file_content = diagnostic_excerpt
+            elif len(file_content) > budget:
                 file_content = file_content[:budget] + "\n...[content truncated]"
             content_chars_used += len(file_content)
             payload_text = "exact file content follows:\n```\n" + file_content + "\n```"
@@ -358,15 +448,6 @@ def build_retry_write_after_bootstrap_context(
             payload_text = payload_text.strip()
             if len(payload_text) > 1200:
                 payload_text = payload_text[:1200] + " ...[truncated]"
-        resolved_file = ""
-        if isinstance(payload, Mapping):
-            resolved_file = str(payload.get("file") or payload.get("path") or "").strip()
-        if not resolved_file:
-            from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
-                extract_target_file_from_invocation_args,
-            )
-
-            resolved_file = extract_target_file_from_invocation_args({"arguments": item.get("arguments")})
         if status == "success":
             summary_lines.append(f"- {tool_name}: {payload_text}")
             if resolved_file and resolved_file not in successful_files:

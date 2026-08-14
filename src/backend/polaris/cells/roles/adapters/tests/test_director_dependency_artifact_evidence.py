@@ -569,7 +569,11 @@ def test_rebind_restores_drained_parent_from_strict_ce_projection_and_project_re
         },
     }
     adapter = DirectorAdapter(str(tmp_path))
-    adapter._get_task = lambda _task_id: None  # type: ignore[method-assign]
+    adapter._get_task = lambda _task_id: {  # type: ignore[method-assign]
+        "id": "TASK-2",
+        "status": "pending",
+        "metadata": {"external_task_id": "TASK-2"},
+    }
     monkeypatch.setattr(
         adapter_core,
         "get_blueprint_status",
@@ -605,6 +609,67 @@ def test_rebind_restores_drained_parent_from_strict_ce_projection_and_project_re
     assert payload["modules"][0]["path"] == path
     assert payload["modules"][0]["body"] == body
     assert payload["modules"][0]["receipt_authority_source"] == ("runtime.execution_broker.project_artifact_receipt.v1")
+
+
+def test_rebind_rehydrates_missing_project_receipt_from_exact_execution_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A verified parent delivery may recover a receipt lost by old settlement."""
+    from polaris.cells.roles.adapters.internal.director.adapter import (
+        DirectorAdapter,
+        _core as adapter_core,
+    )
+
+    path = "engine/rules.go"
+    body = 'package engine\n\nfunc Apply() string { return "ok" }\n'
+    source = tmp_path / path
+    source.parent.mkdir(parents=True)
+    source.write_text(body, encoding="utf-8")
+    artifact_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    query = {
+        "workspace": str(tmp_path),
+        "project_id": "L1-04",
+        "run_id": "factory-r51",
+        "completion_contract_hash": "a" * 64,
+        "obligation_id": "ART-engine-rules",
+        "owner_task_id": "TASK-2",
+        "path": path,
+    }
+    observed: list[dict[str, str]] = []
+    monkeypatch.setattr(adapter_core, "query_project_artifact_receipt_payload", lambda _query: None)
+
+    def record(command: Any) -> Any:
+        observed.append(
+            {
+                key: str(getattr(command, key))
+                for key in (
+                    "workspace",
+                    "project_id",
+                    "run_id",
+                    "completion_contract_hash",
+                    "obligation_id",
+                    "owner_task_id",
+                    "path",
+                )
+            }
+        )
+        return SimpleNamespace(
+            **query,
+            artifact_hash=artifact_hash,
+            authority_revision="b" * 64,
+            receipt_hash="c" * 64,
+            receipt_ref="runtime/project-verification/receipts/artifact/recovered",
+        )
+
+    monkeypatch.setattr(adapter_core, "record_project_artifact", record)
+
+    payload = DirectorAdapter._ensure_dependency_project_artifact_receipt(query)
+
+    assert observed == [query]
+    assert payload is not None
+    assert payload["artifact_hash"] == artifact_hash
+    assert payload["receipt_ref"].endswith("/recovered")
 
 
 @pytest.mark.parametrize(

@@ -89,6 +89,38 @@ def ce_extract_llm_evidence(ce_result: Any, *, task_id: str, run_id: str) -> dic
     return evidence
 
 
+def ce_prompt_profile_identity(ce_result: Any) -> dict[str, str]:
+    """Recover the exact prompt-profile identity used by the primary CE call.
+
+    A schema-repair objective necessarily contains words such as ``repair`` and
+    often omits the product-facing wording that identified the original
+    artifact.  Re-inferring profiles from that objective can therefore turn an
+    ``implement/cli`` request into ``bugfix/library``.  The final provider
+    request audit is the authority for what the primary call actually used, so
+    bounded repair must inherit that identity instead of guessing again.
+    """
+
+    evidence = ce_extract_llm_evidence(ce_result, task_id="", run_id="")
+    final_audit = evidence.get("final_request_context_audit")
+    if not isinstance(final_audit, Mapping):
+        return {}
+    selection = final_audit.get("prompt_profile_selection")
+    if not isinstance(selection, Mapping):
+        return {}
+
+    identity: dict[str, str] = {}
+    for source_key, context_key in (
+        ("inferred_language", "language"),
+        ("inferred_task_type", "task_type"),
+        ("inferred_stage", "prompt_stage"),
+        ("inferred_artifact", "artifact"),
+    ):
+        value = str(selection.get(source_key) or "").strip()
+        if value:
+            identity[context_key] = value
+    return identity
+
+
 def ce_review_schema_failure_is_recoverable(ce_result: Any, *, raw_output: str) -> bool:
     if not raw_output.strip():
         return False
@@ -170,6 +202,36 @@ def ce_schema_repair_failure_class(ce_result: Any) -> str:
     ):
         return "output_validation_failed"
     return "thinking_only_response"
+
+
+def chief_engineer_authoritative_pm_projection_candidate() -> dict[str, Any]:
+    """Return the minimal CE advisory payload for deterministic PM projection.
+
+    The candidate contains no project semantics of its own.  Exact tasks,
+    targets, entrypoints, verifier commands, and ownership are projected later
+    by the Chief Engineer owner from the already validated PM authority.  It
+    is used only after the primary and one bounded repair both produced an
+    unusable result-protocol payload; transport, auth, deadline, and evidence
+    failures remain fail-closed before this helper is considered.
+    """
+
+    return {
+        "construction_plan": {
+            "task_plans": {},
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+        },
+        "project_completion_contract": {
+            "obligations": {
+                "artifacts": [],
+                "entrypoints": [],
+                "verification": [],
+            }
+        },
+        "risk_flags": [],
+    }
 
 
 def attach_ce_llm_evidence(signal: dict[str, Any], evidence: dict[str, Any]) -> None:
@@ -257,14 +319,11 @@ def chief_engineer_portfolio_output_errors(
         errors.append("construction_plan must be an object")
         return errors
     task_plans = construction_plan.get("task_plans")
-    if not isinstance(task_plans, Mapping):
+    if task_plans is not None and not isinstance(task_plans, Mapping):
         errors.append("construction_plan.task_plans must be an object")
-    else:
+    elif isinstance(task_plans, Mapping):
         declared_task_ids = {str(task_id).strip() for task_id in task_plans}
-        missing_task_ids = sorted(set(task_ids) - declared_task_ids)
         unknown_task_ids = sorted(declared_task_ids - set(task_ids))
-        if missing_task_ids:
-            errors.append("task_plans missing PM task ids: " + ", ".join(missing_task_ids))
         if unknown_task_ids:
             errors.append("task_plans contains unknown task ids: " + ", ".join(unknown_task_ids))
     interface_contract = construction_plan.get("project_interface_contract")
@@ -273,11 +332,11 @@ def chief_engineer_portfolio_output_errors(
     else:
         providers = interface_contract.get(
             "provider_declarations",
-            interface_contract.get("providers"),
+            interface_contract.get("providers", []),
         )
         consumers = interface_contract.get(
             "consumer_declarations",
-            interface_contract.get("consumers"),
+            interface_contract.get("consumers", []),
         )
         if not isinstance(providers, list):
             errors.append("project_interface_contract.provider_declarations must be an array")

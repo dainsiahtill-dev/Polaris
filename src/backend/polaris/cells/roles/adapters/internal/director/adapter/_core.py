@@ -21,6 +21,10 @@ from polaris.cells.director.tasking.public.execution_guidance import (
     resolve_task_execution_profile,
     resolve_task_execution_strategy,
 )
+from polaris.cells.runtime.execution_broker.public import (
+    RecordProjectArtifactCommandV1,
+    record_project_artifact,
+)
 
 from ...base import BaseRoleAdapter
 from ...director_execution_backend import (
@@ -1265,7 +1269,21 @@ class DirectorAdapter(BaseRoleAdapter):
 
         live_parent = self._get_task(parent_task_id)
         if isinstance(live_parent, dict):
-            return dict(live_parent)
+            live_metadata = _copy_mapping_payload(live_parent.get("metadata")) or {}
+            live_adapter_result = _copy_mapping_payload(live_metadata.get("adapter_result")) or {}
+            has_live_receipt_evidence = bool(live_adapter_result.get("write_tool_evidence")) and any(
+                live_adapter_result.get(key) not in (None, "", [], (), {})
+                for key in ("tool_results", "batch_receipt", "primary_llm")
+            )
+            has_live_completion_authority = isinstance(
+                live_metadata.get("task_completion_projection"),
+                Mapping,
+            ) or isinstance(live_parent.get("task_completion_projection"), Mapping)
+            if has_live_receipt_evidence or has_live_completion_authority:
+                return dict(live_parent)
+            # QA-local reset may recreate a skeletal pending parent row after the
+            # original TaskRuntime has drained.  That row has no delivery authority
+            # and must not shadow the same-run strict CE completion projection.
 
         factory_run_id = self._dependency_artifact_factory_run_id(task=child_task, context=context)
         if not factory_run_id:
@@ -1338,9 +1356,16 @@ class DirectorAdapter(BaseRoleAdapter):
                     child_task=merged_task,
                     context=context,
                 ),
-                get_project_artifact_receipt=query_project_artifact_receipt_payload,
+                get_project_artifact_receipt=self._ensure_dependency_project_artifact_receipt,
             )
         except DirectorDependencyArtifactEvidenceError as exc:
+            logger.warning(
+                "Director dependency artifact snapshot rejected: run_id=%s task_id=%s code=%s details=%s",
+                self._dependency_artifact_factory_run_id(task=task, context=context),
+                task.get("id") or task.get("task_id") or context.get("task_id") or "",
+                exc.code,
+                dict(exc.details),
+            )
             metadata = _copy_mapping_payload(context.get("metadata")) or {}
             metadata["actual_sibling_exports_projection_error"] = {
                 "schema_version": "polaris.actual_sibling_exports.projection_error.v1",
@@ -1357,6 +1382,50 @@ class DirectorAdapter(BaseRoleAdapter):
             context[DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY] = snapshot
         project_director_dependency_artifact_snapshot(context, snapshot)
         return snapshot
+
+    @staticmethod
+    def _ensure_dependency_project_artifact_receipt(
+        query_payload: Mapping[str, str],
+    ) -> Mapping[str, Any] | None:
+        """Read or exact-authority rehydrate one parent artifact receipt.
+
+        A task-local tool batch may contain both durable successful writes and a
+        later rejected mutation.  Once TaskBoundary proves the owned files are
+        complete, the failed batch is historical outcome evidence, but an older
+        runtime may still lack its project-level receipt.  Re-recording here is
+        safe: execution_broker independently validates the immutable CE
+        obligation, task-local JobToken capability, current path, and bytes.
+        """
+
+        existing = query_project_artifact_receipt_payload(query_payload)
+        if isinstance(existing, Mapping):
+            return existing
+        try:
+            receipt = record_project_artifact(RecordProjectArtifactCommandV1(**dict(query_payload)))
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Director dependency project receipt rehydration rejected: "
+                "run_id=%s owner_task_id=%s obligation_id=%s path=%s error=%s",
+                query_payload.get("run_id", ""),
+                query_payload.get("owner_task_id", ""),
+                query_payload.get("obligation_id", ""),
+                query_payload.get("path", ""),
+                exc,
+            )
+            return None
+        return {
+            "workspace": receipt.workspace,
+            "project_id": receipt.project_id,
+            "run_id": receipt.run_id,
+            "completion_contract_hash": receipt.completion_contract_hash,
+            "obligation_id": receipt.obligation_id,
+            "owner_task_id": receipt.owner_task_id,
+            "path": receipt.path,
+            "artifact_hash": receipt.artifact_hash,
+            "authority_revision": receipt.authority_revision,
+            "receipt_hash": receipt.receipt_hash,
+            "receipt_ref": receipt.receipt_ref,
+        }
 
     def _build_director_message(
         self,

@@ -222,12 +222,14 @@ class ErrorEvent:
     error_type: str
     message: str
     state_at_error: str = ""  # 错误时的状态机状态
+    metadata: dict[str, Any] = field(default_factory=dict)
     timestamp_ms: int = 0
     turn_request_id: str | None = None
     span_id: str | None = None
     parent_span_id: str | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "metadata", dict(self.metadata))
         if self.timestamp_ms == 0:
             object.__setattr__(self, "timestamp_ms", int(time.time() * 1000))
 

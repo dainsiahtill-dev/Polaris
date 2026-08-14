@@ -1,0 +1,52 @@
+schema_version: "verification-card/v1"
+id: "vc-20260814-instance-process-identity-fast-path"
+title: "Instance startup identity does not perform a full source-tree fingerprint"
+classification: "structural"
+severity: "P0"
+status: "in_progress"
+scope:
+  files:
+    - "src/backend/polaris/cells/instances/internal/service.py"
+    - "src/backend/polaris/cells/instances/tests/test_instance_service.py"
+    - "src/backend/polaris/delivery/http/routers/system.py"
+    - "src/backend/polaris/delivery/tests/test_runtime_process_identity.py"
+defect:
+  instance_id: "factory-bench-l1-04-r51-l1-04-run-8ce91e5364dc-22f786560213976d"
+  observed: >-
+    Backend reached application startup complete and /health returned 200, but
+    each /v2/runtime/fingerprint identity probe exceeded the 5 second client
+    timeout because it rehashed the full refactored backend source tree. The
+    75 second supervisor deadline then killed the healthy process.
+  terminal_error: "backend identity check timed out for port 49978"
+assumption_register:
+  - id: "A1"
+    claim: "Process identity and mutable source freshness are separate facts."
+    evidence: >-
+      Instance startup validates pid, instance_id, workspace, backend_root, and
+      startup source identity. It does not compare current_source_fingerprint.
+  - id: "A2"
+    claim: "A dedicated immutable process-identity endpoint is bounded."
+    evidence: >-
+      All required fields are already captured at process startup; no source
+      traversal is needed for the launcher attestation.
+pre_mortem:
+  most_likely_wrong_fix: >-
+    Increasing the request timeout would couple launch latency to repository
+    size and fail again after future large refactors.
+  safety_risk: >-
+    The new endpoint must preserve auth and exact pid/instance/workspace/root
+    validation. The full fingerprint endpoint remains authoritative for stale
+    source checks.
+repair_contract:
+  dedicated_endpoint: "/v2/runtime/process-identity"
+  full_fingerprint_endpoint_preserved: true
+  authentication_preserved: true
+  exact_identity_validation_preserved: true
+  source_tree_scan_on_identity_probe: false
+verification_plan:
+  - "Instance service tests prove exact endpoint/auth and mismatch rejection."
+  - "Ruff, mypy, focused pytest, diff check."
+  - "Restart the stopped r51 instance and require running status plus /health and /v2/runtime/fingerprint 200."
+  - "Retry only qa_gate on the existing Factory run."
+owner: "Codex /root"
+opened_at: "2026-08-14"

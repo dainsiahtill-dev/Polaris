@@ -142,6 +142,40 @@ async def test_submit_deduplicates_live_driver_but_allows_later_reentry() -> Non
 
 
 @pytest.mark.asyncio
+async def test_wait_run_idle_crosses_terminal_closeout_before_retry_submission() -> None:
+    """A retry waiter must not return while the previous same-run driver is live."""
+
+    service = _Service([_Run("run-1", "failed")])
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _execute(_service: object, _run_id: str, _payload: object, _state: object) -> None:
+        entered.set()
+        await release.wait()
+
+    runtime = FactoryRunDriverRuntimeV1(
+        workspace="/workspace",
+        service=service,
+        state=object(),
+        execute=_execute,
+        build_recovery_payload=lambda _run, _workspace: object(),
+    )
+    await runtime.start(recover=False)
+    runtime.submit("run-1", payload=object())
+    await entered.wait()
+
+    waiter = asyncio.create_task(runtime.wait_run_idle("run-1"))
+    await asyncio.sleep(0)
+    assert waiter.done() is False
+
+    release.set()
+    await waiter
+    await asyncio.sleep(0)
+    assert runtime.active_run_ids == ()
+    await runtime.stop()
+
+
+@pytest.mark.asyncio
 async def test_stop_cancels_lifespan_owned_driver_tasks() -> None:
     service = _Service([_Run("run-1", "running")])
     entered = asyncio.Event()

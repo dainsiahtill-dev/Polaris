@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from copy import deepcopy
 
 import pytest
@@ -227,6 +228,79 @@ def test_missing_required_empty_arrays_are_coerced_before_schema_validation() ->
     assert normalized["tool_calls"] == []
 
 
+def test_nested_required_empty_object_is_coerced_without_provider_retry() -> None:
+    """A missing advisory CE interface object is an empty-container omission."""
+
+    contract, payload = _real_ce_contract_and_payload()
+    construction_plan = dict(payload["construction_plan"])
+    construction_plan.pop("project_interface_contract")
+    payload["construction_plan"] = construction_plan
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "args": payload,
+                    "call_id": "call-missing-nested-empty-object",
+                }
+            ],
+        },
+        plan,
+    )
+
+    projected = json.loads(normalized["content"])
+    assert projected["construction_plan"]["project_interface_contract"] == {}
+    assert normalized["structured_output_transport"]["schema_normalization_applied"] is True
+    assert (
+        "required_empty_container_defaults_v1"
+        in normalized["structured_output_transport"]["schema_normalization_policy"]
+    )
+
+
+def test_nested_required_non_empty_obligations_remain_fail_closed() -> None:
+    """Recursive empty defaults never bypass minItems delivery obligations."""
+
+    contract, payload = _real_ce_contract_and_payload()
+    schema = deepcopy(contract.json_schema)
+    obligations_schema = schema["properties"]["project_completion_contract"]["properties"]["obligations"]
+    for obligation_schema in obligations_schema["properties"].values():
+        obligation_schema["minItems"] = 1
+    contract = RoleStructuredOutputContractV1(
+        schema_name=contract.schema_name,
+        description=contract.description,
+        json_schema=schema,
+    )
+    payload["project_completion_contract"] = {"obligations": {}}
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+
+    with pytest.raises(
+        ValueError,
+        match=r"structured_output_payload_schema_mismatch:project_completion_contract\.obligations:",
+    ):
+        normalize_structured_output_response(
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                        "args": payload,
+                        "call_id": "call-missing-non-empty-obligations",
+                    }
+                ],
+            },
+            plan,
+        )
+
+
 def test_null_required_array_is_coerced_to_empty_list() -> None:
     plan = resolve_structured_output_transport(
         {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _contract().to_context_projection()}
@@ -294,7 +368,7 @@ def test_schema_proven_root_fragment_recovers_overescaped_provider_envelope() ->
         {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _contract().to_context_projection()}
     )
     assert plan is not None
-    root_fragment = r'''{"task_plans":{"TASK-1":{"signature":"describe(\'garden\')","html":"<canvas id=\\"garden\\"></canvas>"}}}, "scope_for_apply": [], "risk_flags": []}'''
+    root_fragment = r"""{"task_plans":{"TASK-1":{"signature":"describe(\'garden\')","html":"<canvas id=\\"garden\\"></canvas>"}}}, "scope_for_apply": [], "risk_flags": []}"""
 
     normalized = normalize_structured_output_response(
         {
@@ -337,8 +411,7 @@ def test_root_fragment_recovery_remains_fail_closed_for_unknown_root_property() 
                         "tool": STRUCTURED_OUTPUT_TOOL_NAME,
                         "args": {
                             "construction_plan": (
-                                '{"task_plans": {}}, "scope_for_apply": [], '
-                                '"risk_flags": [], "untrusted_extra": true}'
+                                '{"task_plans": {}}, "scope_for_apply": [], "risk_flags": [], "untrusted_extra": true}'
                             )
                         },
                         "call_id": "call-unknown-root-property",
@@ -515,19 +588,45 @@ def test_real_ce_schema_keeps_other_unknown_nested_members_fail_closed() -> None
         )
 
 
-@pytest.mark.parametrize("missing_path", ["project_completion_contract", "TASK-3"])
-def test_r17_root_fragment_remains_fail_closed_when_real_ce_obligations_are_missing(
-    missing_path: str,
-) -> None:
+def test_schema_mismatch_logs_only_unknown_root_key_types(caplog: pytest.LogCaptureFixture) -> None:
+    """Live diagnostics expose envelope shape without leaking project payload."""
+
     contract, payload = _real_ce_contract_and_payload()
-    if missing_path == "project_completion_contract":
-        payload.pop(missing_path)
-    else:
-        construction_plan = payload["construction_plan"]
-        assert isinstance(construction_plan, dict)
-        task_plans = construction_plan["task_plans"]
-        assert isinstance(task_plans, dict)
-        task_plans.pop(missing_path)
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    payload["TASK-3"] = {"secret_project_content": "must-not-enter-log"}
+
+    with (
+        caplog.at_level(logging.WARNING),
+        pytest.raises(
+            ValueError,
+            match="structured_output_payload_schema_mismatch",
+        ),
+    ):
+        normalize_structured_output_response(
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                        "args": payload,
+                        "call_id": "call-unknown-root-shape",
+                    }
+                ],
+            },
+            plan,
+        )
+
+    assert 'unknown_root_shape={"TASK-3": "dict"}' in caplog.text
+    assert "must-not-enter-log" not in caplog.text
+    assert "secret_project_content" not in caplog.text
+
+
+def test_r17_root_fragment_remains_fail_closed_when_real_ce_obligations_are_missing() -> None:
+    contract, payload = _real_ce_contract_and_payload()
+    payload.pop("project_completion_contract")
     plan = resolve_structured_output_transport(
         {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
     )
@@ -543,7 +642,7 @@ def test_r17_root_fragment_remains_fail_closed_when_real_ce_obligations_are_miss
                     {
                         "tool": STRUCTURED_OUTPUT_TOOL_NAME,
                         "args": {"construction_plan": fragment},
-                        "call_id": f"call-r17-missing-{missing_path}",
+                        "call_id": "call-r17-missing-project-completion-contract",
                     }
                 ],
             },
@@ -558,18 +657,17 @@ def test_stream_root_fragment_recovery_projects_trusted_normalization_evidence()
     assert plan is not None
     normalizer = StructuredOutputStreamNormalizer(plan)
 
-    assert normalizer.project(
-        {
-            "type": "tool_call",
-            "tool": STRUCTURED_OUTPUT_TOOL_NAME,
-            "args": {
-                "construction_plan": (
-                    '{"task_plans": {}}, "scope_for_apply": [], "risk_flags": []}'
-                )
-            },
-            "call_id": "call-stream-root-fragment",
-        }
-    ) == ()
+    assert (
+        normalizer.project(
+            {
+                "type": "tool_call",
+                "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                "args": {"construction_plan": ('{"task_plans": {}}, "scope_for_apply": [], "risk_flags": []}')},
+                "call_id": "call-stream-root-fragment",
+            }
+        )
+        == ()
+    )
     projected = normalizer.project({"type": "complete", "content": ""})
 
     assert len(projected) == 2

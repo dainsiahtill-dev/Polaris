@@ -8,27 +8,15 @@ decomposed into sibling collaborators.
 
 from __future__ import annotations
 
-import ast
-import asyncio
-import contextlib
 import hashlib
-import inspect
 import json
-import logging
-import os
-import shutil
-import sys
-import textwrap
 import threading
-import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 from typing import Any
 
 import pytest
 from polaris.cells.chief_engineer.blueprint.public import (
-    BlueprintPersistence,
     BuildChiefEngineerBlueprintPortfolioCommandV1,
     ChiefEngineerPortfolioTaskV1,
     GenerateTaskBlueprintCommandV1,
@@ -44,45 +32,20 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
     TaskBlueprintResultV1,
     _issue_chief_engineer_portfolio_authority_carrier,
 )
-from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
     bootstrap_fact_stream_workspace,
     fact_stream_bootstrap_streams,
 )
-from polaris.cells.events.fact_stream.public.service import (
-    QueryFactEventsV1,
-    query_fact_events,
-)
 from polaris.cells.factory.pipeline.internal import (
     factory_stage_executor as stage_executor_module,
-    factory_workspace_quality as workspace_quality_module,
-)
-from polaris.cells.factory.pipeline.internal.factory_deadline_policy import (
-    FactoryDeadlineBudgetPolicyV1,
-    FactoryDeadlineDispositionV1,
-    build_task_dependency_schedule,
 )
 from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
     FactoryRoleEvidenceAuthorityPort,
 )
-from polaris.cells.factory.pipeline.internal.factory_run_completion import RunCompletionWaiter
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
-    CommandResult,
-    FactoryConfig,
     FactoryRun,
-    FactoryRunStatus,
     OrchestrationStageExecutor,
-)
-from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import _fencing_token
-from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
-    evaluate_canonical_factory_authority,
-)
-from polaris.cells.factory.pipeline.internal.run_ledger import load_run_ledger_projection
-from polaris.cells.roles.adapters.public import (
-    build_director_materialization_quality_repair_message,
-    extract_workspace_quality_summary,
-    resolve_director_semantic_quality_repair_target_files,
 )
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
@@ -90,34 +53,28 @@ from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
 )
 from polaris.cells.runtime.task_runtime.public.contracts import (
     ObservableTaskRowsProjectionV1,
-    SettleTaskRuntimeExecutionAttemptCommandV1,
-    TaskRuntimeExecutionAttemptHeartbeatVerdictV1,
-    TaskRuntimeExecutionAttemptIdentityV1,
 )
-from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
-from polaris.kernelone.storage import resolve_logical_path
-
 
 __all__ = [
-    "_characterization_authority_port",
-    "_factory_stage_context",
-    "_bootstrap_fact_stream_workspace",
-    "_executor",
-    "_library_completion_requirements",
-    "_write_minimal_chief_engineer_plan",
-    "_single_task_chief_engineer_result",
-    "_invalid_chief_engineer_stream_result",
-    "_thinking_only_chief_engineer_result",
-    "_invalid_structured_transport_chief_engineer_result",
-    "_capture_chief_engineer_lease_keepers",
     "_assert_no_chief_engineer_lease_keeper_threads",
     "_authoritative_task_projection",
-    "_with_task_runtime_authority",
+    "_bootstrap_fact_stream_workspace",
+    "_capture_chief_engineer_lease_keepers",
+    "_characterization_authority_port",
+    "_executor",
+    "_factory_stage_context",
     "_factory_workspace_run_lease",
-    "_write_review_for_blueprint",
-    "_write_handoff_ready_review_for_tasks",
     "_generate_domain_blueprint",
+    "_invalid_chief_engineer_stream_result",
+    "_invalid_structured_transport_chief_engineer_result",
+    "_library_completion_requirements",
+    "_single_task_chief_engineer_result",
+    "_thinking_only_chief_engineer_result",
     "_verified_delivery_recovery_authority",
+    "_with_task_runtime_authority",
+    "_write_handoff_ready_review_for_tasks",
+    "_write_minimal_chief_engineer_plan",
+    "_write_review_for_blueprint",
 ]
 
 
@@ -408,7 +365,15 @@ def _single_task_chief_engineer_result() -> SimpleNamespace:
             "provider_id": "test-provider",
             "model": "test-model",
             "structured_output": payload,
-            "final_request_context_audit": {"context_window_utilization": 0.25},
+            "final_request_context_audit": {
+                "context_window_utilization": 0.25,
+                "prompt_profile_selection": {
+                    "inferred_language": "python",
+                    "inferred_task_type": "implement",
+                    "inferred_stage": "blueprint",
+                    "inferred_artifact": "library",
+                },
+            },
             "context_snapshot_ref": "abcdef123456abcdef123456",
         },
         usage={},
@@ -425,7 +390,15 @@ def _invalid_chief_engineer_stream_result(output: str = '{"construction_plan": <
         metadata={
             "provider_id": "test-provider",
             "model": "test-model",
-            "final_request_context_audit": {"context_window_utilization": 0.25},
+            "final_request_context_audit": {
+                "context_window_utilization": 0.25,
+                "prompt_profile_selection": {
+                    "inferred_language": "python",
+                    "inferred_task_type": "implement",
+                    "inferred_stage": "blueprint",
+                    "inferred_artifact": "library",
+                },
+            },
             "context_snapshot_ref": "abcdef123456abcdef123456",
             "output_validation": {
                 "success": False,
@@ -449,7 +422,15 @@ def _thinking_only_chief_engineer_result() -> SimpleNamespace:
         metadata={
             "provider_id": "test-provider",
             "model": "test-model",
-            "final_request_context_audit": {"context_window_utilization": 0.25},
+            "final_request_context_audit": {
+                "context_window_utilization": 0.25,
+                "prompt_profile_selection": {
+                    "inferred_language": "python",
+                    "inferred_task_type": "implement",
+                    "inferred_stage": "blueprint",
+                    "inferred_artifact": "library",
+                },
+            },
             "context_snapshot_ref": "abcdef123456abcdef123456",
         },
         usage={},
@@ -468,7 +449,15 @@ def _invalid_structured_transport_chief_engineer_result() -> SimpleNamespace:
         metadata={
             "provider_id": "test-provider",
             "model": "test-model",
-            "final_request_context_audit": {"context_window_utilization": 0.25},
+            "final_request_context_audit": {
+                "context_window_utilization": 0.25,
+                "prompt_profile_selection": {
+                    "inferred_language": "python",
+                    "inferred_task_type": "implement",
+                    "inferred_stage": "blueprint",
+                    "inferred_artifact": "library",
+                },
+            },
             "context_snapshot_ref": "abcdef123456abcdef123456",
         },
         usage={},

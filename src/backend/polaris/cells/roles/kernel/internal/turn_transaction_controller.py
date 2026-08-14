@@ -978,6 +978,7 @@ class TurnTransactionController:
                         error_type=type(e).__name__,
                         message=str(e),
                         state_at_error=state_machine.state.name,
+                        metadata=_llm_error_metadata_from_exception(e),
                     ),
                     turn_request_id=effective_turn_request_id,
                     turn_span_id=effective_turn_span_id,

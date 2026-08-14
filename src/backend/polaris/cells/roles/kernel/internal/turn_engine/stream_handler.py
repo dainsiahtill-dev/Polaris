@@ -216,7 +216,27 @@ class StreamEventHandler:
                         }
             elif event_type == "error":
                 error_message = str(event.get("error") or event.get("message") or "unknown_error")
-                yield {"type": "error", "error": error_message, "iteration": round_index}
+                # Error events are terminal, but their provider-request audit is
+                # still authoritative evidence.  Rebuilding the event with only
+                # ``error`` used to discard the final-request profile, provider,
+                # model and context snapshot before roles.runtime could project
+                # them into RoleExecutionResultV1.  Preserve prior stream
+                # metadata and let terminal error metadata take precedence.
+                raw_metadata = event.get("metadata")
+                error_metadata = dict(stream_metadata)
+                if isinstance(raw_metadata, dict):
+                    error_metadata.update(raw_metadata)
+                error_event: dict[str, Any] = {
+                    "type": "error",
+                    "error": error_message,
+                    "iteration": round_index,
+                    "metadata": error_metadata,
+                }
+                for key in ("error_type", "provider_id", "model"):
+                    value = event.get(key)
+                    if value is not None:
+                        error_event[key] = value
+                yield error_event
                 return
             elif event_type == "context_metadata":
                 raw_metadata = event.get("metadata")

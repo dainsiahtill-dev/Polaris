@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
+import json
 from pathlib import Path
 
 import polaris.infrastructure.log_pipeline.writer as writer_module
@@ -37,6 +39,40 @@ def test_log_writer_and_query_use_unified_runtime_root(tmp_path, monkeypatch):
     result = service.query(LogQuery(run_id="RUN-001", limit=10))
     assert len(result.events) == 1
     assert result.events[0].message == "pipeline-check"
+
+
+def test_log_writer_recovers_sequence_only_once_per_process_run(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    runtime_root = tmp_path / "runtime_root"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    run_id = "RUN-SEQ-ONCE"
+
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+    seed_writer = LogEventWriter(workspace=str(workspace), run_id=run_id)
+    writer_module._seq_counters.pop(run_id, None)
+
+    logs_dir = Path(seed_writer.raw_path).parent
+    row = json.dumps({"seq": 17}, ensure_ascii=False) + "\n"
+    (logs_dir / "journal.raw.jsonl").write_text(row, encoding="utf-8")
+    (logs_dir / "journal.norm.jsonl").write_text(row, encoding="utf-8")
+
+    original_open = builtins.open
+    read_paths: list[str] = []
+
+    def tracking_open(path, *args, **kwargs):
+        if str(path).endswith(("journal.raw.jsonl", "journal.norm.jsonl")):
+            read_paths.append(str(path))
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(writer_module, "open", tracking_open, raising=False)
+
+    LogEventWriter(workspace=str(workspace), run_id=run_id)
+    LogEventWriter(workspace=str(workspace), run_id=run_id)
+
+    assert len(read_paths) == 2
+    assert writer_module._seq_counters[run_id] == 17
 
 
 def test_logs_router_user_action_writes_to_runtime_layout(tmp_path, monkeypatch):

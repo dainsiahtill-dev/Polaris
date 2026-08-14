@@ -2,20 +2,9 @@
 
 from __future__ import annotations
 
-import ast
 import asyncio
-import contextlib
 import hashlib
-import inspect
 import json
-import logging
-import os
-import shutil
-import sys
-import textwrap
-import threading
-import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 from typing import Any
@@ -23,76 +12,18 @@ from typing import Any
 import pytest
 from polaris.cells.chief_engineer.blueprint.public import (
     BlueprintPersistence,
-    BuildChiefEngineerBlueprintPortfolioCommandV1,
-    ChiefEngineerPortfolioTaskV1,
-    GenerateTaskBlueprintCommandV1,
-    VerificationCommandAuthorityV1,
-    build_chief_engineer_blueprint_portfolio,
-    derive_project_kind_authority_from_catalog_snapshot,
-    generate_task_blueprint,
-    project_chief_engineer_task_blueprint,
     project_completion_catalog_snapshot_hash,
-    project_completion_verifier_policy_snapshot_hash,
-)
-from polaris.cells.chief_engineer.blueprint.public.contracts import (
-    TaskBlueprintResultV1,
-    _issue_chief_engineer_portfolio_authority_carrier,
-)
-from polaris.cells.control_plane.run_ledger.public import FailureClassV1
-from polaris.cells.events.fact_stream.public import (
-    BootstrapFactStreamWorkspaceCommandV1,
-    bootstrap_fact_stream_workspace,
-    fact_stream_bootstrap_streams,
-)
-from polaris.cells.events.fact_stream.public.service import (
-    QueryFactEventsV1,
-    query_fact_events,
 )
 from polaris.cells.factory.pipeline.internal import (
     factory_stage_executor as stage_executor_module,
-    factory_workspace_quality as workspace_quality_module,
 )
-from polaris.cells.factory.pipeline.internal.factory_deadline_policy import (
-    FactoryDeadlineBudgetPolicyV1,
-    FactoryDeadlineDispositionV1,
-    build_task_dependency_schedule,
-)
-from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
-    FactoryRoleEvidenceAuthorityPort,
-)
-from polaris.cells.factory.pipeline.internal.factory_run_completion import RunCompletionWaiter
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
-    CommandResult,
     FactoryConfig,
     FactoryRun,
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
-from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import _fencing_token
-from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
-    evaluate_canonical_factory_authority,
-)
-from polaris.cells.factory.pipeline.internal.run_ledger import load_run_ledger_projection
-from polaris.cells.roles.adapters.public import (
-    build_director_materialization_quality_repair_message,
-    extract_workspace_quality_summary,
-    resolve_director_semantic_quality_repair_target_files,
-)
-from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
-    FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
-    FactoryRoleEvidenceAuthorityBindingV1,
-)
-from polaris.cells.runtime.task_runtime.public.contracts import (
-    ObservableTaskRowsProjectionV1,
-    SettleTaskRuntimeExecutionAttemptCommandV1,
-    TaskRuntimeExecutionAttemptHeartbeatVerdictV1,
-    TaskRuntimeExecutionAttemptIdentityV1,
-)
-from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
-from polaris.kernelone.storage import resolve_logical_path
-
-
-from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
+from polaris.cells.factory.pipeline.tests._characterization_helpers import (
     _assert_no_chief_engineer_lease_keeper_threads,
     _capture_chief_engineer_lease_keepers,
     _executor,
@@ -104,9 +35,145 @@ from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # 
     _thinking_only_chief_engineer_result,
     _write_minimal_chief_engineer_plan,
 )
+from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
+from polaris.kernelone.storage import resolve_logical_path
 
 
 class TestChiefEngineerHandoffGuards:
+    def test_schema_valid_candidate_round_trips_only_for_exact_same_run_authority(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        executor = _executor(tmp_path)
+        structured_output = {
+            "construction_plan": {"task_plans": {}},
+            "project_completion_contract": {"obligations": {}},
+            "risk_flags": [],
+        }
+
+        candidate_ref = executor._persist_chief_engineer_structured_candidate(
+            run_id="factory-run-candidate",
+            pm_contract_hash="a" * 64,
+            task_ids=("TASK-1", "TASK-2"),
+            structured_output=structured_output,
+            evidence={
+                "provider": "provider-a",
+                "model": "model-a",
+                "context_snapshot_ref": "a" * 24,
+                "request_hash": "b" * 64,
+            },
+        )
+
+        assert candidate_ref.endswith("factory-run-candidate.ce-structured-candidate.json")
+        assert executor._load_chief_engineer_structured_candidate(
+            run_id="factory-run-candidate",
+            pm_contract_hash="a" * 64,
+            task_ids=("TASK-1", "TASK-2"),
+        ) == (structured_output, candidate_ref)
+        assert (
+            executor._load_chief_engineer_structured_candidate(
+                run_id="factory-run-candidate",
+                pm_contract_hash="c" * 64,
+                task_ids=("TASK-1", "TASK-2"),
+            )
+            is None
+        )
+
+    def test_schema_valid_candidate_hash_tamper_fails_closed(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        candidate_ref = executor._persist_chief_engineer_structured_candidate(
+            run_id="factory-run-candidate-tamper",
+            pm_contract_hash="a" * 64,
+            task_ids=("TASK-1",),
+            structured_output={"risk_flags": []},
+            evidence={},
+        )
+        candidate_path = Path(resolve_logical_path(tmp_path, candidate_ref))
+        payload = json.loads(candidate_path.read_text(encoding="utf-8"))
+        payload["structured_output"] = {"risk_flags": ["tampered"]}
+        candidate_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        assert (
+            executor._load_chief_engineer_structured_candidate(
+                run_id="factory-run-candidate-tamper",
+                pm_contract_hash="a" * 64,
+                task_ids=("TASK-1",),
+            )
+            is None
+        )
+
+    def test_schema_valid_candidate_materializes_portfolio_without_provider_call(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Candidate recovery distinguishes missing portfolio from immutable conflict."""
+
+        executor = _executor(tmp_path)
+        _write_minimal_chief_engineer_plan(executor)
+        run = FactoryRun(
+            id="factory-run-candidate-materialize",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+        executor._persist_chief_engineer_structured_candidate(
+            run_id=run.id,
+            pm_contract_hash="a" * 64,
+            task_ids=("TASK-CANCEL",),
+            structured_output=executor._chief_engineer_authoritative_pm_projection_candidate(),
+            evidence={
+                "provider": "test-provider",
+                "model": "test-model",
+                "context_snapshot_ref": "a" * 24,
+            },
+        )
+
+        class _ProviderMustNotRun:
+            async def execute_role_task(self, command: Any) -> Any:
+                raise AssertionError(f"unexpected provider call: {command.task_id}")
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _ProviderMustNotRun)
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "success", result.output
+        review = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert review["generated_blueprints"] == 1
+        assert review["llm_call_count"] == 0
+        assert "chief_engineer.structured_candidate_materialized" in {signal["code"] for signal in review["signals"]}
+
+    def test_portfolio_validation_allows_missing_advisory_task_plan_overlays(self) -> None:
+        payload = dict(_single_task_chief_engineer_result().metadata["structured_output"])
+        construction_plan = dict(payload["construction_plan"])
+        construction_plan.pop("task_plans")
+        construction_plan["project_interface_contract"] = {}
+        payload["construction_plan"] = construction_plan
+
+        errors = OrchestrationStageExecutor._chief_engineer_portfolio_output_errors(
+            payload,
+            task_ids=("TASK-CANCEL",),
+        )
+
+        assert errors == []
+
+    def test_portfolio_validation_still_rejects_unknown_task_plan_overlay(self) -> None:
+        payload = dict(_single_task_chief_engineer_result().metadata["structured_output"])
+        construction_plan = dict(payload["construction_plan"])
+        construction_plan["task_plans"] = {"TASK-UNKNOWN": {"implementation": ["Do not execute"]}}
+        payload["construction_plan"] = construction_plan
+
+        errors = OrchestrationStageExecutor._chief_engineer_portfolio_output_errors(
+            payload,
+            task_ids=("TASK-CANCEL",),
+        )
+
+        assert errors == ["task_plans contains unknown task ids: TASK-UNKNOWN"]
+
     def test_task_blueprint_context_injects_catalog_delivery_depth_contract(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         catalog_path = tmp_path / ".polaris" / "catalog_contract.json"
@@ -340,7 +407,7 @@ class TestChiefEngineerHandoffGuards:
 
         result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
 
-        assert result.status == "success"
+        assert result.status == "success", result.output
         review_path = Path(resolve_logical_path(tmp_path, "runtime/state/blueprints/factory-run.review.json"))
         review = json.loads(review_path.read_text(encoding="utf-8"))
         row = review["blueprints"][0]
@@ -371,8 +438,11 @@ class TestChiefEngineerHandoffGuards:
         task_plans_schema = command.structured_output_contract.json_schema["properties"]["construction_plan"][
             "properties"
         ]["task_plans"]
-        assert task_plans_schema["required"] == ["TASK-1"]
+        assert task_plans_schema.get("required", []) == []
         assert task_plans_schema["additionalProperties"] is False
+        assert command.structured_output_contract.json_schema["properties"]["construction_plan"]["required"] == [
+            "project_interface_contract"
+        ]
         project_interface_schema = command.structured_output_contract.json_schema["properties"]["construction_plan"][
             "properties"
         ]["project_interface_contract"]
@@ -380,6 +450,11 @@ class TestChiefEngineerHandoffGuards:
             "provider_declarations",
             "consumer_declarations",
         }
+        # Both lists are CE advisory evidence.  The owner parser defaults an
+        # omitted list to [], then _project_interface_seed projects the full
+        # authoritative ownership carrier.  Provider transport must not reject
+        # that already-supported omission before owner normalization runs.
+        assert project_interface_schema.get("required", []) == []
         assert project_interface_schema["additionalProperties"] is False
         completion_schema = command.structured_output_contract.json_schema["properties"]["project_completion_contract"]
         assert completion_schema["additionalProperties"] is False
@@ -935,11 +1010,25 @@ class TestChiefEngineerHandoffGuards:
         assert repair_command.context["chief_engineer_schema_repair"] is True
         assert repair_command.context["llm_max_tokens"] == 8_192
         assert repair_command.context["reasoning_budget_tokens"] == 2_048
+        assert repair_command.context["language"] == "python"
+        assert repair_command.context["task_type"] == "implement"
+        assert repair_command.context["prompt_stage"] == "blueprint"
+        assert repair_command.context["artifact"] == "library"
+        assert (
+            repair_command.context["chief_engineer_schema_repair_prompt_profile_source"]
+            == "primary_final_request_context_audit"
+        )
+        assert repair_command.metadata["inherited_prompt_profile_identity"] == {
+            "language": "python",
+            "task_type": "implement",
+            "prompt_stage": "blueprint",
+            "artifact": "library",
+        }
         assert repair_command.structured_output_contract is not None
         repair_task_plans_schema = repair_command.structured_output_contract.json_schema["properties"][
             "construction_plan"
         ]["properties"]["task_plans"]
-        assert repair_task_plans_schema["required"] == ["TASK-CANCEL"]
+        assert repair_task_plans_schema.get("required", []) == []
         assert repair_task_plans_schema["additionalProperties"] is False
         assert repair_command.context["failure_feedback"] == {
             "schema_version": "factory.chief_engineer_schema_repair.failure_evidence.v1",
@@ -985,7 +1074,10 @@ class TestChiefEngineerHandoffGuards:
             )
         )
         assert review["llm_call_count"] == 2
-        assert [signal["code"] for signal in review["signals"]] == ["chief_engineer.output_schema_repair_started"]
+        assert [signal["code"] for signal in review["signals"]] == [
+            "chief_engineer.output_schema_repair_started",
+            "chief_engineer.structured_candidate_persisted",
+        ]
         assert len(keepers) == 2
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
@@ -1095,7 +1187,7 @@ class TestChiefEngineerHandoffGuards:
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
-    def test_chief_engineer_thinking_only_repair_is_bounded_to_one_attempt(
+    def test_chief_engineer_thinking_only_repair_falls_back_to_pm_authority_after_one_attempt(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -1120,9 +1212,24 @@ class TestChiefEngineerHandoffGuards:
 
         result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
 
-        assert result.status == "failed"
+        assert result.status == "success", result.output
         assert len(commands) == 2
         assert commands[-1].task_id.endswith("-SCHEMA-REPAIR")
+        review = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert review["generated_blueprints"] == 1
+        signal_codes = [signal["code"] for signal in review["signals"]]
+        assert "chief_engineer.advisory_projection_fallback" in signal_codes
+        fallback_signal = next(
+            signal for signal in review["signals"] if signal["code"] == "chief_engineer.advisory_projection_fallback"
+        )
+        assert fallback_signal["pm_authority_preserved"] is True
+        assert fallback_signal["scope_expansion_allowed"] is False
+        assert fallback_signal["provider_calls_capped"] == 2
+        assert fallback_signal["context_snapshot_ref"] == "abcdef123456abcdef123456"
         assert len(keepers) == 2
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
@@ -1146,6 +1253,8 @@ class TestChiefEngineerHandoffGuards:
         assert "project_completion_contract" in objective
         assert "project_completion_contract.obligations" in objective
         assert "artifacts, entrypoints, and verification" in objective
+        assert "task-plan overlays are advisory only" in objective
+        assert "every task plan: concrete files" not in objective
         contract = OrchestrationStageExecutor._chief_engineer_structured_output_contract(("TASK-1", "TASK-2"))
         assert set(contract.json_schema["required"]) == {
             "construction_plan",
@@ -1154,3 +1263,10 @@ class TestChiefEngineerHandoffGuards:
         }
         assert "required top-level keys: construction_plan, project_completion_contract, risk_flags" in objective
         assert "optional scope_for_apply" in objective
+        obligation_schemas = contract.json_schema["properties"]["project_completion_contract"]["properties"][
+            "obligations"
+        ]["properties"]
+        assert all(
+            "minItems" not in obligation_schemas[field] for field in ("artifacts", "entrypoints", "verification")
+        )
+        assert "advisory arrays may be empty" in objective

@@ -11,7 +11,7 @@ from polaris.cells.roles.kernel.internal.kernel.transaction_turn_completion impo
     record_missing_dispatch_lifecycle_receipt,
 )
 from polaris.cells.roles.kernel.internal.quality_checker import QualityResult
-from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
+from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, ErrorEvent
 from polaris.cells.roles.profile.public.service import RoleTurnRequest
 
 
@@ -46,6 +46,37 @@ def _make_stream_completion_projector(
         runtime_tool_policy_audit={"tool_policy_mode": "native"},
         tool_filter_audit=None,
     )
+
+
+def test_error_projection_preserves_final_request_audit(tmp_path: Path) -> None:
+    publisher = _Publisher()
+    projector = _make_stream_completion_projector(tmp_path, publisher)
+    final_request_audit = {
+        "prompt_profile_selection": {
+            "inferred_language": "go",
+            "inferred_task_type": "implement",
+            "inferred_stage": "blueprint",
+            "inferred_artifact": "cli",
+        }
+    }
+
+    result = asyncio.run(
+        projector.project(
+            ErrorEvent(
+                turn_id="turn-1",
+                error_type="structured_output_payload_schema_mismatch",
+                message="entrypoints must be non-empty",
+                metadata={
+                    "context_snapshot_ref": "abcdef123456abcdef123456",
+                    "final_request_context_audit": final_request_audit,
+                },
+            )
+        )
+    )
+
+    assert result is not None
+    assert result.event["metadata"]["final_request_context_audit"] == final_request_audit
+    assert result.event["metadata"]["context_snapshot_ref"] == "abcdef123456abcdef123456"
 
 
 def test_lift_completion_audit_evidence_preserves_native_tool_envelopes() -> None:

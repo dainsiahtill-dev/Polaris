@@ -862,6 +862,27 @@ async def _control_factory_run_core(
     if run is None:
         raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
 
+    if payload.action in {"retry_from_checkpoint", "retry_phase"} and run.status == ServiceRunStatus.FAILED:
+        # A terminal projection is visible before the lifespan-owned Factory
+        # driver necessarily finishes summary persistence and closeout.  If we
+        # mutate the run to RECOVERING during that window, submit() deduplicates
+        # against the old task and the old closeout overwrites the retry back to
+        # FAILED.  Wait for the exact driver owner first, then reload the durable
+        # run before opening a new execution epoch.  This remains stage-local;
+        # no PM/CE replay is introduced.
+        from polaris.bootstrap.factory_run_driver_runtime import get_bound_factory_run_driver_runtime
+
+        driver_runtime = get_bound_factory_run_driver_runtime()
+        if driver_runtime is not None and driver_runtime.service is service:
+            await driver_runtime.wait_run_idle(run_id)
+            run = await _load_factory_run_for_http(service, run_id)
+            if run is None:
+                raise StructuredHTTPException(
+                    status_code=404,
+                    code="RUN_NOT_FOUND",
+                    message=f"Run {run_id} not found after driver closeout",
+                )
+
     if payload.action == "cancel":
         return _map_service_run_to_contract(await service.cancel_run(run_id, payload.reason))
     if payload.action == "pause":

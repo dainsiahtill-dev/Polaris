@@ -39,13 +39,18 @@ INSTANCE_WATCHDOG_INTERVAL_ENV = "KERNELONE_INSTANCE_WATCHDOG_INTERVAL_SECONDS"
 DEFAULT_WATCHDOG_INTERVAL_SECONDS = 2.0
 PROCESS_TERMINATE_TIMEOUT_SECONDS = 5.0
 PORT_RELEASE_TIMEOUT_SECONDS = 8.0
-BACKEND_IDENTITY_TIMEOUT_SECONDS = 75.0
+# Cold isolated backends may spend ~80s loading local embedding/index state
+# after a large source-tree refactor.  The old 75s budget killed a healthy
+# process immediately after ``Application startup complete``.  Keep the
+# identity request itself tightly bounded below; only the startup observation
+# window matches the existing partial-startup grace period.
+BACKEND_IDENTITY_TIMEOUT_SECONDS = 120.0
 BACKEND_IDENTITY_REQUEST_TIMEOUT_SECONDS = 5.0
 FRONTEND_IDENTITY_TIMEOUT_SECONDS = 10.0
 PARTIAL_STARTUP_GRACE_SECONDS = 120.0
 REGISTRY_LOCK_TIMEOUT_SECONDS = 30.0
 RESERVATION_LEASE_TTL_SECONDS = 180.0
-BACKEND_PROCESS_IDENTITY_ENDPOINT = "/v2/runtime/fingerprint"
+BACKEND_PROCESS_IDENTITY_ENDPOINT = "/v2/runtime/process-identity"
 BACKEND_PROCESS_IDENTITY_SOURCE = "runtime/fingerprint:process_startup"
 BACKEND_PROCESS_IDENTITY_METADATA_KEY = "backend_process_identity"
 RESERVATION_LEASE_METADATA_KEY = "reservation_lease"

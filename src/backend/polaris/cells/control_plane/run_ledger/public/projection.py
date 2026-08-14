@@ -1174,6 +1174,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     tool_lifecycle_events: list[dict[str, Any]] = []
     tool_lifecycle_requirement_events: list[dict[str, Any]] = []
     effective_gate_event_indexes, gate_revision_issues = _effective_gate_event_indexes(events)
+    latest_task_boundaries = _latest_task_boundary_epochs(events)
     required_modalities_by_obligation = _required_modalities_by_gate_obligation(events)
     for event_index, event in enumerate(events):
         if not isinstance(event, dict):
@@ -1242,7 +1243,19 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         physical_metadata = _dict_value(physical_evidence.get("metadata"))
         task_id = _clean_string(job_token.get("task_id") or physical_metadata.get("task_id"))
         token_stage = _clean_string(job_token.get("stage") or event.get("stage"))
-        if gate_is_effective and task_id and token_stage == "pending_exec":
+        latest_task_boundary = latest_task_boundaries.get(task_id)
+        task_delivery_verified = bool(
+            latest_task_boundary
+            and latest_task_boundary.get("ok") is True
+            and _clean_string(latest_task_boundary.get("status")).lower() == "completed_verified"
+        )
+        # Outcome authority and execution-capability authority are distinct.
+        # A failed tool batch becomes historical after a canonical
+        # completed_verified boundary, but its immutable task-local JobToken
+        # is still the authority required to seal receipts for the files that
+        # did land.  Dropping both facts made execution_broker unable to record
+        # ProjectArtifactReceiptV1 and broke downstream sibling-export repair.
+        if (gate_is_effective or task_delivery_verified) and task_id and token_stage == "pending_exec":
             execution_capability_by_task[task_id] = {
                 "ok": bool(capability_audit.get("ok")) and not bool(issues),
                 "issues": list(issues) if isinstance(issues, list) else [],

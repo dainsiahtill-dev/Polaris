@@ -138,6 +138,26 @@ class FactoryRunDriverRuntimeV1:
         task.add_done_callback(_done)
         return task
 
+    async def wait_run_idle(self, run_id: str) -> None:
+        """Wait until the exact run's lifespan-owned driver has exited.
+
+        A Factory run can already expose terminal child-session/lease evidence
+        while its driver is still persisting summaries and executing terminal
+        closeout.  Reopening the run during that window changes it to
+        ``recovering``, but ``submit`` correctly deduplicates against the old
+        live task; the old closeout then writes ``failed`` again and the retry
+        is silently lost.  Retry control must cross this process-local task
+        boundary before mutating durable run state.
+        """
+
+        normalized_run_id = str(run_id or "").strip()
+        if not normalized_run_id:
+            raise ValueError("factory_run_driver_run_id_required")
+        current = self._tasks.get(normalized_run_id)
+        if current is None or current.done():
+            return
+        await asyncio.gather(asyncio.shield(current), return_exceptions=True)
+
     def _on_done(self, run_id: str, task: asyncio.Task[None]) -> None:
         if self._tasks.get(run_id) is task:
             self._tasks.pop(run_id, None)
@@ -174,6 +194,7 @@ __all__ = [
     "FactoryRunRecoveryPayloadPort",
     "bind_factory_run_driver_runtime",
     "clear_factory_run_driver_runtime",
+    "get_bound_factory_run_driver_runtime",
     "get_factory_run_driver_runtime",
     "recover_committed_factory_run_ids",
 ]
@@ -192,6 +213,12 @@ def bind_factory_run_driver_runtime(runtime: FactoryRunDriverRuntimeV1) -> None:
 def get_factory_run_driver_runtime() -> FactoryRunDriverRuntimeV1:
     if _FACTORY_RUN_DRIVER_RUNTIME is None:
         raise RuntimeError("factory_run_driver_runtime_unbound")
+    return _FACTORY_RUN_DRIVER_RUNTIME
+
+
+def get_bound_factory_run_driver_runtime() -> FactoryRunDriverRuntimeV1 | None:
+    """Return the lifespan owner when composition has bound one."""
+
     return _FACTORY_RUN_DRIVER_RUNTIME
 
 

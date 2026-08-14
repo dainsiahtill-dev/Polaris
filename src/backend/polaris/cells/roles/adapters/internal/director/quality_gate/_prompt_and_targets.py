@@ -210,6 +210,7 @@ def _repair_target_context_block(
     *,
     workspace_full: str,
     repair_target_files: list[str],
+    artifact_quality_errors: list[str],
 ) -> str:
     workspace = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
     if workspace is None or not workspace.is_dir() or not repair_target_files:
@@ -232,9 +233,20 @@ def _repair_target_context_block(
         remaining = max(0, total_budget - used)
         if remaining <= 0:
             break
-        excerpt = content[: min(per_file_budget, remaining)]
+        budget = min(per_file_budget, remaining)
+        diagnostic_lines = _diagnostic_line_numbers_for_path(
+            artifact_quality_errors=artifact_quality_errors,
+            rel_path=rel,
+        )
+        excerpt = _diagnostic_centered_excerpt(
+            content=content,
+            line_numbers=diagnostic_lines,
+            budget=budget,
+        )
+        if not excerpt:
+            excerpt = content[:budget]
         used += len(excerpt)
-        suffix = "\n[truncated]\n" if len(content) > len(excerpt) else ""
+        suffix = "\n[truncated]\n" if not diagnostic_lines and len(content) > len(excerpt) else ""
         blocks.append(f"--- {rel} ---\n```text\n{excerpt}{suffix}```")
     if not blocks:
         return ""
@@ -245,6 +257,91 @@ def _repair_target_context_block(
         + "\n".join(blocks)
         + "\n"
     )
+
+
+_GENERIC_DIAGNOSTIC_SOURCE_RE = re.compile(
+    r"(?P<path>(?:[A-Za-z]:)?(?:\.{0,2}[/\\])?[^\s:()'\"]+\.[A-Za-z0-9_+-]+)"
+    r"(?::(?P<line>\d+)(?::\d+)?|\((?P<paren_line>\d+)(?:,\d+)?\))"
+)
+
+
+def _normalized_diagnostic_path(value: str) -> str:
+    normalized = str(value or "").strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def _diagnostic_line_numbers_for_path(
+    *,
+    artifact_quality_errors: list[str],
+    rel_path: str,
+) -> list[int]:
+    """Return compiler/verifier line references that name ``rel_path``."""
+
+    expected = _normalized_diagnostic_path(rel_path)
+    line_numbers: list[int] = []
+    for error in artifact_quality_errors:
+        for match in _GENERIC_DIAGNOSTIC_SOURCE_RE.finditer(str(error or "")):
+            candidate = _normalized_diagnostic_path(match.group("path"))
+            if candidate != expected and not candidate.endswith(f"/{expected}"):
+                continue
+            raw_line = match.group("line") or match.group("paren_line")
+            line_number = int(raw_line)
+            if line_number > 0 and line_number not in line_numbers:
+                line_numbers.append(line_number)
+    return sorted(line_numbers)
+
+
+def _diagnostic_centered_excerpt(
+    *,
+    content: str,
+    line_numbers: list[int],
+    budget: int,
+) -> str:
+    """Render bounded file-head plus exact-source diagnostic windows.
+
+    Compiler diagnostics usually point at the use site, while the legal repair
+    belongs in the file header (imports/package directives) or an earlier
+    declaration.  A diagnostic-only excerpt therefore makes common fixes such
+    as adding ``os/exec`` impossible and encourages the model to invent a
+    local replacement symbol.  Keep both anchors inside the same fixed budget.
+    """
+
+    lines = content.splitlines()
+    valid_lines = sorted({line for line in line_numbers if 1 <= line <= len(lines)})
+    if not lines or not valid_lines or budget <= 0:
+        return ""
+
+    head_budget = min(1200, max(256, int(budget * 0.60)))
+    head_body = "\n".join(lines[:40])
+    if len(head_body) > head_budget:
+        head_body = head_body[:head_budget]
+    head = f"[file head lines 1-{min(40, len(lines))} of {len(lines)}]\n{head_body}"
+    diagnostic_budget = max(0, budget - len(head) - 1)
+
+    for radius in (16, 12, 8, 4, 2, 0):
+        windows: list[tuple[int, int]] = []
+        for line_number in valid_lines:
+            start = max(1, line_number - radius)
+            end = min(len(lines), line_number + radius)
+            if windows and start <= windows[-1][1] + 1:
+                windows[-1] = (windows[-1][0], max(windows[-1][1], end))
+            else:
+                windows.append((start, end))
+        rendered = "\n".join(
+            f"[diagnostic excerpt lines {start}-{end} of {len(lines)}]\n" + "\n".join(lines[start - 1 : end])
+            for start, end in windows
+        )
+        if len(rendered) <= diagnostic_budget:
+            return head + "\n" + rendered
+
+    # A pathological single long source line can exceed the prompt budget.
+    # Keep its diagnostic marker and the exact line prefix rather than falling
+    # back to an unrelated file-head excerpt.
+    line_number = valid_lines[0]
+    marker = f"[diagnostic excerpt line {line_number} of {len(lines)}]\n"
+    return head + "\n" + marker + lines[line_number - 1][: max(0, diagnostic_budget - len(marker))]
 
 
 _PYTHON_TRACEBACK_SOURCE_RE = re.compile(
@@ -290,9 +387,7 @@ def _verifier_source_context_block(
         return ""
 
     repair_targets = {
-        _normalize_declared_task_path(item)
-        for item in repair_target_files
-        if _normalize_declared_task_path(item)
+        _normalize_declared_task_path(item) for item in repair_target_files if _normalize_declared_task_path(item)
     }
     refs: list[tuple[str, int]] = []
     for error in artifact_quality_errors:
@@ -334,9 +429,7 @@ def _verifier_source_context_block(
     return (
         "FAILING VERIFIER SOURCE CONTEXT (READ-ONLY EVIDENCE; NEVER EDIT THESE FILES):\n"
         "Use the concrete setup/call inputs below to repair the authorized product target. "
-        "This evidence does not expand write scope.\n"
-        + "\n".join(blocks)
-        + "\n"
+        "This evidence does not expand write scope.\n" + "\n".join(blocks) + "\n"
     )
 
 
@@ -1218,6 +1311,7 @@ def _build_materialization_quality_repair_message(
     repair_context_block = _repair_target_context_block(
         workspace_full=workspace_full,
         repair_target_files=prompt_repair_target_files,
+        artifact_quality_errors=artifact_quality_errors,
     )
     verifier_source_context_block = _verifier_source_context_block(
         workspace_full=workspace_full,

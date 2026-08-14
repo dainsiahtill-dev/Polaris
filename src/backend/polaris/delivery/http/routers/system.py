@@ -151,19 +151,14 @@ def _current_process_instance_id() -> str:
     return normalize_instance_id(os.environ.get("KERNELONE_INSTANCE_ID", ""))
 
 
-def _build_runtime_fingerprint_response(request: Request | None = None) -> dict[str, Any]:
-    """Expose the process-startup backend source fingerprint for freshness gates."""
+def _build_runtime_process_identity_response(request: Request | None = None) -> dict[str, Any]:
+    """Expose immutable process-startup identity without scanning source files."""
 
     backend_root = _backend_source_root()
     fingerprint = _SERVER_STARTUP_SOURCE_FINGERPRINT
-    current_source_fingerprint = _compute_backend_source_fingerprint()
     return {
         "ok": bool(fingerprint),
         "fingerprint": fingerprint,
-        "current_source_fingerprint": current_source_fingerprint,
-        "stale_since_startup": bool(
-            fingerprint and current_source_fingerprint and fingerprint != current_source_fingerprint
-        ),
         "pid": os.getpid(),
         "startup_time": _SERVER_STARTUP_TIME,
         "uptime_seconds": round(max(0.0, time.monotonic() - _SERVER_START_MONOTONIC), 3),
@@ -172,6 +167,23 @@ def _build_runtime_fingerprint_response(request: Request | None = None) -> dict[
         "backend_root": str(backend_root),
         "source": "runtime/fingerprint:process_startup",
     }
+
+
+def _build_runtime_fingerprint_response(request: Request | None = None) -> dict[str, Any]:
+    """Expose process identity plus current backend source freshness."""
+
+    result = _build_runtime_process_identity_response(request)
+    fingerprint = str(result.get("fingerprint") or "")
+    current_source_fingerprint = _compute_backend_source_fingerprint()
+    result.update(
+        {
+            "current_source_fingerprint": current_source_fingerprint,
+            "stale_since_startup": bool(
+                fingerprint and current_source_fingerprint and fingerprint != current_source_fingerprint
+            ),
+        }
+    )
+    return result
 
 
 async def _build_health_response() -> dict[str, Any]:
@@ -445,6 +457,28 @@ async def v2_health() -> dict[str, Any]:
 def v2_runtime_fingerprint(request: Request) -> dict[str, Any]:
     """Get the running backend source fingerprint for factory-bench freshness gates."""
     return _build_runtime_fingerprint_response(request)
+
+
+async def _require_runtime_process_identity_auth(request: Request) -> None:
+    """Authenticate the supervisor probe without entering the shared worker pool.
+
+    ``require_auth`` is intentionally synchronous and used by many ordinary API
+    routes.  FastAPI dispatches synchronous dependencies and handlers through
+    AnyIO's shared worker pool.  During a Factory run that pool can be occupied
+    by filesystem and verifier work for many seconds, which made this bounded
+    liveness probe miss its five-second supervisor deadline even though its
+    response builder itself is constant-time.  Reuse the exact auth contract on
+    the event-loop path reserved for process attestation.
+    """
+
+    require_auth(request)
+
+
+@router.get("/v2/runtime/process-identity", dependencies=[Depends(_require_runtime_process_identity_auth)])
+async def v2_runtime_process_identity(request: Request) -> dict[str, Any]:
+    """Get immutable backend process identity for Instance Supervisor attestation."""
+
+    return _build_runtime_process_identity_response(request)
 
 
 @router.get("/v2/settings", dependencies=[Depends(require_auth)], response_model=SettingsResponse)

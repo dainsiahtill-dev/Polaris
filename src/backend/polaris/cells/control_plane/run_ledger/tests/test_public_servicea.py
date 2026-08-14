@@ -2219,6 +2219,8 @@ def test_completed_task_boundary_makes_failed_tool_attempt_historical() -> None:
             "token_id": "director-task-3",
             "run_id": "factory-1",
             "project_id": "P1",
+            "task_id": "TASK-3",
+            "stage": "pending_exec",
             "capability_audit": {"ok": True, "issues": []},
             "gate_policy": {},
         },
@@ -2246,6 +2248,7 @@ def test_completed_task_boundary_makes_failed_tool_attempt_historical() -> None:
     assert after["gates"][0]["effective"] is False
     assert after["historical_failed_gate_count"] == 1
     assert after["failed_gates"] == []
+    assert after["execution_capability_by_task"]["TASK-3"]["latest_token_id"] == "director-task-3"
 
 
 def test_required_evidence_distinguishes_missing_from_failed() -> None:

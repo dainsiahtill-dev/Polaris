@@ -850,11 +850,13 @@ class StreamOrchestrator:
                         )
                 elif event_type == "error":
                     error_message = str(event.get("error") or event.get("message") or "unknown_error")
+                    raw_metadata = event.get("metadata")
                     yield ErrorEvent(
                         turn_id=ledger.turn_id,
-                        error_type="stream_error",
+                        error_type=str(event.get("error_type") or "stream_error"),
                         message=error_message,
                         state_at_error="DECISION_REQUESTED",
+                        metadata=dict(raw_metadata) if isinstance(raw_metadata, dict) else {},
                     )
                     return
                 elif event_type == "_internal_materialize":

@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock, patch
 
 import pytest
+from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
+from polaris.cells.roles.kernel.internal.llm_caller.stream_engine import StreamEngine
 from polaris.cells.roles.kernel.internal.structured_output_transport import (
     STRUCTURED_OUTPUT_TOOL_NAME,
     StructuredOutputStreamNormalizer,
@@ -99,6 +103,119 @@ async def test_process_stream_preserves_terminal_provider_request_metadata(tmp_p
     assert materialized["type"] == "_internal_materialize"
     assert materialized["metadata"]["final_request_context_audit"] == final_request_audit
     assert materialized["metadata"]["context_snapshot_ref"] == context_snapshot_ref
+
+
+@pytest.mark.asyncio
+async def test_stream_error_preserves_final_request_identity_and_audit() -> None:
+    """A schema error must carry the exact primary-request evidence to Factory."""
+
+    final_request_audit = {
+        "schema_version": "llm.final_request_context_audit.v1",
+        "final_request_token_estimate": 321,
+        "prompt_profile_selection": {
+            "inferred_language": "go",
+            "inferred_task_type": "implement",
+            "inferred_stage": "blueprint",
+            "inferred_artifact": "cli",
+        },
+    }
+    context_result = SimpleNamespace(
+        token_estimate=24,
+        compression_strategy="none",
+        compression_applied=False,
+    )
+    ai_request = SimpleNamespace(context={}, options={}, input="")
+    prepared = PreparedLLMRequest(
+        messages=[{"role": "user", "content": "Build the Go CLI blueprint."}],
+        input_text="Build the Go CLI blueprint.",
+        context_result=context_result,
+        context_summary="summary",
+        request_options={},
+        ai_request=ai_request,
+        native_tool_schemas=[],
+        native_tool_mode="disabled",
+        response_format_mode="plain_text",
+    )
+
+    class _Executor:
+        async def invoke_stream(self, _request: object):
+            yield {"type": "error", "error": "structured_output_payload_schema_mismatch:$:invalid"}
+
+    emit_error = Mock()
+    engine = StreamEngine(
+        workspace="/ws",
+        get_executor=lambda: _Executor(),
+        allow_native_tool_text_fallback_fn=Mock(return_value=False),
+        emit_call_start_event=Mock(),
+        emit_call_error_event=emit_error,
+        emit_call_end_event=Mock(),
+        emit_call_retry_event=Mock(),
+    )
+    context = SimpleNamespace(
+        context_override={"stream_max_reconnects": 0},
+        stream_cancelled=False,
+        temperature=0.2,
+        max_tokens=256,
+    )
+    profile = SimpleNamespace(
+        provider_id="provider-a",
+        role_id="chief_engineer",
+        max_context_tokens=32768,
+        context_policy=SimpleNamespace(max_context_tokens=32768),
+    )
+
+    with (
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.stream_engine."
+            "build_final_request_context_audit_for_request",
+            return_value=final_request_audit,
+        ),
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.stream_engine."
+            "enforce_factory_aware_final_request_evidence_coverage"
+        ),
+    ):
+        events = [
+            event
+            async for event in engine.run_stream(
+                profile=profile,
+                prepared=prepared,
+                context=context,
+                start_time=time.perf_counter(),
+                role_id="chief_engineer",
+                run_id="factory-run",
+                task_id="CE-PORTFOLIO-factory-run",
+                attempt=0,
+                model="model-a",
+                call_id="call-a",
+                event_emitter=None,
+                turn_round=0,
+            )
+        ]
+
+    assert [event["type"] for event in events] == ["error"]
+    metadata = events[0]["metadata"]
+    assert metadata["provider_id"] == "provider-a"
+    assert metadata["model"] == "model-a"
+    assert metadata["final_request_context_audit"] == final_request_audit
+    assert emit_error.call_args.kwargs["metadata"] == metadata
+
+    async def _engine_error_stream() -> AsyncIterator[dict[str, Any]]:
+        for event in events:
+            yield event
+
+    normalized = [
+        event
+        async for event in StreamEventHandler(workspace="/ws").process_stream(
+            _engine_error_stream(),
+            round_index=0,
+            start_time=0.0,
+            profile=profile,
+        )
+    ]
+    assert [event["type"] for event in normalized] == ["error"]
+    assert normalized[0]["metadata"] == metadata
+    assert normalized[0]["metadata"]["final_request_context_audit"] == final_request_audit
 
 
 @pytest.mark.asyncio

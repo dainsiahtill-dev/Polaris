@@ -640,7 +640,7 @@ def test_backend_process_identity_probe_matches_and_persists_attestation(
         server.server_close()
         thread.join(timeout=2.0)
 
-    assert requests == [("/v2/runtime/fingerprint", "Bearer identity-probe-token")]
+    assert requests == [("/v2/runtime/process-identity", "Bearer identity-probe-token")]
     attestation = record.metadata[instance_service.BACKEND_PROCESS_IDENTITY_METADATA_KEY]
     assert attestation["pid"] == record.backend_pid
     assert attestation["instance_id"] == record.instance_id
@@ -672,9 +672,15 @@ def test_backend_process_identity_probe_accepts_bounded_slow_fingerprint_respons
         server.server_close()
         thread.join(timeout=2.0)
 
-    assert requests == [("/v2/runtime/fingerprint", "Bearer identity-probe-token")]
+    assert requests == [("/v2/runtime/process-identity", "Bearer identity-probe-token")]
     attestation = record.metadata[instance_service.BACKEND_PROCESS_IDENTITY_METADATA_KEY]
     assert attestation["fingerprint"] == "startup-source-fingerprint"
+
+
+def test_backend_identity_startup_budget_covers_partial_startup_grace() -> None:
+    """A healthy cold backend must not be killed before its startup grace ends."""
+
+    assert instance_service.BACKEND_IDENTITY_TIMEOUT_SECONDS >= instance_service.PARTIAL_STARTUP_GRACE_SECONDS
 
 
 @pytest.mark.parametrize("mismatched_field", ["pid", "instance_id", "workspace", "backend_root"])
@@ -703,7 +709,7 @@ def test_backend_process_identity_probe_rejects_impersonating_endpoint(
         server.server_close()
         thread.join(timeout=2.0)
 
-    assert requests == [("/v2/runtime/fingerprint", "Bearer identity-probe-token")]
+    assert requests == [("/v2/runtime/process-identity", "Bearer identity-probe-token")]
     assert instance_service.BACKEND_PROCESS_IDENTITY_METADATA_KEY not in record.metadata
 
 

@@ -1,0 +1,59 @@
+schema_version: "verification-card/v1"
+id: "vc-20260814-director-diagnostic-centered-repair-context"
+title: "Director repair context preserves the failing diagnostic line"
+classification: "pattern"
+severity: "P0"
+status: "in_progress"
+scope:
+  cells:
+    - "roles.adapters"
+    - "roles.kernel"
+  files:
+    - "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_prompt_and_targets.py"
+    - "src/backend/polaris/cells/roles/kernel/internal/transaction/retry_context_builders.py"
+    - "src/backend/polaris/cells/roles/adapters/tests/test_director_diagnostic_centered_repair_context.py"
+    - "src/backend/polaris/tests/unit/cells/roles/kernel/internal/test_bootstrap_followup_weak_model.py"
+    - "src/backend/docs/blueprints/FACTORY_R51_CE_STRUCTURED_OUTPUT_CONVERGENCE_20260814.md"
+assumption_register:
+  - id: "A1"
+    claim: "Director mutation and receipt settlement work in r51."
+    evidence: >-
+      Live receipts have unequal before/after hashes, authoritative durable
+      effect receipts, RECEIPT_COMMITTED settlement, and a real go test rerun.
+  - id: "A2"
+    claim: "The repair model cannot see the failing source line."
+    evidence: >-
+      The initial target context keeps only the first 4000 characters and the
+      bootstrap follow-up keeps only the first configured character budget;
+      main_test.go fails at lines 616 and 618 outside both head excerpts.
+  - id: "A3"
+    claim: "Selecting a bounded diagnostic-line window is sufficient and safer than increasing token budgets."
+    evidence: >-
+      The verifier names an exact path and line. A centered window preserves
+      the fault and nearby syntax while keeping existing output-token headroom.
+pre_mortem:
+  most_likely_wrong_fix: >-
+    Raising global character budgets would waste tokens and still fail when a
+    diagnostic lies beyond the new head cutoff.
+  path_matching_risk: >-
+    Compiler formats differ. Normalize leading ./ and separators, support
+    path:line:column and path(line,column), and fall back to current head
+    behavior when no exact path match exists.
+  regression_risk: >-
+    Existing no-diagnostic bootstrap behavior must remain head-first and
+    bounded; a diagnostic for another file must not redirect this receipt.
+repair_contract:
+  verifier_or_target_project_edits: "forbidden"
+  authority_or_scope_expansion: "forbidden"
+  exact_path_diagnostic_match_required: true
+  bounded_context_required: true
+  no_diagnostic_fallback_preserved: true
+  utf8_required: true
+verification_plan:
+  - "Regression: 700-line Go file with main_test.go:618:2 includes line 618 in the initial repair prompt."
+  - "Regression: bootstrap read retry includes line 616 for main_test.go while preserving the old head-truncation fallback without diagnostics."
+  - "Ruff check/format, mypy, focused pytest, git diff --check."
+  - "Restart only the existing isolated r51 instance and retry qa_gate on factory_87c10610b465; do not restart PM/CE."
+  - "Inspect final provider request and effect receipt; require fault-line visibility, real edit, verifier rerun, and diagnostic reduction."
+owner: "Codex /root"
+opened_at: "2026-08-14"

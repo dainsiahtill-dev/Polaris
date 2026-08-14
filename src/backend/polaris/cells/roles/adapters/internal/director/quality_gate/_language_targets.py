@@ -290,6 +290,13 @@ def _go_runtime_smoke_repair_target_files(
 
 
 def _looks_like_go_workspace_quality_error(text: str) -> bool:
+    # ``go test`` commonly emits only the package failure and compiler rows,
+    # without echoing the command that produced them.  A concrete
+    # ``*.go:line:column`` location is already a high-confidence Go diagnostic
+    # and must route into the existing-target repair path; otherwise the
+    # repair round receives no target body and can only spend its turn reading.
+    if _GO_COMPILE_PATH_RE.search(str(text or "")):
+        return True
     lowered = str(text or "").lower()
     if "workspace validation command failed" in lowered and ("go run" in lowered or "go test" in lowered):
         return True

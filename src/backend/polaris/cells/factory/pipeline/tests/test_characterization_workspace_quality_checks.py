@@ -897,6 +897,91 @@ class TestRunWorkspaceQualityChecks:
         )
 
     @pytest.mark.asyncio
+    async def test_workspace_quality_no_mutation_retries_director_without_rerunning_verifier(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-no-mutation",
+            config=FactoryConfig(name="quality-no-mutation"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-14T00:00:00+00:00",
+        )
+        command_calls = 0
+        deterministic_calls = 0
+        llm_calls = 0
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            nonlocal command_calls
+            del timeout_seconds
+            command_calls += 1
+            return {
+                "command": command,
+                "exit_code": 1,
+                "passed": False,
+                "stdout_tail": "main_test.go:85: assertion failed",
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def fake_deterministic_repairs(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal deterministic_calls
+            del kwargs
+            deterministic_calls += 1
+            return [], {"attempted": True, "success": False, "write_tool_evidence": False}
+
+        async def fake_llm_repairs(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal llm_calls
+            del kwargs
+            llm_calls += 1
+            return (
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": False,
+                        "result": {
+                            "error_code": "deo_physical_execution_failed",
+                            "physical_error": "No replacements made",
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": False,
+                    "source_tools": ["director_materialization_quality_repair"],
+                    "tool_results": 1,
+                    "write_tool_evidence": False,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["go", "test", "./..."]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_deterministic_repairs", fake_deterministic_repairs)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", fake_llm_repairs)
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 3},
+        )
+
+        assert passed is False
+        assert command_calls == 1
+        assert deterministic_calls == 2
+        assert llm_calls == 2
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        repair = payload["repair"]
+        assert repair["revalidated"] is False
+        assert repair["consecutive_stagnant_rounds"] == 2
+        assert repair["convergence_stop_reason"] == "two_consecutive_no_mutation_repairs"
+        assert [item["verifier_effect"] for item in repair["rounds"]] == ["no_op", "no_op"]
+        assert all(item["write_tool_evidence"] is False for item in repair["rounds"])
+
+    @pytest.mark.asyncio
     async def test_workspace_quality_stops_after_two_equal_count_diagnostic_swaps(
         self,
         tmp_path: Path,

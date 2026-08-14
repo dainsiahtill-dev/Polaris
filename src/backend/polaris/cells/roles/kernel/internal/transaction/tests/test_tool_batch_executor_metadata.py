@@ -227,6 +227,50 @@ def test_unknown_write_failure_remains_fail_closed() -> None:
     assert batch_write_failures_require_llm_replan(receipt) is False
 
 
+def test_directed_effect_no_replacement_failure_requires_fresh_edit_replan() -> None:
+    """A physical no-match is a stale edit, not an unknown hard failure."""
+
+    receipt = {
+        "results": [
+            {
+                "tool_name": "edit_file",
+                "status": "error",
+                "error": "deo_physical_execution_failed:No replacements made",
+                "result": {
+                    "schema_version": "roles.adapters.directed_effect_physical_failure.v1",
+                    "error_code": "deo_physical_execution_failed",
+                    "failure_kind": "physical_result_failed",
+                    "physical_error": "No replacements made",
+                    "physical_error_type": "",
+                },
+            }
+        ]
+    }
+
+    assert batch_write_failure_error_types(receipt) == ("stale_edit",)
+    assert batch_write_failures_require_llm_replan(receipt) is True
+
+
+def test_other_directed_effect_physical_failure_remains_fail_closed() -> None:
+    """Do not make arbitrary DEO failures retriable merely because one no-match is."""
+
+    receipt = {
+        "results": [
+            {
+                "tool_name": "edit_file",
+                "status": "error",
+                "result": {
+                    "error_code": "deo_physical_execution_failed",
+                    "physical_error": "permission denied",
+                },
+            }
+        ]
+    }
+
+    assert batch_write_failure_error_types(receipt) == ("deo_physical_execution_failed",)
+    assert batch_write_failures_require_llm_replan(receipt) is False
+
+
 def test_tool_batch_execution_identity_falls_back_to_transaction_authority() -> None:
     config = TransactionConfig(
         role_id="director",

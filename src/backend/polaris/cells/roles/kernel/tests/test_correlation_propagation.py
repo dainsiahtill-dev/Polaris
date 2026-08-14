@@ -110,10 +110,16 @@ def test_content_chunk_event_correlation_fields_default_to_none() -> None:
 
 def test_error_event_correlation_fields_default_to_none() -> None:
     """ErrorEvent correlation fields default to None."""
-    event = ErrorEvent(turn_id="turn_003", error_type="test_error", message="boom")
+    event = ErrorEvent(
+        turn_id="turn_003",
+        error_type="test_error",
+        message="boom",
+        metadata={"context_snapshot_ref": "abcdef123456abcdef123456"},
+    )
     assert event.turn_request_id is None
     assert event.span_id is None
     assert event.parent_span_id is None
+    assert event.metadata["context_snapshot_ref"] == "abcdef123456abcdef123456"
 
 
 # ---------------------------------------------------------------------------

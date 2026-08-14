@@ -641,6 +641,10 @@ class _Mixin01:
         return ce_evidence.ce_extract_llm_evidence(ce_result, task_id=task_id, run_id=run_id)
 
     @staticmethod
+    def _ce_prompt_profile_identity(ce_result: Any) -> dict[str, str]:
+        return ce_evidence.ce_prompt_profile_identity(ce_result)
+
+    @staticmethod
     def _ce_review_schema_failure_is_recoverable(ce_result: Any, *, raw_output: str) -> bool:
         return ce_evidence.ce_review_schema_failure_is_recoverable(ce_result, raw_output=raw_output)
 
@@ -653,6 +657,10 @@ class _Mixin01:
     @staticmethod
     def _ce_schema_repair_failure_class(ce_result: Any) -> str:
         return ce_evidence.ce_schema_repair_failure_class(ce_result)
+
+    @staticmethod
+    def _chief_engineer_authoritative_pm_projection_candidate() -> dict[str, Any]:
+        return ce_evidence.chief_engineer_authoritative_pm_projection_candidate()
 
     @staticmethod
     def _attach_ce_llm_evidence(signal: dict[str, Any], evidence: dict[str, Any]) -> None:
@@ -1092,7 +1100,6 @@ class _Mixin01:
                     "properties": {
                         "artifacts": {
                             "type": "array",
-                            "minItems": 1,
                             "items": {
                                 "type": "object",
                                 "properties": {
@@ -1128,7 +1135,6 @@ class _Mixin01:
                         },
                         "entrypoints": {
                             "type": "array",
-                            "minItems": 1,
                             "items": {
                                 "type": "object",
                                 "properties": {
@@ -1160,7 +1166,6 @@ class _Mixin01:
                         },
                         "verification": {
                             "type": "array",
-                            "minItems": 1,
                             "items": {
                                 "type": "object",
                                 "properties": {
@@ -1214,7 +1219,6 @@ class _Mixin01:
                             "task_plans": {
                                 "type": "object",
                                 "properties": task_plan_properties,
-                                "required": list(portfolio_task_ids),
                                 "additionalProperties": False,
                             },
                             "project_interface_contract": {
@@ -1229,15 +1233,10 @@ class _Mixin01:
                                         "items": {"type": "object"},
                                     },
                                 },
-                                "required": [
-                                    "provider_declarations",
-                                    "consumer_declarations",
-                                ],
                                 "additionalProperties": False,
                             },
                         },
                         "required": [
-                            "task_plans",
                             "project_interface_contract",
                         ],
                         "additionalProperties": True,
@@ -1444,13 +1443,16 @@ class _Mixin01:
             "trailing fragments. Keep the response under 8,000 output tokens.\n\n"
             "Required shape:\n"
             "- required top-level keys: construction_plan, project_completion_contract, risk_flags\n"
-            "- construction_plan.task_plans: object keyed by every validated PM task id\n"
+            "- construction_plan.task_plans: an object; it may be empty because exact PM task authority is "
+            "projected deterministically after schema validation\n"
             "- construction_plan.project_interface_contract: object containing provider_declarations and "
-            "consumer_declarations arrays\n"
-            "- every task plan: concrete files, public interfaces, dependencies, implementation phases, "
-            "verification evidence, and handoff criteria\n"
-            "- project_completion_contract.obligations: object containing non-empty artifacts, entrypoints, "
-            "and verification arrays that follow the active provider tool schema and PM authority\n"
+            "consumer_declarations arrays; either array may be empty when no cross-task interface is required\n"
+            "- task-plan overlays are advisory only; do not invent alternate task ids, target files, scope, "
+            "dependencies, or entrypoints\n"
+            "- project_completion_contract.obligations: object containing artifacts, entrypoints, and verification "
+            "arrays that follow the active provider tool schema and PM authority; these advisory arrays may be "
+            "empty because exact PM target_files, entrypoint_targets, and verifier command authority are projected "
+            "deterministically after schema validation\n"
             "- risk_flags: array; optional scope_for_apply, when present: array\n\n"
             f"Validated PM task ids: {json.dumps(list(portfolio_task_ids), ensure_ascii=False)}\n"
             f"Prior validation failure: {prior_error}\n"

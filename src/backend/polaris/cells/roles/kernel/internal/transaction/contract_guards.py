@@ -1073,6 +1073,49 @@ _TERMINAL_WRITE_ERROR_TYPES = frozenset(
     }
 )
 
+_STALE_EDIT_PHYSICAL_ERROR_ANCHORS = (
+    "no replacements made",
+    "search text not found in file",
+)
+
+
+def _structured_write_failure_error_type(item: Mapping[str, Any]) -> str:
+    """Project one failed write result onto its actionable error class.
+
+    Directed-effect execution deliberately wraps the physical executor failure
+    as ``deo_physical_execution_failed``.  The nested payload still carries the
+    concrete ``physical_error``.  Losing that nested evidence made an exact
+    search miss (``No replacements made``) appear as ``unknown`` and skipped
+    the existing bounded stale-edit read -> edit recovery path.
+
+    Only known non-mutating search misses are normalized to ``stale_edit``.
+    Every other directed-effect failure keeps its original error code and
+    therefore remains fail-closed.
+    """
+
+    payload = item.get("result")
+    sources = (item, payload) if isinstance(payload, Mapping) else (item,)
+    for source in sources:
+        error_type = str(source.get("error_type") or source.get("handler_error_type") or "").strip().lower()
+        if error_type:
+            return error_type
+
+    physical_fragments: list[str] = []
+    for source in sources:
+        for key in ("physical_error", "error", "message", "error_message"):
+            value = source.get(key)
+            if value:
+                physical_fragments.append(str(value).strip().lower())
+    physical_error = "\n".join(physical_fragments)
+    if any(anchor in physical_error for anchor in _STALE_EDIT_PHYSICAL_ERROR_ANCHORS):
+        return "stale_edit"
+
+    for source in sources:
+        error_code = str(source.get("error_code") or "").strip().lower()
+        if error_code:
+            return error_code
+    return ""
+
 
 def batch_write_failure_error_types(batch_receipt: Mapping[str, Any]) -> tuple[str, ...]:
     """Return normalized structured error types from failed write results."""
@@ -1083,13 +1126,9 @@ def batch_write_failure_error_types(batch_receipt: Mapping[str, Any]) -> tuple[s
             continue
         if str(item.get("status") or "").strip().lower() == "success":
             continue
-        payload = item.get("result")
-        sources = (item, payload) if isinstance(payload, Mapping) else (item,)
-        for source in sources:
-            error_type = str(source.get("error_type") or source.get("handler_error_type") or "").strip().lower()
-            if error_type:
-                error_types.append(error_type)
-                break
+        error_type = _structured_write_failure_error_type(item)
+        if error_type:
+            error_types.append(error_type)
     return tuple(dict.fromkeys(error_types))
 
 

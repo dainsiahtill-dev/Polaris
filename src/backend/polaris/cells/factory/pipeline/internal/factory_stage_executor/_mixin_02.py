@@ -13,6 +13,7 @@ import os
 from collections.abc import Iterable, Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 
 from polaris.cells.chief_engineer.blueprint.public import (
     BuildChiefEngineerBlueprintPortfolioCommandV1,
+    ChiefEngineerBlueprintErrorV1,
     ChiefEngineerBlueprintPortfolioV1,
     ChiefEngineerPortfolioTaskV1,
     GenerateTaskBlueprintCommandV1,
@@ -48,9 +50,11 @@ from polaris.cells.runtime.task_runtime.public import (
 from polaris.kernelone.constants import (
     MAX_LLM_PROVIDER_TIMEOUT_SECONDS,  # noqa: F401 — re-exported for characterization-test surface
 )
+from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.llm.budget_policy import (
     chief_engineer_portfolio_output_tokens,
 )
+from polaris.kernelone.storage import resolve_logical_path
 
 from .. import (
     factory_director_dispatch_impl as director_dispatch_impl,
@@ -101,6 +105,115 @@ logger = logging.getLogger("polaris.cells.factory.pipeline.internal.factory_stag
 class _Mixin02:
     """Method group extracted from OrchestrationStageExecutor (lossless)."""
 
+    @staticmethod
+    def _chief_engineer_candidate_hash(payload: Mapping[str, Any]) -> str:
+        return hashlib.sha256(
+            json.dumps(
+                dict(payload),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+
+    def _persist_chief_engineer_structured_candidate(
+        self,
+        *,
+        run_id: str,
+        pm_contract_hash: str,
+        task_ids: tuple[str, ...],
+        structured_output: Mapping[str, Any],
+        evidence: Mapping[str, Any],
+    ) -> str:
+        """Persist one schema-valid advisory candidate before semantic projection.
+
+        This is recovery evidence, not a completion SSoT.  A later same-run retry
+        must re-run the current semantic owner before it may reuse the candidate.
+        """
+
+        identity = {
+            "schema_version": "factory.chief_engineer_structured_candidate.v1",
+            "run_id": run_id,
+            "pm_contract_hash": pm_contract_hash,
+            "task_ids": list(task_ids),
+            "structured_output": dict(structured_output),
+            "provider": str(evidence.get("provider") or "unknown"),
+            "model": str(evidence.get("model") or "unknown"),
+            "context_snapshot_ref": str(evidence.get("context_snapshot_ref") or ""),
+            "request_hash": str(evidence.get("request_hash") or ""),
+        }
+        payload = {**identity, "candidate_hash": self._chief_engineer_candidate_hash(identity)}
+        logical_path = f"runtime/state/blueprints/{run_id}.ce-structured-candidate.json"
+        physical_path = Path(resolve_logical_path(self.workspace, logical_path))
+        physical_path.parent.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(str(physical_path), payload)
+        return logical_path
+
+    def _load_chief_engineer_structured_candidate(
+        self,
+        *,
+        run_id: str,
+        pm_contract_hash: str,
+        task_ids: tuple[str, ...],
+    ) -> tuple[dict[str, Any], str] | None:
+        """Load exact same-run evidence; reject drift/corruption without fallback trust."""
+
+        logical_path = f"runtime/state/blueprints/{run_id}.ce-structured-candidate.json"
+        physical_path = Path(resolve_logical_path(self.workspace, logical_path))
+        if not physical_path.exists():
+            return None
+        try:
+            raw = json.loads(physical_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return None
+        if not isinstance(raw, dict):
+            return None
+        candidate_hash = str(raw.pop("candidate_hash", ""))
+        if candidate_hash != self._chief_engineer_candidate_hash(raw):
+            return None
+        if (
+            raw.get("schema_version") != "factory.chief_engineer_structured_candidate.v1"
+            or raw.get("run_id") != run_id
+            or raw.get("pm_contract_hash") != pm_contract_hash
+            or raw.get("task_ids") != list(task_ids)
+            or not isinstance(raw.get("structured_output"), dict)
+        ):
+            return None
+        return dict(raw["structured_output"]), logical_path
+
+    def _build_chief_engineer_portfolio_from_candidate(
+        self,
+        *,
+        run_id: str,
+        tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
+        authority: _ChiefEngineerPortfolioAuthorityV1,
+        structured_output: Mapping[str, Any],
+        revalidate_existing: bool = False,
+    ) -> ChiefEngineerBlueprintPortfolioV1:
+        return build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(self.workspace),
+                run_id=run_id,
+                tasks=tasks,
+                authority_carrier=_issue_chief_engineer_portfolio_authority_carrier(
+                    workspace=str(self.workspace),
+                    run_id=run_id,
+                    project_id=authority.project_id,
+                    pm_stage_event_id=authority.pm_stage_event_id,
+                    pm_contract_hash=authority.pm_contract_hash,
+                    tasks=tasks,
+                    catalog_snapshot=authority.catalog_snapshot,
+                    catalog_snapshot_hash=authority.catalog_snapshot_hash,
+                    verifier_policy_hash=authority.verifier_policy_hash,
+                    verifier_policy_snapshot=authority.verifier_policy,
+                    verifier_policy_snapshot_hash=authority.verifier_policy_snapshot_hash,
+                    verification_command_authority=authority.verification_command_authority,
+                ),
+                llm_blueprint=dict(structured_output),
+            ),
+            revalidate_existing=revalidate_existing,
+        )
+
     async def _run_chief_engineer_schema_repair(
         self,
         *,
@@ -135,6 +248,13 @@ class _Mixin02:
             "prior_output_chars": len(prior_output),
             "evidence_refs": [],
         }
+        repair_profile_identity = self._ce_prompt_profile_identity(prior_result)
+        required_profile_fields = {"language", "task_type", "prompt_stage", "artifact"}
+        missing_profile_fields = sorted(required_profile_fields.difference(repair_profile_identity))
+        if missing_profile_fields:
+            raise RuntimeError(
+                "chief_engineer_schema_repair_prompt_profile_identity_missing:" + ",".join(missing_profile_fields)
+            )
         try:
             runtime_task_id, execution_attempt = self._claim_chief_engineer_execution_attempt(
                 run_id=run.id,
@@ -154,6 +274,8 @@ class _Mixin02:
             repair_context = deepcopy(dict(portfolio_context))
             repair_context.update(
                 {
+                    **repair_profile_identity,
+                    "chief_engineer_schema_repair_prompt_profile_source": ("primary_final_request_context_audit"),
                     "chief_engineer_schema_repair": True,
                     "chief_engineer_schema_repair_of_task_id": f"CE-PORTFOLIO-{run.id}",
                     "chief_engineer_prior_error_code": str(prior_result.error_code or ""),
@@ -189,6 +311,7 @@ class _Mixin02:
                     "scope_paths": list(repair_context["scope_paths"]),
                     "source": "factory_stage_executor.chief_engineer_schema_repair",
                     "schema_repair_of_task_id": f"CE-PORTFOLIO-{run.id}",
+                    "inherited_prompt_profile_identity": dict(repair_profile_identity),
                     "cognitive_runtime_mode": "off",
                     "cognitive_runtime_enabled": False,
                     "cognitive_runtime_required": False,
@@ -415,8 +538,94 @@ class _Mixin02:
                 )
                 portfolio_tasks = ()
 
+        if portfolio_tasks and portfolio_authority is not None:
+            cached_candidate = self._load_chief_engineer_structured_candidate(
+                run_id=run.id,
+                pm_contract_hash=portfolio_authority.pm_contract_hash,
+                task_ids=tuple(task.task_id for task in portfolio_tasks),
+            )
+            if cached_candidate is not None:
+                cached_output, candidate_ref = cached_candidate
+                try:
+                    portfolio = self._build_chief_engineer_portfolio_from_candidate(
+                        run_id=run.id,
+                        tasks=portfolio_tasks,
+                        authority=portfolio_authority,
+                        structured_output=cached_output,
+                        revalidate_existing=True,
+                    )
+                except ChiefEngineerBlueprintErrorV1 as exc:
+                    if exc.code != "blueprint_portfolio_revalidation_target_missing":
+                        stage_signals.append(
+                            {
+                                "code": "chief_engineer.structured_candidate_revalidation_failed",
+                                "severity": "warning",
+                                "detail": f"{type(exc).__name__}: {exc}",
+                                "candidate_ref": candidate_ref,
+                                "provider_fallback_required": True,
+                            }
+                        )
+                    else:
+                        try:
+                            portfolio = self._build_chief_engineer_portfolio_from_candidate(
+                                run_id=run.id,
+                                tasks=portfolio_tasks,
+                                authority=portfolio_authority,
+                                structured_output=cached_output,
+                                revalidate_existing=False,
+                            )
+                        except (OSError, RuntimeError, TypeError, ValueError) as materialize_exc:
+                            stage_signals.append(
+                                {
+                                    "code": "chief_engineer.structured_candidate_revalidation_failed",
+                                    "severity": "warning",
+                                    "detail": f"{type(materialize_exc).__name__}: {materialize_exc}",
+                                    "candidate_ref": candidate_ref,
+                                    "provider_fallback_required": True,
+                                }
+                            )
+                        else:
+                            stage_signals.append(
+                                {
+                                    "code": "chief_engineer.structured_candidate_materialized",
+                                    "severity": "info",
+                                    "detail": (
+                                        "Materialized the immutable portfolio from one exact same-run "
+                                        "schema-valid CE candidate after current PM-authority revalidation; "
+                                        "no new provider call was required."
+                                    ),
+                                    "candidate_ref": candidate_ref,
+                                    "pm_contract_hash": portfolio_authority.pm_contract_hash,
+                                    "provider_calls_saved": 1,
+                                }
+                            )
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.structured_candidate_revalidation_failed",
+                            "severity": "warning",
+                            "detail": f"{type(exc).__name__}: {exc}",
+                            "candidate_ref": candidate_ref,
+                            "provider_fallback_required": True,
+                        }
+                    )
+                else:
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.structured_candidate_revalidated",
+                            "severity": "info",
+                            "detail": (
+                                "Reused one same-run schema-valid CE candidate after current semantic "
+                                "owner revalidation; no new provider call was required."
+                            ),
+                            "candidate_ref": candidate_ref,
+                            "pm_contract_hash": portfolio_authority.pm_contract_hash,
+                            "provider_calls_saved": 1,
+                        }
+                    )
+
         ce_result: RoleExecutionResultV1 | None = None
-        if portfolio_tasks:
+        if portfolio_tasks and portfolio is None:
             dependency_schedule = build_task_dependency_schedule(pm_tasks)
             requested_timeout_seconds = self._chief_engineer_llm_timeout_seconds(context)
             deadline_decision = self._chief_engineer_deadline_projection_decision(
@@ -623,17 +832,46 @@ class _Mixin02:
             ce_result_metadata = dict(ce_result.metadata or {})
 
             if not ce_result.ok:
-                error_signal: dict[str, Any] = {
-                    "code": "chief_engineer.llm_review_failed",
-                    "severity": "error",
-                    "detail": ce_result.error_message or ce_result.error_code or "CE portfolio LLM call failed",
-                    "task_id": portfolio_task_id,
-                    "provider": ce_provider,
-                    "model": ce_model,
-                    "recoverable": False,
-                }
-                self._attach_ce_llm_evidence(error_signal, ce_evidence)
-                stage_signals.append(error_signal)
+                missing_final_request_evidence = self._ce_missing_final_request_evidence(ce_evidence)
+                advisory_projection_allowed = (
+                    self._ce_portfolio_result_allows_schema_repair(ce_result)
+                    and not ce_evidence.get("provider_model_unknown")
+                    and not missing_final_request_evidence
+                    and portfolio_authority is not None
+                )
+                if advisory_projection_allowed:
+                    ce_llm_blueprint = self._chief_engineer_authoritative_pm_projection_candidate()
+                    fallback_signal: dict[str, Any] = {
+                        "code": "chief_engineer.advisory_projection_fallback",
+                        "severity": "warning",
+                        "detail": (
+                            "Primary plus bounded repair did not produce a valid CE result-protocol payload; "
+                            "continued with the minimal advisory candidate and projected all delivery authority "
+                            "from the validated PM contract."
+                        ),
+                        "task_id": portfolio_task_id,
+                        "provider": ce_provider,
+                        "model": ce_model,
+                        "failure_class": self._ce_schema_repair_failure_class(ce_result),
+                        "provider_error": str(ce_result.error_message or ce_result.error_code or "")[:512],
+                        "pm_authority_preserved": True,
+                        "scope_expansion_allowed": False,
+                        "provider_calls_capped": 2,
+                    }
+                    self._attach_ce_llm_evidence(fallback_signal, ce_evidence)
+                    stage_signals.append(fallback_signal)
+                else:
+                    error_signal: dict[str, Any] = {
+                        "code": "chief_engineer.llm_review_failed",
+                        "severity": "error",
+                        "detail": ce_result.error_message or ce_result.error_code or "CE portfolio LLM call failed",
+                        "task_id": portfolio_task_id,
+                        "provider": ce_provider,
+                        "model": ce_model,
+                        "recoverable": False,
+                    }
+                    self._attach_ce_llm_evidence(error_signal, ce_evidence)
+                    stage_signals.append(error_signal)
             elif ce_evidence.get("provider_model_unknown"):
                 stage_signals.append(
                     {
@@ -677,43 +915,68 @@ class _Mixin02:
             call_error_count = sum(
                 1 for signal in stage_signals if str(signal.get("severity") or "").strip().lower() == "error"
             )
-            structured_output = ce_result_metadata.get("structured_output")
-            if isinstance(structured_output, Mapping):
-                ce_llm_blueprint = dict(structured_output)
-            elif "<SESSION_PATCH" in raw_output or "</SESSION_PATCH>" in raw_output:
-                stage_signals.append(
-                    {
-                        "code": "chief_engineer.session_patch_output_rejected",
-                        "severity": "error",
-                        "detail": "CE returned SESSION_PATCH content instead of the required portfolio JSON object",
-                        "task_id": portfolio_task_id,
-                        "provider": ce_provider,
-                        "model": ce_model,
-                    }
-                )
-            elif call_error_count == 0:
-                quality_result = QualityChecker(str(self.workspace)).validate_output(
-                    raw_output,
-                    cast(Any, SimpleNamespace(role_id="chief_engineer")),
-                )
-                if not quality_result.success:
+            if not ce_llm_blueprint:
+                structured_output = ce_result_metadata.get("structured_output")
+                if isinstance(structured_output, Mapping):
+                    ce_llm_blueprint = dict(structured_output)
+                elif "<SESSION_PATCH" in raw_output or "</SESSION_PATCH>" in raw_output:
                     stage_signals.append(
                         {
-                            "code": "chief_engineer.output_schema_invalid",
+                            "code": "chief_engineer.session_patch_output_rejected",
                             "severity": "error",
-                            "detail": "; ".join(str(item) for item in quality_result.errors)
-                            or "CE portfolio output failed schema validation",
+                            "detail": "CE returned SESSION_PATCH content instead of the required portfolio JSON object",
                             "task_id": portfolio_task_id,
                             "provider": ce_provider,
                             "model": ce_model,
-                            "quality_score": float(quality_result.quality_score),
-                            "suggestions": list(quality_result.suggestions),
                         }
                     )
-                elif isinstance(quality_result.data, Mapping):
-                    ce_llm_blueprint = dict(quality_result.data)
+                elif call_error_count == 0:
+                    quality_result = QualityChecker(str(self.workspace)).validate_output(
+                        raw_output,
+                        cast(Any, SimpleNamespace(role_id="chief_engineer")),
+                    )
+                    if not quality_result.success:
+                        stage_signals.append(
+                            {
+                                "code": "chief_engineer.output_schema_invalid",
+                                "severity": "error",
+                                "detail": "; ".join(str(item) for item in quality_result.errors)
+                                or "CE portfolio output failed schema validation",
+                                "task_id": portfolio_task_id,
+                                "provider": ce_provider,
+                                "model": ce_model,
+                                "quality_score": float(quality_result.quality_score),
+                                "suggestions": list(quality_result.suggestions),
+                            }
+                        )
+                    elif isinstance(quality_result.data, Mapping):
+                        ce_llm_blueprint = dict(quality_result.data)
 
             if ce_llm_blueprint and call_error_count == 0:
+                construction_plan = ce_llm_blueprint.get("construction_plan")
+                task_plans = construction_plan.get("task_plans") if isinstance(construction_plan, Mapping) else None
+                declared_task_ids = (
+                    {str(task_id).strip() for task_id in task_plans} if isinstance(task_plans, Mapping) else set()
+                )
+                missing_task_ids = sorted({task.task_id for task in portfolio_tasks} - declared_task_ids)
+                if missing_task_ids:
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.task_plan_overlay_defaulted",
+                            "severity": "warning",
+                            "detail": (
+                                "CE omitted advisory task-local plans; the Chief Engineer owner "
+                                "projected exact PM task boundaries instead of spending another "
+                                "Provider repair call."
+                            ),
+                            "task_id": portfolio_task_id,
+                            "missing_task_ids": missing_task_ids,
+                            "provider": ce_provider,
+                            "model": ce_model,
+                            "pm_authority_preserved": True,
+                            "provider_calls_saved": 1,
+                        }
+                    )
                 if "scope_for_apply" not in ce_llm_blueprint:
                     omission_signal: dict[str, Any] = {
                         "code": "chief_engineer.scope_advisory_omitted",
@@ -746,6 +1009,27 @@ class _Mixin02:
                             "errors": output_errors,
                         }
                     )
+                else:
+                    assert portfolio_authority is not None
+                    candidate_ref = self._persist_chief_engineer_structured_candidate(
+                        run_id=run.id,
+                        pm_contract_hash=portfolio_authority.pm_contract_hash,
+                        task_ids=tuple(task.task_id for task in portfolio_tasks),
+                        structured_output=ce_llm_blueprint,
+                        evidence=ce_evidence,
+                    )
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.structured_candidate_persisted",
+                            "severity": "info",
+                            "detail": (
+                                "Persisted schema-valid CE output before semantic owner projection for "
+                                "same-run stage-local recovery."
+                            ),
+                            "candidate_ref": candidate_ref,
+                            "pm_contract_hash": portfolio_authority.pm_contract_hash,
+                        }
+                    )
             elif not ce_llm_blueprint and call_error_count == 0:
                 stage_signals.append(
                     {
@@ -761,29 +1045,19 @@ class _Mixin02:
         has_pre_projection_errors = any(
             str(signal.get("severity") or "").strip().lower() == "error" for signal in stage_signals
         )
-        if portfolio_tasks and portfolio_authority is not None and ce_llm_blueprint and not has_pre_projection_errors:
+        if (
+            portfolio is None
+            and portfolio_tasks
+            and portfolio_authority is not None
+            and ce_llm_blueprint
+            and not has_pre_projection_errors
+        ):
             try:
-                portfolio = build_chief_engineer_blueprint_portfolio(
-                    BuildChiefEngineerBlueprintPortfolioCommandV1(
-                        workspace=str(self.workspace),
-                        run_id=run.id,
-                        tasks=portfolio_tasks,
-                        authority_carrier=_issue_chief_engineer_portfolio_authority_carrier(
-                            workspace=str(self.workspace),
-                            run_id=run.id,
-                            project_id=portfolio_authority.project_id,
-                            pm_stage_event_id=portfolio_authority.pm_stage_event_id,
-                            pm_contract_hash=portfolio_authority.pm_contract_hash,
-                            tasks=portfolio_tasks,
-                            catalog_snapshot=portfolio_authority.catalog_snapshot,
-                            catalog_snapshot_hash=portfolio_authority.catalog_snapshot_hash,
-                            verifier_policy_hash=portfolio_authority.verifier_policy_hash,
-                            verifier_policy_snapshot=portfolio_authority.verifier_policy,
-                            verifier_policy_snapshot_hash=portfolio_authority.verifier_policy_snapshot_hash,
-                            verification_command_authority=(portfolio_authority.verification_command_authority),
-                        ),
-                        llm_blueprint=ce_llm_blueprint,
-                    )
+                portfolio = self._build_chief_engineer_portfolio_from_candidate(
+                    run_id=run.id,
+                    tasks=portfolio_tasks,
+                    authority=portfolio_authority,
+                    structured_output=ce_llm_blueprint,
                 )
             except (OSError, RuntimeError, TypeError, ValueError) as exc:
                 stage_signals.append(

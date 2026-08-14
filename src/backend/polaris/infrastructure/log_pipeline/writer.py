@@ -237,28 +237,34 @@ class LogEventWriter:
         if not self.run_id:
             return
 
-        # Find max seq in existing files
-        max_seq = 0
-        for path in [self.raw_path, self.norm_path]:
-            if os.path.exists(path):
-                try:
-                    with open(path, encoding="utf-8") as f:
-                        for line in f:
-                            line = line.strip()
-                            if not line:
-                                continue
-                            try:
-                                data = json.loads(line)
-                                seq = data.get("seq", 0)
-                                max_seq = max(max_seq, seq)
-                            except json.JSONDecodeError:
-                                continue
-                except OSError as exc:
-                    logger.debug("seq file read failed (non-critical): path=%s: %s", path, exc)
-
-        # Set the counter
+        # ``get_writer`` intentionally returns a lightweight writer per event.
+        # Scanning both journals on every construction makes a long run O(n²):
+        # L1-04 r51 had 13 MiB raw + 13 MiB normalized journals and spent
+        # 30-60 seconds of one full CPU core between a provider response and
+        # its tool/verifier projection.  Sequence recovery is only required
+        # once per process/run.  Keep the presence check and initial scan under
+        # the run lock so concurrent first writers cannot race or rescan.
         lock = _get_run_lock(self.run_id)
         with lock:
+            if self.run_id in _seq_counters:
+                return
+            max_seq = 0
+            for path in [self.raw_path, self.norm_path]:
+                if os.path.exists(path):
+                    try:
+                        with open(path, encoding="utf-8") as f:
+                            for line in f:
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                try:
+                                    data = json.loads(line)
+                                    seq = data.get("seq", 0)
+                                    max_seq = max(max_seq, seq)
+                                except json.JSONDecodeError:
+                                    continue
+                    except OSError as exc:
+                        logger.debug("seq file read failed (non-critical): path=%s: %s", path, exc)
             _seq_counters[self.run_id] = max_seq
 
     def _write_jsonl(self, path: str, event: CanonicalLogEventV2) -> None:

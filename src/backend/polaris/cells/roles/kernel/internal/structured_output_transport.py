@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -26,6 +27,8 @@ _STRUCTURED_OUTPUT_DESCRIPTION_SUFFIX = (
     "Call this result-submission tool exactly once. It records no side effect and is not an executable workspace tool."
 )
 _MAX_SCHEMA_CONTAINER_STRING_CHARS = 262_144
+
+logger = logging.getLogger(__name__)
 
 
 class _ValidatedStructuredOutputStreamEvent(dict[str, Any]):
@@ -296,32 +299,65 @@ def _coerce_structured_output_payload_defaults(
 
     Provider structured-output frequently omits empty arrays such as CE
     ``risk_flags: []``. SCHEMA-REPAIR that re-asks the model can fail the same
-    way. Coerce only missing/null required top-level properties whose schema
-    type is ``array`` -> ``[]`` or ``object`` -> ``{}``. Scalars, enums, and
-    wrong-type values remain fail-closed under the validator.
+    way. Coerce only schema-declared required properties whose type is
+    ``array`` -> ``[]`` or semantically empty ``object`` -> ``{}``, recursively
+    through declared object/array containers.  Never synthesize a missing
+    object that itself has required children, nor a container with a positive
+    ``minItems``/``minProperties`` contract.  That boundary lets advisory
+    empty containers recover while whole semantic subcontracts remain
+    fail-closed.
     """
 
-    result = dict(payload)
-    properties = json_schema.get("properties")
-    if not isinstance(properties, Mapping):
-        return result
-    required = json_schema.get("required")
-    if not isinstance(required, (list, tuple)):
-        return result
-    for key in required:
-        if not isinstance(key, str) or not key.strip():
-            continue
-        prop_schema = properties.get(key)
-        if not isinstance(prop_schema, Mapping):
-            continue
-        prop_type = prop_schema.get("type")
-        if key in result and result[key] is not None:
-            continue
-        if prop_type == "array":
-            result[key] = []
-        elif prop_type == "object":
-            result[key] = {}
-    return result
+    no_default = object()
+
+    def required_container_default(schema: Mapping[str, Any]) -> object:
+        schema_type = schema.get("type")
+        if schema_type == "array":
+            min_items = schema.get("minItems")
+            if isinstance(min_items, int) and not isinstance(min_items, bool) and min_items > 0:
+                return no_default
+            return []
+        if schema_type == "object":
+            required_children = schema.get("required")
+            min_properties = schema.get("minProperties")
+            if (isinstance(required_children, (list, tuple)) and bool(required_children)) or (
+                isinstance(min_properties, int) and not isinstance(min_properties, bool) and min_properties > 0
+            ):
+                return no_default
+            return {}
+        return no_default
+
+    def coerce(value: Any, schema: Mapping[str, Any]) -> Any:
+        schema_type = schema.get("type")
+        if schema_type == "object" and isinstance(value, Mapping):
+            result = dict(value)
+            properties = schema.get("properties")
+            declared = properties if isinstance(properties, Mapping) else {}
+            required_raw = schema.get("required")
+            required = required_raw if isinstance(required_raw, (list, tuple)) else ()
+            for raw_key in required:
+                if not isinstance(raw_key, str) or not raw_key.strip():
+                    continue
+                prop_schema = declared.get(raw_key)
+                if not isinstance(prop_schema, Mapping):
+                    continue
+                if raw_key not in result or result[raw_key] is None:
+                    default = required_container_default(prop_schema)
+                    if default is not no_default:
+                        result[raw_key] = default
+            for raw_key, prop_schema in declared.items():
+                if raw_key not in result or not isinstance(prop_schema, Mapping):
+                    continue
+                result[raw_key] = coerce(result[raw_key], prop_schema)
+            return result
+        if schema_type == "array" and isinstance(value, list):
+            item_schema = schema.get("items")
+            if isinstance(item_schema, Mapping):
+                return [coerce(item, item_schema) for item in value]
+        return value
+
+    coerced = coerce(dict(payload), json_schema)
+    return coerced if isinstance(coerced, dict) else dict(payload)
 
 
 def _schema_container_type(schema: Mapping[str, Any]) -> type[dict[str, Any]] | type[list[Any]] | None:
@@ -408,8 +444,7 @@ def _normalize_schema_proven_json_containers(
                     sibling_key != key
                     and (
                         sibling_key not in decoded_root
-                        or _canonical_json_value(decoded_root[sibling_key])
-                        != _canonical_json_value(sibling_value)
+                        or _canonical_json_value(decoded_root[sibling_key]) != _canonical_json_value(sibling_value)
                     )
                     for sibling_key, sibling_value in result.items()
                 ):
@@ -525,6 +560,37 @@ def _validate_payload_with_normalization(
         return coerced, normalization_policy
     first = errors[0]
     path = ".".join(str(part) for part in first.absolute_path) or "$"
+    properties = schema.get("properties")
+    declared = properties if isinstance(properties, Mapping) else {}
+    unknown_root_shape = {str(key): type(value).__name__ for key, value in coerced.items() if str(key) not in declared}
+    container: Any = coerced
+    for part in first.absolute_path:
+        if (isinstance(container, Mapping) and part in container) or (
+            isinstance(container, list) and isinstance(part, int) and 0 <= part < len(container)
+        ):
+            container = container[part]
+        else:
+            break
+    container_keys = sorted(str(key) for key in container) if isinstance(container, Mapping) else []
+    required_at_failure = first.schema.get("required") if isinstance(first.schema, Mapping) else None
+    declared_required = (
+        sorted(str(key) for key in required_at_failure) if isinstance(required_at_failure, (list, tuple)) else []
+    )
+    # Provider response bodies remain redacted. Preserve only key/type and
+    # schema structure at this validation boundary so a live failure can
+    # distinguish omission, envelope drift, and stream corruption without
+    # logging project content or secrets.
+    logger.warning(
+        "structured_output_schema_mismatch_shape: path=%s validator=%s container_type=%s "
+        "container_keys=%s declared_required=%s unknown_root_shape=%s declared_root_keys=%s",
+        path,
+        str(first.validator),
+        type(container).__name__,
+        container_keys,
+        declared_required,
+        json.dumps(unknown_root_shape, ensure_ascii=False, sort_keys=True),
+        sorted(str(key) for key in declared),
+    )
     raise ValueError(f"structured_output_payload_schema_mismatch:{path}:{first.message}")
 
 

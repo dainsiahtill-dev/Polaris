@@ -38,14 +38,18 @@ from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import 
 # ---------------------------------------------------------------------------
 
 
-def _receipt_with_content(content: str) -> dict[str, Any]:
+def _receipt_with_content(
+    content: str,
+    *,
+    file: str = "django/core/checks/model_checks.py",
+) -> dict[str, Any]:
     return {
         "results": [
             {
                 "tool_name": "read_file",
                 "status": "success",
-                "result": {"file": "django/core/checks/model_checks.py", "content": content},
-                "arguments": {"file": "django/core/checks/model_checks.py"},
+                "result": {"file": file, "content": content},
+                "arguments": {"file": file},
             }
         ]
     }
@@ -86,6 +90,34 @@ def test_bootstrap_content_window_sized_default_caps_injection(monkeypatch: pyte
     assert "[content truncated]" in rendered  # capped under the small default
     assert "line 0:" in rendered  # the head is still transcribable
     assert "line 319:" not in rendered  # tail dropped to protect the output budget
+
+
+def test_bootstrap_context_includes_head_and_matching_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KERNELONE_BOOTSTRAP_READ_TOTAL_CHARS", "1400")
+    monkeypatch.setenv("KERNELONE_BOOTSTRAP_READ_MAX_CHARS", "1400")
+    lines = [f"line {index}: ordinary source" for index in range(1, 701)]
+    lines[617] = "line 618: }cceeded; want error wrapping"
+    content = "\n".join(lines)
+
+    context = build_retry_write_after_bootstrap_context(
+        original_context=[
+            {
+                "role": "user",
+                "content": "go test failed: ./main_test.go:618:2: expected ';', found cceeded",
+            }
+        ],
+        bootstrap_receipt=_receipt_with_content(content, file="main_test.go"),
+        forced_write_tool_name="edit_file",
+    )
+
+    rendered = "\n".join(str(message.get("content") or "") for message in context)
+    assert "[diagnostic excerpt lines" in rendered
+    assert "[file head lines" in rendered
+    assert "line 618: }cceeded" in rendered
+    assert "line 1: ordinary source" in rendered
+    assert len(rendered) < 5000
 
 
 def test_bootstrap_context_unwraps_executor_envelope() -> None:

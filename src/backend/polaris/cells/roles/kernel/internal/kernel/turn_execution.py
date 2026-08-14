@@ -589,6 +589,7 @@ async def execute_transaction_kernel_stream(
                 "error": event.message,
                 "error_type": event.error_type,
                 "turn_id": event.turn_id,
+                "metadata": dict(event.metadata),
             }
         else:
             continue
