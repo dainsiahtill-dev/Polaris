@@ -737,7 +737,7 @@ def _collect_materialization_target_runtime_base_files(
         artifact_quality_errors=artifact_quality_errors,
         artifact_quality_issues=artifact_quality_issues,
         source_tool=source_tool,
-        allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".html", ".htm"),
+        allowed_suffixes=_MATERIALIZATION_TARGET_RUNTIME_SUFFIXES,
         collect_unmatched_diagnostic_paths=True,
         task=task,
     )
@@ -745,7 +745,7 @@ def _collect_materialization_target_runtime_base_files(
         _add_bounded_workspace_materialization_base_files(
             base_files,
             workspace_path,
-            allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".html", ".htm"),
+            allowed_suffixes=_MATERIALIZATION_TARGET_RUNTIME_SUFFIXES,
             max_files=512,
         )
     return base_files

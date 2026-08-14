@@ -192,8 +192,6 @@ from polaris.kernelone.quality import artifact_quality_issues_from_errors
 from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
 
 
-
-
 def test_go_error_string_helper_coverage_uses_typed_identifier_metadata() -> None:
     relative_path = "models/gallery.go"
     diagnostic = RepairDiagnostic(
@@ -1943,11 +1941,7 @@ def test_rust_cargo_transcript_splits_independent_error_blocks() -> None:
 
 
 def test_rust_line_suggestion_applies_plus_help_and_strips_xml_residue() -> None:
-    runner = (
-        "pub fn combine_alchemists() {}\n"
-        "}\n"
-        "</Stardust></String></Stardust>\n"
-    )
+    runner = "pub fn combine_alchemists() {}\n}\n</Stardust></String></Stardust>\n"
     rules = 'let mut combined = Alchemy::new(format!("combined::{head.name}"));\n'
     raw = (
         "error: expected identifier, found `<`\n"
@@ -1972,6 +1966,65 @@ def test_rust_line_suggestion_applies_plus_help_and_strips_xml_residue() -> None
     after = {patch.path: patch.content_after for patch in planning.composition.patches}
     assert "</Stardust>" not in after["src/engine/alchemy_runner.rs"]
     assert 'format!("combined::{0}", head.name)' in after["src/engine/alchemy_rules.rs"]
+
+
+def test_cargo_test_transcript_keeps_one_verifier_island_per_failed_test() -> None:
+    raw = (
+        "---- engine::alchemy_runner::tests::combine_alchemists_returns_combined_recipe stdout ----\n"
+        "\n"
+        "thread 'engine::alchemy_runner::tests::combine_alchemists_returns_combined_recipe' "
+        "(621) panicked at src/engine/alchemy_runner.rs:189:9:\n"
+        'assertion failed: combined.name.starts_with("combined::")\n'
+        "\n"
+        "---- zero_mass_reagents_are_rejected_by_input_gate stdout ----\n"
+        "\n"
+        "thread 'zero_mass_reagents_are_rejected_by_input_gate' (653) panicked at tests/product.rs:226:5:\n"
+        "zero-mass bag must be rejected by gate\n"
+        "\n"
+        "failures:\n"
+        "    zero_mass_reagents_are_rejected_by_input_gate\n"
+        "\n"
+        "test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+    assert [item.code for item in diagnostics] == ["verifier_test_failure", "verifier_test_failure"]
+    assert diagnostics[0].path == "src/engine/alchemy_runner.rs"
+    assert diagnostics[1].path == "tests/product.rs"
+    assert diagnostics[1].metadata["test_name"] == "zero_mass_reagents_are_rejected_by_input_gate"
+    assert diagnostics[1].metadata["framework"] == "cargo_test"
+
+
+def test_rust_zero_mass_gate_replaces_floored_effective_mass_predicate() -> None:
+    rules = (
+        "pub fn is_valid_input(alchemy: &Alchemy, reagents: &[Stardust]) -> bool {\n"
+        "    if reagents.is_empty() {\n"
+        "        return false;\n"
+        "    }\n"
+        "    reagents.iter().any(|r| r.effective_mass() > 0)\n"
+        "}\n"
+    )
+    raw = (
+        "---- zero_mass_reagents_are_rejected_by_input_gate stdout ----\n"
+        "\n"
+        "thread 'zero_mass_reagents_are_rejected_by_input_gate' (653) panicked at tests/product.rs:226:5:\n"
+        "zero-mass bag must be rejected by gate\n"
+        "\n"
+        "test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n"
+    )
+    planning = plan_runtime_repair(
+        source_tool="deterministic_rust_line_suggestion_repair",
+        base_files={
+            "src/engine/alchemy_rules.rs": rules,
+            "tests/product.rs": "assert!(!is_valid_input(&workbench, &bag));\n",
+        },
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+    assert planning.plan is not None
+    assert planning.composition is not None
+    after = {patch.path: patch.content_after for patch in planning.composition.patches}
+    assert "r.effective_mass() > 0" not in after["src/engine/alchemy_rules.rs"]
+    assert "(r.purity * r.quantity as f64).round() as u32 > 0" in after["src/engine/alchemy_rules.rs"]
 
 
 def test_rust_field_rename_suggestion_rule_builds_span_text_replace_plan_and_runs_with_editor(
@@ -2713,5 +2766,3 @@ def test_public_cpp_missing_private_members_run_executes_with_receipt(tmp_path: 
     assert result.metadata["plan_policy"]["allowed"] is True
     assert result.metadata["composition_policy"]["allowed"] is True
     assert result.metadata["execution_error"] is None
-
-

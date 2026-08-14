@@ -1237,6 +1237,44 @@ def test_materialization_target_runtime_scope_intersection_normalizes_path_forms
     assert runtime_calls[0]["allowed_paths"] == ("src/engine/rules.js",)
 
 
+def test_materialization_target_runtime_base_files_include_rust_sources(tmp_path: Path) -> None:
+    """Cargo test residuals live on tests/*.rs; the gate lives in src/*.rs.
+
+    Live L1-09: collector used TS-only suffixes, so plan probe only saw
+    tests/product.rs and reported covered_unplannable for a fixable gate.
+    """
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "alchemy_rules.rs").write_text(
+        "pub fn is_valid_input() -> bool { true }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests" / "product.rs").write_text(
+        "fn zero_mass_reagents_are_rejected_by_input_gate() {}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "demo"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    residual = (
+        "---- zero_mass_reagents_are_rejected_by_input_gate stdout ----\n"
+        "thread 'zero_mass_reagents_are_rejected_by_input_gate' panicked at tests/product.rs:226:5:\n"
+        "zero-mass bag must be rejected by gate\n"
+        "test result: FAILED. 12 passed; 1 failed\n"
+    )
+    base_files = materialization_quality_callback_ports._collect_materialization_target_runtime_base_files(
+        tmp_path,
+        task={"target_files": ["src/alchemy_rules.rs", "tests/product.rs", "Cargo.toml"]},
+        artifact_quality_errors=[residual],
+        source_tool="deterministic_rust_line_suggestion_repair",
+    )
+    assert "src/alchemy_rules.rs" in base_files
+    assert "tests/product.rs" in base_files
+    assert "Cargo.toml" in base_files
+
+
 def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     tmp_path: Path,
     monkeypatch: Any,

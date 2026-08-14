@@ -1022,6 +1022,93 @@ class TestQualityGateDeadlineHandling:
 
         assert executor._workspace_quality_task_boundary_blocker(run, {}) is None
 
+    def test_workspace_quality_allows_quality_residual_failed_owners_on_qa_retry(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Failed workspace_quality_* rows must not deadlock a same-run qa_gate retry."""
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="run-quality-residual-retry",
+            config=FactoryConfig(name="quality-residual-retry-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-14T00:00:00+00:00",
+        )
+        projection = _with_task_runtime_authority(
+            {
+                "source": "run_ledger",
+                "task_boundary": {
+                    "latest_by_task": {
+                        "TASK-1": {"task_id": "TASK-1", "status": "completed_verified", "ok": True},
+                        "TASK-2": {"task_id": "TASK-2", "status": "completed_verified", "ok": True},
+                        "TASK-3": {"task_id": "TASK-3", "status": "completed_verified", "ok": True},
+                    }
+                },
+            },
+            task_ids=("TASK-1", "TASK-2", "TASK-3"),
+            incomplete_task_ids=("TASK-1", "TASK-2", "TASK-3"),
+        )
+        action = {
+            "schema_version": "task-runtime.same-task-local-rework-record/1",
+            "factory_run_id": run.id,
+            "external_task_id": "TASK-1",
+            "action_id": "a" * 64,
+            "action_kind": "run_required_verifier",
+            "dispatch_claim_id": "b" * 64,
+            "effect_hash": "c" * 64,
+            "diagnostic": {
+                "owner_task_id": "TASK-1",
+                "allowed_next_action": "run_required_verifier",
+            },
+        }
+        rows = projection["task_runtime_projection"]["rows"]
+        rows[0]["metadata"] = {
+            "factory_local_rework": action,
+            "same_task_local_rework_authorizations": [dict(action)],
+        }
+        rows[0]["claimed_by"] = "director"
+        for row in (rows[1], rows[2]):
+            row["status"] = "failed"
+            row["execution_state"] = "failed"
+            row["claimed_by"] = "director"
+        monkeypatch.setattr(executor, "_canonical_factory_projection", lambda _run, _context: projection)
+
+        assert executor._workspace_quality_task_boundary_blocker(run, {}) is None
+
+    def test_workspace_quality_still_blocks_failed_owners_without_completed_boundary(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="run-director-failed-owner",
+            config=FactoryConfig(name="director-failed-owner-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-14T00:00:00+00:00",
+        )
+        projection = _with_task_runtime_authority(
+            {
+                "source": "run_ledger",
+                "task_boundary": {},
+            },
+            incomplete_task_ids=("TASK-1",),
+        )
+        row = projection["task_runtime_projection"]["rows"][0]
+        row["status"] = "failed"
+        row["execution_state"] = "failed"
+        row["claimed_by"] = "director"
+        monkeypatch.setattr(executor, "_canonical_factory_projection", lambda _run, _context: projection)
+
+        blocker = executor._workspace_quality_task_boundary_blocker(run, {})
+        assert blocker is not None
+        assert blocker["reason_code"] in {
+            "task_runtime_not_converged",
+            "task_boundary_verdict_missing",
+        }
+
     @pytest.mark.parametrize(
         ("field", "value"),
         [

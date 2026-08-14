@@ -190,6 +190,11 @@ _RUST_ENUM_VARIANT_MISSING_FIELD_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Live L1-09: is_valid_input used floored effective_mass() > 0, which is
+# tautological when quantity is clamped to >= 1 and mass is .max(1).
+# Product residual: "zero-mass bag must be rejected by gate".
+_RUST_FLOORED_EFFECTIVE_MASS_GATE_RE = re.compile(r"(?P<var>[A-Za-z_][A-Za-z0-9_]*)\.effective_mass\(\)\s*>\s*0\b")
+
 _RUST_FIELD_RENAME_ERROR_RE = re.compile(
     r"error\[E0609\]:\s*no field [`'\"](?P<wrong>[A-Za-z_][A-Za-z0-9_]*)[`'\"]"
     r".*?^\s*-->\s*(?P<path>[^:\n]+\.rs):(?P<line>\d+):(?P<column>\d+)",

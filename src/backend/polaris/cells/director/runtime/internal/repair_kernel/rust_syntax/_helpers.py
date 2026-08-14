@@ -23,6 +23,7 @@ from ._constants import (
     _RUST_FIELD_METHOD_LINE_SUGGESTION_RE,
     _RUST_FIELD_RENAME_ERROR_RE,
     _RUST_FIELD_RENAME_PLUS_LINE_RE,
+    _RUST_FLOORED_EFFECTIVE_MASS_GATE_RE,
     _RUST_FULL_LINE_SUGGESTION_RE,
     _RUST_INCOMPATIBLE_COPY_LOCATION_RE,
     _RUST_INTEGER_IS_FINITE_RE,
@@ -1734,6 +1735,11 @@ def rust_local_structure_operations(
         if "right: Resonant" in haystack and "left: Failed" in haystack:
             repaired = repaired.replace("score >= 5_000", "score >= 100")
             repaired = repaired.replace("score >= 5000", "score >= 100")
+        if "zero-mass" in haystack and "rejected" in haystack:
+            repaired = _RUST_FLOORED_EFFECTIVE_MASS_GATE_RE.sub(
+                r"(\g<var>.purity * \g<var>.quantity as f64).round() as u32 > 0",
+                repaired,
+            )
         if repaired == content:
             continue
         operations.extend(

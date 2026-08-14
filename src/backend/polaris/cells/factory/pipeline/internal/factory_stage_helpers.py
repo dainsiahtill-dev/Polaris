@@ -123,6 +123,7 @@ class CanonicalFactoryAuthority:
     incomplete_runtime_task_ids: tuple[str, ...]
     missing_task_boundary_ids: tuple[str, ...]
     recovered_runtime_task_ids: tuple[str, ...]
+    runtime_has_active_work: bool = False
 
     @property
     def director_stage_authorized(self) -> bool:
@@ -142,8 +143,27 @@ class CanonicalFactoryAuthority:
     def quality_stage_authorized(self) -> bool:
         """Return whether canonical QA and evidence authorize final success."""
 
+        # TaskRuntime history and TaskBoundary delivery are independent axes.
+        # After QA already passed, leftover pending/failed rows from a same-run
+        # quality residual must not veto Factory completion when every owner
+        # already has completed_verified and no row is still in_progress.
+        runtime_delivery_authorized = (
+            self.task_runtime_converged
+            or self.terminal_runtime_delivery_recovered
+            or (
+                self.task_boundary_completed_verified
+                and not self.runtime_has_active_work
+                and not self.missing_runtime_task_ids
+                and not self.missing_task_boundary_ids
+            )
+        )
         return (
-            self.director_stage_authorized
+            self.source_valid
+            and self.task_runtime_projection_authoritative
+            and self.contract_task_scope_valid
+            and runtime_delivery_authorized
+            and self.task_boundary_present
+            and self.task_boundary_completed_verified
             and self.qa_verdict_present
             and self.qa_verdict_passed
             and self.sequence_barrier_satisfied
@@ -354,10 +374,11 @@ def evaluate_canonical_factory_authority(
     # aliases affect identity matching only; neither axis may overwrite the
     # other.
     task_boundary_completed_verified = (
-        task_boundary_present
-        and not failed_task_boundary_ids
-        and not missing_task_boundary_ids
-        and task_runtime_converged
+        task_boundary_present and not failed_task_boundary_ids and not missing_task_boundary_ids
+    )
+    runtime_has_active_work = any(
+        str(row.get("execution_state") or row.get("status") or "").strip().lower() in {"in_progress", "claimed"}
+        for row in normalized_runtime_rows.values()
     )
     failed_verdict = next(
         (normalized_verdicts[task_id] for task_id in failed_task_boundary_ids if task_id in normalized_verdicts),
@@ -473,6 +494,7 @@ def evaluate_canonical_factory_authority(
         incomplete_runtime_task_ids=incomplete_runtime_task_ids,
         missing_task_boundary_ids=missing_task_boundary_ids,
         recovered_runtime_task_ids=(),
+        runtime_has_active_work=runtime_has_active_work,
     )
     # Canonical completed_verified boundaries carry their own ledger coordinates
     # and evidence. When TaskRuntime is already terminal, the same immutable

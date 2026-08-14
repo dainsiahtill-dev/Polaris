@@ -479,6 +479,27 @@ def test_settle_recovery_rejects_nonterminal_runtime_even_with_green_boundary(st
     assert authority.director_stage_authorized is False
 
 
+def test_quality_stage_authorizes_leftover_pending_runtime_after_qa_pass() -> None:
+    """QA + completed_verified must not be vetoed by leftover pending history."""
+
+    projection = _canonical_projection()
+    runtime_row = projection["task_runtime_projection"]["rows"][0]
+    runtime_row["status"] = "pending"
+    runtime_row["execution_state"] = "pending"
+
+    authority = evaluate_canonical_factory_authority(
+        projection,
+        sequence_barrier_satisfied=True,
+    )
+
+    assert authority.task_runtime_converged is False
+    assert authority.task_boundary_completed_verified is True
+    assert authority.director_stage_authorized is False
+    assert authority.runtime_has_active_work is False
+    assert authority.quality_stage_authorized is True
+    assert authority.reason_code == "task_runtime_not_converged"
+
+
 def test_r181_failed_runtime_without_boundary_still_incomplete() -> None:
     """Pending/failed without completed_verified boundary stays fail-closed."""
 

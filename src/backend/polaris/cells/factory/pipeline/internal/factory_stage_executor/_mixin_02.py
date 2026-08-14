@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1639,6 +1639,70 @@ class _Mixin02:
             token = str(value or "").strip()
             return len(token) == 64 and all(char in lower_hex for char in token)
 
+        for task_id in incomplete_ids:
+            row = rows_by_task[task_id]
+            state = str(row.get("execution_state") or row.get("status") or "").strip().lower()
+            # Compact authority rows omit last_execution_error. A same-run
+            # qa_gate retry therefore cannot classify ``workspace_quality_*``
+            # residuals by error text. TaskBoundary completed_verified is the
+            # independent delivery axis: failed/pending runtime history must
+            # not skip the verifier once Director already sealed the owner.
+            # ``claimed_by=director`` on pending/failed is a leftover last
+            # claim, not an active in-progress lock.
+            if state in {"in_progress", "claimed"}:
+                return False
+            if state in {"pending", "ready"}:
+                if _Mixin02._row_has_prepared_same_task_local_rework(
+                    row,
+                    factory_run_id=factory_run_id,
+                    task_id=task_id,
+                    is_sha256=is_sha256,
+                ) or _Mixin02._task_boundary_completed_verified(projection, task_id):
+                    continue
+                return False
+            if state == "failed" and _Mixin02._task_boundary_completed_verified(projection, task_id):
+                continue
+            return False
+        return True
+
+    @staticmethod
+    def _task_boundary_completed_verified(projection: Mapping[str, Any], task_id: str) -> bool:
+        """Return True when the owner TaskBoundary is completed_verified."""
+
+        boundary_raw = projection.get("task_boundary")
+        boundary = boundary_raw if isinstance(boundary_raw, Mapping) else {}
+        latest_raw = boundary.get("latest_by_task")
+        latest = latest_raw if isinstance(latest_raw, Mapping) else {}
+        canonical = helpers._canonical_task_id_token(task_id)
+        for key in (task_id, canonical, f"TASK-{canonical}" if canonical else ""):
+            if not key:
+                continue
+            verdict = latest.get(key)
+            if not isinstance(verdict, Mapping):
+                continue
+            status = str(verdict.get("status") or "").strip().lower()
+            if bool(verdict.get("ok")) and status == "completed_verified":
+                return True
+        return False
+
+    @staticmethod
+    def _row_has_prepared_same_task_local_rework(
+        row: Mapping[str, Any],
+        *,
+        factory_run_id: str,
+        task_id: str,
+        is_sha256: Callable[[Any], bool],
+    ) -> bool:
+        """Return True when the row carries a complete same-task rework receipt."""
+
+        metadata_raw = row.get("metadata")
+        metadata = metadata_raw if isinstance(metadata_raw, Mapping) else {}
+        action_raw = metadata.get("factory_local_rework")
+        action = action_raw if isinstance(action_raw, Mapping) else {}
+        diagnostic_raw = action.get("diagnostic")
+        diagnostic = diagnostic_raw if isinstance(diagnostic_raw, Mapping) else {}
+        action_id = str(action.get("action_id") or "").strip()
+        action_kind = str(action.get("action_kind") or "").strip()
         executable_actions = frozenset(
             {
                 "publish_owner_rework",
@@ -1647,43 +1711,28 @@ class _Mixin02:
                 "run_required_verifier",
             }
         )
-        for task_id in incomplete_ids:
-            row = rows_by_task[task_id]
-            state = str(row.get("execution_state") or row.get("status") or "").strip().lower()
-            if state not in {"pending", "ready"} or str(row.get("claimed_by") or "").strip():
-                return False
-            metadata_raw = row.get("metadata")
-            metadata = metadata_raw if isinstance(metadata_raw, Mapping) else {}
-            action_raw = metadata.get("factory_local_rework")
-            action = action_raw if isinstance(action_raw, Mapping) else {}
-            diagnostic_raw = action.get("diagnostic")
-            diagnostic = diagnostic_raw if isinstance(diagnostic_raw, Mapping) else {}
-            action_id = str(action.get("action_id") or "").strip()
-            action_kind = str(action.get("action_kind") or "").strip()
-            if (
-                action.get("schema_version") != "task-runtime.same-task-local-rework-record/1"
-                or str(action.get("factory_run_id") or "").strip() != factory_run_id
-                or str(action.get("external_task_id") or "").strip() != task_id
-                or action_kind not in executable_actions
-                or str(diagnostic.get("owner_task_id") or "").strip() != task_id
-                or str(diagnostic.get("allowed_next_action") or "").strip() != action_kind
-                or not is_sha256(action_id)
-                or not is_sha256(action.get("dispatch_claim_id"))
-                or not is_sha256(action.get("effect_hash"))
-            ):
-                return False
-            authorizations_raw = metadata.get("same_task_local_rework_authorizations")
-            authorizations = authorizations_raw if isinstance(authorizations_raw, list) else []
-            matching_authorizations = [
-                record
-                for record in authorizations
-                if isinstance(record, Mapping)
-                and str(record.get("action_id") or "").strip() == action_id
-                and str(record.get("effect_hash") or "").strip() == str(action.get("effect_hash") or "").strip()
-            ]
-            if len(matching_authorizations) != 1:
-                return False
-        return True
+        if (
+            action.get("schema_version") != "task-runtime.same-task-local-rework-record/1"
+            or str(action.get("factory_run_id") or "").strip() != factory_run_id
+            or str(action.get("external_task_id") or "").strip() != task_id
+            or action_kind not in executable_actions
+            or str(diagnostic.get("owner_task_id") or "").strip() != task_id
+            or str(diagnostic.get("allowed_next_action") or "").strip() != action_kind
+            or not is_sha256(action_id)
+            or not is_sha256(action.get("dispatch_claim_id"))
+            or not is_sha256(action.get("effect_hash"))
+        ):
+            return False
+        authorizations_raw = metadata.get("same_task_local_rework_authorizations")
+        authorizations = authorizations_raw if isinstance(authorizations_raw, list) else []
+        matching_authorizations = [
+            record
+            for record in authorizations
+            if isinstance(record, Mapping)
+            and str(record.get("action_id") or "").strip() == action_id
+            and str(record.get("effect_hash") or "").strip() == str(action.get("effect_hash") or "").strip()
+        ]
+        return len(matching_authorizations) == 1
 
     @staticmethod
     def _trim_command_output(text: str, limit: int = _WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS) -> str:
