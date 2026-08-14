@@ -2,65 +2,19 @@
 
 from __future__ import annotations
 
-import ast
-import asyncio
-import contextlib
-import hashlib
-import inspect
 import json
-import logging
-import os
-import shutil
-import sys
-import textwrap
-import threading
-import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import MethodType, SimpleNamespace
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from polaris.cells.chief_engineer.blueprint.public import (
-    BlueprintPersistence,
-    BuildChiefEngineerBlueprintPortfolioCommandV1,
-    ChiefEngineerPortfolioTaskV1,
-    GenerateTaskBlueprintCommandV1,
-    VerificationCommandAuthorityV1,
-    build_chief_engineer_blueprint_portfolio,
-    derive_project_kind_authority_from_catalog_snapshot,
-    generate_task_blueprint,
-    project_chief_engineer_task_blueprint,
-    project_completion_catalog_snapshot_hash,
-    project_completion_verifier_policy_snapshot_hash,
-)
-from polaris.cells.chief_engineer.blueprint.public.contracts import (
-    TaskBlueprintResultV1,
-    _issue_chief_engineer_portfolio_authority_carrier,
-)
-from polaris.cells.control_plane.run_ledger.public import FailureClassV1
-from polaris.cells.events.fact_stream.public import (
-    BootstrapFactStreamWorkspaceCommandV1,
-    bootstrap_fact_stream_workspace,
-    fact_stream_bootstrap_streams,
-)
-from polaris.cells.events.fact_stream.public.service import (
-    QueryFactEventsV1,
-    query_fact_events,
-)
 from polaris.cells.factory.pipeline.internal import (
     factory_stage_executor as stage_executor_module,
-    factory_workspace_quality as workspace_quality_module,
 )
 from polaris.cells.factory.pipeline.internal.factory_deadline_policy import (
-    FactoryDeadlineBudgetPolicyV1,
     FactoryDeadlineDispositionV1,
     build_task_dependency_schedule,
 )
-from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
-    FactoryRoleEvidenceAuthorityPort,
-)
-from polaris.cells.factory.pipeline.internal.factory_run_completion import RunCompletionWaiter
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     CommandResult,
     FactoryConfig,
@@ -68,36 +22,13 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
-from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import _fencing_token
-from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
-    evaluate_canonical_factory_authority,
-)
-from polaris.cells.factory.pipeline.internal.run_ledger import load_run_ledger_projection
-from polaris.cells.roles.adapters.public import (
-    build_director_materialization_quality_repair_message,
-    extract_workspace_quality_summary,
-    resolve_director_semantic_quality_repair_target_files,
-)
-from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
-    FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
-    FactoryRoleEvidenceAuthorityBindingV1,
-)
-from polaris.cells.runtime.task_runtime.public.contracts import (
-    ObservableTaskRowsProjectionV1,
-    SettleTaskRuntimeExecutionAttemptCommandV1,
-    TaskRuntimeExecutionAttemptHeartbeatVerdictV1,
-    TaskRuntimeExecutionAttemptIdentityV1,
-)
-from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
-from polaris.kernelone.storage import resolve_logical_path
-
-
-from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
+from polaris.cells.factory.pipeline.tests._characterization_helpers import (
     _executor,
     _factory_stage_context,
     _with_task_runtime_authority,
     _write_handoff_ready_review_for_tasks,
 )
+from polaris.kernelone.storage import resolve_logical_path
 
 
 class TestQualityGateDeadlineHandling:
@@ -1042,6 +973,118 @@ class TestQualityGateDeadlineHandling:
         command = payload["commands"][0]
         assert command["deadline_capped_timeout_seconds"] <= 26.0
         assert command["configured_timeout_seconds"] == 240.0
+
+    def test_workspace_quality_allows_durably_prepared_same_task_rework_owner(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="run-prepared-local-rework",
+            config=FactoryConfig(name="prepared-local-rework-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-14T00:00:00+00:00",
+        )
+        projection = _with_task_runtime_authority(
+            {
+                "source": "run_ledger",
+                "task_boundary": {
+                    "latest_by_task": {
+                        "TASK-1": {
+                            "task_id": "TASK-1",
+                            "status": "completed_verified",
+                            "ok": True,
+                        }
+                    }
+                },
+            },
+            incomplete_task_ids=("TASK-1",),
+        )
+        action = {
+            "schema_version": "task-runtime.same-task-local-rework-record/1",
+            "factory_run_id": run.id,
+            "external_task_id": "TASK-1",
+            "action_id": "a" * 64,
+            "action_kind": "run_required_verifier",
+            "dispatch_claim_id": "b" * 64,
+            "effect_hash": "c" * 64,
+            "diagnostic": {
+                "owner_task_id": "TASK-1",
+                "allowed_next_action": "run_required_verifier",
+            },
+        }
+        projection["task_runtime_projection"]["rows"][0]["metadata"] = {
+            "factory_local_rework": action,
+            "same_task_local_rework_authorizations": [dict(action)],
+        }
+        monkeypatch.setattr(executor, "_canonical_factory_projection", lambda _run, _context: projection)
+
+        assert executor._workspace_quality_task_boundary_blocker(run, {}) is None
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("factory_run_id", "other-run"),
+            ("action_kind", "wait_for_dependencies"),
+            ("effect_hash", "not-a-hash"),
+        ],
+    )
+    def test_workspace_quality_rejects_unbound_or_nonexecutable_local_rework_owner(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        field: str,
+        value: str,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="run-invalid-local-rework",
+            config=FactoryConfig(name="invalid-local-rework-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-14T00:00:00+00:00",
+        )
+        projection = _with_task_runtime_authority(
+            {
+                "source": "run_ledger",
+                "task_boundary": {
+                    "latest_by_task": {
+                        "TASK-1": {
+                            "task_id": "TASK-1",
+                            "status": "completed_verified",
+                            "ok": True,
+                        }
+                    }
+                },
+            },
+            incomplete_task_ids=("TASK-1",),
+        )
+        action = {
+            "schema_version": "task-runtime.same-task-local-rework-record/1",
+            "factory_run_id": run.id,
+            "external_task_id": "TASK-1",
+            "action_id": "a" * 64,
+            "action_kind": "run_required_verifier",
+            "dispatch_claim_id": "b" * 64,
+            "effect_hash": "c" * 64,
+            "diagnostic": {
+                "owner_task_id": "TASK-1",
+                "allowed_next_action": "run_required_verifier",
+            },
+        }
+        action[field] = value
+        if field == "action_kind":
+            action["diagnostic"]["allowed_next_action"] = value
+        projection["task_runtime_projection"]["rows"][0]["metadata"] = {
+            "factory_local_rework": action,
+            "same_task_local_rework_authorizations": [dict(action)],
+        }
+        monkeypatch.setattr(executor, "_canonical_factory_projection", lambda _run, _context: projection)
+
+        blocker = executor._workspace_quality_task_boundary_blocker(run, {})
+
+        assert blocker is not None
+        assert blocker["reason_code"] == "task_runtime_not_converged"
 
     @pytest.mark.asyncio
     async def test_workspace_quality_skips_full_project_checks_when_source_tasks_not_unlocked(

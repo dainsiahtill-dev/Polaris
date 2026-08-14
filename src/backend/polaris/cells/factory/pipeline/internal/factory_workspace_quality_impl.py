@@ -605,12 +605,23 @@ async def _apply_workspace_quality_deterministic_repairs(
     )
 
     run_id = str(run.id or "").strip() or "workspace-quality-repair"
-    target_files = executor._director_stage_materialization_settle_target_files(diagnostics=artifact_quality_errors)
+    # Claim the task that owns the *current verifier diagnostic*, not the task
+    # with the largest share of all project targets.  The previous code passed
+    # the complete project target set into the owner scorer, so a later
+    # ``src/engine/*.rs`` compiler failure could repeatedly reopen TASK-1 merely
+    # because TASK-1 owned more files.  That erased same-task locality and made
+    # ordinary Director code repair look like a cross-task CE contract gap.
+    diagnostic_target_files = executor._workspace_quality_repair_diagnostic_target_files(
+        artifact_quality_errors
+    )
+    claim_target_files = diagnostic_target_files or executor._director_stage_materialization_settle_target_files(
+        diagnostics=artifact_quality_errors
+    )
     try:
         task_id, task_row_id, execution_attempt, repair_task = executor._claim_workspace_quality_repair_attempt(
             run=run,
             repair_attempt=repair_attempt,
-            target_files=target_files,
+            target_files=claim_target_files,
         )
         authority = create_task_runtime_execution_attempt_authority(execution_attempt)
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -623,6 +634,28 @@ async def _apply_workspace_quality_deterministic_repairs(
             "tool_results": 0,
             "write_tool_evidence": False,
         }
+
+    owner_metadata_raw = repair_task.get("metadata")
+    owner_metadata = dict(owner_metadata_raw) if isinstance(owner_metadata_raw, Mapping) else {}
+    raw_owner_targets = repair_task.get("target_files") or owner_metadata.get("target_files") or ()
+    owner_target_files = _dedupe_workspace_repair_paths(
+        [raw_owner_targets] if isinstance(raw_owner_targets, str) else list(raw_owner_targets)
+    )
+    owner_target_set = set(owner_target_files)
+    in_scope_diagnostic_targets = [path for path in diagnostic_target_files if path in owner_target_set]
+    out_of_scope_diagnostic_targets = [path for path in diagnostic_target_files if path not in owner_target_set]
+    task_boundary_owner_evidence = {
+        "schema_version": "factory.workspace_quality_task_owner.v1",
+        "source": "task_runtime_execution_attempt",
+        "task_id": task_id,
+        "owner_target_files": owner_target_files[:80],
+        "diagnostic_target_files": diagnostic_target_files[:20],
+        "in_scope_diagnostic_target_files": in_scope_diagnostic_targets[:20],
+        "out_of_scope_diagnostic_target_files": out_of_scope_diagnostic_targets[:20],
+        "director_local_repair_allowed": bool(diagnostic_target_files)
+        and len(in_scope_diagnostic_targets) == len(diagnostic_target_files)
+        and not out_of_scope_diagnostic_targets,
+    }
 
     results: list[dict[str, Any]] = []
     summary: dict[str, Any] = {}
@@ -647,6 +680,8 @@ async def _apply_workspace_quality_deterministic_repairs(
             repair_task=repair_task,
         )
         summary = dict(raw_summary)
+        summary["task_id"] = task_id
+        summary["task_boundary_owner_evidence"] = task_boundary_owner_evidence
         deferred_candidates = [
             item
             for item in results
@@ -682,6 +717,8 @@ async def _apply_workspace_quality_deterministic_repairs(
             "repair_mode": "director_deterministic",
             "error": f"workspace_quality_deterministic_commit_failed:{type(exc).__name__}:{exc}",
         }
+    summary.setdefault("task_id", task_id)
+    summary.setdefault("task_boundary_owner_evidence", task_boundary_owner_evidence)
     # ``create_task`` does not guarantee the heartbeat coroutine runs before a
     # very fast repair callback returns.  Yield once so an immediate authority
     # rejection becomes part of this transaction decision instead of being

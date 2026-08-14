@@ -133,6 +133,21 @@ async def _run_materialization_quality_repair_retry(
         return [], {"attempted": False, "reason": "no_artifact_quality_errors"}
 
     workspace_full = str(getattr(adapter, "workspace", "") or "")
+    # Restore the exact CE handoff before classifying a covered-but-unplannable
+    # diagnostic.  QA same-run recovery starts from a TaskRuntime/PM task row;
+    # its ``blueprint_id`` is authoritative, but the structured
+    # ``module_interface_contract`` is loaded by this adapter.  Promoting only
+    # after triage made an existing contract appear absent and incorrectly
+    # routed ordinary compiler repair back to Chief Engineer.
+    promote_task_contract = getattr(adapter, "_promote_task_contract_to_runtime_context", None)
+    if callable(promote_task_contract):
+        promoted_context = dict(context or {})
+        promote_task_contract(
+            task=task,
+            context=promoted_context,
+            workspace=workspace_full,
+        )
+        context = promoted_context
     cache_root_full = _quality_repair_cache_root(task, context)
     repair_quality_errors = _tool_receipt_safe_quality_errors(artifact_quality_errors)
     deferred_scope_context: dict[str, Any] = {}
@@ -549,13 +564,6 @@ async def _run_materialization_quality_repair_retry(
             "workspace_quality_evidence": workspace_quality_evidence,
         },
     }
-    promote_task_contract = getattr(adapter, "_promote_task_contract_to_runtime_context", None)
-    if callable(promote_task_contract):
-        promote_task_contract(
-            task=task,
-            context=repair_context,
-            workspace=workspace_full,
-        )
     rebind_dependency_artifact = getattr(adapter, "_rebind_director_dependency_artifact_for_dialogue", None)
     if callable(rebind_dependency_artifact) and isinstance(task, dict):
         rebind_dependency_artifact(repair_context)

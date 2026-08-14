@@ -1537,8 +1537,28 @@ class _Mixin02:
     ) -> dict[str, Any] | None:
         """Block workspace validation until canonical task boundaries settle."""
 
-        authority = helpers.evaluate_canonical_factory_authority(self._canonical_factory_projection(run, context))
+        projection = self._canonical_factory_projection(run, context)
+        authority = helpers.evaluate_canonical_factory_authority(projection)
         if authority.director_stage_authorized:
+            return None
+        # A same-task completion action deliberately reopens its exact Director
+        # owner before QA runs the failed verifier and local repair.  If the
+        # process dies between that durable reopen and the verifier call, the
+        # next same-run QA retry observes a canonical ``pending`` row.  Treating
+        # that prepared owner like an ordinary incomplete materialization makes
+        # the recovery self-deadlock: workspace checks refuse to run, so the
+        # owner can never be claimed, edited, revalidated, and settled.
+        #
+        # This is admission to the verifier/repair transaction only, not delivery
+        # success.  Require an authoritative TaskRuntime row plus the full
+        # same-run action receipt.  Unprepared pending/blocked/active tasks remain
+        # fail-closed, and final quality authority still requires verifier PASS
+        # followed by TaskRuntime reconciliation.
+        if self._workspace_quality_prepared_local_rework_authorized(
+            projection=projection,
+            authority=authority,
+            factory_run_id=run.id,
+        ):
             return None
         failure_class = authority.failure_class or (
             FailureClassV1.DEPENDENCY_NOT_UNLOCKED.value
@@ -1555,6 +1575,86 @@ class _Mixin02:
             "detail": authority.detail,
             "authority_source": "run_ledger_projection",
         }
+
+    @staticmethod
+    def _workspace_quality_prepared_local_rework_authorized(
+        *,
+        projection: Mapping[str, Any],
+        authority: helpers.CanonicalFactoryAuthority,
+        factory_run_id: str,
+    ) -> bool:
+        """Allow QA to resume a durably prepared same-task repair transaction."""
+
+        if authority.reason_code != "task_runtime_not_converged":
+            return False
+        incomplete_ids = set(authority.incomplete_runtime_task_ids)
+        if not incomplete_ids:
+            return False
+
+        task_runtime_raw = projection.get("task_runtime_projection")
+        task_runtime = task_runtime_raw if isinstance(task_runtime_raw, Mapping) else {}
+        rows_raw = task_runtime.get("rows")
+        rows = [row for row in rows_raw if isinstance(row, Mapping)] if isinstance(rows_raw, list) else []
+        rows_by_task: dict[str, Mapping[str, Any]] = {}
+        for row in rows:
+            task_id = helpers._runtime_row_contract_task_id(row)
+            if not task_id or task_id in rows_by_task:
+                return False
+            rows_by_task[task_id] = row
+        if not incomplete_ids.issubset(rows_by_task):
+            return False
+
+        lower_hex = frozenset("0123456789abcdef")
+
+        def is_sha256(value: Any) -> bool:
+            token = str(value or "").strip()
+            return len(token) == 64 and all(char in lower_hex for char in token)
+
+        executable_actions = frozenset(
+            {
+                "publish_owner_rework",
+                "refresh_owner_evidence",
+                "run_deterministic_repair",
+                "run_required_verifier",
+            }
+        )
+        for task_id in incomplete_ids:
+            row = rows_by_task[task_id]
+            state = str(row.get("execution_state") or row.get("status") or "").strip().lower()
+            if state not in {"pending", "ready"} or str(row.get("claimed_by") or "").strip():
+                return False
+            metadata_raw = row.get("metadata")
+            metadata = metadata_raw if isinstance(metadata_raw, Mapping) else {}
+            action_raw = metadata.get("factory_local_rework")
+            action = action_raw if isinstance(action_raw, Mapping) else {}
+            diagnostic_raw = action.get("diagnostic")
+            diagnostic = diagnostic_raw if isinstance(diagnostic_raw, Mapping) else {}
+            action_id = str(action.get("action_id") or "").strip()
+            action_kind = str(action.get("action_kind") or "").strip()
+            if (
+                action.get("schema_version") != "task-runtime.same-task-local-rework-record/1"
+                or str(action.get("factory_run_id") or "").strip() != factory_run_id
+                or str(action.get("external_task_id") or "").strip() != task_id
+                or action_kind not in executable_actions
+                or str(diagnostic.get("owner_task_id") or "").strip() != task_id
+                or str(diagnostic.get("allowed_next_action") or "").strip() != action_kind
+                or not is_sha256(action_id)
+                or not is_sha256(action.get("dispatch_claim_id"))
+                or not is_sha256(action.get("effect_hash"))
+            ):
+                return False
+            authorizations_raw = metadata.get("same_task_local_rework_authorizations")
+            authorizations = authorizations_raw if isinstance(authorizations_raw, list) else []
+            matching_authorizations = [
+                record
+                for record in authorizations
+                if isinstance(record, Mapping)
+                and str(record.get("action_id") or "").strip() == action_id
+                and str(record.get("effect_hash") or "").strip() == str(action.get("effect_hash") or "").strip()
+            ]
+            if len(matching_authorizations) != 1:
+                return False
+        return True
 
     @staticmethod
     def _trim_command_output(text: str, limit: int = _WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS) -> str:

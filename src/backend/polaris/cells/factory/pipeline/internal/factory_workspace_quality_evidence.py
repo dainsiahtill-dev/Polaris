@@ -266,9 +266,39 @@ def workspace_quality_interface_discrepancy_evidence(
         "type ",
         "is not assignable to type",
     )
+    raw_owner_evidence = summary.get("task_boundary_owner_evidence")
+    owner_evidence = dict(raw_owner_evidence) if isinstance(raw_owner_evidence, Mapping) else {}
+    owner_target_files = _dedupe_workspace_repair_paths(owner_evidence.get("owner_target_files") or [])
+    diagnostic_target_files = _dedupe_workspace_repair_paths(
+        owner_evidence.get("diagnostic_target_files") or []
+    )
+    in_scope_diagnostic_target_files = _dedupe_workspace_repair_paths(
+        owner_evidence.get("in_scope_diagnostic_target_files") or []
+    )
+    out_of_scope_diagnostic_target_files = _dedupe_workspace_repair_paths(
+        owner_evidence.get("out_of_scope_diagnostic_target_files") or []
+    )
+    exact_task_owner_allows_director_retry = (
+        str(owner_evidence.get("source") or "") == "task_runtime_execution_attempt"
+        and bool(str(owner_evidence.get("task_id") or "").strip())
+        and bool(owner_target_files)
+        and bool(diagnostic_target_files)
+        and set(diagnostic_target_files) == set(in_scope_diagnostic_target_files)
+        and not out_of_scope_diagnostic_target_files
+        and bool(owner_evidence.get("director_local_repair_allowed"))
+    )
     cross_artifact = any(marker in diagnostic_blob for marker in cross_artifact_markers)
     local_implementation = any(marker in diagnostic_blob for marker in local_implementation_markers)
-    if cross_artifact:
+    if exact_task_owner_allows_director_retry:
+        # An import/symbol diagnostic can cross module files without crossing
+        # the current Director authority.  When TaskRuntime has already claimed
+        # the exact owner of every diagnostic target, keep the repair on that
+        # task and let the next verifier residual select another owner if
+        # needed.  This never authorizes writes outside ``owner_target_files``.
+        recommended_owner = "director"
+        recommended_route = "director_retry_with_interface_discrepancy_context"
+        cross_artifact_route = "director_repair_within_claimed_task"
+    elif cross_artifact:
         recommended_owner = "chief_engineer"
         recommended_route = "pending_design_interface_contract"
         cross_artifact_route = "contract_amendment_request"
@@ -301,6 +331,7 @@ def workspace_quality_interface_discrepancy_evidence(
             "route": "task_boundary_quality_loop",
             "cross_artifact_route": cross_artifact_route,
             "coverage_gap_count": coverage_gap_count,
+            "task_boundary_owner_evidence": owner_evidence,
         }
     )
     canonical = DirectorInterfaceDiscrepancyReceiptV1.from_mapping(
@@ -344,6 +375,7 @@ def workspace_quality_repair_summary_projection(
 ) -> dict[str, Any]:
     projected: dict[str, Any] = {}
     for key in (
+        "task_id",
         "stage",
         "attempt",
         "success",
@@ -359,6 +391,7 @@ def workspace_quality_repair_summary_projection(
         "repair_target_files",
         "rotated_repair_targets",
         "task_boundary_scope_filter",
+        "task_boundary_owner_evidence",
         "deferred_owner_rebind",
         "plan_probe_preaudit",
         "interface_discrepancy_evidence",

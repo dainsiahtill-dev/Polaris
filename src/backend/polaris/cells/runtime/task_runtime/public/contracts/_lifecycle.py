@@ -26,6 +26,36 @@ TASK_RUNTIME_EXECUTION_FACT_SCHEMA_V1 = "task-runtime.execution-fact/1"
 _TERMINAL_EXECUTION_STATES = frozenset({"cancelled", "completed", "failed", "timed_out", "timeout"})
 
 
+def _project_same_task_local_rework_authority(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Project only the current, bounded same-task rework authority.
+
+    The compact control-plane projection must not leak the full task payload,
+    but restart-safe QA recovery needs the exact durable action plus its matching
+    authorization.  Preserve duplicate matching records so consumers can reject
+    ambiguous authority instead of silently choosing one.
+    """
+
+    action_raw = metadata.get("factory_local_rework")
+    if not isinstance(action_raw, Mapping):
+        return {}
+    action = _to_dict_copy(action_raw)
+    action_id = str(action.get("action_id") or "").strip()
+    effect_hash = str(action.get("effect_hash") or "").strip()
+    authorizations_raw = metadata.get("same_task_local_rework_authorizations")
+    authorizations = authorizations_raw if isinstance(authorizations_raw, list) else []
+    matching_authorizations = [
+        _to_dict_copy(record)
+        for record in authorizations
+        if isinstance(record, Mapping)
+        and str(record.get("action_id") or "").strip() == action_id
+        and str(record.get("effect_hash") or "").strip() == effect_hash
+    ]
+    return {
+        "factory_local_rework": action,
+        "same_task_local_rework_authorizations": matching_authorizations,
+    }
+
+
 @dataclass(frozen=True)
 class CreateRuntimeTaskCommandV1:
     task_id: str
@@ -561,6 +591,7 @@ class ObservableTaskRowsProjectionV1:
         for row in source_rows:
             metadata = row.get("metadata")
             metadata_map = metadata if isinstance(metadata, Mapping) else {}
+            local_rework_authority = _project_same_task_local_rework_authority(metadata_map)
             workflow_run_id = _workflow_run_id_from_task_row(row)
             external_task_id = str(
                 row.get("external_task_id")
@@ -580,9 +611,16 @@ class ObservableTaskRowsProjectionV1:
                     "factory_run_id": _factory_run_id_from_task_row(row),
                     "status": str(row.get("status") or "").strip().lower(),
                     "execution_state": str(row.get("execution_state") or row.get("status") or "").strip().lower(),
+                    # Claim ownership is part of admission authority. Omitting it
+                    # could make an already-claimed pending task look available
+                    # to a restart recovery consumer.
+                    "claimed_by": str(row.get("claimed_by") or "").strip(),
                     "fact_event_seq": row.get("fact_event_seq"),
                     "source": str(metadata_map.get("source") or "").strip(),
                     "status_source": str(metadata_map.get("status_source") or "").strip(),
+                    # Deliberately bounded subset; large task contracts, prompts,
+                    # adapter results, and unrelated metadata remain excluded.
+                    "metadata": local_rework_authority,
                 }
             )
         return {

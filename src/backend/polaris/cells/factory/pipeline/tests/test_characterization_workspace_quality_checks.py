@@ -2,99 +2,24 @@
 
 from __future__ import annotations
 
-import ast
 import asyncio
-import contextlib
-import hashlib
-import inspect
 import json
-import logging
-import os
-import shutil
-import sys
-import textwrap
-import threading
-import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import MethodType, SimpleNamespace
 from typing import Any
 
 import pytest
-from polaris.cells.chief_engineer.blueprint.public import (
-    BlueprintPersistence,
-    BuildChiefEngineerBlueprintPortfolioCommandV1,
-    ChiefEngineerPortfolioTaskV1,
-    GenerateTaskBlueprintCommandV1,
-    VerificationCommandAuthorityV1,
-    build_chief_engineer_blueprint_portfolio,
-    derive_project_kind_authority_from_catalog_snapshot,
-    generate_task_blueprint,
-    project_chief_engineer_task_blueprint,
-    project_completion_catalog_snapshot_hash,
-    project_completion_verifier_policy_snapshot_hash,
-)
-from polaris.cells.chief_engineer.blueprint.public.contracts import (
-    TaskBlueprintResultV1,
-    _issue_chief_engineer_portfolio_authority_carrier,
-)
-from polaris.cells.control_plane.run_ledger.public import FailureClassV1
-from polaris.cells.events.fact_stream.public import (
-    BootstrapFactStreamWorkspaceCommandV1,
-    bootstrap_fact_stream_workspace,
-    fact_stream_bootstrap_streams,
-)
-from polaris.cells.events.fact_stream.public.service import (
-    QueryFactEventsV1,
-    query_fact_events,
-)
-from polaris.cells.factory.pipeline.internal import (
-    factory_stage_executor as stage_executor_module,
-    factory_workspace_quality as workspace_quality_module,
-)
-from polaris.cells.factory.pipeline.internal.factory_deadline_policy import (
-    FactoryDeadlineBudgetPolicyV1,
-    FactoryDeadlineDispositionV1,
-    build_task_dependency_schedule,
-)
-from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
-    FactoryRoleEvidenceAuthorityPort,
-)
-from polaris.cells.factory.pipeline.internal.factory_run_completion import RunCompletionWaiter
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
-    CommandResult,
     FactoryConfig,
     FactoryRun,
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
-from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import _fencing_token
-from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
-    evaluate_canonical_factory_authority,
-)
-from polaris.cells.factory.pipeline.internal.run_ledger import load_run_ledger_projection
-from polaris.cells.roles.adapters.public import (
-    build_director_materialization_quality_repair_message,
-    extract_workspace_quality_summary,
-    resolve_director_semantic_quality_repair_target_files,
-)
-from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
-    FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
-    FactoryRoleEvidenceAuthorityBindingV1,
-)
-from polaris.cells.runtime.task_runtime.public.contracts import (
-    ObservableTaskRowsProjectionV1,
-    SettleTaskRuntimeExecutionAttemptCommandV1,
-    TaskRuntimeExecutionAttemptHeartbeatVerdictV1,
-    TaskRuntimeExecutionAttemptIdentityV1,
-)
-from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
-from polaris.kernelone.storage import resolve_logical_path
-
-
-from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
+from polaris.cells.factory.pipeline.tests._characterization_helpers import (
     _executor,
     _with_task_runtime_authority,
+)
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    TaskRuntimeExecutionAttemptIdentityV1,
 )
 
 
@@ -1933,6 +1858,54 @@ class TestRunWorkspaceQualityChecks:
         assert payload["passed"] is True
         assert payload["repair"]["success"] is True
         assert payload["repair"]["rounds"][0]["repair_summary"]["stage"] == "quality_repair"
+
+    def test_workspace_quality_keeps_claimed_rust_diagnostic_owner_on_director(self) -> None:
+        diagnostic = "cargo check :: error[E0432]: unresolved import `crate::engine::RecipeDraft` in src/lib.rs"
+        owner_evidence = {
+            "schema_version": "factory.workspace_quality_task_owner.v1",
+            "source": "task_runtime_execution_attempt",
+            "task_id": "TASK-1",
+            "owner_target_files": ["Cargo.toml", "src/lib.rs", "src/models/mod.rs"],
+            "diagnostic_target_files": ["src/lib.rs"],
+            "in_scope_diagnostic_target_files": ["src/lib.rs"],
+            "out_of_scope_diagnostic_target_files": [],
+            "director_local_repair_allowed": True,
+        }
+        summary = {
+            "task_id": "TASK-1",
+            "task_boundary_owner_evidence": owner_evidence,
+            "plan_probe_preaudit": {
+                "status": "coverage_matched_but_unplannable",
+                "plannable_source_tools": [],
+                "covered_unplannable_source_tools": ["deterministic_rust_line_suggestion_repair"],
+                "covered_unplannable_diagnostic_count": 1,
+            },
+        }
+
+        evidence = OrchestrationStageExecutor._workspace_quality_interface_discrepancy_evidence(
+            summary,
+            [diagnostic],
+        )
+        assert evidence["recommended_owner"] == "director"
+        assert evidence["recommended_route"] == "director_retry_with_interface_discrepancy_context"
+        assert evidence["cross_artifact_route"] == "director_repair_within_claimed_task"
+        assert evidence["director_retry_allowed"] is True
+        assert evidence["llm_fallback_blocked"] is False
+        assert evidence["metadata"]["task_boundary_owner_evidence"] == owner_evidence
+
+        # A claimed task must never authorize a diagnostic path it does not own.
+        out_of_scope = dict(owner_evidence)
+        out_of_scope["diagnostic_target_files"] = ["src/engine/flavor_rules.rs"]
+        out_of_scope["in_scope_diagnostic_target_files"] = []
+        out_of_scope["out_of_scope_diagnostic_target_files"] = ["src/engine/flavor_rules.rs"]
+        out_of_scope["director_local_repair_allowed"] = False
+        summary["task_boundary_owner_evidence"] = out_of_scope
+        blocked = OrchestrationStageExecutor._workspace_quality_interface_discrepancy_evidence(
+            summary,
+            [diagnostic],
+        )
+        assert blocked["recommended_owner"] == "chief_engineer"
+        assert blocked["director_retry_allowed"] is False
 
     @pytest.mark.asyncio
     async def test_workspace_quality_reruns_prepare_after_successful_repair(

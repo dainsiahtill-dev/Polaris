@@ -18,6 +18,7 @@ from polaris.cells.runtime.task_runtime.public.contracts import (
     GetRuntimeTaskQueryV1,
     HeartbeatTaskRuntimeExecutionAttemptCommandV1,
     ListRuntimeTasksQueryV1,
+    ObservableTaskRowsProjectionV1,
     OwnerReworkExecutionPreparationCodeV1,
     OwnerReworkExecutionPreparationResultV1,
     ParentCorrelationV1,
@@ -33,6 +34,86 @@ from polaris.cells.runtime.task_runtime.public.contracts import (
     UpdateRuntimeTaskCommandV1,
     ValidateTaskRuntimeExecutionAttemptQueryV1,
 )
+
+
+class TestObservableTaskRowsAuthorityProjection:
+    """Compact authority keeps restart-safe rework proof without payload leaks."""
+
+    @staticmethod
+    def _action(*, action_id: str = "a" * 64, effect_hash: str = "b" * 64) -> dict[str, object]:
+        return {
+            "schema_version": "task-runtime.same-task-local-rework-record/1",
+            "factory_run_id": "factory-1",
+            "external_task_id": "TASK-1",
+            "action_id": action_id,
+            "action_kind": "run_required_verifier",
+            "dispatch_claim_id": "c" * 64,
+            "effect_hash": effect_hash,
+            "diagnostic": {
+                "owner_task_id": "TASK-1",
+                "allowed_next_action": "run_required_verifier",
+            },
+        }
+
+    def test_projects_only_current_rework_authority_and_claim_owner(self) -> None:
+        current = self._action()
+        stale = self._action(action_id="d" * 64, effect_hash="e" * 64)
+        projection = ObservableTaskRowsProjectionV1(
+            workspace="/tmp/ws",
+            source="task_runtime.execution_fact",
+            authoritative=True,
+            degraded=False,
+            rows=(
+                {
+                    "id": 1,
+                    "status": "pending",
+                    "execution_state": "pending",
+                    "claimed_by": "director-worker",
+                    "factory_run_id": "factory-1",
+                    "metadata": {
+                        "external_task_id": "TASK-1",
+                        "factory_local_rework": current,
+                        "same_task_local_rework_authorizations": [stale, current],
+                        "adapter_result": {"large": "must-not-leak"},
+                        "prompt": "must-not-leak",
+                    },
+                },
+            ),
+        )
+
+        row = projection.to_authority_dict(factory_run_id="factory-1")["rows"][0]
+
+        assert row["claimed_by"] == "director-worker"
+        assert row["metadata"] == {
+            "factory_local_rework": current,
+            "same_task_local_rework_authorizations": [current],
+        }
+        assert "adapter_result" not in row["metadata"]
+        assert "prompt" not in row["metadata"]
+
+    def test_omits_unrelated_metadata_when_no_rework_is_prepared(self) -> None:
+        projection = ObservableTaskRowsProjectionV1(
+            workspace="/tmp/ws",
+            source="task_runtime.execution_fact",
+            authoritative=True,
+            degraded=False,
+            rows=(
+                {
+                    "id": 1,
+                    "status": "completed",
+                    "factory_run_id": "factory-1",
+                    "metadata": {
+                        "external_task_id": "TASK-1",
+                        "adapter_result": {"large": "must-not-leak"},
+                    },
+                },
+            ),
+        )
+
+        row = projection.to_authority_dict(factory_run_id="factory-1")["rows"][0]
+
+        assert row["claimed_by"] == ""
+        assert row["metadata"] == {}
 
 
 class TestDirectedEffectStreamEnrollmentContracts:
