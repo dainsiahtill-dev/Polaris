@@ -1,21 +1,21 @@
 {
   "schema_version": "polaris.platform_defect.v1",
   "defect_id": "P0-20260814-L104-QUALITY-REPAIR-TRANSACTION",
-  "status": "FIXED_AWAITING_LIVE_REVALIDATION",
+  "status": "LIVE_REVALIDATION_RUNNING",
   "severity": "P0",
   "project_probe": "L1-04",
   "factory_run_id": "factory_87c10610b465",
   "symptom": {
     "stage": "quality_gate",
-    "message": "Director edit introduced a Go parser error, TaskRuntime was settled before verifier authority, and settlement wake replay amplified stale journal writes.",
-    "physical_residual": "engine/rules.go:146:2 contains `}na < spellCost {`",
+    "message": "L1-04 reached QA-local semantic failures, but a forced edit_file call with an empty search was promoted to a successful physical-effect receipt and reran the verifier without changing the workspace.",
+    "physical_residual": "go test ./... fails TestTeach_NormalPath, TestTeach_Monotonic, and TestQuickDemo_Invariants while go run . succeeds",
     "comparison": "L1-01 through L1-03 exercised successful edits; L1-04 was the first probe to expose a verifier-regressing edit on this path."
   },
   "dynamic_evidence": {
     "workspace": "/tmp/factory-bench-l1-04-r51/workspaces/8ce91e5364dc-6caf30f05b9c3b1d/L1-04-94fd04a84e09b5de/e2826410ee7625bd7c4aa967",
     "file_edit_event": ".polaris/runtime/file-edits/events.jsonl:30",
     "edit_timestamp": "2026-08-14T04:12:12.432225+00:00",
-    "final_request_context_snapshot_ref": "e5b780e99b5ce5f8508a75ef",
+    "final_request_context_snapshot_ref": "b3e833763fe0d8f71a118f22",
     "final_request_findings": {
       "role_identity_ok": true,
       "required_context_coverage_pass": true,
@@ -23,10 +23,29 @@
         "edit_file"
       ],
       "forced_tool_choice": "edit_file",
-      "root_cause_is_context_or_tool_schema": false
+      "root_cause_is_context_or_tool_schema": false,
+      "provider_response_tool_calls": [
+        "read_file",
+        "read_file"
+      ],
+      "provider_response_violated_final_tool_surface": true,
+      "platform_executed_out_of_surface_calls_before_fix": true
     },
     "settlement_error": "append_fact_event failed: idempotency conflict: key='factory-settlement:...:pending:waiting_barrier' fields=payload",
-    "settlement_journal": "/home/dains/.cache/kernelone/.polaris/projects/e2826410ee7625bd7c4aa967-3f6c7b00539f/runtime/events/factory.settlement.jsonl"
+    "settlement_journal": "/home/dains/.cache/kernelone/.polaris/projects/e2826410ee7625bd7c4aa967-3f6c7b00539f/runtime/events/factory.settlement.jsonl",
+    "no_op_edit_receipt": {
+      "provider_tool_call_id": "call_019fff24c9b67c00a76bbb9d",
+      "file": "engine/rules.go",
+      "physical_result": {
+        "ok": true,
+        "no_op": true,
+        "reason": "edit_file_empty_search"
+      },
+      "incorrect_authoritative_receipt_hash": "2c7d660d3b34bc4e7299afcbb14710565eed5ec3de4c0326c91b4cf6af3df3e9",
+      "incorrect_receipt_outcome": "succeeded",
+      "before_after_hashes": "both absent",
+      "effect": "unchanged verifier was rerun and the parent settled failed"
+    }
   },
   "root_causes": [
     {
@@ -44,6 +63,30 @@
     {
       "owner": "factory settlement",
       "cause": "stale journal snapshots appended competing WAITING_BARRIER payloads under one idempotency key and wake routing replayed non-authoritative notifications"
+    },
+    {
+      "owner": "roles.kernel llm_caller",
+      "cause": "the physical request narrowed tools to forced edit_file, but provider-returned read_file calls were checked against the earlier broad semantic tool set and executed"
+    },
+    {
+      "owner": "factory bootstrap/lifecycle",
+      "cause": "synchronous historical recovery blocked backend readiness and a fresh restart-replay lifecycle nonce conflicted with the orphaned same-run claim"
+    },
+    {
+      "owner": "roles.kernel transaction controller",
+      "cause": "final-request tool-surface rejection raised before decision decoding, so the existing mutation-required retry loop never received the contract violation and the Director repair turn terminated without an edit"
+    },
+    {
+      "owner": "kernelone events/factory settlement",
+      "cause": "FactStream head and current-checkpoint catch-up deserialized the full 38.6 MB task_runtime.execution history on every wake; the backend saturated one CPU and Factory status queries timed out while no new event existed"
+    },
+    {
+      "owner": "roles.kernel final provider tool contract",
+      "cause": "a mutation-required forced edit_file response was validated by tool name only; empty search reached the physical executor, whose safety no-op was then committed as an authoritative successful effect receipt without before/after hashes"
+    },
+    {
+      "owner": "runtime.task_runtime observable projection",
+      "cause": "Factory's 100 ms claimability/status observation repeatedly rebuilt the same task_runtime.execution projection; L1-04's 40 MiB/765-fact history was reread at approximately 88 MiB per 2 seconds, saturating the backend event-loop CPU before the Director repair LLM call"
     }
   ],
   "fixes": [
@@ -70,18 +113,73 @@
     {
       "file": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
       "change": "replay only authoritative TaskRuntime and Run Ledger notifications; acknowledge observer, malformed, incomplete, and unknown messages without replay"
+    },
+    {
+      "file": "polaris/cells/roles/kernel/internal/llm_caller/final_request_tool_surface.py",
+      "change": "make the physically dispatched final request tools/tool_choice authoritative; normalize aliases and fail closed on provider calls outside that surface"
+    },
+    {
+      "file": "polaris/cells/roles/kernel/internal/llm_caller/stream_engine.py",
+      "change": "reject out-of-surface streamed tool calls before any tool event reaches the transaction executor"
+    },
+    {
+      "file": "polaris/cells/roles/kernel/internal/llm_caller/invoker/_call.py",
+      "change": "apply the same final-request tool-surface guard to non-stream provider responses"
+    },
+    {
+      "file": "polaris/bootstrap/factory_run_driver_runtime.py",
+      "change": "launch historical Factory recovery in background so application readiness is not blocked"
+    },
+    {
+      "file": "polaris/cells/factory/pipeline/internal/factory_run_service/_service_lifecycle.py",
+      "change": "resume the exact orphaned restart-replay lifecycle claim for the same run instead of creating a conflicting nonce"
+    },
+    {
+      "file": "polaris/cells/roles/kernel/internal/turn_transaction_controller.py",
+      "change": "route an exact provider tool-surface violation into the existing bounded mutation retry in the same Director turn and authority; do not execute the rejected tool or restart PM/CE"
+    },
+    {
+      "file": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py",
+      "change": "keep repeated out-of-surface provider calls inside the existing bounded mutation retry budget and fail closed after exhaustion"
+    },
+    {
+      "file": "polaris/kernelone/fs/locked_regular_file.py",
+      "change": "add descriptor-verified bounded tail reads so event-stream head queries do not read the full append history"
+    },
+    {
+      "file": "polaris/kernelone/events/sourcing/file_store.py",
+      "change": "derive a non-strict stream head from the last valid JSONL envelope while preserving full scans for strict-integrity callers"
+    },
+    {
+      "file": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "change": "use the FactStream head port to skip source page reads when the durable head already equals the validated settlement checkpoint"
+    },
+    {
+      "file": "polaris/cells/roles/kernel/internal/llm_caller/final_request_tool_surface.py",
+      "change": "validate provider edit_file arguments against search/replace, line-range, or blocks mode before DEO admission; route empty search through the same bounded Director mutation retry instead of committing a no-op receipt"
+    },
+    {
+      "file": "polaris/cells/runtime/task_runtime/internal/service/_mixin_task_rows.py",
+      "change": "cache the projected latest task rows across service instances by workspace, limit, and descriptor-bound durable stream head; any append advances the head and invalidates the projection immediately"
     }
   ],
   "verification": {
     "workspace_quality_tests": "51 passed",
     "settlement_tests": "96 passed",
-    "syntax_and_execution_tool_tests": "40 passed, 2 skipped",
-    "mypy": "7 changed source files passed",
+    "syntax_and_execution_tool_tests": "42 passed, 2 skipped",
+    "final_request_tool_surface_tests": "11 passed including stream pre-dispatch rejection, empty-search rejection, valid edit acceptance, and same-turn mutation recovery",
+    "transaction_and_settlement_regression": "106 focused tests passed across provider surface, retry routing, settlement consumer, and event sourcing",
+    "settlement_head_performance": "live 38.6 MB task_runtime.execution head query: approximately 1095 ms before bounded tail read; 6-7 ms warm after fix; current checkpoint replay performs zero source page reads",
+    "task_runtime_projection_performance": "dynamic /proc evidence: old backend reread approximately 88 MiB in 2 seconds with no stream append; head-bound cache regression proves identical-head observers reuse one projection and a new fact invalidates it",
+    "bootstrap_recovery_tests": "8 passed plus orphaned replay claim regression",
+    "mypy": "all changed tool-surface and bootstrap source files passed",
     "ruff": "changed source files and focused settlement/tool/syntax tests passed",
     "known_unrelated_lint_debt": "characterization test split currently has pre-existing duplicate/unused imports; runtime tests execute successfully"
   },
   "live_acceptance": {
     "required": true,
+    "started_at": "2026-08-14T07:32:44Z",
+    "factory_run_status": "recovering",
     "retry_scope": "same L1-04 quality/Director owner only",
     "forbidden": [
       "restart PM",

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
@@ -9,6 +11,7 @@ from polaris.cells.events.fact_stream.public.contracts import (
     FactStreamError,
     FactStreamQueryResultV1,
     QueryFactEventsV1,
+    QueryFactStreamHeadV1,
 )
 from polaris.cells.runtime.task_runtime.internal.task_board import (
     Task,
@@ -37,6 +40,7 @@ from ._helpers import (
 )
 from ._late_bindings import (
     query_fact_events,
+    query_fact_stream_head,
     utc_now,
 )
 from ._mixin_base import _ServiceMixinBase
@@ -50,6 +54,19 @@ if TYPE_CHECKING:
 _EXECUTION_FACT_ROWS_PROJECTION_CACHE: ContextVar[
     dict[tuple[str, int], tuple[dict[str, Any], ...]] | None
 ] = ContextVar("task_runtime_execution_fact_rows_projection_cache", default=None)
+
+# Cross-call projection cache, keyed by the durable FactStream head.  Factory
+# polling creates a fresh TaskRuntimeService on every observation, so the
+# ContextVar above only deduplicates reads *inside* one projection composition.
+# Without this head-bound cache a 40 MiB L1-04 execution stream was parsed on
+# every 100 ms claimability poll, keeping the backend event-loop thread at 100%
+# CPU.  The cheap descriptor-bound head query invalidates the cache immediately
+# after any append, including appends from another process.
+_EXECUTION_FACT_ROWS_HEAD_CACHE_MAX = 16
+_EXECUTION_FACT_ROWS_HEAD_CACHE: OrderedDict[
+    tuple[str, int, int], tuple[dict[str, Any], ...]
+] = OrderedDict()
+_EXECUTION_FACT_ROWS_HEAD_CACHE_LOCK = threading.RLock()
 
 
 class _TaskRowsMixin(_ServiceMixinBase):
@@ -1199,6 +1216,66 @@ class _TaskRowsMixin(_ServiceMixinBase):
             )
         )
 
+    def _query_execution_fact_stream_head(self) -> int | None:
+        """Return the durable execution-stream head for cache invalidation.
+
+        A missing/unavailable head only disables the cross-call optimization;
+        it never fabricates authority or suppresses the canonical event query.
+        """
+
+        try:
+            projection = query_fact_stream_head(
+                QueryFactStreamHeadV1(
+                    workspace=self.workspace,
+                    stream=TASK_RUNTIME_EXECUTION_STREAM_V1,
+                )
+            )
+        except (FactStreamError, RuntimeError, TypeError, ValueError):
+            return None
+        head = getattr(projection, "current_seq", None)
+        if isinstance(head, bool) or not isinstance(head, int) or head < 0:
+            return None
+        return head
+
+    def _cached_execution_fact_rows(
+        self,
+        *,
+        event_limit: int,
+        stream_head: int | None,
+    ) -> list[dict[str, Any]] | None:
+        if stream_head is None:
+            return None
+        key = (self.workspace, event_limit, stream_head)
+        with _EXECUTION_FACT_ROWS_HEAD_CACHE_LOCK:
+            rows = _EXECUTION_FACT_ROWS_HEAD_CACHE.get(key)
+            if rows is None:
+                return None
+            _EXECUTION_FACT_ROWS_HEAD_CACHE.move_to_end(key)
+            return [dict(row) for row in rows]
+
+    def _cache_execution_fact_rows(
+        self,
+        *,
+        event_limit: int,
+        stream_head: int | None,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        if stream_head is None:
+            return
+        key = (self.workspace, event_limit, stream_head)
+        with _EXECUTION_FACT_ROWS_HEAD_CACHE_LOCK:
+            stale_keys = [
+                candidate
+                for candidate in _EXECUTION_FACT_ROWS_HEAD_CACHE
+                if candidate[0] == self.workspace and candidate[1] == event_limit and candidate != key
+            ]
+            for stale_key in stale_keys:
+                _EXECUTION_FACT_ROWS_HEAD_CACHE.pop(stale_key, None)
+            _EXECUTION_FACT_ROWS_HEAD_CACHE[key] = tuple(dict(row) for row in rows)
+            _EXECUTION_FACT_ROWS_HEAD_CACHE.move_to_end(key)
+            while len(_EXECUTION_FACT_ROWS_HEAD_CACHE) > _EXECUTION_FACT_ROWS_HEAD_CACHE_MAX:
+                _EXECUTION_FACT_ROWS_HEAD_CACHE.popitem(last=False)
+
     def list_task_rows_from_execution_facts(self, *, limit: int = 500) -> list[dict[str, Any]]:
         """Return latest task-row read models from ``task_runtime.execution`` facts.
 
@@ -1229,6 +1306,15 @@ class _TaskRowsMixin(_ServiceMixinBase):
         cache_key = (self.workspace, event_limit)
         if cache is not None and cache_key in cache:
             return [dict(row) for row in cache[cache_key]]
+        stream_head = self._query_execution_fact_stream_head()
+        cached_rows = self._cached_execution_fact_rows(
+            event_limit=event_limit,
+            stream_head=stream_head,
+        )
+        if cached_rows is not None:
+            if cache is not None:
+                cache[cache_key] = tuple(dict(row) for row in cached_rows)
+            return cached_rows
         try:
             result = self._query_execution_fact_events(limit=event_limit)
             if result.total > len(result.events):
@@ -1256,6 +1342,11 @@ class _TaskRowsMixin(_ServiceMixinBase):
         rows.sort(key=self._row_sort_key)
         if cache is not None:
             cache[cache_key] = tuple(dict(row) for row in rows)
+        self._cache_execution_fact_rows(
+            event_limit=event_limit,
+            stream_head=stream_head,
+            rows=rows,
+        )
         return rows
 
     def _find_latest_execution_fact_row_for_task(

@@ -1875,6 +1875,16 @@ class TestStreamEngineRunStream:
         prepared.__post_init__ = Mock()
         prepared.messages = [{"role": "user", "content": "create files"}]
         prepared.ai_request = Mock()
+        prepared.ai_request.options = {
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "write_file", "parameters": {"type": "object"}},
+                }
+            ]
+        }
+        prepared.request_options = prepared.ai_request.options
+        prepared.native_tool_schemas = prepared.ai_request.options["tools"]
         prepared.native_tool_mode = "native_tools_streaming"
         prepared.response_format_mode = "none"
         prepared.context_result = None
@@ -2284,4 +2294,3 @@ class TestStreamEngineRunStream:
         error_metadata = emit_error.call_args.kwargs["metadata"]
         assert error_metadata["native_tool_calling_fallback"] is False
         assert error_metadata["final_request_context_audit"]["tool_schema_count"] == 1
-

@@ -61,6 +61,9 @@ from dataclasses import replace
 from typing import Any
 
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
+from polaris.cells.roles.kernel.internal.llm_caller.final_request_tool_surface import (
+    is_provider_tool_surface_violation,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_calls_from_response
 from polaris.cells.roles.kernel.internal.metrics import get_metrics_collector
 from polaris.cells.roles.kernel.internal.speculation.chain_speculator import ChainSpeculator
@@ -80,6 +83,7 @@ from polaris.cells.roles.kernel.internal.transaction import (
     kernel_guard_asserts,
 )
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+    has_available_write_tool,
     is_mutation_contract_violation,
 )
 from polaris.cells.roles.kernel.internal.transaction.correlation import (
@@ -1055,18 +1059,65 @@ class TurnTransactionController:
                 tool_choice_override=tool_choice_override,
             )
 
-        decision = await run_decision_pipeline(
-            turn_id=turn_id,
-            context=context,
-            tool_definitions=tool_definitions,
-            state_machine=state_machine,
-            ledger=ledger,
-            decoder=self.decoder,
-            call_llm_for_decision=_call_llm_for_decision,
-            apply_delivery_mode_filter=self._apply_delivery_mode_filter,
-            guard_assert_single_decision=self._guard_assert_single_decision,
-            emit_event=self._emit_phase_event,
-        )
+        try:
+            decision = await run_decision_pipeline(
+                turn_id=turn_id,
+                context=context,
+                tool_definitions=tool_definitions,
+                state_machine=state_machine,
+                ledger=ledger,
+                decoder=self.decoder,
+                call_llm_for_decision=_call_llm_for_decision,
+                apply_delivery_mode_filter=self._apply_delivery_mode_filter,
+                guard_assert_single_decision=self._guard_assert_single_decision,
+                emit_event=self._emit_phase_event,
+            )
+        except RuntimeError as exc:
+            recoverable_surface_violation = (
+                is_provider_tool_surface_violation(exc)
+                and ledger.delivery_contract.requires_mutation
+                and has_available_write_tool(tool_definitions)
+            )
+            if not recoverable_surface_violation:
+                raise
+
+            # The final-request guard already rejected the provider's
+            # unauthorized tool, so no effect occurred.  In a mutation turn,
+            # recover at the same Director boundary using the existing bounded
+            # write retry instead of failing the task or restarting PM/CE.
+            logger.warning(
+                "provider_tool_surface_violation_recovering_same_turn: turn_id=%s error=%s",
+                turn_id,
+                exc,
+            )
+            ledger.anomaly_flags.append(
+                {
+                    "type": "PROVIDER_TOOL_SURFACE_VIOLATION_RECOVERED",
+                    "turn_id": turn_id,
+                    "reason": str(exc),
+                    "recovery_scope": "same_turn_mutation_retry",
+                    "violating_tool_executed": False,
+                }
+            )
+            state_machine.transition_to(TurnState.DECISION_RECEIVED)
+            ledger.state_history.append(("DECISION_RECEIVED", int(time.time() * 1000)))
+            state_machine.transition_to(TurnState.DECISION_DECODED)
+            ledger.state_history.append(("DECISION_DECODED", int(time.time() * 1000)))
+            shadow_engine = self._build_stream_shadow_engine(
+                workspace=self._resolve_shadow_workspace(context),
+                turn_id=turn_id,
+            )
+            return await self._retry_orchestrator.retry_tool_batch_after_contract_violation(
+                turn_id=turn_id,
+                context=context,
+                tool_definitions=tool_definitions,
+                state_machine=state_machine,
+                ledger=ledger,
+                stream=False,
+                shadow_engine=shadow_engine,
+                original_decision=None,
+                initial_failure_reason=str(exc),
+            )
 
         # === Phase 4: 执行决策 ===
         decision_kind = decision.get("kind")

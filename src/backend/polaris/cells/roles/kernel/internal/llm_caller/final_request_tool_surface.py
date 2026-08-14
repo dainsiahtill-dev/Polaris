@@ -8,9 +8,13 @@ execution.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from typing import Any
 
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+_PROVIDER_TOOL_SURFACE_VIOLATION_PREFIX = "provider_tool_surface_violation:"
 
 
 def _canonical_tool_name(value: Any) -> str:
@@ -43,6 +47,63 @@ def _forced_tool_name(value: Any) -> str:
     return _canonical_tool_name(function.get("name"))
 
 
+def _tool_arguments(value: Any) -> dict[str, Any] | None:
+    """Decode provider-native tool arguments without mutating the envelope."""
+
+    if isinstance(value, Mapping):
+        return {str(key): item for key, item in value.items()}
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(decoded, Mapping):
+        return None
+    return {str(key): item for key, item in decoded.items()}
+
+
+def _edit_file_invalid_reason(value: Any) -> str:
+    """Return why an ``edit_file`` call cannot produce a physical mutation.
+
+    This guard runs before DEO admission.  The low-level editor deliberately
+    preserves empty/malformed edits as non-fatal no-ops so they cannot poison
+    Run Ledger integrity.  A mutation-required LLM turn, however, must not
+    accept such a no-op as a successful physical effect receipt.
+    """
+
+    arguments = _tool_arguments(value)
+    if arguments is None:
+        return "invalid_arguments"
+
+    aliases = ToolSpecRegistry.get_all_specs().get("edit_file", {}).get("arg_aliases", {})
+    if isinstance(aliases, Mapping):
+        for raw_alias, raw_canonical in aliases.items():
+            alias = str(raw_alias or "")
+            canonical = str(raw_canonical or "")
+            if canonical and canonical not in arguments and alias in arguments:
+                arguments[canonical] = arguments[alias]
+
+    blocks = arguments.get("blocks")
+    if isinstance(blocks, str) and blocks.strip():
+        return ""
+
+    has_range = (
+        isinstance(arguments.get("start_line"), int)
+        and isinstance(arguments.get("end_line"), int)
+        and "content" in arguments
+    )
+    if has_range:
+        return ""
+
+    search = arguments.get("search")
+    if isinstance(search, str) and search:
+        return "" if "replace" in arguments else "missing_replace"
+    if "search" in arguments:
+        return "empty_search"
+    return "missing_edit_mode"
+
+
 def final_request_allowed_tool_names(*, active_request: Any, prepared: Any) -> frozenset[str]:
     """Return the exact canonical tool authority of the physical request.
 
@@ -60,7 +121,7 @@ def final_request_allowed_tool_names(*, active_request: Any, prepared: Any) -> f
     if not names and "tools" not in options:
         names = _tool_names(fallback_options.get("tools"))
     if not names and "tools" not in options and "tools" not in fallback_options:
-        names = _tool_names(list(getattr(prepared, "native_tool_schemas", None) or []))
+        names = _tool_names(getattr(prepared, "native_tool_schemas", None))
 
     forced = _forced_tool_name(options.get("tool_choice")) or _forced_tool_name(
         fallback_options.get("tool_choice")
@@ -76,6 +137,7 @@ def final_request_allowed_tool_names(*, active_request: Any, prepared: Any) -> f
 def assert_tool_in_final_request_surface(
     *,
     tool_name: Any,
+    tool_arguments: Any = None,
     active_request: Any,
     prepared: Any,
 ) -> None:
@@ -84,15 +146,30 @@ def assert_tool_in_final_request_surface(
     requested = _canonical_tool_name(tool_name)
     allowed = final_request_allowed_tool_names(active_request=active_request, prepared=prepared)
     if requested and requested in allowed:
+        if requested == "edit_file" and tool_arguments is not None:
+            invalid = _edit_file_invalid_reason(tool_arguments)
+            if invalid:
+                rendered_allowed = ",".join(sorted(allowed))
+                raise RuntimeError(
+                    f"{_PROVIDER_TOOL_SURFACE_VIOLATION_PREFIX} "
+                    f"requested={requested}; allowed={rendered_allowed}; invalid={invalid}"
+                )
         return
     rendered_allowed = ",".join(sorted(allowed)) if allowed else "<none>"
     raise RuntimeError(
-        "provider_tool_surface_violation: "
+        f"{_PROVIDER_TOOL_SURFACE_VIOLATION_PREFIX} "
         f"requested={requested or '<empty>'}; allowed={rendered_allowed}"
     )
+
+
+def is_provider_tool_surface_violation(value: Any) -> bool:
+    """Classify the fail-closed final-request tool-surface guard."""
+
+    return str(value or "").strip().startswith(_PROVIDER_TOOL_SURFACE_VIOLATION_PREFIX)
 
 
 __all__ = [
     "assert_tool_in_final_request_surface",
     "final_request_allowed_tool_names",
+    "is_provider_tool_surface_violation",
 ]

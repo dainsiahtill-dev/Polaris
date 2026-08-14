@@ -22,6 +22,9 @@ import logging
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol, cast
 
+from polaris.cells.roles.kernel.internal.llm_caller.final_request_tool_surface import (
+    is_provider_tool_surface_violation,
+)
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime, ToolExecutionContext
 from polaris.cells.roles.kernel.internal.tool_call_envelope import native_tool_call_name
 from polaris.cells.roles.kernel.internal.transaction.bootstrap_followup import (
@@ -702,18 +705,44 @@ class RetryOrchestrator:
                     attempt_temperature_override,
                 )
 
-            retry_response = await self._execute_retry_batch(
-                turn_id=turn_id,
-                attempt_context=attempt_context,
-                attempt_tool_definitions=attempt_tool_definitions,
-                ledger=ledger,
-                attempt_tool_choice_override=attempt_tool_choice_override,
-                attempt_model_override=attempt_model_override,
-                stream=stream,
-                shadow_engine=shadow_engine,
-                attempt_temperature_override=attempt_temperature_override,
-                force_write_create=from_scratch_create,
-            )
+            try:
+                retry_response = await self._execute_retry_batch(
+                    turn_id=turn_id,
+                    attempt_context=attempt_context,
+                    attempt_tool_definitions=attempt_tool_definitions,
+                    ledger=ledger,
+                    attempt_tool_choice_override=attempt_tool_choice_override,
+                    attempt_model_override=attempt_model_override,
+                    stream=stream,
+                    shadow_engine=shadow_engine,
+                    attempt_temperature_override=attempt_temperature_override,
+                    force_write_create=from_scratch_create,
+                )
+            except RuntimeError as retry_exc:
+                if not is_provider_tool_surface_violation(retry_exc):
+                    raise
+                logger.warning(
+                    "mutation-contract retry rejected out-of-surface provider tool: "
+                    "turn_id=%s attempt=%s error=%s",
+                    turn_id,
+                    attempt_index + 1,
+                    retry_exc,
+                )
+                if attempt_index >= max_retry_attempts - 1:
+                    raise RuntimeError(
+                        "single_batch_contract_violation_retry_failed: "
+                        f"provider tool surface remained invalid after {max_retry_attempts} attempts: {retry_exc}"
+                    ) from retry_exc
+                retry_context = append_retry_enforcement_hint(
+                    retry_context,
+                    allowed_tool_names=attempt_allowed_tool_names,
+                    reason=(
+                        f"{retry_exc!s}; the rejected tool was not executed. "
+                        "Emit one authorized write/edit tool call now."
+                    ),
+                    forced_write_tool_name=None,
+                )
+                continue
             if attempt_model_override:
                 logger.warning(
                     "mutation-contract retry attempt=%s uses model override: %s",

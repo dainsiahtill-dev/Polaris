@@ -29,12 +29,15 @@ from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
     FactEventAppendedV1,
     FactStreamError,
+    FactStreamHeadV1,
     FactStreamQueryResultV1,
     QueryFactEventsV1,
+    QueryFactStreamHeadV1,
     append_fact_event,
     bootstrap_fact_stream_workspace,
     fact_stream_bootstrap_streams,
     query_fact_events,
+    query_fact_stream_head,
 )
 from polaris.cells.runtime.task_runtime.public import (
     DirectedEffectRecoverySweepResultV1,
@@ -106,6 +109,7 @@ _FENCED_CODES: Final[frozenset[str]] = frozenset(
 )
 
 FactQueryHandler = Callable[[QueryFactEventsV1], FactStreamQueryResultV1]
+FactHeadQueryHandler = Callable[[QueryFactStreamHeadV1], FactStreamHeadV1]
 FactAppendHandler = Callable[[AppendFactEventCommandV1], FactEventAppendedV1]
 BarrierQueryHandler = Callable[[str | Path, str], FactorySettlementBarrierResultV1]
 DirectedEffectRecoveryHandler = Callable[
@@ -331,13 +335,18 @@ class FactStreamPublicServiceAdapter:
         self,
         *,
         query_handler: FactQueryHandler = query_fact_events,
+        head_query_handler: FactHeadQueryHandler = query_fact_stream_head,
         append_handler: FactAppendHandler = append_fact_event,
     ) -> None:
         self._query_handler = query_handler
+        self._head_query_handler = head_query_handler
         self._append_handler = append_handler
 
     def query(self, query: QueryFactEventsV1, /) -> FactStreamQueryResultV1:
         return self._query_handler(query)
+
+    def head(self, query: QueryFactStreamHeadV1, /) -> FactStreamHeadV1:
+        return self._head_query_handler(query)
 
     def append(self, command: AppendFactEventCommandV1, /) -> FactEventAppendedV1:
         return self._append_handler(command)

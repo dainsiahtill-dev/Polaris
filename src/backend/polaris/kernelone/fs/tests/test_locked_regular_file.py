@@ -389,6 +389,24 @@ def test_persistent_lock_survives_events_directory_replacement_and_detects_drift
     assert all(path.exists() and path.is_file() for path in original_locks)
 
 
+def test_read_tail_bytes_returns_only_bounded_suffix(tmp_path: Path) -> None:
+    """Large append streams expose a descriptor-verified bounded tail read."""
+
+    root = tmp_path / "runtime"
+    events = root / "events"
+    events.mkdir(parents=True)
+    stream = events / "target.jsonl"
+    stream.write_bytes(b"prefix-" + b"x" * 10_000 + b"-tail\n")
+
+    with _leases(root, "runtime/events/target.jsonl") as leases:
+        lease = leases.lease("runtime/events/target.jsonl")
+        assert lease.open_existing()
+        assert lease.read_tail_bytes(16) == b"x" * 10 + b"-tail\n"
+
+    with pytest.raises(ValueError, match="max_bytes must be a positive int"):
+        lease.read_tail_bytes(0)
+
+
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO coverage requires POSIX mkfifo")
 def test_fifo_and_hardlink_leaves_fail_without_blocking(tmp_path: Path) -> None:
     root = tmp_path / "runtime"

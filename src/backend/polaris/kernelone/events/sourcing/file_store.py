@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -315,6 +317,12 @@ class JsonlEventStore:
         with self._locked_streams(logical_path) as leases:
             lease = leases.lease(logical_path)
             lease.open_existing(writable=False)
+            if not strict_integrity:
+                return self._read_lease_tail_seq(
+                    stream=stream_token,
+                    logical_path=logical_path,
+                    lease=lease,
+                )
             records = self._read_lease_records(
                 stream=stream_token,
                 logical_path=logical_path,
@@ -322,6 +330,66 @@ class JsonlEventStore:
                 strict_integrity=strict_integrity,
             )
             return records[-1].seq if records else 0
+
+    def _read_lease_tail_seq(
+        self,
+        *,
+        stream: str,
+        logical_path: str,
+        lease: StreamLeaseV1,
+    ) -> int:
+        """Read the latest valid append envelope without parsing stream history.
+
+        Ordinary FactStream appends are monotonic and descriptor-locked.  A
+        head query therefore needs only the last valid physical record; parsing
+        every historical heartbeat snapshot made each settlement wake O(total
+        stream bytes).  Strict-integrity callers retain the complete scan in
+        ``current_seq``.
+        """
+
+        if not lease.exists:
+            return 0
+        try:
+            # One TaskRuntime envelope can be large because it carries a full
+            # task-row snapshot.  Read a bounded tail and expand only if that
+            # window does not contain a complete record boundary.
+            tail_budget = 1024 * 1024
+            remaining = lease.read_tail_bytes(tail_budget).rstrip(b"\r\n")
+        except LockedRegularFileError as exc:
+            raise EventSourcingError(
+                f"stream descriptor read failed stream={stream!r}: {exc}",
+                code=exc.code,
+                details=dict(exc.details),
+            ) from exc
+        except (OSError, ValueError) as exc:
+            raise _StrictStreamIntegrityError(
+                f"head read failed stream={stream!r}: {exc}",
+                code="stream_read_failed",
+                details={"stream": stream, "storage_path": logical_path},
+            ) from exc
+
+        while remaining:
+            prefix, separator, raw_line = remaining.rpartition(b"\n")
+            line = raw_line.strip()
+            if line:
+                try:
+                    record = json.loads(line)
+                    if isinstance(record, dict):
+                        return EventEnvelope.from_record(record).seq
+                except (RuntimeError, UnicodeDecodeError, ValueError) as exc:
+                    logger.debug("skip malformed tail event record path=%s: %s", logical_path, exc)
+            if not separator:
+                # A single envelope larger than the initial window is rare
+                # but valid. Expand geometrically, still avoiding a routine
+                # full-history read.
+                tail_budget *= 2
+                expanded = lease.read_tail_bytes(tail_budget).rstrip(b"\r\n")
+                if len(expanded) <= len(remaining):
+                    break
+                remaining = expanded
+                continue
+            remaining = prefix.rstrip(b"\r\n")
+        return 0
 
     def _append_locked(
         self,
@@ -609,6 +677,7 @@ class JsonlEventStore:
 
         if not lease.exists:
             return []
+        started_at = time.perf_counter()
         try:
             content_bytes = lease.read_bytes()
             content = content_bytes.decode("utf-8")
@@ -625,13 +694,30 @@ class JsonlEventStore:
                 details={"stream": stream, "storage_path": logical_path},
             ) from exc
         if strict_integrity:
-            return self._parse_strict_records(
+            records = self._parse_strict_records(
                 content=content,
                 storage_path=logical_path,
                 stream=stream,
                 byte_length=len(content_bytes),
             )
-        return self._parse_records(content=content, storage_path=logical_path)
+        else:
+            records = self._parse_records(content=content, storage_path=logical_path)
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+        if duration_ms >= 250:
+            caller_path = " > ".join(
+                f"{frame.name}@{Path(frame.filename).name}:{frame.lineno}"
+                for frame in traceback.extract_stack(limit=7)[:-1]
+            )
+            logger.warning(
+                "[event_stream.full_scan] stream=%s bytes=%d records=%d strict=%s duration_ms=%d callers=%s",
+                stream,
+                len(content_bytes),
+                len(records),
+                strict_integrity,
+                duration_ms,
+                caller_path,
+            )
+        return records
 
     def _parse_strict_records(
         self,

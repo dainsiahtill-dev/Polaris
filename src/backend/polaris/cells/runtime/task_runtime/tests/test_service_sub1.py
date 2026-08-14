@@ -1264,6 +1264,60 @@ def test_list_task_rows_from_execution_facts_queries_gateway_and_keeps_latest_wi
     assert rows[0]["fact_event_seq"] == 3
 
 
+def test_list_task_rows_from_execution_facts_reuses_projection_until_stream_head_advances(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated observers must not rescan the complete append-only stream.
+
+    L1-04 accumulated a 40 MiB execution stream.  Factory's bounded claimable
+    wait queried the same observable projection repeatedly and parsed that
+    complete stream on every poll, starving the event loop.  A cheap durable
+    head read must reuse the prior row projection until a new fact advances the
+    stream, then invalidate immediately.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+
+    for event_type, status in (
+        ("created", "pending"),
+        ("claimed", "in_progress"),
+        ("completed", "completed"),
+    ):
+        _append_execution_fact_probe(
+            workspace,
+            task_id="TASK-HEAD-CACHE",
+            event_type=event_type,
+            status=status,
+            run_id="run-head-cache",
+            subject="head cache row",
+        )
+
+    gateway_calls = _spy_execution_fact_gateway(service, monkeypatch)
+
+    first = service.list_task_rows_from_execution_facts(limit=2)
+    second = service.list_task_rows_from_execution_facts(limit=2)
+
+    assert first == second
+    assert gateway_calls == [(2, 0), (2, 1)]
+
+    _append_execution_fact_probe(
+        workspace,
+        task_id="TASK-HEAD-CACHE",
+        event_type="failed",
+        status="failed",
+        run_id="run-head-cache",
+        subject="head cache row",
+    )
+
+    advanced = service.list_task_rows_from_execution_facts(limit=2)
+
+    assert advanced[0]["status"] == "failed"
+    assert gateway_calls == [(2, 0), (2, 1), (2, 0), (2, 2)]
+
+
 def test_find_latest_execution_fact_row_for_task_pages_backward_through_gateway(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2154,5 +2208,4 @@ def test_get_task_returns_fact_overlaid_status_for_numeric_task_id(tmp_path: Pat
     # file-row status from a fact-overlaid status.
     assert overlaid.get("metadata", {}).get("source") == "task_runtime.execution_fact"
     assert "previous_status" not in overlaid.get("metadata", {})
-
 

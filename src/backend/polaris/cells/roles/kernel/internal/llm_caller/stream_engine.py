@@ -646,6 +646,7 @@ class StreamEngine:
                         # never execute a provider call outside that final set.
                         assert_tool_in_final_request_surface(
                             tool_name=normalized.tool_name,
+                            tool_arguments=normalized.tool_args,
                             active_request=active_request,
                             prepared=prepared,
                         )

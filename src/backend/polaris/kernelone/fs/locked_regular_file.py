@@ -733,6 +733,37 @@ class StreamLeaseV1:
             except OSError as exc:
                 raise _fail("stream_identity_drift", "stream descriptor read failed", errno=exc.errno) from exc
 
+    def read_tail_bytes(self, max_bytes: int) -> bytes:
+        """Read at most ``max_bytes`` from the verified descriptor tail.
+
+        This keeps durable head queries proportional to one JSONL envelope
+        instead of the full append history while preserving the same path,
+        authority, descriptor, and leaf-identity checks as ``read_bytes``.
+        """
+
+        if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
+            raise ValueError("max_bytes must be a positive int")
+        with self._owner._operation():
+            if self._file_fd is None:
+                return b""
+            self._verify_file()
+            try:
+                file_size = os.lseek(self._file_fd, 0, os.SEEK_END)
+                start = max(0, file_size - max_bytes)
+                os.lseek(self._file_fd, start, os.SEEK_SET)
+                remaining = file_size - start
+                chunks: list[bytes] = []
+                while remaining > 0:
+                    chunk = os.read(self._file_fd, min(remaining, 1024 * 1024))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                self._verify_file()
+                return b"".join(chunks)
+            except OSError as exc:
+                raise _fail("stream_identity_drift", "stream descriptor tail read failed", errno=exc.errno) from exc
+
     def append_bytes(self, payload: bytes, *, fsync_file: bool, fsync_parent_on_create: bool) -> None:
         with self._owner._operation():
             if not payload:

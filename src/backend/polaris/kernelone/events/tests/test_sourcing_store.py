@@ -96,6 +96,29 @@ def test_jsonl_event_store_appends_monotonic_seq(tmp_path: Path) -> None:
     assert result.storage_path == "runtime/events/taskboard.terminal.events.jsonl"
 
 
+def test_current_seq_reads_only_tail_record_in_non_strict_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Head queries must not deserialize every historical event payload."""
+
+    store = _prepared_store(tmp_path / "workspace", "task_runtime.execution")
+    for index in range(3):
+        store.append(
+            stream="task_runtime.execution",
+            event_type="heartbeat",
+            source="runtime.task_runtime",
+            payload={"task_id": "task-1", "large_snapshot": "x" * 20_000, "index": index},
+        )
+
+    def _full_scan_forbidden(*_args: object, **_kwargs: object) -> list[EventEnvelope]:
+        raise AssertionError("current_seq performed a full historical JSON parse")
+
+    monkeypatch.setattr(store, "_parse_records", _full_scan_forbidden)
+
+    assert store.current_seq("task_runtime.execution", strict_integrity=False) == 3
+
+
 def test_jsonl_event_store_query_filters_by_event_type_run_and_task(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     store = _prepared_store(workspace, "task_runtime.execution")

@@ -568,6 +568,7 @@ class _InvokerCallMixin:
             )
             assert_tool_in_final_request_surface(
                 tool_name=raw_name,
+                tool_arguments=(function.get("arguments") if isinstance(function, dict) else None),
                 active_request=active_request,
                 prepared=prepared,
             )

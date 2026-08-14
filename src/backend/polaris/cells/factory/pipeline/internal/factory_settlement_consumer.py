@@ -15,7 +15,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Protocol
 
-from polaris.cells.events.fact_stream.public.contracts import QueryFactEventsV1
+from polaris.cells.events.fact_stream.public.contracts import QueryFactEventsV1, QueryFactStreamHeadV1
 from polaris.cells.runtime.task_runtime.public.contracts import (
     TASK_RUNTIME_EXECUTION_FACT_SCHEMA_V1,
     TASK_RUNTIME_EXECUTION_SOURCE_V1 as TASK_RUNTIME_EXECUTION_SOURCE,
@@ -1007,6 +1007,30 @@ class FactorySettlementConsumer:
 
         if start_offset < 0:
             raise ValueError("start_offset must be non-negative")
+        # Production FactStream exposes a tail-only head query.  If the
+        # checkpoint already equals that head, avoid an offset query whose
+        # legacy JSONL implementation deserializes every historical heartbeat.
+        head_reader = getattr(self._fact_stream, "head", None)
+        if start_offset > 0 and callable(head_reader):
+            head = head_reader(
+                QueryFactStreamHeadV1(
+                    workspace=self._workspace,
+                    stream=TASK_RUNTIME_EXECUTION_STREAM,
+                )
+            )
+            self._validate_source_page(head.workspace, head.stream)
+            current_seq = int(head.current_seq)
+            if current_seq < start_offset:
+                raise FactorySettlementConsumerError(
+                    "task_runtime.execution is shorter than the validated checkpoint",
+                    code="task_runtime_execution_checkpoint_beyond_head",
+                )
+            if current_seq == start_offset:
+                return _SourceReplaySnapshot(
+                    events=(),
+                    events_by_offset=MappingProxyType({}),
+                    events_by_id=MappingProxyType({}),
+                )
         events: list[Mapping[str, Any]] = []
         events_by_offset: dict[int, Mapping[str, Any]] = {}
         events_by_id: dict[str, tuple[Mapping[str, Any], int]] = {}

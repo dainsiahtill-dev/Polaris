@@ -16,10 +16,16 @@ from polaris.cells.events.fact_stream.public import (
 from polaris.cells.events.fact_stream.public.contracts import (
     AppendFactEventCommandV1,
     FactEventAppendedV1,
+    FactStreamHeadV1,
     FactStreamQueryResultV1,
     QueryFactEventsV1,
+    QueryFactStreamHeadV1,
 )
-from polaris.cells.events.fact_stream.public.service import append_fact_event, query_fact_events
+from polaris.cells.events.fact_stream.public.service import (
+    append_fact_event,
+    query_fact_events,
+    query_fact_stream_head,
+)
 from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import (
     TASK_RUNTIME_EXECUTION_STREAM,
     FactorySettlementBarrierQuery,
@@ -105,6 +111,22 @@ class CountingFactStreamAdapter(FactStreamAdapter):
 
     def reset_query_counts(self) -> None:
         self.query_counts.clear()
+
+
+class HeadAwareCountingFactStreamAdapter(CountingFactStreamAdapter):
+    """Expose the production head port and count head-only catch-up reads."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.head_queries: list[QueryFactStreamHeadV1] = []
+
+    def head(self, query: QueryFactStreamHeadV1, /) -> FactStreamHeadV1:
+        self.head_queries.append(query)
+        return query_fact_stream_head(query)
+
+    def reset_query_counts(self) -> None:
+        super().reset_query_counts()
+        self.head_queries.clear()
 
 
 class ConcurrentCheckpointFactStreamAdapter(FactStreamAdapter):
@@ -523,6 +545,40 @@ async def test_same_consumer_catch_up_reads_only_source_tail_and_reuses_validate
     assert fact_stream.query_counts == {TASK_RUNTIME_EXECUTION_STREAM: 1}
     assert len(fact_stream.queries) == 1
     assert fact_stream.queries[0].offset == 3
+
+
+@pytest.mark.asyncio
+async def test_head_aware_consumer_skips_source_page_when_checkpoint_is_current(tmp_path: Path) -> None:
+    """A current checkpoint must not deserialize historical TaskRuntime snapshots."""
+
+    workspace = _workspace(tmp_path)
+    fact_stream = HeadAwareCountingFactStreamAdapter()
+    for index in range(3):
+        _append_source_fact(
+            fact_stream,
+            workspace,
+            factory_run_id=None,
+            suffix=f"head-tail-{index}",
+        )
+    consumer, _ = _build_consumer(
+        workspace=workspace,
+        fact_stream=fact_stream,
+        barrier=MutableBarrier(workspace=workspace, fencing_token=7),
+        factory_runs=RecordingFactoryRuns(),
+    )
+
+    started = await consumer.start()
+    assert len(started.decisions) == 3
+    fact_stream.reset_query_counts()
+    fact_stream.queries.clear()
+
+    caught_up = await consumer.replay()
+
+    assert caught_up.decisions == ()
+    assert fact_stream.query_counts == {}
+    assert fact_stream.queries == []
+    assert len(fact_stream.head_queries) == 1
+    assert fact_stream.head_queries[0].stream == TASK_RUNTIME_EXECUTION_STREAM
 
 
 @pytest.mark.asyncio
