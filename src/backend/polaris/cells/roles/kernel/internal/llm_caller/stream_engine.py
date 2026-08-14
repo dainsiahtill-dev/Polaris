@@ -42,6 +42,7 @@ from .final_provider_attempt_qualification import (
     final_request_snapshot_evidence,
 )
 from .final_request_metrics import validated_final_context_evidence
+from .final_request_tool_surface import assert_tool_in_final_request_surface
 from .stream_handler import (
     build_stream_slo_metrics,
     normalize_stream_chunk,
@@ -639,6 +640,15 @@ class StreamEngine:
                         continue
 
                     if event_type == "tool_call":
+                        # The physical final request is the tool authority.
+                        # Semantic turns may start broad and be narrowed to a
+                        # forced edit/write request immediately before dispatch;
+                        # never execute a provider call outside that final set.
+                        assert_tool_in_final_request_surface(
+                            tool_name=normalized.tool_name,
+                            active_request=active_request,
+                            prepared=prepared,
+                        )
                         validate_structured_output_stream_tool_call(
                             tool_name=normalized.tool_name,
                             arguments=normalized.tool_args,

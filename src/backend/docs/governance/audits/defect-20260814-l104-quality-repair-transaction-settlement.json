@@ -1,0 +1,94 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "P0-20260814-L104-QUALITY-REPAIR-TRANSACTION",
+  "status": "FIXED_AWAITING_LIVE_REVALIDATION",
+  "severity": "P0",
+  "project_probe": "L1-04",
+  "factory_run_id": "factory_87c10610b465",
+  "symptom": {
+    "stage": "quality_gate",
+    "message": "Director edit introduced a Go parser error, TaskRuntime was settled before verifier authority, and settlement wake replay amplified stale journal writes.",
+    "physical_residual": "engine/rules.go:146:2 contains `}na < spellCost {`",
+    "comparison": "L1-01 through L1-03 exercised successful edits; L1-04 was the first probe to expose a verifier-regressing edit on this path."
+  },
+  "dynamic_evidence": {
+    "workspace": "/tmp/factory-bench-l1-04-r51/workspaces/8ce91e5364dc-6caf30f05b9c3b1d/L1-04-94fd04a84e09b5de/e2826410ee7625bd7c4aa967",
+    "file_edit_event": ".polaris/runtime/file-edits/events.jsonl:30",
+    "edit_timestamp": "2026-08-14T04:12:12.432225+00:00",
+    "final_request_context_snapshot_ref": "e5b780e99b5ce5f8508a75ef",
+    "final_request_findings": {
+      "role_identity_ok": true,
+      "required_context_coverage_pass": true,
+      "available_tools": [
+        "edit_file"
+      ],
+      "forced_tool_choice": "edit_file",
+      "root_cause_is_context_or_tool_schema": false
+    },
+    "settlement_error": "append_fact_event failed: idempotency conflict: key='factory-settlement:...:pending:waiting_barrier' fields=payload",
+    "settlement_journal": "/home/dains/.cache/kernelone/.polaris/projects/e2826410ee7625bd7c4aa967-3f6c7b00539f/runtime/events/factory.settlement.jsonl"
+  },
+  "root_causes": [
+    {
+      "owner": "roles.adapters/director execution tools",
+      "cause": "write_file/edit_file committed newly introduced source syntax errors without a precommit parser check"
+    },
+    {
+      "owner": "factory workspace quality",
+      "cause": "repair TaskRuntime attempt could settle success before the affected verifier decided the mutation"
+    },
+    {
+      "owner": "factory workspace quality",
+      "cause": "diagnostic progress accepted changed or smaller signatures even when new diagnostics were introduced"
+    },
+    {
+      "owner": "factory settlement",
+      "cause": "stale journal snapshots appended competing WAITING_BARRIER payloads under one idempotency key and wake routing replayed non-authoritative notifications"
+    }
+  ],
+  "fixes": [
+    {
+      "file": "polaris/kernelone/quality/syntax_gate.py",
+      "change": "add UTF-8 content syntax check for supported source files"
+    },
+    {
+      "file": "polaris/cells/roles/adapters/internal/director/execution_tools.py",
+      "change": "reject only newly introduced definite syntax failure before physical write/edit"
+    },
+    {
+      "file": "polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "change": "hold repair lease and defer TaskRuntime settlement until post-repair verifier decision"
+    },
+    {
+      "file": "polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "change": "progress requires strict diagnostic subset with no introduced signature"
+    },
+    {
+      "file": "polaris/cells/factory/pipeline/internal/factory_settlement_journal.py",
+      "change": "CAS append from current replay sequence, bounded conflict reload, exact barrier reuse, non-contiguous replay rejection"
+    },
+    {
+      "file": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
+      "change": "replay only authoritative TaskRuntime and Run Ledger notifications; acknowledge observer, malformed, incomplete, and unknown messages without replay"
+    }
+  ],
+  "verification": {
+    "workspace_quality_tests": "51 passed",
+    "settlement_tests": "96 passed",
+    "syntax_and_execution_tool_tests": "40 passed, 2 skipped",
+    "mypy": "7 changed source files passed",
+    "ruff": "changed source files and focused settlement/tool/syntax tests passed",
+    "known_unrelated_lint_debt": "characterization test split currently has pre-existing duplicate/unused imports; runtime tests execute successfully"
+  },
+  "live_acceptance": {
+    "required": true,
+    "retry_scope": "same L1-04 quality/Director owner only",
+    "forbidden": [
+      "restart PM",
+      "restart Chief Engineer",
+      "modify generated project manually",
+      "weaken Go verifier"
+    ],
+    "success": "affected verifier passes, TaskRuntime settles after verifier, settlement journal has no idempotency replay storm, and Factory reaches COMPLETED_VERIFIED"
+  }
+}

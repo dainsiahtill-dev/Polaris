@@ -283,26 +283,33 @@ def _precommit_source_syntax_guard(
     before_content: str | None,
     after_content: str,
 ) -> dict[str, Any]:
-    """Reject only a definite newly introduced parse failure before disk mutation."""
+    """Reject any definite parse failure before disk mutation.
+
+    A previously broken file is not permission to commit a *different* broken
+    candidate.  Live L1-04 showed that such progressive commits merely moved a
+    Go parser failure from ``}na < spellCost`` to an out-of-function
+    ``return``.  The same Director repair turn must therefore propose an atomic
+    syntactic repair; rejected candidates leave the workspace bytes unchanged.
+    """
 
     from polaris.kernelone.quality import check_content_syntax
 
     after = check_content_syntax(rel_path, after_content)
     if not after.checked or after.ok:
         return {"ok": True}
+    preexisting_syntax_failure = False
     if before_content is not None:
         before = check_content_syntax(rel_path, before_content)
-        # Preserve progressive repair: if the file was already unparsable, the
-        # verifier/convergence loop decides whether the edit improved it.
-        if before.checked and not before.ok:
-            return {"ok": True, "preexisting_syntax_failure": True}
+        preexisting_syntax_failure = before.checked and not before.ok
+    error_type = "source_syntax_not_repaired" if preexisting_syntax_failure else "source_syntax_regression"
+    failure_verb = "does not repair the existing syntax error" if preexisting_syntax_failure else "introduces a syntax error"
     return {
         "ok": False,
         "blocked": True,
         "retryable": True,
-        "error_type": "source_syntax_regression",
+        "error_type": error_type,
         "error": (
-            f"Edit rejected before commit because it introduces a syntax error in {rel_path}: "
+            f"Edit rejected before commit because it {failure_verb} in {rel_path}: "
             f"{str(after.error or 'parse failure')[:400]}"
         ),
         "suggestion": (
@@ -311,6 +318,7 @@ def _precommit_source_syntax_guard(
         ),
         "file": rel_path,
         "syntax_check": "failed_precommit",
+        "preexisting_syntax_failure": preexisting_syntax_failure,
     }
 
 

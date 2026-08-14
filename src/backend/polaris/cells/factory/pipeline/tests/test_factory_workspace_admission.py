@@ -43,6 +43,9 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     StageResult,
     _service_physical as service_physical_module,
 )
+from polaris.cells.factory.pipeline.internal.factory_run_service import (
+    _service_lifecycle as service_lifecycle_module,
+)
 from polaris.cells.factory.pipeline.internal.factory_stage_artifact_bindings import (
     PM_STAGE_ARTIFACT_BINDING_CONTEXT_KEY,
 )
@@ -1243,7 +1246,7 @@ async def test_recovery_deadline_is_rechecked_after_blocking_replay_capture(
         def monotonic() -> float:
             return 31.0 if expired else 0.0
 
-    monkeypatch.setattr(factory_run_service_module, "time", _ReplayTime)
+    monkeypatch.setattr(service_physical_module, "time", _ReplayTime)
     with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_head_unstable"):
         await restarted.recover_run(created.id)
 
@@ -1287,7 +1290,7 @@ async def test_recovery_deadline_stops_before_lifecycle_read_after_role_read_exp
         factory_run_service_module, "query_factory_role_evidence_replay_snapshot", role_query_then_expire
     )
     monkeypatch.setattr(factory_run_service_module, "query_factory_provider_attempt_lifecycle_replay", lifecycle_query)
-    monkeypatch.setattr(factory_run_service_module, "time", _ReplayTime)
+    monkeypatch.setattr(service_physical_module, "time", _ReplayTime)
 
     with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_head_unstable"):
         await restarted.recover_run(created.id)
@@ -1336,7 +1339,7 @@ async def test_recovery_deadline_stops_before_snapshot_read_after_event_read_exp
 
     monkeypatch.setattr(restarted.store, "_read_authoritative_events_sync", event_read_then_expire)
     monkeypatch.setattr(restarted.store, "_read_strict_snapshot_sync", snapshot_read)
-    monkeypatch.setattr(factory_run_service_module, "time", _ReplayTime)
+    monkeypatch.setattr(service_physical_module, "time", _ReplayTime)
 
     with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_head_unstable"):
         await restarted.recover_run(created.id)
@@ -1380,7 +1383,7 @@ async def test_recovery_deadline_stops_after_lifecycle_hold_entry_before_second_
             return 31.0 if expired else 0.0
 
     monkeypatch.setattr(restarted._admission, "hold_active_lifecycle_operation_claim", hold_then_expire)
-    monkeypatch.setattr(factory_run_service_module, "time", _ReplayTime)
+    monkeypatch.setattr(service_physical_module, "time", _ReplayTime)
 
     with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_head_unstable"):
         await restarted.recover_run(created.id)
@@ -1433,7 +1436,7 @@ async def test_recovery_deadline_stops_after_final_lease_revalidation_before_fin
 
     monkeypatch.setattr(restarted._admission, "hold_active_lifecycle_operation_claim", counted_hold)
     monkeypatch.setattr(restarted, "_capture_physical_attempt_replay_fence", count_capture)
-    monkeypatch.setattr(factory_run_service_module, "time", _ReplayTime)
+    monkeypatch.setattr(service_physical_module, "time", _ReplayTime)
 
     with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_head_unstable"):
         await restarted.recover_run(created.id)
@@ -2266,7 +2269,7 @@ async def test_terminal_drain_retry_reuses_snapshot_after_reset_before_release_c
                 raise RuntimeError("simulated crash after TaskRuntime reset")
             return result
 
-    monkeypatch.setattr(factory_run_service_module, "TaskRuntimeService", _CrashAfterResetTaskRuntime)
+    monkeypatch.setattr(service_lifecycle_module, "TaskRuntimeService", _CrashAfterResetTaskRuntime)
 
     with pytest.raises(RuntimeError, match="simulated crash after TaskRuntime reset"):
         await service.complete_run(run.id, success=False)
@@ -2399,6 +2402,48 @@ async def test_recover_run_clears_crash_stage_claim_after_durable_settlement(
     assert current is not None
     assert current.stage_execution_claim is None
     assert current.lifecycle_operation_claim is None
+
+
+@pytest.mark.asyncio
+async def test_recover_run_resumes_orphaned_restart_replay_claim(tmp_path: Path) -> None:
+    """A crashed lifespan must resume its exact durable recover operation.
+
+    L1-04 reproduced the production failure: startup committed a restart-replay
+    ``recover_run`` claim, Launcher killed the process while waiting for
+    ``/identity``, and every next startup generated a new nonce that conflicted
+    for the full 30-minute workspace TTL.
+    """
+
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "runtime"
+    workspace.mkdir()
+    owner = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    created = await owner.create_run(FactoryConfig(name="orphaned-recover-claim"))
+    running = await owner.start_run(created.id)
+
+    first_lifespan = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    recovering = await first_lifespan.get_run(created.id)
+    assert recovering is not None
+    orphan_nonce = "lifecycle_orphaned_restart_replay"
+    orphan_lease = first_lifespan._claim_lifecycle_operation(
+        recovering,
+        operation="recover_run",
+        nonce=orphan_nonce,
+        acquire_if_available=True,
+    )
+    assert orphan_lease.lifecycle_operation_claim is not None
+    assert orphan_lease.lifecycle_operation_claim.nonce == orphan_nonce
+    recovering.status = FactoryRunStatus.RECOVERING
+    await first_lifespan.store.save_run(recovering)
+
+    restarted = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    recovered = await restarted.recover_run(created.id)
+
+    assert recovered.status == FactoryRunStatus.RECOVERING
+    current = restarted._admission.current()
+    assert current is not None
+    assert current.lifecycle_operation_claim is None
+    assert current.fencing_token >= running.metadata["factory_workspace_run_lease"]["fencing_token"]
 
 
 @pytest.mark.asyncio

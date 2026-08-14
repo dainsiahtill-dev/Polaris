@@ -69,6 +69,7 @@ class FactoryRunDriverRuntimeV1:
     build_recovery_payload: FactoryRunRecoveryPayloadPort
     recover_committed_run_ids: FactoryCommittedRunIdsPort | None = None
     _tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False, repr=False)
+    _recovery_task: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
     _started: bool = field(default=False, init=False, repr=False)
 
     @property
@@ -81,6 +82,17 @@ class FactoryRunDriverRuntimeV1:
         self._started = True
         if not recover:
             return
+        # Historical recovery may reconcile hundreds of TaskRuntime/settlement
+        # facts and wait for child-session proof.  It must not sit on FastAPI's
+        # lifespan critical path: live L1-04 accumulated 631 facts and Launcher
+        # killed an otherwise healthy backend before /identity could open.
+        self._recovery_task = asyncio.create_task(
+            self._recover_nonterminal_runs(),
+            name="factory-run-driver:startup-recovery",
+        )
+        self._recovery_task.add_done_callback(self._on_recovery_done)
+
+    async def _recover_nonterminal_runs(self) -> None:
         rows = await self.service.list_runs()
         status_resumable_ids = {
             str(row.get("id") or "").strip()
@@ -116,6 +128,14 @@ class FactoryRunDriverRuntimeV1:
                 run = await self.service.resume_recovered_run(run_id)
             payload = self.build_recovery_payload(run, self.workspace)
             self.submit(run_id, payload=payload)
+
+    @staticmethod
+    def _on_recovery_done(task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error("Factory run startup recovery failed: %s", error, exc_info=error)
 
     def submit(self, run_id: str, *, payload: object) -> asyncio.Task[None]:
         if not self._started:
@@ -173,11 +193,20 @@ class FactoryRunDriverRuntimeV1:
             )
 
     async def wait_idle(self) -> None:
+        recovery_task = self._recovery_task
+        if recovery_task is not None:
+            await asyncio.gather(asyncio.shield(recovery_task))
         tasks = tuple(self._tasks.values())
         if tasks:
             await asyncio.gather(*tasks)
 
     async def stop(self) -> None:
+        recovery_task = self._recovery_task
+        if recovery_task is not None and not recovery_task.done():
+            recovery_task.cancel()
+        if recovery_task is not None:
+            await asyncio.gather(recovery_task, return_exceptions=True)
+        self._recovery_task = None
         tasks = tuple(self._tasks.values())
         for task in tasks:
             task.cancel()

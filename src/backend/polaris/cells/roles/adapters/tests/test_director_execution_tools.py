@@ -396,6 +396,33 @@ def test_edit_file_rejects_new_go_syntax_failure_before_commit(tmp_path) -> None
     assert target.read_text(encoding="utf-8") == original
 
 
+def test_edit_file_rejects_changed_but_still_invalid_go_candidate(tmp_path) -> None:
+    """L1-04 r51: an existing parse error must be fixed atomically, not moved."""
+
+    target = tmp_path / "engine" / "rules.go"
+    target.parent.mkdir(parents=True)
+    original = "package engine\n\nfunc Cast() int {\n\treturn 1\n}na < spellCost {\n"
+    target.write_text(original, encoding="utf-8")
+    executor = _create_director_tool_executor(str(tmp_path))
+
+    result = executor.execute_tool(
+        "edit_file",
+        {
+            "file": "engine/rules.go",
+            "search": "}na < spellCost {",
+            "replace": "}\n\treturn 2",
+            "target_files": ["engine/rules.go"],
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["error_type"] == "source_syntax_not_repaired"
+    assert result["preexisting_syntax_failure"] is True
+    assert result["retryable"] is True
+    assert result["syntax_check"] == "failed_precommit"
+    assert target.read_text(encoding="utf-8") == original
+
+
 def test_r195_compound_command_block_is_non_fatal_no_op(tmp_path) -> None:
     """Layer 2 / R195-pattern: a blocked compound/restricted command must not break
     canonical_execution.

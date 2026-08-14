@@ -457,7 +457,26 @@ class _FactoryRunServiceLifecycleMixin:
                 return run
 
             operation = "recover_run"
-            nonce = f"lifecycle_{uuid.uuid4().hex}"
+            # A backend crash can occur after the durable restart-replay claim
+            # is committed but before it is released.  Under the platform's
+            # single-backend-per-workspace invariant, the next lifespan owner
+            # must resume that exact idempotent operation instead of creating a
+            # fresh nonce that conflicts with its own orphaned claim for the
+            # full workspace TTL (live L1-04: 30 minutes).
+            current_lease = self._admission.current()
+            current_claim = (
+                current_lease.lifecycle_operation_claim
+                if current_lease is not None and current_lease.run_id == run.id
+                else None
+            )
+            resumable_restart_claim = (
+                current_lease is not None
+                and current_lease.state.value == "draining"
+                and current_lease.drain_reason == "factory_physical_attempt_restart_replay_fence"
+                and current_claim is not None
+                and current_claim.operation == operation
+            )
+            nonce = current_claim.nonce if resumable_restart_claim and current_claim is not None else f"lifecycle_{uuid.uuid4().hex}"
             claimed = False
             try:
                 lease = self._claim_lifecycle_operation(

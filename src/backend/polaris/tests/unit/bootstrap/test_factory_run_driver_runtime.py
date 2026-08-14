@@ -98,6 +98,35 @@ async def test_start_recovers_failed_run_with_committed_local_rework_action() ->
 
 
 @pytest.mark.asyncio
+async def test_start_does_not_block_backend_readiness_on_slow_recovery() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class _SlowService(_Service):
+        async def list_runs(self) -> list[dict[str, str]]:
+            entered.set()
+            await release.wait()
+            return await super().list_runs()
+
+    service = _SlowService([_Run("run-1", "running")])
+    runtime = FactoryRunDriverRuntimeV1(
+        workspace="/workspace",
+        service=service,
+        state=object(),
+        execute=lambda *_args: asyncio.sleep(0),
+        build_recovery_payload=lambda _run, _workspace: object(),
+    )
+
+    await asyncio.wait_for(runtime.start(), timeout=0.1)
+    await entered.wait()
+    assert runtime.active_run_ids == ()
+
+    release.set()
+    await runtime.wait_idle()
+    await runtime.stop()
+
+
+@pytest.mark.asyncio
 async def test_submit_deduplicates_live_driver_but_allows_later_reentry() -> None:
     service = _Service([_Run("run-1", "running")])
     entered = asyncio.Event()

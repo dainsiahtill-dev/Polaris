@@ -682,6 +682,11 @@ async def _apply_workspace_quality_deterministic_repairs(
             "repair_mode": "director_deterministic",
             "error": f"workspace_quality_deterministic_commit_failed:{type(exc).__name__}:{exc}",
         }
+    # ``create_task`` does not guarantee the heartbeat coroutine runs before a
+    # very fast repair callback returns.  Yield once so an immediate authority
+    # rejection becomes part of this transaction decision instead of being
+    # discovered only after the verifier has already started.
+    await asyncio.sleep(0)
     if heartbeat_failures:
         summary["execution_attempt_heartbeat_failures"] = heartbeat_failures
         summary.setdefault(
@@ -927,6 +932,10 @@ async def _apply_workspace_quality_llm_repairs(
             "source_tools": ["director_materialization_quality_repair_error"],
             "tool_results": 0,
         }
+    # Give a newly scheduled heartbeat one turn before deciding whether the
+    # mutation may enter verifier-owned pending state.  This closes the
+    # fast-provider-response race exercised by the direct adapter tests.
+    await asyncio.sleep(0)
     normalized_summary = dict(summary)
     if heartbeat_failures:
         normalized_summary["execution_attempt_heartbeat_failures"] = heartbeat_failures
