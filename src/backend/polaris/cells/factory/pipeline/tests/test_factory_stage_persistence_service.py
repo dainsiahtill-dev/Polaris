@@ -30,12 +30,18 @@ from polaris.cells.factory.pipeline.internal.factory_stage_persistence import (
     FactoryStagePersistenceError,
     FactoryStagePersistenceIntentV1,
     build_stage_persistence_intent,
+    reduce_factory_stage_persistence,
 )
 
 
 class _SuccessExecutor:
     async def execute(self, stage: str, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         return StageResult(stage=stage, status="success", output="done", artifacts=[])
+
+
+class _FailedExecutor:
+    async def execute(self, stage: str, run: FactoryRun, context: dict[str, Any]) -> StageResult:
+        return StageResult(stage=stage, status="failed", output="verifier failed", artifacts=[])
 
 
 async def _running_service(tmp_path: Path) -> tuple[FactoryRunService, FactoryRun]:
@@ -235,6 +241,98 @@ async def test_cancellation_cut_before_marker_prevents_marker_and_publish_and_qu
     assert "factory_stage_persistence_committed" not in {event["type"] for event in events}
     assert "stage_completed" not in published
     assert _claim_is_preserved(service, run.id)
+
+
+@pytest.mark.asyncio
+async def test_retry_recovers_exact_cancelled_stage_commit_before_reentry(tmp_path: Path) -> None:
+    """A restart cut after snapshot+checkpoint must not permanently brick a run.
+
+    Recovery is allowed only because the cancelled quarantine names the exact
+    pending stage event and the strict checkpoint/run pointer can prove the
+    original transaction. The retry must then re-enter only that stage.
+    """
+
+    service = FactoryRunService(tmp_path, executor=_FailedExecutor())
+    run = await service.create_run(FactoryConfig(name="transaction", stages=["docs_generation"]))
+    await service.start_run(run.id)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original_save = service.store.save_run
+
+    async def blocked_save(candidate: FactoryRun) -> str:
+        if "last_factory_stage_commit" in candidate.metadata:
+            entered.set()
+            await release.wait()
+        return await original_save(candidate)
+
+    service.store.save_run = blocked_save  # type: ignore[method-assign]
+    task = asyncio.create_task(service.execute_stage(run.id, "docs_generation"))
+    await asyncio.wait_for(entered.wait(), timeout=3)
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    retried = await service.retry_run_from_stage(run.id, target_stage="docs_generation")
+    assert retried.status == FactoryRunStatus.RECOVERING
+
+    result = await service.execute_stage(run.id, "docs_generation")
+    assert result.status == "failed"
+    events = await service.store.get_authoritative_events(run.id)
+    quarantine_index = next(i for i, event in enumerate(events) if event["type"] == "factory_run_quarantined")
+    recovery_marker_index = next(
+        i
+        for i, event in enumerate(events)
+        if i > quarantine_index and event["type"] == "factory_stage_persistence_committed"
+    )
+    assert recovery_marker_index > quarantine_index
+
+
+@pytest.mark.asyncio
+async def test_cancelled_stage_ack_recovery_preserves_newer_mutable_run_state(tmp_path: Path) -> None:
+    """Missing ACK repair must not roll back a later accepted retry epoch."""
+
+    service = FactoryRunService(tmp_path, executor=_FailedExecutor())
+    run = await service.create_run(FactoryConfig(name="transaction", stages=["docs_generation"]))
+    await service.start_run(run.id)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original_save = service.store.save_run
+
+    async def blocked_save(candidate: FactoryRun) -> str:
+        if "last_factory_stage_commit" in candidate.metadata:
+            entered.set()
+            await release.wait()
+        return await original_save(candidate)
+
+    service.store.save_run = blocked_save  # type: ignore[method-assign]
+    task = asyncio.create_task(service.execute_stage(run.id, "docs_generation"))
+    await asyncio.wait_for(entered.wait(), timeout=3)
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    service.store.save_run = original_save  # type: ignore[method-assign]
+    current = await service.get_run(run.id)
+    assert current is not None
+    current.status = FactoryRunStatus.RECOVERING
+    current.metadata["post_cancel_retry_epoch"] = 41
+    current.metadata["post_cancel_workspace_fencing_token"] = 106
+    await service.store.save_run(current)
+
+    assert await service._recover_cancelled_stage_commit_if_proven(run.id) is True
+    preserved = await service.get_run(run.id)
+    assert preserved is not None
+    assert preserved.status == FactoryRunStatus.RECOVERING
+    assert preserved.metadata["post_cancel_retry_epoch"] == 41
+    assert preserved.metadata["post_cancel_workspace_fencing_token"] == 106
+
+    state = reduce_factory_stage_persistence(
+        await service.store.get_authoritative_events(run.id),
+        factory_run_id=run.id,
+    )
+    assert state.is_quarantined is False
 
 
 @pytest.mark.asyncio

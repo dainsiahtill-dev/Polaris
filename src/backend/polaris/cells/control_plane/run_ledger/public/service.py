@@ -11,7 +11,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,8 +52,10 @@ from polaris.cells.events.fact_stream.public import (
     AppendFactEventCommandV1,
     FactEventAppendedV1,
     QueryFactEventsV1,
+    QueryFactStreamHeadV1,
     append_fact_event,
     query_fact_events,
+    query_fact_stream_head,
 )
 from polaris.cells.runtime.task_runtime.public.contracts import (
     TASK_RUNTIME_EXECUTION_STREAM_V1,
@@ -71,6 +75,11 @@ _RUN_LEDGER_FACT_PROOF_MAX_RECORDS = 4096
 _RUN_LEDGER_FACT_PROOF_MAX_PAGES = (
     _RUN_LEDGER_FACT_PROOF_MAX_RECORDS + _RUN_LEDGER_FACT_PROOF_PAGE_SIZE - 1
 ) // _RUN_LEDGER_FACT_PROOF_PAGE_SIZE
+_TASK_RUNTIME_SCOPE_FACT_CACHE_MAX = 4
+_TASK_RUNTIME_SCOPE_FACT_CACHE: OrderedDict[
+    tuple[str, int, str, str, str], tuple[dict[str, Any], ...]
+] = OrderedDict()
+_TASK_RUNTIME_SCOPE_FACT_CACHE_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -491,6 +500,70 @@ def _structured_string_list(value: Any) -> list[str]:
     return list(dict.fromkeys(token for item in value if (token := str(item or "").strip())))
 
 
+def _task_runtime_execution_stream_head(workspace: Path) -> int | None:
+    """Return the durable TaskRuntime head used to fence projection reuse."""
+
+    try:
+        projection = query_fact_stream_head(
+            QueryFactStreamHeadV1(
+                workspace=str(workspace),
+                stream=TASK_RUNTIME_EXECUTION_STREAM_V1,
+            )
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+    head = getattr(projection, "current_seq", None)
+    if isinstance(head, bool) or not isinstance(head, int) or head < 0:
+        return None
+    return head
+
+
+def _cached_task_runtime_scope_facts(
+    *,
+    workspace: Path,
+    stream_head: int | None,
+    run_id: str,
+    factory_run_id: str,
+    project_id: str,
+) -> list[dict[str, Any]] | None:
+    if stream_head is None:
+        return None
+    key = (str(workspace), stream_head, run_id, factory_run_id, project_id)
+    with _TASK_RUNTIME_SCOPE_FACT_CACHE_LOCK:
+        rows = _TASK_RUNTIME_SCOPE_FACT_CACHE.get(key)
+        if rows is None:
+            return None
+        _TASK_RUNTIME_SCOPE_FACT_CACHE.move_to_end(key)
+        return [dict(row) for row in rows]
+
+
+def _cache_task_runtime_scope_facts(
+    *,
+    workspace: Path,
+    stream_head: int | None,
+    run_id: str,
+    factory_run_id: str,
+    project_id: str,
+    facts: list[dict[str, Any]],
+) -> None:
+    if stream_head is None:
+        return
+    workspace_token = str(workspace)
+    key = (workspace_token, stream_head, run_id, factory_run_id, project_id)
+    with _TASK_RUNTIME_SCOPE_FACT_CACHE_LOCK:
+        stale_keys = [
+            candidate
+            for candidate in _TASK_RUNTIME_SCOPE_FACT_CACHE
+            if candidate[0] == workspace_token and candidate[2:] == key[2:] and candidate != key
+        ]
+        for stale_key in stale_keys:
+            _TASK_RUNTIME_SCOPE_FACT_CACHE.pop(stale_key, None)
+        _TASK_RUNTIME_SCOPE_FACT_CACHE[key] = tuple(dict(row) for row in facts)
+        _TASK_RUNTIME_SCOPE_FACT_CACHE.move_to_end(key)
+        while len(_TASK_RUNTIME_SCOPE_FACT_CACHE) > _TASK_RUNTIME_SCOPE_FACT_CACHE_MAX:
+            _TASK_RUNTIME_SCOPE_FACT_CACHE.popitem(last=False)
+
+
 def _read_task_runtime_execution_facts(
     *,
     workspace: Path,
@@ -509,7 +582,19 @@ def _read_task_runtime_execution_facts(
     """
 
     selected_run_id = str(run_id or "").strip()
-    factory_scope = bool(factory_run_id or project_id)
+    selected_factory_run_id = str(factory_run_id or "").strip()
+    selected_project_id = str(project_id or "").strip()
+    factory_scope = bool(selected_factory_run_id or selected_project_id)
+    stream_head = _task_runtime_execution_stream_head(workspace)
+    cached = _cached_task_runtime_scope_facts(
+        workspace=workspace,
+        stream_head=stream_head,
+        run_id=selected_run_id,
+        factory_run_id=selected_factory_run_id,
+        project_id=selected_project_id,
+    )
+    if cached is not None:
+        return cached
     facts: list[dict[str, Any]] = []
     offset = 0
     while True:
@@ -527,8 +612,8 @@ def _read_task_runtime_execution_facts(
             payload = dict(payload_raw) if isinstance(payload_raw, dict) else {}
             if factory_scope and not _task_runtime_fact_matches_scope(
                 payload,
-                factory_run_id=factory_run_id,
-                project_id=project_id,
+                factory_run_id=selected_factory_run_id,
+                project_id=selected_project_id,
             ):
                 continue
             if selected_run_id and not factory_scope and _event_run_id(payload) != selected_run_id:
@@ -539,6 +624,16 @@ def _read_task_runtime_execution_facts(
             payload.setdefault("project_id", str(payload.get("factory_bench_project_id") or "").strip())
             facts.append(payload)
         if page.next_offset == 0:
+            final_head = _task_runtime_execution_stream_head(workspace)
+            if final_head == stream_head:
+                _cache_task_runtime_scope_facts(
+                    workspace=workspace,
+                    stream_head=stream_head,
+                    run_id=selected_run_id,
+                    factory_run_id=selected_factory_run_id,
+                    project_id=selected_project_id,
+                    facts=facts,
+                )
             return facts
         offset = page.next_offset
 

@@ -175,6 +175,69 @@ def test_projection_before_director_execution_marks_lifecycle_not_required(tmp_p
     assert lifecycle["requirement_status"] == "not_required"
 
 
+def test_task_runtime_fact_join_reuses_projection_until_stream_head_advances(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated Run Ledger joins must not rescan an unchanged execution stream."""
+
+    run_id = "run-head-bound-task-runtime-join"
+
+    def append_execution_fact(event_type: str, status: str) -> None:
+        append_fact_event(
+            AppendFactEventCommandV1(
+                workspace=str(tmp_path),
+                stream="task_runtime.execution",
+                event_type=event_type,
+                source="runtime.task_runtime",
+                run_id=run_id,
+                task_id="TASK-1",
+                payload={
+                    "task_id": "TASK-1",
+                    "run_id": run_id,
+                    "factory_run_id": "factory-head-bound",
+                    "factory_bench_project_id": "P1",
+                    "event_type": event_type,
+                    "status": status,
+                },
+            )
+        )
+
+    append_execution_fact("claimed", "in_progress")
+    original_query = run_ledger_service.query_fact_events
+    task_runtime_queries = 0
+
+    def query_spy(query: QueryFactEventsV1):
+        nonlocal task_runtime_queries
+        if query.stream == "task_runtime.execution":
+            task_runtime_queries += 1
+        return original_query(query)
+
+    monkeypatch.setattr(run_ledger_service, "query_fact_events", query_spy)
+
+    first = run_ledger_service._read_task_runtime_execution_facts(
+        workspace=tmp_path,
+        run_id=run_id,
+    )
+    second = run_ledger_service._read_task_runtime_execution_facts(
+        workspace=tmp_path,
+        run_id=run_id,
+    )
+
+    assert first == second
+    assert task_runtime_queries == 1
+
+    append_execution_fact("completed", "completed")
+
+    advanced = run_ledger_service._read_task_runtime_execution_facts(
+        workspace=tmp_path,
+        run_id=run_id,
+    )
+
+    assert len(advanced) == 2
+    assert task_runtime_queries == 2
+
+
 def test_director_materialization_claim_requires_lifecycle_receipt(tmp_path: Path) -> None:
     run_id = "run-director-claim"
     _append_task_runtime_execution_fact(

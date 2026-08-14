@@ -119,6 +119,50 @@ def test_current_seq_reads_only_tail_record_in_non_strict_mode(
     assert store.current_seq("task_runtime.execution", strict_integrity=False) == 3
 
 
+def test_non_strict_query_reuses_parsed_stream_until_head_advances(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unchanged append-only streams must not be reparsed by every observer."""
+
+    store = _prepared_store(tmp_path / "workspace", "task_runtime.execution")
+    store.append(
+        stream="task_runtime.execution",
+        event_type="created",
+        source="runtime.task_runtime",
+        payload={"task_id": "task-1", "large_snapshot": "x" * 20_000},
+    )
+    with file_store._PARSED_STREAM_CACHE_LOCK:
+        file_store._PARSED_STREAM_CACHE.clear()
+    original_read = store._read_lease_records
+    full_scans = 0
+
+    def read_spy(*args: Any, **kwargs: Any) -> list[EventEnvelope]:
+        nonlocal full_scans
+        full_scans += 1
+        return original_read(*args, **kwargs)
+
+    monkeypatch.setattr(store, "_read_lease_records", read_spy)
+
+    first = store.query(stream="task_runtime.execution")
+    second = store.query(stream="task_runtime.execution")
+
+    assert [event.seq for event in first.events] == [1]
+    assert [event.seq for event in second.events] == [1]
+    assert full_scans == 1
+
+    store.append(
+        stream="task_runtime.execution",
+        event_type="completed",
+        source="runtime.task_runtime",
+        payload={"task_id": "task-1", "large_snapshot": "y" * 20_000},
+    )
+    advanced = store.query(stream="task_runtime.execution")
+
+    assert [event.seq for event in advanced.events] == [1, 2]
+    assert full_scans == 1
+
+
 def test_jsonl_event_store_query_filters_by_event_type_run_and_task(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     store = _prepared_store(workspace, "task_runtime.execution")

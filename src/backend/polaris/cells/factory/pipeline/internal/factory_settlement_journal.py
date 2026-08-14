@@ -417,6 +417,18 @@ class FactorySettlementJournal:
             checkpoint_chain=chain,
         )
 
+    def refresh_replay_snapshot(self, snapshot: SettlementJournalReplaySnapshot) -> None:
+        """Reload one stale replay view after a concurrent durable append.
+
+        Terminal settlement writers can race across consumer instances.  A
+        losing writer must observe the first durable terminal record before it
+        can classify an idempotency conflict as an already-settled duplicate.
+        The same validated reload used for checkpoint CAS drift provides that
+        bounded refresh without weakening FactStream idempotency checks.
+        """
+
+        self._reload_replay_snapshot_after_drift(snapshot)
+
     def state_for(
         self,
         identity: SettlementIdentity,

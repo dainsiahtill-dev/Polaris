@@ -72,6 +72,45 @@ async def test_start_recovers_running_and_recovering_runs_without_http_request()
 
 
 @pytest.mark.asyncio
+async def test_start_does_not_resume_when_recovery_restores_terminal_checkpoint() -> None:
+    """A cancelled commit ACK may restore the exact failed stage checkpoint.
+
+    The startup list snapshot still says ``recovering`` in that case.  Once
+    ``recover_run`` returns the authoritative terminal status, the driver must
+    not open a physical-attempt epoch or submit the run automatically.
+    """
+
+    class _TerminalRestoreService(_Service):
+        async def recover_run(self, run_id: str) -> _Run:
+            self.recovered_run_ids.append(run_id)
+            run = self._runs[run_id]
+            run.status = "failed"
+            return run
+
+    service = _TerminalRestoreService([_Run("run-cancelled-ack", "recovering")])
+    executed: list[str] = []
+
+    async def _execute(_service: object, run_id: str, _payload: object, _state: object) -> None:
+        executed.append(run_id)
+
+    runtime = FactoryRunDriverRuntimeV1(
+        workspace="/workspace",
+        service=service,
+        state=object(),
+        execute=_execute,
+        build_recovery_payload=lambda _run, _workspace: object(),
+    )
+
+    await runtime.start()
+    await runtime.wait_idle()
+    await runtime.stop()
+
+    assert service.recovered_run_ids == ["run-cancelled-ack"]
+    assert service.resumed_run_ids == []
+    assert executed == []
+
+
+@pytest.mark.asyncio
 async def test_start_recovers_failed_run_with_committed_local_rework_action() -> None:
     service = _Service([_Run("run-failed", "failed")])
     executed: list[str] = []

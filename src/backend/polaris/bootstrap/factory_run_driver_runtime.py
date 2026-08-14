@@ -125,6 +125,19 @@ class FactoryRunDriverRuntimeV1:
             # action already went through closeout and must not be recovered.
             if run_id in status_resumable_ids:
                 run = await self.service.recover_run(run_id)
+                # Recovery may close an exact cancellation cut by restoring the
+                # authoritative terminal checkpoint (for example, a failed QA
+                # stage whose event/checkpoint were durable but whose commit ACK
+                # was interrupted).  The list snapshot above is then stale:
+                # reopening a physical-attempt epoch would execute a terminal
+                # run, fail with factory_physical_attempt_replay_required, and
+                # fence its workspace lease.  Only genuinely nonterminal state
+                # may proceed to resume/submission.
+                if _status_token(getattr(run, "status", "")) not in {
+                    "running",
+                    "recovering",
+                }:
+                    continue
                 run = await self.service.resume_recovered_run(run_id)
             payload = self.build_recovery_payload(run, self.workspace)
             self.submit(run_id, payload=payload)

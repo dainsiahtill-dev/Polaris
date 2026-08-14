@@ -41,10 +41,8 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunService,
     FactoryRunStatus,
     StageResult,
-    _service_physical as service_physical_module,
-)
-from polaris.cells.factory.pipeline.internal.factory_run_service import (
     _service_lifecycle as service_lifecycle_module,
+    _service_physical as service_physical_module,
 )
 from polaris.cells.factory.pipeline.internal.factory_stage_artifact_bindings import (
     PM_STAGE_ARTIFACT_BINDING_CONTEXT_KEY,
@@ -2369,6 +2367,40 @@ async def test_recover_run_rejects_active_factory_child(tmp_path: Path) -> None:
     assert stored is not None
     assert stored.status == FactoryRunStatus.RUNNING
     assert stored.metadata["factory_child_sessions_settled"] is False
+
+
+@pytest.mark.asyncio
+async def test_recover_run_fences_expired_factory_child_before_reentry(tmp_path: Path) -> None:
+    """A crashed child whose lease expired must not strand restart recovery.
+
+    The exact Factory owner may fence its expired child session during
+    ``recover_run``.  Live, unexpired children remain fail-closed in the test
+    above; this path only closes an already-dead execution lease.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    service = FactoryRunService(
+        workspace,
+        cache_root=tmp_path / "runtime",
+        executor=_SuccessfulStageExecutor(),
+    )
+    run = await service.create_run(FactoryConfig(name="recover-expired-child"))
+    await service.start_run(run.id)
+    runtime, task_id, identity = _create_active_factory_child(
+        workspace,
+        factory_run_id=run.id,
+    )
+    _expire_task_runtime_session(runtime, identity)
+
+    recovered = await service.recover_run(run.id)
+
+    assert recovered.status is FactoryRunStatus.RECOVERING
+    session = runtime._read_session(task_id)
+    assert session is not None
+    assert session.status == "suspended"
+    assert session.resumable is False
+    assert runtime.query_factory_run_settlement(factory_run_id=run.id)["settled"] is True
 
 
 @pytest.mark.asyncio

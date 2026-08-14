@@ -166,6 +166,14 @@ def test_surface_violation_is_not_a_generic_provider_failure() -> None:
     assert is_provider_tool_surface_violation(
         RuntimeError("provider_tool_surface_violation: requested=read_file; allowed=edit_file")
     )
+    # The physical invoker projects guarded provider failures into its public
+    # response envelope before DecisionCaller raises them back to the turn.
+    assert is_provider_tool_surface_violation(
+        RuntimeError(
+            "LLM call failed: provider_tool_surface_violation: "
+            "requested=read_file; allowed=edit_file"
+        )
+    )
     assert not is_provider_tool_surface_violation(RuntimeError("provider timeout"))
     assert not is_provider_tool_surface_violation("prefix provider_tool_surface_violation: fake")
 

@@ -936,6 +936,75 @@ async def test_old_workspace_token_is_fenced_and_dead_lettered(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_dead_letter_idempotency_conflict_recovers_first_terminal_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale consumer view must converge on the first durable dead letter.
+
+    Barrier audit evidence can grow between wake deliveries.  The terminal
+    decision identity and reason remain the same, so a competing consumer may
+    observe an idempotency conflict after the first writer commits.  That is
+    duplicate terminal evidence, not a reason to redeliver the source fact in
+    a CPU/IO loop.
+    """
+
+    workspace = _workspace(tmp_path)
+    fact_stream = FactStreamAdapter()
+    source = _append_source_fact(fact_stream, workspace, fencing_token=7)
+    journal = FactorySettlementJournal(workspace=workspace, fact_stream=fact_stream)
+    identity = SettlementIdentity(
+        workspace=workspace,
+        source_fact_event_id=source.event_id,
+        factory_run_id="factory-run-1",
+        workspace_fencing_token=7,
+    )
+    first = journal.append_dead_letter(
+        identity,
+        source_fact_seq=int(source.appended_seq or 0),
+        reason_code="stale_workspace_fencing_token",
+        barrier_hash="barrier-before-race",
+        evidence_refs=("evidence:before-race",),
+    )
+    barrier = MutableBarrier(workspace=workspace, fencing_token=8)
+    consumer = FactorySettlementConsumer(
+        workspace=workspace,
+        fact_stream=fact_stream,
+        journal=journal,
+        barrier=barrier,
+        factory_runs=RecordingFactoryRuns(),
+    )
+    original_state_for = journal.state_for
+    state_reads = 0
+
+    def stale_once(
+        requested_identity: SettlementIdentity,
+        *,
+        snapshot: object | None = None,
+    ) -> object | None:
+        nonlocal state_reads
+        state_reads += 1
+        if state_reads == 1:
+            return None
+        return original_state_for(requested_identity, snapshot=snapshot)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(journal, "state_for", stale_once)
+
+    report = await consumer.start()
+
+    assert report.ack_safe is True
+    assert report.decisions[0].outcome is SettlementOutcome.DEAD_LETTER
+    assert report.decisions[0].journal_event_id == first.event_id
+    terminals = [
+        record
+        for record in journal.records()
+        if record.status is SettlementJournalStatus.DEAD_LETTER
+        and record.settlement_key == identity.digest
+    ]
+    assert len(terminals) == 1
+
+
+@pytest.mark.asyncio
 async def test_missing_envelope_schema_is_dead_lettered_and_checkpointed(
     tmp_path: Path,
 ) -> None:

@@ -1,0 +1,37 @@
+schema_version: "verification-card/v1"
+id: "vc-20260814-factory-cancelled-stage-ack-no-rollback"
+title: "Cancelled stage ACK recovery preserves newer runtime authority"
+classification: "structural"
+severity: "P0"
+status: "implementation_active"
+bench_status: "same_run_recovery_active"
+scope:
+  cell: "factory.pipeline"
+  files:
+    - "src/backend/polaris/cells/factory/pipeline/internal/factory_run_service/_service_stage.py"
+    - "src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_persistence_service.py"
+    - "src/backend/polaris/bootstrap/factory_run_driver_runtime.py"
+    - "src/backend/polaris/tests/unit/bootstrap/test_factory_run_driver_runtime.py"
+assumption_register:
+  - assumption: "The immutable checkpoint is proof of the original stage commit, not authority to overwrite later runtime state."
+    evidence: "L1-04 events 549-554 and workspace lease token 106 versus run token 104."
+  - assumption: "A later retry can be accepted before the missing stage marker is repaired."
+    evidence: "physical_attempt_failed_retry_replayed, epoch_reopened, and retry_requested precede the delayed marker."
+  - assumption: "Exact pointer validation can preserve fail-closed semantics without snapshot rollback."
+    evidence: "FactoryLastStageCommitV1 binds stage event, chain hash, intent hash, and checkpoint ref."
+pre_mortem:
+  most_likely_wrong_fix: "Appending a marker from the current mutable snapshot would bind later lifecycle state to the old stage transaction."
+  prevention: "Use the immutable checkpoint canonical hash; validate but never overwrite current run state."
+verification_plan:
+  red_test: "A post-cancellation mutable retry sentinel must survive ACK recovery."
+  focused_tests:
+    - "test_factory_stage_persistence_service.py"
+    - "test_factory_stage_persistence.py"
+    - "test_factory_run_driver_runtime.py"
+  static_gates:
+    - "ruff check and format"
+    - "mypy"
+  live_gate: "Restart isolated L1-04 instance, reconcile same run, retry quality_gate only, and rerun failed Go verifier."
+owner: "Codex /root"
+opened_at: "2026-08-14"
+

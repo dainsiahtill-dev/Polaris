@@ -45,6 +45,17 @@
       "incorrect_receipt_outcome": "succeeded",
       "before_after_hashes": "both absent",
       "effect": "unchanged verifier was rerun and the parent settled failed"
+    },
+    "bootstrap_classification_failure": {
+      "error": "deo_tool_classification_mismatch: execution_mode",
+      "serialized_mode": "readonly_serial",
+      "current_registry_mode": "readonly_parallel",
+      "effect": "stale-edit recovery aborted before read_file executed"
+    },
+    "wrapped_surface_violation": {
+      "guard_error": "provider_tool_surface_violation: requested=read_file; allowed=edit_file",
+      "public_error": "LLM call failed: provider_tool_surface_violation: requested=read_file; allowed=edit_file",
+      "effect": "the exact same-turn recovery marker was hidden behind an invoker-owned prefix"
     }
   },
   "root_causes": [
@@ -87,6 +98,22 @@
     {
       "owner": "runtime.task_runtime observable projection",
       "cause": "Factory's 100 ms claimability/status observation repeatedly rebuilt the same task_runtime.execution projection; L1-04's 40 MiB/765-fact history was reread at approximately 88 MiB per 2 seconds, saturating the backend event-loop CPU before the Director repair LLM call"
+    },
+    {
+      "owner": "kernelone.events JsonlEventStore",
+      "cause": "every non-strict query and append reparsed the complete append-only stream; dynamic slow-scan call stacks showed Run Ledger artifact/verification joins, TaskRuntime claims, and settlement checkpoint verification repeatedly consuming the same 40 MiB execution stream and 12 MiB settlement stream"
+    },
+    {
+      "owner": "roles.kernel stale-edit bootstrap",
+      "cause": "bootstrap decisions froze read_file as readonly_serial even after ToolSpecRegistry made readonly_parallel authoritative; ToolBatch correctly rejected the stale execution_mode before recovery reads"
+    },
+    {
+      "owner": "roles.kernel provider failure classification",
+      "cause": "the invoker wrapped the exact tool-surface guard marker with 'LLM call failed:' while same-turn recovery recognized only an offset-zero marker"
+    },
+    {
+      "owner": "factory stage persistence",
+      "cause": "process cancellation after the durable stage_completed event and strict checkpoint pointer but before the commit marker ACK created cancelled_before_commit_ack quarantine that no later exact retry could discharge"
     }
   ],
   "fixes": [
@@ -161,6 +188,26 @@
     {
       "file": "polaris/cells/runtime/task_runtime/internal/service/_mixin_task_rows.py",
       "change": "cache the projected latest task rows across service instances by workspace, limit, and descriptor-bound durable stream head; any append advances the head and invalidates the projection immediately"
+    },
+    {
+      "file": "polaris/cells/control_plane/run_ledger/public/service.py",
+      "change": "reuse TaskRuntime scope facts across repeated artifact and verifier authority queries while the durable stream head is unchanged"
+    },
+    {
+      "file": "polaris/kernelone/events/sourcing/file_store.py",
+      "change": "cache parsed non-strict EventEnvelope sequences behind the descriptor lock and durable tail head; publish the advanced cache atomically after append, retain full validation for strict-integrity reads, and emit slow full-scan call paths for proactive diagnosis"
+    },
+    {
+      "file": "polaris/cells/roles/kernel/internal/transaction/contract_guards.py and retry_orchestrator.py",
+      "change": "capture current ToolSpecRegistry semantics when synthesizing bootstrap reads and reclassify serialized invocations at execution, ignoring stale effect/mode hints"
+    },
+    {
+      "file": "polaris/cells/roles/kernel/internal/llm_caller/final_request_tool_surface.py",
+      "change": "unwrap only platform-owned provider error prefixes before matching the exact tool-surface violation marker; arbitrary marker-containing text remains non-authoritative"
+    },
+    {
+      "file": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py and factory_run_service/_service_stage.py",
+      "change": "classify only an exact cancelled_before_commit_ack event as recoverable, prove event/intent/checkpoint/pointer identity, restore the strict checkpoint, append the missing canonical commit marker, and clear only that exact cancellation quarantine before same-stage reentry"
     }
   ],
   "verification": {
@@ -171,7 +218,11 @@
     "transaction_and_settlement_regression": "106 focused tests passed across provider surface, retry routing, settlement consumer, and event sourcing",
     "settlement_head_performance": "live 38.6 MB task_runtime.execution head query: approximately 1095 ms before bounded tail read; 6-7 ms warm after fix; current checkpoint replay performs zero source page reads",
     "task_runtime_projection_performance": "dynamic /proc evidence: old backend reread approximately 88 MiB in 2 seconds with no stream append; head-bound cache regression proves identical-head observers reuse one projection and a new fact invalidates it",
-    "bootstrap_recovery_tests": "8 passed plus orphaned replay claim regression",
+    "run_ledger_scope_performance": "live L1-04 factory/project scope: first TaskRuntime join approximately 1009 ms for 613 facts; identical-head repeat 5.8 ms with equal output",
+    "event_store_cache_tests": "70/70 sourcing-store tests passed; regression proves repeated non-strict query plus subsequent append/query require one historical parse total and advance sequences correctly",
+    "bootstrap_recovery_tests": "43/43 bootstrap and weak-model recovery tests passed; live legacy readonly_serial mismatch reproduced before fix",
+    "provider_surface_recovery_tests": "4/4 passed including invoker-wrapped guard error classification",
+    "cancelled_stage_commit_recovery_tests": "28/28 reducer tests plus 5/5 focused service tests passed; exact cancellation cut recovers, publish failure remains non-authoritative, and unrelated persistence quarantine remains fail-closed",
     "mypy": "all changed tool-surface and bootstrap source files passed",
     "ruff": "changed source files and focused settlement/tool/syntax tests passed",
     "known_unrelated_lint_debt": "characterization test split currently has pre-existing duplicate/unused imports; runtime tests execute successfully"

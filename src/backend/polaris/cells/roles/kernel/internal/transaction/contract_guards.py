@@ -39,7 +39,6 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     FinalizeMode,
     ToolBatch,
     ToolCallId,
-    ToolEffectType,
     ToolExecutionMode,
     ToolInvocation,
     TurnDecision,
@@ -828,16 +827,15 @@ def _build_read_bootstrap_decision(
             if not normalized_candidate or normalized_candidate in seen_targets:
                 continue
             seen_targets.add(normalized_candidate)
+            # Let ToolInvocation capture the current ToolSpecRegistry semantics.
+            # A bootstrap decision must not freeze an execution-mode hint that can
+            # drift when the registry changes (read_file is currently parallel).
             read_invocations.append(
-                cast(
-                    "ToolInvocation",
-                    {
-                        "call_id": ToolCallId(f"{turn_id}_bootstrap_read_{index}_{len(read_invocations) + 1}"),
-                        "tool_name": "read_file",
-                        "arguments": {"file": normalized_candidate},
-                        "effect_type": ToolEffectType.READ,
-                        "execution_mode": ToolExecutionMode.READONLY_SERIAL,
-                    },
+                ToolInvocation(
+                    call_id=ToolCallId(f"{turn_id}_bootstrap_read_{index}_{len(read_invocations) + 1}"),
+                    tool_name="read_file",
+                    raw_tool_name="read_file",
+                    arguments={"file": normalized_candidate},
                 )
             )
 

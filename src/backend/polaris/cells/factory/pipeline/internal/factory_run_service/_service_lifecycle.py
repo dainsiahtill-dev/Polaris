@@ -451,6 +451,10 @@ class _FactoryRunServiceLifecycleMixin:
             run = await self.store.get_run(run_id)
             if run is None:
                 raise ValueError(f"Run {run_id} not found")
+            await self._recover_cancelled_stage_commit_if_proven(run_id)
+            run = await self.store.get_run(run_id)
+            if run is None:
+                raise ValueError(f"Run {run_id} not found after cancelled stage recovery")
             run = await self.assert_mutation_allowed(run_id, current_run=run)
 
             if run.status in TERMINAL_RUN_STATUSES:
@@ -487,6 +491,23 @@ class _FactoryRunServiceLifecycleMixin:
                 )
                 replay_fenced = lease.state.value == "draining"
                 claimed = True
+                # Backend restart recovery is allowed to close only child
+                # execution leases that are already expired and belong to
+                # this exact Factory run.  The TaskRuntime fence remains
+                # fail-closed for live/foreign sessions and for any pending
+                # directed effect.  Without this step an expired Director
+                # session with no ambiguous write operation stays ``active``
+                # forever: DEO startup recovery has nothing to reconcile,
+                # while the Factory settlement projection correctly refuses
+                # re-entry on that stale session.
+                child_fence = fence_expired_factory_run_sessions(
+                    FenceExpiredFactoryRunSessionsCommandV1(
+                        workspace=str(self.workspace),
+                        factory_run_id=run.id,
+                        reason="factory_restart_recovery_expired_child_session",
+                    )
+                )
+                run.metadata["factory_expired_child_session_fence"] = child_fence.to_record()
                 settlement = await self._require_child_session_settlement_for_reentry(
                     run,
                     operation=operation,
@@ -630,6 +651,10 @@ class _FactoryRunServiceLifecycleMixin:
             run = await self.store.get_run(run_id)
             if run is None:
                 raise ValueError(f"Run {run_id} not found")
+            await self._recover_cancelled_stage_commit_if_proven(run_id)
+            run = await self.store.get_run(run_id)
+            if run is None:
+                raise ValueError(f"Run {run_id} not found after cancelled stage recovery")
             run = await self.assert_mutation_allowed(run_id, current_run=run)
 
             if run.status in {FactoryRunStatus.COMPLETED, FactoryRunStatus.CANCELLED}:

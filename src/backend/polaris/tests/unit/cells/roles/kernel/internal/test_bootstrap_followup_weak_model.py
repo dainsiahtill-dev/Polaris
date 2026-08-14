@@ -24,6 +24,9 @@ from polaris.cells.roles.kernel.internal.transaction.bootstrap_followup import (
     build_deterministic_bootstrap_followup_write_decision,
     merge_bootstrap_receipt_into_result,
 )
+from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+    build_stale_edit_bootstrap_decision,
+)
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.retry_context_builders import (
     build_retry_write_after_bootstrap_context,
@@ -1080,6 +1083,10 @@ async def test_bootstrap_reads_emit_tool_result_events() -> None:
                     "call_id": "c1",
                     "tool_name": "read_file",
                     "arguments": {"file": "a.py"},
+                    # Regression input from L1-04: a serialized bootstrap decision
+                    # retained the legacy mode after the registry moved read_file
+                    # to readonly_parallel. Execution must reclassify it.
+                    "execution_mode": "readonly_serial",
                 }
             ]
         },
@@ -1087,12 +1094,33 @@ async def test_bootstrap_reads_emit_tool_result_events() -> None:
     )
 
     assert merged is not None
+    executed_batch = runtime.execute_batch.await_args.args[0]
+    assert [inv.tool_name for inv in executed_batch.parallel_readonly] == ["read_file"]
+    assert executed_batch.readonly_serial == []
     tool_result_events = [e for e in emitted if isinstance(e, dict) and e.get("type") == "tool_result"]
     assert len(tool_result_events) == 1
     data = tool_result_events[0]["data"]
     assert data["tool"] == "read_file"
     assert data["bootstrap_read"] is True
     assert data["result"]["content"] == "x = 1\n"
+
+
+def test_stale_edit_bootstrap_captures_current_read_file_classification() -> None:
+    decision = build_stale_edit_bootstrap_decision(
+        turn_id="t-stale",
+        retry_invocations=[
+            {
+                "tool_name": "edit_file",
+                "arguments": {"file": "main.go", "search": "old", "replace": "new"},
+            }
+        ],
+        decision_metadata={"workspace": "."},
+    )
+
+    assert decision is not None
+    invocations = decision["tool_batch"]["invocations"]
+    assert invocations
+    assert {inv.execution_mode.value for inv in invocations} == {"readonly_parallel"}
 
 
 # ---------------------------------------------------------------------------

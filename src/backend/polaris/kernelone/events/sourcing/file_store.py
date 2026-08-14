@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 import traceback
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -53,6 +55,11 @@ _STRICT_REASON_BY_CODE = {
     "missing_integrity_digest": _STRICT_REASON_MIDDLE_CORRUPTION,
 }
 _STRICT_STREAM_REASONS = frozenset(_STRICT_REASON_BY_CODE.values())
+_PARSED_STREAM_CACHE_MAX = 4
+_PARSED_STREAM_CACHE: OrderedDict[
+    tuple[str, str, int], tuple[EventEnvelope, ...]
+] = OrderedDict()
+_PARSED_STREAM_CACHE_LOCK = threading.RLock()
 
 
 class _StrictStreamIntegrityError(EventSourcingError):
@@ -274,7 +281,7 @@ class JsonlEventStore:
         with self._locked_streams(logical_path) as leases:
             lease = leases.lease(logical_path)
             lease.open_existing(writable=False)
-            records = self._read_lease_records(
+            records = self._read_lease_records_cached(
                 stream=stream_token,
                 logical_path=logical_path,
                 lease=lease,
@@ -406,7 +413,7 @@ class JsonlEventStore:
         with self._locked_streams(logical_path) as leases:
             lease = leases.lease(logical_path)
             lease.open_existing(writable=True)
-            records = self._read_lease_records(
+            records = self._read_lease_records_cached(
                 stream=semantic.stream,
                 logical_path=logical_path,
                 lease=lease,
@@ -494,6 +501,12 @@ class JsonlEventStore:
                 raise EventSourcingError(
                     f"failed to append event stream={semantic.stream!r}: {exc}",
                 ) from exc
+            if not strict_integrity:
+                self._publish_parsed_stream_cache(
+                    logical_path=logical_path,
+                    stream_head=envelope.seq,
+                    records=[*records, envelope],
+                )
             return envelope
 
     def _build_envelope(
@@ -664,6 +677,78 @@ class JsonlEventStore:
         """Compatibility wrapper that performs a strict central-lock scan."""
 
         return self._read_strict_records_locked(stream=stream, logical_path=logical_path)
+
+    def _parsed_stream_cache_key(self, *, logical_path: str, stream_head: int) -> tuple[str, str, int]:
+        return (self._storage_identity.token, logical_path, stream_head)
+
+    def _publish_parsed_stream_cache(
+        self,
+        *,
+        logical_path: str,
+        stream_head: int,
+        records: list[EventEnvelope],
+    ) -> None:
+        key = self._parsed_stream_cache_key(logical_path=logical_path, stream_head=stream_head)
+        identity = key[:2]
+        with _PARSED_STREAM_CACHE_LOCK:
+            stale_keys = [
+                candidate
+                for candidate in _PARSED_STREAM_CACHE
+                if candidate[:2] == identity and candidate != key
+            ]
+            for stale_key in stale_keys:
+                _PARSED_STREAM_CACHE.pop(stale_key, None)
+            _PARSED_STREAM_CACHE[key] = tuple(records)
+            _PARSED_STREAM_CACHE.move_to_end(key)
+            while len(_PARSED_STREAM_CACHE) > _PARSED_STREAM_CACHE_MAX:
+                _PARSED_STREAM_CACHE.popitem(last=False)
+
+    def _read_lease_records_cached(
+        self,
+        *,
+        stream: str,
+        logical_path: str,
+        lease: StreamLeaseV1,
+        strict_integrity: bool,
+    ) -> list[EventEnvelope]:
+        """Reuse a parsed non-strict stream while its durable head is unchanged.
+
+        The descriptor lock and tail-derived sequence fence the cache.  Strict
+        integrity reads deliberately keep their complete validation pass.
+        """
+
+        if strict_integrity or not lease.exists:
+            return self._read_lease_records(
+                stream=stream,
+                logical_path=logical_path,
+                lease=lease,
+                strict_integrity=strict_integrity,
+            )
+        stream_head = self._read_lease_tail_seq(
+            stream=stream,
+            logical_path=logical_path,
+            lease=lease,
+        )
+        key = self._parsed_stream_cache_key(logical_path=logical_path, stream_head=stream_head)
+        with _PARSED_STREAM_CACHE_LOCK:
+            cached = _PARSED_STREAM_CACHE.get(key)
+            if cached is not None:
+                _PARSED_STREAM_CACHE.move_to_end(key)
+                return list(cached)
+        records = self._read_lease_records(
+            stream=stream,
+            logical_path=logical_path,
+            lease=lease,
+            strict_integrity=False,
+        )
+        observed_head = records[-1].seq if records else 0
+        if observed_head == stream_head:
+            self._publish_parsed_stream_cache(
+                logical_path=logical_path,
+                stream_head=stream_head,
+                records=records,
+            )
+        return records
 
     def _read_lease_records(
         self,

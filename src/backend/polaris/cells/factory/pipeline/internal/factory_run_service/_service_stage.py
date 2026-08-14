@@ -39,6 +39,7 @@ from ..factory_stage_persistence import (
     FactoryLastStageCommitV1,
     FactoryStagePersistenceCommittedV1,
     FactoryStagePersistenceError,
+    FactoryStagePersistenceIntentV1,
     bounded_redacted_error,
     build_stage_persistence_intent,
     canonical_checkpoint_sha256,
@@ -63,6 +64,118 @@ from ._helpers import (
 
 
 class _FactoryRunServiceStageMixin:
+    async def _recover_cancelled_stage_commit_if_proven(self: Any, run_id: str) -> bool:
+        """Complete one exact stage commit cut by process cancellation.
+
+        This is not a generic quarantine bypass.  It is available only when the
+        reducer proves that ``cancelled_before_commit_ack`` names the current
+        pending stage event, and the immutable checkpoint carries the exact
+        last-stage pointer.  Any mismatch remains quarantined.
+        """
+
+        events = await self.store.get_authoritative_events(run_id)
+        state = reduce_factory_stage_persistence(events, factory_run_id=run_id)
+        pending_event_id = state.recoverable_cancelled_stage_event_id
+        if not pending_event_id:
+            return False
+        stage_event = next(
+            (
+                event
+                for event in events
+                if event.get("type") == "stage_completed" and event.get("event_id") == pending_event_id
+            ),
+            None,
+        )
+        if not isinstance(stage_event, Mapping):
+            return False
+        intent = FactoryStagePersistenceIntentV1.from_record(stage_event.get("persistence_intent"))
+        checkpoint = await self.store.read_strict_checkpoint_snapshot(run_id, intent.checkpoint_ref)
+        self._validate_checkpoint_ref_from_typed_run(run_id, intent.checkpoint_ref, checkpoint)
+        expected_pointer = FactoryLastStageCommitV1(
+            stage=intent.stage,
+            stage_completed_event_id=str(stage_event["event_id"]),
+            stage_completed_chain_sequence=int(stage_event["chain_sequence"]),
+            stage_completed_chain_event_hash=str(stage_event["chain_event_hash"]),
+            persistence_intent_sha256=intent.persistence_intent_sha256,
+            checkpoint_ref=intent.checkpoint_ref,
+        )
+        checkpoint_metadata = checkpoint.get("metadata")
+        checkpoint_pointer = (
+            checkpoint_metadata.get("last_factory_stage_commit") if isinstance(checkpoint_metadata, Mapping) else None
+        )
+        if FactoryLastStageCommitV1.from_record(checkpoint_pointer, factory_run_id=run_id) != expected_pointer:
+            raise FactoryStagePersistenceError(
+                "factory_cancelled_stage_recovery_pointer_mismatch",
+                "Cancelled stage checkpoint does not carry the exact pending commit pointer",
+            )
+
+        checkpoint_run = FactoryRun.from_dict(checkpoint)
+        if checkpoint_run.id != run_id:
+            raise FactoryStagePersistenceError(
+                "factory_cancelled_stage_recovery_run_mismatch",
+                "Cancelled stage checkpoint belongs to another run",
+            )
+
+        # The checkpoint is immutable proof of the interrupted stage
+        # transaction; it is not authority to roll mutable runtime state back.
+        # A later retry may already have reopened a physical epoch or advanced
+        # the workspace fencing token before startup closes the missing ACK.
+        # Replacing the current run with this older checkpoint would split
+        # authority (durable admission lease at the new token, run snapshot at
+        # the old token) and permanently fence same-stage recovery.
+        current_run_snapshot = await self.store.read_strict_run_snapshot(run_id)
+        current_run = FactoryRun.from_dict(current_run_snapshot)
+        if current_run.id != run_id:
+            raise FactoryStagePersistenceError(
+                "factory_cancelled_stage_recovery_current_run_mismatch",
+                "Current mutable run snapshot belongs to another run",
+            )
+        current_metadata = current_run_snapshot.get("metadata")
+        current_pointer = (
+            current_metadata.get("last_factory_stage_commit") if isinstance(current_metadata, Mapping) else None
+        )
+        if FactoryLastStageCommitV1.from_record(current_pointer, factory_run_id=run_id) != expected_pointer:
+            raise FactoryStagePersistenceError(
+                "factory_cancelled_stage_recovery_current_pointer_mismatch",
+                "Current mutable run no longer names the exact pending stage commit",
+            )
+        marker = await self._append_event(
+            run_id,
+            {
+                "type": "factory_stage_persistence_committed",
+                "schema_version": "factory.stage_persistence_committed.v1",
+                "factory_run_id": run_id,
+                "stage": intent.stage,
+                "stage_completed_event_id": str(stage_event["event_id"]),
+                "stage_completed_chain_sequence": int(stage_event["chain_sequence"]),
+                "stage_completed_chain_event_hash": str(stage_event["chain_event_hash"]),
+                "persistence_intent_sha256": intent.persistence_intent_sha256,
+                "run_snapshot_canonical_sha256": canonical_run_snapshot_sha256(checkpoint),
+                "checkpoint_ref": intent.checkpoint_ref,
+                "checkpoint_canonical_sha256": canonical_checkpoint_sha256(checkpoint),
+                "timestamp": self._now(),
+            },
+            publish=False,
+        )
+        commit = FactoryStagePersistenceCommittedV1.from_record(marker)
+        validate_current_stage_commit_pointer(checkpoint_pointer, commit)
+        recovered_state = reduce_factory_stage_persistence(
+            await self.store.get_authoritative_events(run_id),
+            factory_run_id=run_id,
+        )
+        if recovered_state.is_quarantined:
+            raise FactoryStagePersistenceError(
+                "factory_cancelled_stage_recovery_not_converged",
+                "Exact cancelled stage commit did not clear persistence quarantine",
+            )
+        logger.info(
+            "Recovered exact cancelled stage ACK without runtime rollback: run=%s stage=%s event=%s",
+            run_id,
+            intent.stage,
+            pending_event_id,
+        )
+        return True
+
     async def execute_stage(
         self: Any,
         run_id: str,

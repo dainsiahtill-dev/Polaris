@@ -15,7 +15,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Protocol
 
-from polaris.cells.events.fact_stream.public.contracts import QueryFactEventsV1, QueryFactStreamHeadV1
+from polaris.cells.events.fact_stream.public.contracts import (
+    FactStreamError,
+    QueryFactEventsV1,
+    QueryFactStreamHeadV1,
+)
 from polaris.cells.runtime.task_runtime.public.contracts import (
     TASK_RUNTIME_EXECUTION_FACT_SCHEMA_V1,
     TASK_RUNTIME_EXECUTION_SOURCE_V1 as TASK_RUNTIME_EXECUTION_SOURCE,
@@ -609,19 +613,14 @@ class FactorySettlementConsumer:
         barrier = self._query_barrier(source)
         evidence_refs = _barrier_evidence_refs(barrier)
         if barrier.workspace_fencing_token != source.workspace_fencing_token:
-            dead_letter = self._journal.append_dead_letter(
-                identity,
+            return self._append_dead_letter_decision(
+                source,
+                identity=identity,
                 source_fact_seq=source.event_seq,
                 reason_code="stale_workspace_fencing_token",
                 barrier_hash=barrier.barrier_hash,
                 evidence_refs=evidence_refs,
-                snapshot=journal_snapshot,
-            )
-            return self._terminal_decision(
-                source,
-                outcome=SettlementOutcome.DEAD_LETTER,
-                journal_event_id=dead_letter.event_id,
-                reason_code="stale_workspace_fencing_token",
+                journal_snapshot=journal_snapshot,
             )
         if not barrier.source_fact_visible or not barrier.closed:
             if (
@@ -657,19 +656,14 @@ class FactorySettlementConsumer:
                 reason_code="run_ledger_barrier_open",
             )
         if not barrier.release_allowed:
-            dead_letter = self._journal.append_dead_letter(
-                identity,
+            return self._append_dead_letter_decision(
+                source,
+                identity=identity,
                 source_fact_seq=source.event_seq,
                 reason_code="run_ledger_release_not_allowed",
                 barrier_hash=barrier.barrier_hash,
                 evidence_refs=evidence_refs,
-                snapshot=journal_snapshot,
-            )
-            return self._terminal_decision(
-                source,
-                outcome=SettlementOutcome.DEAD_LETTER,
-                journal_event_id=dead_letter.event_id,
-                reason_code="run_ledger_release_not_allowed",
+                journal_snapshot=journal_snapshot,
             )
 
         state = self._journal.state_for(identity, snapshot=journal_snapshot)
@@ -1102,6 +1096,58 @@ class FactorySettlementConsumer:
             settlement_key=settlement_key,
             snapshot=journal_snapshot,
             source_event=source_event,
+        )
+
+    def _append_dead_letter_decision(
+        self,
+        source: TaskRuntimeSettlementFact,
+        *,
+        identity: SettlementIdentity,
+        source_fact_seq: int,
+        reason_code: str,
+        barrier_hash: str,
+        evidence_refs: Sequence[str],
+        journal_snapshot: SettlementJournalReplaySnapshot | None,
+    ) -> SettlementDecision:
+        """Append one terminal dead letter or adopt its durable race winner.
+
+        Barrier audit evidence is observational and may grow while two wake
+        consumers race.  FactStream must continue rejecting a same-key,
+        different-payload append.  At this owner boundary, however, the exact
+        same settlement identity + terminal status + reason means the first
+        durable record already owns the decision.  Reload it and acknowledge
+        the source fact instead of redelivering forever.
+        """
+
+        normalized_reason = str(reason_code or "invalid_settlement_fact").strip()
+        try:
+            dead_letter = self._journal.append_dead_letter(
+                identity,
+                source_fact_seq=source_fact_seq,
+                reason_code=normalized_reason,
+                barrier_hash=barrier_hash,
+                evidence_refs=evidence_refs,
+                snapshot=journal_snapshot,
+            )
+            event_id = dead_letter.event_id
+        except FactStreamError as exc:
+            if exc.code != "idempotency_conflict":
+                raise
+            if journal_snapshot is not None:
+                self._journal.refresh_replay_snapshot(journal_snapshot)
+            existing = self._journal.state_for(identity, snapshot=journal_snapshot)
+            if (
+                existing is None
+                or existing.status is not SettlementJournalStatus.DEAD_LETTER
+                or str(existing.payload.get("reason_code") or "").strip() != normalized_reason
+            ):
+                raise
+            event_id = existing.event_id
+        return self._terminal_decision(
+            source,
+            outcome=SettlementOutcome.DEAD_LETTER,
+            journal_event_id=event_id,
+            reason_code=normalized_reason,
         )
 
     @staticmethod

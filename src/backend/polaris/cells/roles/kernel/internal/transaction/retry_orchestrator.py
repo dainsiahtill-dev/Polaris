@@ -92,7 +92,6 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
     RawLLMResponse,
     ToolBatch,
-    ToolEffectType,
     ToolExecutionMode,
     ToolInvocation,
     TurnDecision,
@@ -290,11 +289,22 @@ class RetryOrchestrator:
                 # Decoder-produced invocations always carry call_id, but bootstrap
                 # batches sourced from retry decisions may not — ToolBatch requires it.
                 item["call_id"] = f"{turn_id}_bootstrap_{invocation_index}"
-            if not item.get("execution_mode"):
-                item["execution_mode"] = ToolExecutionMode.READONLY_SERIAL
-            if not item.get("effect_type"):
-                item["effect_type"] = ToolEffectType.READ
-            normalized_invocations.append(cast("ToolInvocation", item))
+            # Bootstrap decisions can outlive a ToolSpecRegistry classification
+            # change.  Never replay their captured effect/mode hints as authority:
+            # rebuild the invocation from the raw tool name so ToolInvocation uses
+            # the current registry snapshot.  Live defect: read_file moved to
+            # READONLY_PARALLEL while the stale-edit bootstrap still carried the
+            # legacy READONLY_SERIAL hint, causing ToolBatch validation to abort
+            # before the recovery read could execute.
+            raw_tool_name = str(item.get("raw_tool_name") or item["tool_name"])
+            normalized_invocations.append(
+                ToolInvocation(
+                    call_id=item["call_id"],
+                    raw_tool_name=raw_tool_name,
+                    tool_name=str(item["tool_name"]),
+                    arguments=dict(item.get("arguments") or {}),
+                )
+            )
         if not normalized_invocations:
             return None
 
@@ -303,16 +313,16 @@ class RetryOrchestrator:
             parallel_readonly=[
                 inv
                 for inv in normalized_invocations
-                if inv.get("execution_mode") == ToolExecutionMode.READONLY_PARALLEL
+                if inv.execution_mode == ToolExecutionMode.READONLY_PARALLEL
             ],
             readonly_serial=[
-                inv for inv in normalized_invocations if inv.get("execution_mode") == ToolExecutionMode.READONLY_SERIAL
+                inv for inv in normalized_invocations if inv.execution_mode == ToolExecutionMode.READONLY_SERIAL
             ],
             serial_writes=[
-                inv for inv in normalized_invocations if inv.get("execution_mode") == ToolExecutionMode.WRITE_SERIAL
+                inv for inv in normalized_invocations if inv.execution_mode == ToolExecutionMode.WRITE_SERIAL
             ],
             async_receipts=[
-                inv for inv in normalized_invocations if inv.get("execution_mode") == ToolExecutionMode.ASYNC_RECEIPT
+                inv for inv in normalized_invocations if inv.execution_mode == ToolExecutionMode.ASYNC_RECEIPT
             ],
         )
         receipts = await self._build_tool_batch_runtime(workspace).execute_batch(

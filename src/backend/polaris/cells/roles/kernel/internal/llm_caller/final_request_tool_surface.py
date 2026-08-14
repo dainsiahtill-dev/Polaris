@@ -15,6 +15,10 @@ from typing import Any
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 _PROVIDER_TOOL_SURFACE_VIOLATION_PREFIX = "provider_tool_surface_violation:"
+_PROVIDER_TOOL_SURFACE_ERROR_WRAPPERS = (
+    "LLM call failed: ",
+    "single_batch_contract_violation_retry_failed: retry stream error: ",
+)
 
 
 def _canonical_tool_name(value: Any) -> str:
@@ -163,9 +167,25 @@ def assert_tool_in_final_request_surface(
 
 
 def is_provider_tool_surface_violation(value: Any) -> bool:
-    """Classify the fail-closed final-request tool-surface guard."""
+    """Classify the fail-closed guard through known transport wrappers.
 
-    return str(value or "").strip().startswith(_PROVIDER_TOOL_SURFACE_VIOLATION_PREFIX)
+    The invoker converts a guarded physical-response failure into its public
+    ``LLM call failed: ...`` envelope before DecisionCaller raises it back to
+    the transaction controller.  Unwrap only those platform-owned prefixes;
+    arbitrary text containing the marker must not acquire recovery authority.
+    """
+
+    rendered = str(value or "").strip()
+    while rendered:
+        if rendered.startswith(_PROVIDER_TOOL_SURFACE_VIOLATION_PREFIX):
+            return True
+        for wrapper in _PROVIDER_TOOL_SURFACE_ERROR_WRAPPERS:
+            if rendered.startswith(wrapper):
+                rendered = rendered[len(wrapper) :].lstrip()
+                break
+        else:
+            return False
+    return False
 
 
 __all__ = [
