@@ -1377,7 +1377,15 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
 
         existing = self._get_task_by_external_task_id(external_id)
         if isinstance(existing, dict):
-            return existing
+            existing_id = self.normalize_task_id(existing.get("id"))
+            board_task = self._board.get(existing_id) if existing_id is not None else None
+            existing_state = str(existing.get("execution_state") or existing.get("status") or "")
+            # Live L1-10 retry: fact overlay still had rematerialized id 11 after
+            # drain deleted the board file. Returning that ghost made
+            # claim_execution fail with task_not_found. Only reuse a non-terminal
+            # row that still has a raw TaskBoard entity.
+            if board_task is not None and not is_terminal_task_row_status(existing_state):
+                return existing
 
         safe_subject = str(subject or "").strip() or external_id
         safe_description = str(description or "").strip()

@@ -829,6 +829,45 @@ def test_get_task_prefers_rematerialized_pending_row_over_stale_terminal_sibling
     assert resolved["status"] == "pending"
 
 
+def test_ensure_task_row_recreates_board_file_when_fact_row_is_a_ghost(
+    tmp_path: Path,
+) -> None:
+    """Drain can delete TaskBoard files while fact overlay still names the id."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    external_id = "TASK-3"
+    created = service.ensure_task_row(
+        external_task_id=external_id,
+        subject="ghost after drain",
+        metadata={"external_task_id": external_id, "pm_task_id": external_id},
+    )
+    created_id = int(created["id"])
+    board_path = _task_file_path(workspace, created_id)
+    assert board_path.is_file()
+    board_path.unlink()
+    # Simulate Factory drain + process restart: facts remain, in-memory board gone.
+    service = _create_bootstrapped_task_runtime_service(workspace)
+
+    ensured = service.ensure_task_row(
+        external_task_id=external_id,
+        subject="recreated after drain",
+        metadata={"external_task_id": external_id, "pm_task_id": external_id},
+    )
+    ensured_id = int(ensured["id"])
+    assert _task_file_path(workspace, ensured_id).is_file()
+    claim = service.claim_execution(
+        ensured_id,
+        worker_id="director",
+        role_id="director",
+        run_id="factory-retry",
+        selection_source="test",
+        external_task_id=external_id,
+    )
+    assert claim.get("success") is True
+
+
 # ---------------------------------------------------------------------------
 # task_exists observable fact-overlay regression
 # ---------------------------------------------------------------------------
