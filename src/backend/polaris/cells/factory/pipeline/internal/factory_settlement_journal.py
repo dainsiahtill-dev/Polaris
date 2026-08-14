@@ -646,6 +646,7 @@ class FactorySettlementJournal:
             identity=identity,
             idempotency_suffix="applied",
             snapshot=snapshot,
+            retry_snapshot_drift=True,
         )
 
     def append_dead_letter(
@@ -674,6 +675,7 @@ class FactorySettlementJournal:
             identity=identity,
             idempotency_suffix=f"dead_letter:{normalized_reason}",
             snapshot=snapshot,
+            retry_snapshot_drift=True,
         )
 
     def append_invalid_dead_letter(
@@ -710,18 +712,44 @@ class FactorySettlementJournal:
             "barrier_hash": "",
             "evidence_refs": [],
         }
-        appended = self._fact_stream.append(
-            AppendFactEventCommandV1(
-                workspace=self._workspace,
-                stream=FACTORY_SETTLEMENT_STREAM,
-                event_type=SettlementJournalStatus.DEAD_LETTER.value,
-                payload=payload,
-                source=FACTORY_SETTLEMENT_SOURCE,
-                correlation_id=event_id,
-                idempotency_key=f"factory-settlement:{settlement_key}:dead_letter:{reason}",
-                expected_seq=(snapshot.current_seq + 1 if snapshot is not None else None),
+        def append_once(expected_seq: int | None) -> FactEventAppendedV1:
+            return self._fact_stream.append(
+                AppendFactEventCommandV1(
+                    workspace=self._workspace,
+                    stream=FACTORY_SETTLEMENT_STREAM,
+                    event_type=SettlementJournalStatus.DEAD_LETTER.value,
+                    payload=payload,
+                    source=FACTORY_SETTLEMENT_SOURCE,
+                    correlation_id=event_id,
+                    idempotency_key=f"factory-settlement:{settlement_key}:dead_letter:{reason}",
+                    expected_seq=expected_seq,
+                )
             )
-        )
+
+        try:
+            appended = append_once(snapshot.current_seq + 1 if snapshot is not None else None)
+        except FactStreamError as exc:
+            if exc.code != "expected_seq_drift" or snapshot is None:
+                raise
+            # Startup replay can revisit one invalid source fact after its exact
+            # dead letter is already durable.  FactStream correctly rejects the
+            # stale expected sequence even for the matching idempotency key.
+            # Reload once: reuse only an exact immutable payload, otherwise retry
+            # this new dead letter from the refreshed head.  Semantic conflicts
+            # and a second CAS race remain fail-closed.
+            self._reload_replay_snapshot_after_drift(snapshot)
+            existing = next(
+                (
+                    record
+                    for record in snapshot.records
+                    if record.status is SettlementJournalStatus.DEAD_LETTER
+                    and dict(record.payload) == payload
+                ),
+                None,
+            )
+            if existing is not None:
+                return append_once(existing.event_seq)
+            appended = append_once(snapshot.current_seq + 1)
         if snapshot is not None:
             snapshot.record_append(
                 status=SettlementJournalStatus.DEAD_LETTER,
@@ -884,23 +912,38 @@ class FactorySettlementJournal:
         idempotency_suffix: str,
         expected_seq: int | None = None,
         snapshot: SettlementJournalReplaySnapshot | None = None,
+        retry_snapshot_drift: bool = False,
     ) -> FactEventAppendedV1:
         effective_expected_seq = expected_seq
         if effective_expected_seq is None and snapshot is not None:
             effective_expected_seq = snapshot.current_seq + 1
-        appended = self._fact_stream.append(
-            AppendFactEventCommandV1(
-                workspace=self._workspace,
-                stream=FACTORY_SETTLEMENT_STREAM,
-                event_type=status.value,
-                payload=payload,
-                source=FACTORY_SETTLEMENT_SOURCE,
-                run_id=identity.factory_run_id,
-                correlation_id=identity.source_fact_event_id,
-                idempotency_key=(f"factory-settlement:{identity.digest}:{idempotency_suffix}"),
-                expected_seq=effective_expected_seq,
+
+        def append_once(current_expected_seq: int | None) -> FactEventAppendedV1:
+            return self._fact_stream.append(
+                AppendFactEventCommandV1(
+                    workspace=self._workspace,
+                    stream=FACTORY_SETTLEMENT_STREAM,
+                    event_type=status.value,
+                    payload=payload,
+                    source=FACTORY_SETTLEMENT_SOURCE,
+                    run_id=identity.factory_run_id,
+                    correlation_id=identity.source_fact_event_id,
+                    idempotency_key=(f"factory-settlement:{identity.digest}:{idempotency_suffix}"),
+                    expected_seq=current_expected_seq,
+                )
             )
-        )
+
+        try:
+            appended = append_once(effective_expected_seq)
+        except FactStreamError as exc:
+            if exc.code != "expected_seq_drift" or snapshot is None or not retry_snapshot_drift:
+                raise
+            # Another settlement identity may append after this replay opened
+            # its validated snapshot. Refresh exactly once, then retry the same
+            # idempotent terminal payload from the new durable head. A second
+            # race remains fail-closed and propagates as expected_seq_drift.
+            self._reload_replay_snapshot_after_drift(snapshot)
+            appended = append_once(snapshot.current_seq + 1)
         if snapshot is not None:
             snapshot.record_append(status=status, payload=payload, appended=appended)
         return appended
@@ -953,23 +996,72 @@ class FactorySettlementJournal:
                 checkpoint_chain=chain,
             )
         existing = self._checkpoint_at_offset(chain, next_source_offset=next_source_offset)
-        if existing is None or not self._checkpoint_matches_request(
-            record=existing.record,
-            source_stream=source_stream,
-            source_fact_event_id=source_fact_event_id,
-            source_fact_seq=source_fact_seq,
-            settlement_key=settlement_key,
-        ):
+        if existing is not None:
+            if not self._checkpoint_matches_request(
+                record=existing.record,
+                source_stream=source_stream,
+                source_fact_event_id=source_fact_event_id,
+                source_fact_seq=source_fact_seq,
+                settlement_key=settlement_key,
+            ):
+                raise SettlementJournalValidationError(
+                    "checkpoint CAS drift was not an idempotent concurrent append",
+                    code="checkpoint_cas_drift",
+                )
+            return self._append_checkpoint_event(
+                payload=existing.record.payload,
+                source_fact_event_id=source_fact_event_id,
+                settlement_key=settlement_key,
+                expected_seq=existing.record.event_seq,
+            )
+
+        # An unrelated settlement identity may advance the journal head between
+        # the replay snapshot and this checkpoint append.  No checkpoint owns
+        # the requested source offset, so this is a stale CAS head rather than
+        # an idempotency conflict.  Rebuild the checkpoint from the refreshed,
+        # validated journal and retry exactly once.  A second race still fails
+        # closed through the FactStream expected-sequence gate.
+        previous = chain[-1] if chain else None
+        expected_offset = (previous.next_source_offset if previous is not None else 0) + 1
+        if next_source_offset != expected_offset:
             raise SettlementJournalValidationError(
                 "checkpoint CAS drift was not an idempotent concurrent append",
                 code="checkpoint_cas_drift",
             )
-        return self._append_checkpoint_event(
-            payload=existing.record.payload,
+
+        expected_seq = current_seq + 1
+        payload = {
+            "schema_version": _JOURNAL_SCHEMA,
+            "workspace": self._workspace,
+            "source_stream": source_stream,
+            "source_fact_event_id": source_fact_event_id,
+            "source_fact_seq": source_fact_seq,
+            "next_source_offset": int(next_source_offset),
+            "settlement_key": settlement_key,
+            "previous_checkpoint_event_id": previous.record.event_id if previous else "",
+            "previous_checkpoint_event_seq": previous.record.event_seq if previous else 0,
+            "previous_next_source_offset": previous.next_source_offset if previous else 0,
+            "journal_expected_seq": expected_seq,
+            **self._checkpoint_decision_provenance(
+                records=records,
+                source_fact_event_id=source_fact_event_id,
+                source_fact_seq=source_fact_seq,
+                settlement_key=settlement_key,
+            ),
+        }
+        appended = self._append_checkpoint_event(
+            payload=payload,
             source_fact_event_id=source_fact_event_id,
             settlement_key=settlement_key,
-            expected_seq=existing.record.event_seq,
+            expected_seq=expected_seq,
         )
+        if snapshot is not None:
+            snapshot.record_append(
+                status=SettlementJournalStatus.CHECKPOINT,
+                payload=payload,
+                appended=appended,
+            )
+        return appended
 
     def _reload_replay_snapshot_after_drift(
         self,

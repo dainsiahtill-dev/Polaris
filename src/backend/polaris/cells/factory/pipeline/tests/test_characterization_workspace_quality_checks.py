@@ -893,7 +893,7 @@ class TestRunWorkspaceQualityChecks:
                 verifier_passed=False,
                 write_tool_evidence=True,
             )
-            == "regression"
+            == "progress"
         )
         assert (
             classify(
@@ -1195,6 +1195,127 @@ class TestRunWorkspaceQualityChecks:
             assert item["repair_summary"]["claimed_success_before_revalidation"] is True
             assert item["repair_summary"]["success"] is False
             assert item["repair_summary"]["success_authority"] == "post_repair_verifier"
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_mixed_nonprogress_classes_get_next_bounded_round(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Different non-progress classes must not masquerade as one repeated stall.
+
+        The regressing edit produces new structured diagnostics that the same
+        Director task can repair.  Keep the three-round hard ceiling, while
+        stopping only when the same non-progress class repeats consecutively.
+        """
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-mixed-nonprogress",
+            config=FactoryConfig(name="quality-mixed-nonprogress"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-14T00:00:00+00:00",
+        )
+        command_calls = 0
+        deterministic_calls = 0
+        llm_calls = 0
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            nonlocal command_calls
+            del timeout_seconds
+            command_calls += 1
+            if command_calls == 1:
+                return {
+                    "command": command,
+                    "exit_code": 1,
+                    "passed": False,
+                    "stdout_tail": "main_test.go:324: behavior assertion failed",
+                    "stderr_tail": "",
+                    "error": "",
+                }
+            if command_calls == 2:
+                return {
+                    "command": command,
+                    "exit_code": 1,
+                    "passed": False,
+                    "stdout_tail": "./main_test.go:46:9: undefined: osStdout",
+                    "stderr_tail": "",
+                    "error": "",
+                }
+            return {
+                "command": command,
+                "exit_code": 0,
+                "passed": True,
+                "stdout_tail": "ok\tascii-pet-terminal",
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def fake_deterministic_repairs(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal deterministic_calls
+            del kwargs
+            deterministic_calls += 1
+            if deterministic_calls == 1:
+                return [], {"attempted": True, "success": False, "write_tool_evidence": False}
+            return (
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {"file": "main_test.go", "operation": "modify"},
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "source_tools": ["deterministic_go_test_repair"],
+                    "tool_results": 1,
+                    "write_tool_evidence": True,
+                },
+            )
+
+        async def fake_llm_repairs(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal llm_calls
+            del kwargs
+            llm_calls += 1
+            return (
+                [{"tool": "edit_file", "success": False, "result": {"error_code": "deo_path_scope_denied"}}],
+                {
+                    "attempted": True,
+                    "success": False,
+                    "source_tools": ["director_materialization_quality_repair"],
+                    "tool_results": 1,
+                    "write_tool_evidence": False,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["go", "test", "./..."]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_deterministic_repairs", fake_deterministic_repairs)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", fake_llm_repairs)
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 3},
+        )
+
+        assert passed is True
+        assert command_calls == 3
+        assert deterministic_calls == 3
+        assert llm_calls == 1
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        repair = payload["repair"]
+        assert repair["success"] is True
+        assert repair["consecutive_stagnant_rounds"] == 0
+        assert repair["convergence_stop_reason"] == "verifier_passed"
+        assert [item["verifier_effect"] for item in repair["rounds"]] == [
+            "no_op",
+            "equal_count_swap",
+            "resolved",
+        ]
 
     @pytest.mark.asyncio
     async def test_workspace_quality_llm_repair_context_includes_ce_blueprint_and_catalog(

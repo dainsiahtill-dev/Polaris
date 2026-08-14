@@ -935,6 +935,106 @@ async def test_old_workspace_token_is_fenced_and_dead_lettered(tmp_path: Path) -
     assert dead_letter.payload["evidence_refs"]
 
 
+def test_terminal_append_refreshes_stale_snapshot_after_unrelated_writer(tmp_path: Path) -> None:
+    """A concurrent terminal append must not pin replay to an obsolete CAS head."""
+
+    workspace = _workspace(tmp_path)
+    fact_stream = FactStreamAdapter()
+    journal = FactorySettlementJournal(workspace=workspace, fact_stream=fact_stream)
+    snapshot = journal.open_replay_snapshot(
+        source_stream=TASK_RUNTIME_EXECUTION_STREAM,
+        source_events={},
+    )
+    first_identity = SettlementIdentity(
+        workspace=workspace,
+        source_fact_event_id="source-fact-first",
+        factory_run_id="factory-run-first",
+        workspace_fencing_token=7,
+    )
+    second_identity = SettlementIdentity(
+        workspace=workspace,
+        source_fact_event_id="source-fact-second",
+        factory_run_id="factory-run-second",
+        workspace_fencing_token=7,
+    )
+
+    first = journal.append_dead_letter(
+        first_identity,
+        source_fact_seq=1,
+        reason_code="stale_workspace_fencing_token",
+        barrier_hash="barrier-first",
+        evidence_refs=("evidence:first",),
+    )
+    second = journal.append_dead_letter(
+        second_identity,
+        source_fact_seq=2,
+        reason_code="stale_workspace_fencing_token",
+        barrier_hash="barrier-second",
+        evidence_refs=("evidence:second",),
+        snapshot=snapshot,
+    )
+
+    assert int(first.appended_seq or 0) == 1
+    assert int(second.appended_seq or 0) == 2
+    assert snapshot.current_seq == 2
+    assert snapshot.state_for(second_identity) is not None
+
+
+def test_invalid_dead_letter_reuses_exact_event_after_stale_expected_sequence(tmp_path: Path) -> None:
+    """Startup replay must reuse an already-durable invalid-source dead letter."""
+
+    workspace = _workspace(tmp_path)
+    fact_stream = FactStreamAdapter()
+    journal = FactorySettlementJournal(workspace=workspace, fact_stream=fact_stream)
+    invalid_source = {
+        "event_id": "invalid-source-event",
+        "event_type": "unsupported.task_runtime.fact",
+        "payload": {"unexpected": True},
+    }
+    first = journal.append_invalid_dead_letter(
+        source_event=invalid_source,
+        source_fact_event_id="invalid-source-event",
+        source_fact_seq=1,
+        reason_code="unsupported_source_schema",
+    )
+    stale_snapshot = journal.open_replay_snapshot(
+        source_stream=TASK_RUNTIME_EXECUTION_STREAM,
+        source_events={},
+    )
+    unrelated_identity = SettlementIdentity(
+        workspace=workspace,
+        source_fact_event_id="unrelated-source-fact",
+        factory_run_id="unrelated-factory-run",
+        workspace_fencing_token=9,
+    )
+    unrelated = journal.append_dead_letter(
+        unrelated_identity,
+        source_fact_seq=99,
+        reason_code="unrelated_terminal_decision",
+        barrier_hash="barrier-unrelated",
+        evidence_refs=("test:unrelated",),
+    )
+
+    recovered = journal.append_invalid_dead_letter(
+        source_event=invalid_source,
+        source_fact_event_id="invalid-source-event",
+        source_fact_seq=1,
+        reason_code="unsupported_source_schema",
+        snapshot=stale_snapshot,
+    )
+
+    assert first.appended_seq == 1
+    assert unrelated.appended_seq == 2
+    assert recovered.event_id == first.event_id
+    assert stale_snapshot.current_seq == 2
+    invalid_commands = [
+        command
+        for command in fact_stream.appends
+        if command.idempotency_key.endswith("dead_letter:unsupported_source_schema")
+    ]
+    assert [command.expected_seq for command in invalid_commands] == [None, 2, 1]
+
+
 @pytest.mark.asyncio
 async def test_dead_letter_idempotency_conflict_recovers_first_terminal_record(
     tmp_path: Path,
@@ -1393,6 +1493,65 @@ def test_concurrent_checkpoint_append_uses_single_cas_commit_and_is_idempotent(t
     assert len(checkpoints) == 1
     assert appended[0].event_id == appended[1].event_id == checkpoints[0]["event_id"]
     assert {command.expected_seq for command in checkpoint_commands} == {terminal.appended_seq + 1}
+
+
+def test_checkpoint_retries_after_unrelated_journal_writer_advances_stale_snapshot(tmp_path: Path) -> None:
+    """A different settlement identity may advance the head before checkpoint CAS."""
+
+    workspace = _workspace(tmp_path)
+    fact_stream = FactStreamAdapter()
+    source = _append_source_fact(fact_stream, workspace)
+    source_event = fact_stream.query(
+        QueryFactEventsV1(
+            workspace=workspace,
+            stream=TASK_RUNTIME_EXECUTION_STREAM,
+            limit=1,
+        )
+    ).events[0]
+    journal = FactorySettlementJournal(workspace=workspace, fact_stream=fact_stream)
+    identity, terminal = _append_terminal_dead_letter(
+        journal,
+        workspace=workspace,
+        source_fact_event_id=source.event_id,
+        source_fact_seq=1,
+    )
+    stale_snapshot = journal.open_replay_snapshot(
+        source_stream=TASK_RUNTIME_EXECUTION_STREAM,
+        source_events={1: source_event},
+    )
+    unrelated_identity = SettlementIdentity(
+        workspace=workspace,
+        source_fact_event_id="unrelated-source-fact",
+        factory_run_id="unrelated-factory-run",
+        workspace_fencing_token=9,
+    )
+    unrelated = journal.append_dead_letter(
+        unrelated_identity,
+        source_fact_seq=99,
+        reason_code="unrelated_terminal_decision",
+        barrier_hash="barrier-unrelated",
+        evidence_refs=("test:unrelated",),
+    )
+
+    checkpoint = journal.append_checkpoint(
+        source_stream=TASK_RUNTIME_EXECUTION_STREAM,
+        source_fact_event_id=source.event_id,
+        source_fact_seq=1,
+        next_source_offset=1,
+        settlement_key=identity.digest,
+        snapshot=stale_snapshot,
+        source_event=source_event,
+    )
+
+    assert terminal.appended_seq == 1
+    assert unrelated.appended_seq == 2
+    assert checkpoint.appended_seq == 3
+    assert stale_snapshot.current_seq == 3
+    assert stale_snapshot.latest_checkpoint_offset(source_stream=TASK_RUNTIME_EXECUTION_STREAM) == 1
+    checkpoint_commands = [
+        command for command in fact_stream.appends if command.event_type == SettlementJournalStatus.CHECKPOINT.value
+    ]
+    assert [command.expected_seq for command in checkpoint_commands] == [2, 3]
 
 
 @pytest.mark.parametrize(

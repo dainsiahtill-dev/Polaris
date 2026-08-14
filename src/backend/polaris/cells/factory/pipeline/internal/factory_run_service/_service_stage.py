@@ -64,18 +64,19 @@ from ._helpers import (
 
 
 class _FactoryRunServiceStageMixin:
-    async def _recover_cancelled_stage_commit_if_proven(self: Any, run_id: str) -> bool:
-        """Complete one exact stage commit cut by process cancellation.
+    async def _recover_stage_commit_if_proven(self: Any, run_id: str) -> bool:
+        """Complete one exact, fully materialized stage commit missing its ACK.
 
         This is not a generic quarantine bypass.  It is available only when the
-        reducer proves that ``cancelled_before_commit_ack`` names the current
-        pending stage event, and the immutable checkpoint carries the exact
-        last-stage pointer.  Any mismatch remains quarantined.
+        quarantine names the current pending stage event and both the mutable
+        run plus immutable checkpoint carry its exact last-stage pointer.  This
+        covers cancellation and transient strict-reread/commit-marker failures
+        after durable writes.  Missing or mismatched proof remains quarantined.
         """
 
         events = await self.store.get_authoritative_events(run_id)
         state = reduce_factory_stage_persistence(events, factory_run_id=run_id)
-        pending_event_id = state.recoverable_cancelled_stage_event_id
+        pending_event_id = state.recoverable_stage_event_id
         if not pending_event_id:
             return False
         stage_event = next(
@@ -105,15 +106,15 @@ class _FactoryRunServiceStageMixin:
         )
         if FactoryLastStageCommitV1.from_record(checkpoint_pointer, factory_run_id=run_id) != expected_pointer:
             raise FactoryStagePersistenceError(
-                "factory_cancelled_stage_recovery_pointer_mismatch",
-                "Cancelled stage checkpoint does not carry the exact pending commit pointer",
+                "factory_stage_recovery_pointer_mismatch",
+                "Stage checkpoint does not carry the exact pending commit pointer",
             )
 
         checkpoint_run = FactoryRun.from_dict(checkpoint)
         if checkpoint_run.id != run_id:
             raise FactoryStagePersistenceError(
-                "factory_cancelled_stage_recovery_run_mismatch",
-                "Cancelled stage checkpoint belongs to another run",
+                "factory_stage_recovery_run_mismatch",
+                "Stage checkpoint belongs to another run",
             )
 
         # The checkpoint is immutable proof of the interrupted stage
@@ -127,7 +128,7 @@ class _FactoryRunServiceStageMixin:
         current_run = FactoryRun.from_dict(current_run_snapshot)
         if current_run.id != run_id:
             raise FactoryStagePersistenceError(
-                "factory_cancelled_stage_recovery_current_run_mismatch",
+                "factory_stage_recovery_current_run_mismatch",
                 "Current mutable run snapshot belongs to another run",
             )
         current_metadata = current_run_snapshot.get("metadata")
@@ -136,7 +137,7 @@ class _FactoryRunServiceStageMixin:
         )
         if FactoryLastStageCommitV1.from_record(current_pointer, factory_run_id=run_id) != expected_pointer:
             raise FactoryStagePersistenceError(
-                "factory_cancelled_stage_recovery_current_pointer_mismatch",
+                "factory_stage_recovery_current_pointer_mismatch",
                 "Current mutable run no longer names the exact pending stage commit",
             )
         marker = await self._append_event(
@@ -165,16 +166,21 @@ class _FactoryRunServiceStageMixin:
         )
         if recovered_state.is_quarantined:
             raise FactoryStagePersistenceError(
-                "factory_cancelled_stage_recovery_not_converged",
+                "factory_stage_recovery_not_converged",
                 "Exact cancelled stage commit did not clear persistence quarantine",
             )
         logger.info(
-            "Recovered exact cancelled stage ACK without runtime rollback: run=%s stage=%s event=%s",
+            "Recovered exact stage ACK without runtime rollback: run=%s stage=%s event=%s",
             run_id,
             intent.stage,
             pending_event_id,
         )
         return True
+
+    async def _recover_cancelled_stage_commit_if_proven(self: Any, run_id: str) -> bool:
+        """Compatibility alias for callers/tests predating generic exact recovery."""
+
+        return await self._recover_stage_commit_if_proven(run_id)
 
     async def execute_stage(
         self: Any,

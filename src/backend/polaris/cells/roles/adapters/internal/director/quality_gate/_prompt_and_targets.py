@@ -217,8 +217,12 @@ def _repair_target_context_block(
         return ""
 
     blocks: list[str] = []
-    total_budget = 12000
-    per_file_budget = 4000
+    # One complete failing verifier is cheaper than repeated blind repair
+    # turns.  Diagnostic windows remain the default for product sources, but
+    # test files often keep fixtures/capture helpers far from the failing
+    # assertion.  Give one ordinary verifier enough room to expose both.
+    total_budget = 30000
+    per_file_budget = 20000
     used = 0
     for rel_path in repair_target_files[:6]:
         rel = _normalize_declared_task_path(rel_path)
@@ -238,11 +242,14 @@ def _repair_target_context_block(
             artifact_quality_errors=artifact_quality_errors,
             rel_path=rel,
         )
-        excerpt = _diagnostic_centered_excerpt(
-            content=content,
-            line_numbers=diagnostic_lines,
-            budget=budget,
-        )
+        if diagnostic_lines and _is_verifier_source_path(rel) and len(content) <= budget:
+            excerpt = content
+        else:
+            excerpt = _diagnostic_centered_excerpt(
+                content=content,
+                line_numbers=diagnostic_lines,
+                budget=budget,
+            )
         if not excerpt:
             excerpt = content[:budget]
         used += len(excerpt)
@@ -362,7 +369,12 @@ def _is_verifier_source_path(rel_path: str) -> bool:
     return bool(
         lowered_parts.intersection({"test", "tests", "__tests__", "spec", "specs"})
         or lowered_name.startswith("test_")
-        or lowered_name.endswith("_test.py")
+        # Language-neutral basename convention used by Go, Rust, C/C++, Java,
+        # and several script ecosystems.  Restricting this to ``_test.py``
+        # made ``main_test.go`` look like product source, so the repair prompt
+        # projected only a narrow assertion window and hid capture helpers at
+        # the end of the same verifier file.
+        or "_test." in lowered_name
         or ".test." in lowered_name
         or ".spec." in lowered_name
     )

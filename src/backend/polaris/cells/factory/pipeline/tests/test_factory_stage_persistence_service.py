@@ -32,6 +32,7 @@ from polaris.cells.factory.pipeline.internal.factory_stage_persistence import (
     build_stage_persistence_intent,
     reduce_factory_stage_persistence,
 )
+from polaris.cells.factory.pipeline.internal.factory_store import FactoryRunSnapshotError
 
 
 class _SuccessExecutor:
@@ -286,6 +287,43 @@ async def test_retry_recovers_exact_cancelled_stage_commit_before_reentry(tmp_pa
         if i > quarantine_index and event["type"] == "factory_stage_persistence_committed"
     )
     assert recovery_marker_index > quarantine_index
+
+
+@pytest.mark.asyncio
+async def test_retry_recovers_exact_checkpoint_reread_race_without_rerunning_stage(tmp_path: Path) -> None:
+    """Transient strict reread drift after save+checkpoint must not brick run."""
+
+    service, run = await _running_service(tmp_path)
+    original_read = service.store.read_strict_run_snapshot
+    failed_once = False
+
+    async def fail_first_post_checkpoint_reread(run_id: str) -> dict[str, Any]:
+        nonlocal failed_once
+        snapshot = await original_read(run_id)
+        metadata = snapshot.get("metadata")
+        if not failed_once and isinstance(metadata, dict) and metadata.get("last_factory_stage_commit"):
+            failed_once = True
+            raise FactoryRunSnapshotError(
+                "factory_run_snapshot_guard_failed",
+                "Factory snapshot failed descriptor-safe bounded reread",
+            )
+        return snapshot
+
+    service.store.read_strict_run_snapshot = fail_first_post_checkpoint_reread  # type: ignore[method-assign]
+
+    with pytest.raises(FactoryRunSnapshotError, match="factory_run_snapshot_guard_failed"):
+        await service.execute_stage(run.id, "docs_generation")
+
+    events_before = await service.store.get_authoritative_events(run.id)
+    assert events_before[-1]["type"] == "factory_run_quarantined"
+    assert events_before[-1]["failed_step"] == "checkpoint"
+
+    assert await service._recover_stage_commit_if_proven(run.id) is True
+
+    events_after = await service.store.get_authoritative_events(run.id)
+    assert events_after[-1]["type"] == "factory_stage_persistence_committed"
+    state = reduce_factory_stage_persistence(events_after, factory_run_id=run.id)
+    assert state.is_quarantined is False
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,7 @@
 {
   "schema_version": "polaris.platform_defect.v1",
   "defect_id": "P0-20260814-L104-QUALITY-REPAIR-TRANSACTION",
-  "status": "PLATFORM_FIX_VERIFIED_UNIT_LIVE_PENDING",
+  "status": "CLOSED_LIVE_COMPLETED",
   "severity": "P0",
   "project_probe": "L1-04",
   "factory_run_id": "factory_87c10610b465",
@@ -129,6 +129,18 @@
     {
       "owner": "kernelone ToolSpecRegistry provider schema",
       "cause": "edit_file declared only file as required and did not encode that blocks, search+replace, or start_line+end_line+content must exist; the forced Anthropic-compatible request therefore admitted a file-only native call that could never mutate. The alternate direct Anthropic schema projection also removed required entirely"
+    },
+    {
+      "owner": "roles.adapters Director quality prompt",
+      "cause": "verifier-source detection recognized Python _test.py but not Go _test.go, so main_test.go did not receive the full-file verifier context budget during repair"
+    },
+    {
+      "owner": "factory workspace-quality convergence",
+      "cause": "no-op, denied write, equal-count diagnostic swap, and regression were accumulated as one undifferentiated consecutive-stagnation counter, prematurely stopping bounded same-task repair when the failure mode changed"
+    },
+    {
+      "owner": "factory workspace-quality effect classifier",
+      "cause": "diagnostic progress required strict set inclusion; authoritative verifier output changing from two failures to one failure was mislabeled regression because duration/footer text changed"
     }
   ],
   "fixes": [
@@ -239,6 +251,18 @@
     {
       "file": "polaris/kernelone/tool_execution/tool_spec_registry.py",
       "change": "preserve required in Anthropic-native schemas and project edit_file anyOf constraints so file-only calls are invalid at the physical provider boundary"
+    },
+    {
+      "file": "polaris/cells/roles/adapters/internal/director/quality_gate/_prompt_and_targets.py",
+      "change": "treat language-neutral _test.* files as verifier sources and include the full verifier source whenever it fits the bounded 30 KB repair context"
+    },
+    {
+      "file": "polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "change": "count only repeated identical non-progress effects toward the two-round circuit breaker; reset when the failure class changes while preserving the three-round bound"
+    },
+    {
+      "file": "polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "change": "treat a smaller authoritative diagnostic set as bounded repair progress even when diagnostic framing changes; verifier pass remains the only success authority"
     }
   ],
   "verification": {
@@ -257,12 +281,15 @@
     "cancelled_stage_commit_recovery_tests": "28/28 reducer tests plus 5/5 focused service tests passed; exact cancellation cut recovers, publish failure remains non-authoritative, and unrelated persistence quarantine remains fail-closed",
     "mypy": "all 5 changed no-effect convergence source files passed",
     "ruff": "all 8 changed no-effect convergence source/test files passed and were formatted",
-    "known_unrelated_lint_debt": "characterization test split currently has pre-existing duplicate/unused imports; runtime tests execute successfully"
+    "known_unrelated_lint_debt": "characterization test split currently has pre-existing duplicate/unused imports; runtime tests execute successfully",
+    "final_convergence_regression": "21/21 workspace-quality characterization tests passed; focused effect tests 2/2; changed production files pass Ruff and Mypy",
+    "live_same_run": "factory_87c10610b465 completed without rerunning PM, Chief Engineer, or Director dispatch; quality gate score 100; go test ./... exit 0; go run . exit 0",
+    "live_mutation_receipt": "main_test.go before=3a1584efd0ff6caa after=8480286ae31c9658; verifier_effect=resolved; diagnostics 1 -> 0"
   },
   "live_acceptance": {
     "required": true,
     "started_at": "2026-08-14T09:30:00Z",
-    "factory_run_status": "first same-run QA retry failed after four correctly rejected director_write_no_effect calls; ToolSpec effect-mode fix verified and second same-run QA retry pending",
+    "factory_run_status": "completed; quality_gate passed with score 100 and task_boundary_completed_verified=True",
     "retry_scope": "same L1-04 quality/Director owner only",
     "forbidden": [
       "restart PM",
@@ -270,6 +297,8 @@
       "modify generated project manually",
       "weaken Go verifier"
     ],
-    "success": "affected verifier passes, TaskRuntime settles after verifier, settlement journal has no idempotency replay storm, and Factory reaches COMPLETED_VERIFIED"
+    "success": "met: affected verifier passes, TaskRuntime settles after verifier, settlement journal has no idempotency replay storm, exact Factory run is completed, and all TASK-1/TASK-2/TASK-3 boundaries project completed_verified",
+    "completed_at": "2026-08-14T11:14:53Z",
+    "residual_observation": "workspace-wide ledger aggregation still retains the old bench-run real_run_gate failure under run_id 8ce91e5364dc; exact factory_87c10610b465 projection is green. This is historical test-harness projection, not a current delivery failure."
   }
 }

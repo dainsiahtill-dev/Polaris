@@ -1599,15 +1599,22 @@ class _Mixin02:
             return "no_op"
         before = set(before_signature)
         after = set(after_signature)
-        if after < before:
-            return "progress"
         if after == before:
             return "stagnant"
-        if after - before:
-            if len(after) == len(before):
-                return "equal_count_swap"
-            return "regression"
-        return "stagnant"
+        # A smaller authoritative diagnostic set is measurable progress even
+        # when the remaining diagnostic text is not a strict subset.  Real
+        # verifier output often changes framing after an earlier barrier is
+        # cleared (for example, a Go compile failure becomes two runnable test
+        # failures, then one test failure whose package footer/duration also
+        # changed).  Requiring set inclusion mislabeled that 2 -> 1 reduction
+        # as a regression and prematurely tripped the two-round circuit
+        # breaker.  This classification never grants success: the verifier
+        # still owns success, and the bounded repair budget still applies.
+        if len(after) < len(before):
+            return "progress"
+        if len(after) == len(before):
+            return "equal_count_swap"
+        return "regression"
 
     def _workspace_quality_repair_issue_payloads(
         self,

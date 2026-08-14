@@ -451,7 +451,7 @@ class _FactoryRunServiceLifecycleMixin:
             run = await self.store.get_run(run_id)
             if run is None:
                 raise ValueError(f"Run {run_id} not found")
-            await self._recover_cancelled_stage_commit_if_proven(run_id)
+            await self._recover_stage_commit_if_proven(run_id)
             run = await self.store.get_run(run_id)
             if run is None:
                 raise ValueError(f"Run {run_id} not found after cancelled stage recovery")
@@ -651,7 +651,7 @@ class _FactoryRunServiceLifecycleMixin:
             run = await self.store.get_run(run_id)
             if run is None:
                 raise ValueError(f"Run {run_id} not found")
-            await self._recover_cancelled_stage_commit_if_proven(run_id)
+            await self._recover_stage_commit_if_proven(run_id)
             run = await self.store.get_run(run_id)
             if run is None:
                 raise ValueError(f"Run {run_id} not found after cancelled stage recovery")

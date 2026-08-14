@@ -459,6 +459,7 @@ class FactoryStagePersistenceStateV1:
     pending_stage_event_id: str | None
     quarantine_event_id: str | None
     recoverable_cancelled_stage_event_id: str | None
+    recoverable_stage_event_id: str | None = None
 
     @property
     def is_quarantined(self) -> bool:
@@ -499,6 +500,7 @@ def reduce_factory_stage_persistence(
     pending: tuple[FactoryStagePersistenceIntentV1, str, int, str] | None = None
     quarantine_event_id: str | None = None
     recoverable_cancelled_stage_event_id: str | None = None
+    recoverable_stage_event_id: str | None = None
     for event in events:
         if not isinstance(event, Mapping):
             raise _fail("event_invalid", "Factory event must be an object")
@@ -524,12 +526,14 @@ def reduce_factory_stage_persistence(
             ):
                 raise _fail("marker_stage_event_mismatch", "Commit marker does not ACK the exact pending stage event")
             commits.append(marker)
-            if recoverable_cancelled_stage_event_id == event_id:
-                # The exact durable marker is the missing ACK for a cancellation
-                # cut. Once all marker fields validate against the pending event,
-                # the earlier fail-closed quarantine no longer represents drift.
+            if recoverable_stage_event_id == event_id:
+                # Exact durable marker closes only a quarantine that named this
+                # pending transaction.  This covers cancellation and the narrow
+                # post-write checkpoint/marker window where run + immutable
+                # checkpoint can later prove the commit without rerunning work.
                 quarantine_event_id = None
                 recoverable_cancelled_stage_event_id = None
+                recoverable_stage_event_id = None
             pending = None
         elif event_type == "factory_run_quarantined":
             quarantine = _payload_object(event, _QUARANTINE_PAYLOAD_FIELDS, code="quarantine_fields_invalid")
@@ -550,7 +554,11 @@ def reduce_factory_stage_persistence(
                     "Quarantine error fields exceed their exact UTF-8 bounds",
                 )
             quarantine_event_id = _text(event.get("event_id"), field="event_id")
-            if quarantine.get("failed_step") == "cancelled_before_commit_ack" and pending is not None:
+            if quarantine.get("failed_step") in {
+                "cancelled_before_commit_ack",
+                "checkpoint",
+                "commit_marker",
+            } and pending is not None:
                 intent, event_id, sequence, event_hash = pending
                 if (
                     quarantine.get("stage_completed_event_id") == event_id
@@ -559,12 +567,15 @@ def reduce_factory_stage_persistence(
                     and quarantine.get("persistence_intent_sha256") == intent.persistence_intent_sha256
                     and quarantine.get("stage") == intent.stage
                 ):
-                    recoverable_cancelled_stage_event_id = event_id
+                    recoverable_stage_event_id = event_id
+                    if quarantine.get("failed_step") == "cancelled_before_commit_ack":
+                        recoverable_cancelled_stage_event_id = event_id
     return FactoryStagePersistenceStateV1(
         commits=tuple(commits),
         pending_stage_event_id=pending[1] if pending is not None else None,
         quarantine_event_id=quarantine_event_id,
         recoverable_cancelled_stage_event_id=recoverable_cancelled_stage_event_id,
+        recoverable_stage_event_id=recoverable_stage_event_id,
     )
 
 

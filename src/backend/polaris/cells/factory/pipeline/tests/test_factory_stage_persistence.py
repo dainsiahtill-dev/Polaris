@@ -250,6 +250,43 @@ def test_explicit_quarantine_remains_fail_closed_after_commit() -> None:
     assert reduced.quarantine_event_id == "evt_quarantine"
 
 
+def test_matching_checkpoint_quarantine_can_be_closed_only_by_exact_later_marker() -> None:
+    intent = _intent()
+    quarantine = {
+        "type": "factory_run_quarantined",
+        "schema_version": "factory.run_quarantined.v1",
+        "run_id": RUN_ID,
+        "event_id": "evt_quarantine",
+        "timestamp": "2026-07-19T01:02:05Z",
+        "chain_sequence": 3,
+        "chain_event_hash": HASH_C,
+        "chain_previous_hash": HASH_B,
+        "factory_run_id": RUN_ID,
+        "stage": STAGE,
+        "failed_step": "checkpoint",
+        "stage_completed_event_id": "evt_stage",
+        "stage_completed_chain_sequence": 2,
+        "stage_completed_chain_event_hash": HASH_A,
+        "persistence_intent_sha256": intent.persistence_intent_sha256,
+        "error_type": "FactoryRunSnapshotError",
+        "error_message": "guarded snapshot leaf changed during the read",
+    }
+
+    quarantined = reduce_factory_stage_persistence(
+        [_stage_event(intent), quarantine],
+        factory_run_id=RUN_ID,
+    )
+    assert quarantined.is_quarantined is True
+    assert quarantined.recoverable_stage_event_id == "evt_stage"
+
+    recovered = reduce_factory_stage_persistence(
+        [_stage_event(intent), quarantine, _marker(intent)],
+        factory_run_id=RUN_ID,
+    )
+    assert recovered.is_quarantined is False
+    assert recovered.recoverable_stage_event_id is None
+
+
 def test_current_pointer_must_match_latest_commit() -> None:
     intent = _intent()
     commit = FactoryStagePersistenceCommittedV1.from_record(_marker(intent))

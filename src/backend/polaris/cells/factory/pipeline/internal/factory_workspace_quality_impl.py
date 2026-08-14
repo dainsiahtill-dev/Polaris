@@ -1177,6 +1177,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
         task_boundary_triage_required = False
         task_boundary_triage_summary: dict[str, Any] = {}
         consecutive_stagnant_rounds = 0
+        last_nonprogress_effect = ""
         convergence_stop_reason = ""
 
         def current_workspace_repair_summary(
@@ -1472,7 +1473,17 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 )
                 if settled_attempt is not None and isinstance(projected_summary_raw, dict):
                     projected_summary_raw["task_runtime_repair_attempt"] = settled_attempt
-                consecutive_stagnant_rounds += 1
+                if last_nonprogress_effect == "no_op":
+                    consecutive_stagnant_rounds += 1
+                else:
+                    # Different non-progress classes are different evidence.
+                    # A denied/no-effect mutation followed by a real edit that
+                    # introduces a compiler diagnostic is not two attempts at
+                    # the same failed strategy.  Preserve the cycle breaker,
+                    # but allow the same Director task to consume the newly
+                    # structured verifier feedback on the next bounded round.
+                    consecutive_stagnant_rounds = 1
+                    last_nonprogress_effect = "no_op"
                 if consecutive_stagnant_rounds >= 2:
                     convergence_stop_reason = "two_consecutive_no_mutation_repairs"
                     break
@@ -1578,8 +1589,13 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     projected_summary["task_runtime_repair_attempt"] = settled_attempt
             if repair_effect in {"resolved", "progress"}:
                 consecutive_stagnant_rounds = 0
+                last_nonprogress_effect = ""
             else:
-                consecutive_stagnant_rounds += 1
+                if repair_effect == last_nonprogress_effect:
+                    consecutive_stagnant_rounds += 1
+                else:
+                    consecutive_stagnant_rounds = 1
+                    last_nonprogress_effect = repair_effect
             if verifier_passed:
                 convergence_stop_reason = "verifier_passed"
                 break
