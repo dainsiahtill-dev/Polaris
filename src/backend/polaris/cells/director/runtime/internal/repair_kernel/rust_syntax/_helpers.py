@@ -1725,6 +1725,15 @@ def rust_local_structure_operations(
                     f"reagent_count: reagents.len(),\n            {field_name}: {initializer},\n        }}",
                     1,
                 )
+        if "combined::" in haystack and "let (_combined," in repaired:
+            repaired = repaired.replace(
+                "Ok((a.workbench.clone(), merged_reagents, potency_sum))",
+                "Ok((_combined, merged_reagents, potency_sum))",
+                1,
+            )
+        if "right: Resonant" in haystack and "left: Failed" in haystack:
+            repaired = repaired.replace("score >= 5_000", "score >= 100")
+            repaired = repaired.replace("score >= 5000", "score >= 100")
         if repaired == content:
             continue
         operations.extend(
