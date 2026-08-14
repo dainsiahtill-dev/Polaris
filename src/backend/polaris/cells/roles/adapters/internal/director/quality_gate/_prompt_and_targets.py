@@ -242,7 +242,14 @@ def _repair_target_context_block(
             artifact_quality_errors=artifact_quality_errors,
             rel_path=rel,
         )
-        if diagnostic_lines and _is_verifier_source_path(rel) and len(content) <= budget:
+        if diagnostic_lines and len(content) <= budget:
+            # Full body for any budget-fitting target with diagnostic anchors.
+            # The former verifier-source-only gate hid the implementation from
+            # product files that carry inline unit tests (Rust ``#[cfg(test)]``,
+            # same-file Go tests): the assertion window pointed at the failing
+            # test while the legal fix lived in the distant product function —
+            # live L1-05 circled that fix site for three real edits without
+            # ever seeing it.  The per-file/total budgets still bound cost.
             excerpt = content
         else:
             excerpt = _diagnostic_centered_excerpt(

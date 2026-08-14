@@ -849,6 +849,48 @@ def test_explicit_quality_repair_prefers_failed_test_named_artifact(tmp_path: An
     assert targets[0] == "README.md"
 
 
+def test_explicit_quality_repair_extracts_rust_compile_target_files(tmp_path: Any) -> None:
+    """A pure Rust cargo compile failure must name its owning source files.
+
+    Live L1-05 regression (factory_d842dba2e017): E0432 on ``src/lib.rs`` kept
+    ``repair_target_files`` empty because no extractor recognised rustc/cargo
+    text, so the forced-``edit_file`` branch never armed, the model spent two
+    read-only rounds, and the gate tripped stagnation.
+    """
+
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _explicit_artifact_quality_repair_target_files,
+    )
+
+    engine_dir = tmp_path / "src" / "engine"
+    engine_dir.mkdir(parents=True)
+    (tmp_path / "Cargo.toml").write_text("[package]\nname = \"kitchen\"\n", encoding="utf-8")
+    (tmp_path / "src" / "lib.rs").write_text("pub mod engine;\n", encoding="utf-8")
+    (engine_dir / "mod.rs").write_text("pub mod flavor_rules;\n", encoding="utf-8")
+    (engine_dir / "flavor_rules.rs").write_text("pub struct PaletteFixture;\n", encoding="utf-8")
+    error = (
+        "Workspace validation failed: error[E0432]: unresolved imports "
+        "`engine::recipe_from_ingredients`, `engine::RecipeDraft`\n"
+        "  --> src/lib.rs:23:50\n"
+        "   |\n"
+        "23 |     palette_for_flavor, palette_name_for_flavor, recipe_from_ingredients,\n"
+        "   |                                                  ^^^^^^^^^^^^^^^^^^^^^^^ no `recipe_from_ingredients` in `engine`\n"
+        "24 |     CompatibilityReport, PaletteSuggestion, RecipeDraft,\n"
+        "   |                                             ^^^^^^^^^^^ no `RecipeDraft` in `engine`\n"
+        "; cargo test --quiet: error[E0432]: unresolved imports\n"
+        "  --> src/lib.rs:23:50\n"
+    )
+
+    targets = _explicit_artifact_quality_repair_target_files(
+        artifact_quality_errors=[error],
+        changed_files=["Cargo.toml", "src/lib.rs", "src/engine/mod.rs", "src/engine/flavor_rules.rs"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "src/lib.rs" in targets
+    assert all(target.endswith(".rs") for target in targets)
+
+
 def test_javascript_test_repair_expands_barrel_import_to_owner_modules(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.quality_gate import (
         _explicit_artifact_quality_repair_target_files,

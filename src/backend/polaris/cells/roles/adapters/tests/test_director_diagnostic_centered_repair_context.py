@@ -27,6 +27,48 @@ def test_quality_repair_message_includes_head_and_diagnostic_line(tmp_path: Path
     assert "// line 1: ordinary source" in message
 
 
+def test_quality_repair_message_embeds_full_product_source_with_inline_unit_test(
+    tmp_path: Path,
+) -> None:
+    """A product file whose inline unit test fails must show its implementation.
+
+    Live L1-05 (factory_d842dba2e017): ``src/engine/flavor_rules.rs`` carries
+    ``#[cfg(test)]`` tests; the failing assertion points at line 452 while the
+    legal fix lives in ``compatibility_report`` around line 300.  The old
+    verifier-source-only full-body gate handed the model a 40-line head plus
+    the assertion window — never the aggregation logic — so three real edits
+    circled the fix site without ever seeing it.  Any budget-fitting target
+    with diagnostic anchors gets its complete body.
+    """
+
+    source = tmp_path / "src" / "engine" / "flavor_rules.rs"
+    source.parent.mkdir(parents=True)
+    lines = [f"// ordinary implementation line {index}" for index in range(1, 474)]
+    lines[300 - 1] = "pub fn compatibility_report(target: FlavorProfile, ingredients: &[Ingredient]) -> Report {"
+    lines[315 - 1] = "let mean_deviation: f32 = diffs.iter().sum::<f32>() / 6.0;"
+    lines[452 - 1] = "assert_eq!(report.verdict, Verdict::Conflicted);"
+    source.write_text("\n".join(lines), encoding="utf-8")
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair the failing compatibility verdict.",
+        artifact_quality_errors=[
+            "cargo test --quiet: running 13 tests\n"
+            "engine::flavor_rules::tests::conflicted_ingredients_score_low --- FAILED\n"
+            "thread panicked at src/engine/flavor_rules.rs:452:9:\n"
+            "assertion `left == right` failed\n"
+            "  left: Balanced\n"
+            " right: Conflicted"
+        ],
+        changed_files=["src/engine/flavor_rules.rs"],
+        repair_target_files=["src/engine/flavor_rules.rs"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "pub fn compatibility_report" in message
+    assert "let mean_deviation: f32 = diffs.iter().sum::<f32>() / 6.0;" in message
+    assert "assert_eq!(report.verdict, Verdict::Conflicted);" in message
+
+
 def test_quality_repair_message_keeps_head_fallback_without_matching_diagnostic(tmp_path: Path) -> None:
     source = tmp_path / "main_test.go"
     source.write_text("head contract\n" + ("x" * 6000), encoding="utf-8")

@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -100,6 +101,22 @@ from ._helpers import (
 from ._pkg_proxy import pkg
 
 logger = logging.getLogger("polaris.cells.factory.pipeline.internal.factory_stage_executor")
+
+# Structured compiler error codes used by the workspace-quality repair-effect
+# classifier: rustc ``error[E0432]`` and TypeScript ``TS2551``.  One scan
+# yields a bare, casefoldable code token per diagnostic.
+_COMPILER_ERROR_CODE_RES = re.compile(
+    r"error\s*\[\s*(?P<rust>E\d{3,5})\s*\]|(?<![\w])TS(?P<ts>\d{4})(?![\w])",
+    re.IGNORECASE,
+)
+
+
+def _compiler_error_code_from_match(match: re.Match[str]) -> str:
+    rust_code = match.group("rust")
+    if rust_code:
+        return rust_code.lower()
+    ts_code = match.group("ts")
+    return f"ts{ts_code.lower()}" if ts_code else ""
 
 
 class _Mixin02:
@@ -1684,7 +1701,23 @@ class _Mixin02:
         return tuple(sorted(normalized))
 
     @staticmethod
+    def _workspace_quality_diagnostic_error_codes(signature: Iterable[str]) -> set[str]:
+        """Extract structured compiler error codes from a diagnostic signature.
+
+        Only explicit code anchors count (rustc ``error[E0432]``, TypeScript
+        ``TS2551``); plain prose diagnostics return an empty set so callers
+        stay conservative. Codes are casefolded for comparison.
+        """
+
+        codes: set[str] = set()
+        for item in signature:
+            text = str(item or "")
+            codes.update(_compiler_error_code_from_match(match) for match in _COMPILER_ERROR_CODE_RES.finditer(text))
+        return codes
+
+    @classmethod
     def _workspace_quality_repair_effect(
+        cls,
         *,
         before_signature: tuple[str, ...],
         after_signature: tuple[str, ...],
@@ -1713,6 +1746,30 @@ class _Mixin02:
         if len(after) < len(before):
             return "progress"
         if len(after) == len(before):
+            # rustc compiles in phases (resolution -> trait/borrow-check ->
+            # codegen) and stops at the first hard error, so an edit that
+            # resolves the reported code unmasks the next phase's diagnostic:
+            # E0432 -> E0277 -> E0507, often at the same line.  Live L1-05
+            # rounds 1-2 each carried fingerprint-changing edits yet both were
+            # miscounted as equivalent swaps and the loop stopped with
+            # compilation strictly advanced.  Disjoint rustc code sets on both
+            # sides mean every previously reported code was resolved; the
+            # caller's oscillation guard keeps A -> B -> A ping-pong
+            # stagnating.  tsc reports all type errors in a single pass, so
+            # disjoint TS codes stay an equal-count swap (churn), preserving
+            # the TS7015 -> TS2551 stagnation characterization.
+            before_codes = cls._workspace_quality_diagnostic_error_codes(before_signature)
+            after_codes = cls._workspace_quality_diagnostic_error_codes(after_signature)
+            before_rust = {code for code in before_codes if code.startswith("e")}
+            after_rust = {code for code in after_codes if code.startswith("e")}
+            if (
+                before_rust
+                and after_rust
+                and len(before_rust) == len(before_codes)
+                and len(after_rust) == len(after_codes)
+                and not (before_rust & after_rust)
+            ):
+                return "forward_unmask"
             return "equal_count_swap"
         return "regression"
 

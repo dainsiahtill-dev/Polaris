@@ -1175,6 +1175,17 @@ _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS: tuple[str, ...] = (
     "traceback (most recent call last)",
     "ruff failed",
     "format failed",
+    # rustc/cargo diagnostics: ``error[E0432]``/``could not compile`` text must
+    # pass the entry gate or no Rust compile failure ever yields a repair
+    # target (live L1-05: E0432 on src/lib.rs left repair_target_files empty,
+    # the forced-edit branch never armed, and two read-only rounds tripped
+    # stagnation). ``error[e`` is rustc-code specific after lowering.
+    "error[e",
+    "could not compile",
+    "rustc",
+    "cargo check",
+    "cargo build",
+    "cargo test",
 )
 
 
@@ -1220,6 +1231,16 @@ def _explicit_artifact_quality_repair_target_files(
             for rel in failed_title_targets
             if not _is_test_like_python_path(rel) and not _is_test_like_javascript_path(rel)
         )
+        if _looks_like_embedded_rust_compile_failure(text):
+            # Pure Rust cargo/rustc failures previously reached no extractor:
+            # the Rust helper was only wired behind the Python runtime-smoke
+            # gate, so an existing-file E0432 produced zero repair targets and
+            # the quality-repair turn stayed read-only. Route rustc diagnostics
+            # through the shared extractor here; it keeps line-anchored .rs
+            # paths only and still defers to task write-scope partitioning.
+            rust_targets = _embedded_rust_compile_repair_target_files(text, workspace_root)
+            candidates.extend(rust_targets)
+            priority_candidates.extend(rust_targets)
         if _looks_like_javascript_module_system_failure(text) and "package.json" in changed_source_set:
             candidates.append("package.json")
             priority_candidates.append("package.json")

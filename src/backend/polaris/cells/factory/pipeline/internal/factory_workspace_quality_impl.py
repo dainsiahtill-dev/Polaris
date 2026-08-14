@@ -32,7 +32,11 @@ from .factory_workspace_quality_evidence import _dedupe_workspace_repair_paths
 # the impl is self-contained without importing the executor module).
 _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS = FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
 _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS = 5.0
-_WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 3
+# Phase-gated compilers (rustc/tsc) unmask one diagnostic class per repair
+# round (E0432 -> E0277 -> E0507, live L1-05), so the same-run loop needs
+# headroom beyond the two-round stagnation breaker while staying bounded by
+# the per-round deadline checks and the oscillation-aware stagnation counter.
+_WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 5
 _WORKSPACE_QUALITY_REPAIR_MIN_LLM_START_BUDGET_SECONDS = FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
 _WORKSPACE_QUALITY_REPAIR_LEASE_TTL_SECONDS = 300
 _WORKSPACE_QUALITY_REPAIR_HEARTBEAT_INTERVAL_SECONDS = 30.0
@@ -226,9 +230,7 @@ def _workspace_quality_repair_errors(executor, results: list[dict[str, Any]]) ->
                 if str(diagnostic.metadata.get("raw") or diagnostic.message or "").strip()
             )
         else:
-            fallback_output = executor._trim_command_output(
-                "\n".join(part for part in (error_text, output) if part)
-            )
+            fallback_output = executor._trim_command_output("\n".join(part for part in (error_text, output) if part))
             errors.append(
                 "Artifact quality scan failed: workspace validation command failed"
                 f" ({command_text or 'unknown command'}): {fallback_output}"
@@ -331,11 +333,7 @@ def _claim_workspace_quality_repair_attempt(
                     continue
                 external_task_id = str(row.get("external_task_id") or "").strip()
                 row_factory_run_id = str(row.get("factory_run_id") or "").strip()
-                if (
-                    external_task_id
-                    and not external_task_id.startswith("factory-")
-                    and row_factory_run_id == run_id
-                ):
+                if external_task_id and not external_task_id.startswith("factory-") and row_factory_run_id == run_id:
                     frozen_task_statuses[external_task_id] = str(
                         row.get("execution_state") or row.get("status") or ""
                     ).strip()
@@ -611,9 +609,7 @@ async def _apply_workspace_quality_deterministic_repairs(
     # ``src/engine/*.rs`` compiler failure could repeatedly reopen TASK-1 merely
     # because TASK-1 owned more files.  That erased same-task locality and made
     # ordinary Director code repair look like a cross-task CE contract gap.
-    diagnostic_target_files = executor._workspace_quality_repair_diagnostic_target_files(
-        artifact_quality_errors
-    )
+    diagnostic_target_files = executor._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors)
     claim_target_files = diagnostic_target_files or executor._director_stage_materialization_settle_target_files(
         diagnostics=artifact_quality_errors
     )
@@ -761,19 +757,22 @@ async def _apply_workspace_quality_deterministic_repairs(
             "outcome": "pending_revalidation",
         }
     else:
-        task_runtime_attempt = await _settle_pending_workspace_quality_repair_attempt(
-            executor,
-            {
-                "task_id": task_id,
-                "task_row_id": task_row_id,
-                "execution_attempt": execution_attempt,
-                "heartbeat_task": heartbeat_task,
-                "heartbeat_stop": heartbeat_stop,
-                "heartbeat_failures": heartbeat_failures,
-            },
-            accepted=False,
-            reason=str(summary.get("error") or "workspace_quality_deterministic_repair_no_commit"),
-        ) or {}
+        task_runtime_attempt = (
+            await _settle_pending_workspace_quality_repair_attempt(
+                executor,
+                {
+                    "task_id": task_id,
+                    "task_row_id": task_row_id,
+                    "execution_attempt": execution_attempt,
+                    "heartbeat_task": heartbeat_task,
+                    "heartbeat_stop": heartbeat_stop,
+                    "heartbeat_failures": heartbeat_failures,
+                },
+                accepted=False,
+                reason=str(summary.get("error") or "workspace_quality_deterministic_repair_no_commit"),
+            )
+            or {}
+        )
     evidence = (
         [f"deferred_commit:successful={len(successful_receipts)};failed={len(failed_receipts)}"]
         if mutation_committed
@@ -838,9 +837,7 @@ async def _apply_workspace_quality_llm_repairs(
         "director_quality_repair": {
             "repair_target_files": (target_files or changed_files)[:80],
             "write_only_single_target": (
-                {"target_file": (target_files or changed_files)[0]}
-                if len(target_files or changed_files) == 1
-                else None
+                {"target_file": (target_files or changed_files)[0]} if len(target_files or changed_files) == 1 else None
             ),
         },
         "factory_workspace_quality_repair": {
@@ -1246,6 +1243,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
         consecutive_stagnant_rounds = 0
         last_nonprogress_effect = ""
         convergence_stop_reason = ""
+        seen_diagnostic_error_codes: set[str] = set()
 
         def current_workspace_repair_summary(
             *,
@@ -1294,6 +1292,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             if not repair_errors:
                 break
             before_signature = executor._workspace_quality_diagnostic_signature(repair_errors)
+            seen_diagnostic_error_codes.update(executor._workspace_quality_diagnostic_error_codes(before_signature))
             round_repair_results, round_summary = await executor._apply_workspace_quality_deterministic_repairs(
                 run=run,
                 artifact_quality_errors=repair_errors,
@@ -1665,7 +1664,15 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 projected_summary["verifier_effect"] = repair_effect
                 if settled_attempt is not None:
                     projected_summary["task_runtime_repair_attempt"] = settled_attempt
-            if repair_effect in {"resolved", "progress"}:
+            after_codes = executor._workspace_quality_diagnostic_error_codes(after_signature)
+            # A forward_unmask onto error codes already observed earlier in
+            # this loop (A -> B -> A ping-pong, or a slide back to a code a
+            # prior round already resolved) is oscillation, not phase
+            # advancement; it must keep feeding the stagnation breaker.
+            forward_unmask_advances = repair_effect == "forward_unmask" and not (
+                after_codes & seen_diagnostic_error_codes
+            )
+            if repair_effect in {"resolved", "progress"} or forward_unmask_advances:
                 consecutive_stagnant_rounds = 0
                 last_nonprogress_effect = ""
             else:
@@ -1674,6 +1681,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 else:
                     consecutive_stagnant_rounds = 1
                     last_nonprogress_effect = repair_effect
+            seen_diagnostic_error_codes.update(after_codes)
             if verifier_passed:
                 convergence_stop_reason = "verifier_passed"
                 break

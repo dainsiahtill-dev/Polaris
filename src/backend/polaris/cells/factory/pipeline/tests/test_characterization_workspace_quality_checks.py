@@ -839,6 +839,115 @@ class TestRunWorkspaceQualityChecks:
             == "no_op"
         )
 
+    def test_workspace_quality_repair_effect_forward_unmask_rules(self) -> None:
+        """Sequentially revealed compiler diagnostics are forward progress.
+
+        rustc/tsc surface errors phase by phase: fixing ``E0432`` unmasks
+        ``E0277``; fixing that unmasks ``E0507`` — often at the same line.
+        Live L1-05 (factory_d842dba2e017) rounds 1-2 both carried real
+        ``edit_file`` mutations with changed fingerprints, yet each was
+        classified ``equal_count_swap`` and the loop stopped after two rounds
+        with compilation strictly advanced. Disjoint compiler error codes with
+        write evidence must classify as ``forward_unmask``; same-code text
+        churn must stay ``equal_count_swap``.
+        """
+
+        classify = OrchestrationStageExecutor._workspace_quality_repair_effect
+
+        # Live round 1: E0432@lib.rs -> E0277@flavor_rules.rs (different phase,
+        # different file). Real hash-changing edit; equal count is an artifact
+        # of phase-gated compilation.
+        assert (
+            classify(
+                before_signature=(
+                    "error[e0432]: unresolved imports `engine::recipe_from_ingredients` --> src/lib.rs:23:50",
+                ),
+                after_signature=(
+                    "error[e0277]: the trait bound `palettefixture: copy` is not satisfied --> src/engine/flavor_rules.rs:162:15",
+                ),
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "forward_unmask"
+        )
+        # Live round 2: E0277 -> E0507 at the SAME line — borrow-check phase
+        # revealed after the trait-bound phase cleared.
+        assert (
+            classify(
+                before_signature=(
+                    "error[e0277]: the trait bound `palettefixture: copy` is not satisfied --> src/engine/flavor_rules.rs:162:15",
+                ),
+                after_signature=(
+                    "error[e0507]: cannot move out of a shared reference --> src/engine/flavor_rules.rs:162:15",
+                ),
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "forward_unmask"
+        )
+        # Same-code churn (renamed one missing symbol to another) is the true
+        # equal-count swap and must keep tripping the stagnation breaker.
+        assert (
+            classify(
+                before_signature=("error[e0432]: unresolved import `a` --> src/lib.rs:5:5",),
+                after_signature=("error[e0432]: unresolved import `b` --> src/lib.rs:5:5",),
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "equal_count_swap"
+        )
+        # tsc reports all type errors in one pass, so disjoint TS codes at the
+        # same spot are churn, not phase unmasking (pinned by the TS7015 ->
+        # TS2551 stagnation characterization).
+        assert (
+            classify(
+                before_signature=("src/index.ts(1,1): error ts7015: first",),
+                after_signature=("src/index.ts(1,1): error ts2551: swapped",),
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "equal_count_swap"
+        )
+        # Non-code diagnostics (plain assertion text) cannot prove a phase
+        # advance; keep the conservative swap classification.
+        assert (
+            classify(
+                before_signature=("assertion failed: palette rows",),
+                after_signature=("assertion failed: swatch order",),
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "equal_count_swap"
+        )
+        # A read-only turn never earns forward progress regardless of codes.
+        assert (
+            classify(
+                before_signature=("error[e0432]: unresolved import `a` --> src/lib.rs:5:5",),
+                after_signature=(
+                    "error[e0277]: the trait bound `x: copy` is not satisfied --> src/lib.rs:9:9",
+                ),
+                verifier_passed=False,
+                write_tool_evidence=False,
+            )
+            == "no_op"
+        )
+
+    def test_workspace_quality_diagnostic_error_codes_extraction(self) -> None:
+        extract = OrchestrationStageExecutor._workspace_quality_diagnostic_error_codes
+
+        codes = extract(
+            (
+                "error[e0432]: unresolved imports --> src/lib.rs:23:50",
+                "Error[E0507]: cannot move out of a shared reference --> src/x.rs:1:1",
+                "error ts2551 in module.ts(12,5)",
+                "assertion failed without any code",
+            )
+        )
+        assert codes == {"e0432", "e0507", "ts2551"}
+
+        assert extract(("plain text only",)) == set()
+        assert extract(()) == set()
+
     @pytest.mark.asyncio
     async def test_workspace_quality_attempt_settles_success_only_after_verifier_passes(
         self,
@@ -1120,6 +1229,208 @@ class TestRunWorkspaceQualityChecks:
             assert item["repair_summary"]["claimed_success_before_revalidation"] is True
             assert item["repair_summary"]["success"] is False
             assert item["repair_summary"]["success_authority"] == "post_repair_verifier"
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_rust_forward_unmask_chain_runs_to_verifier(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Sequentially unmasked rustc phases must not trip the stagnation breaker.
+
+        Live L1-05 shape: E0432 (resolution) -> E0277 (trait bound) -> E0507
+        (borrow check), each round carrying a real ``edit_file`` mutation.
+        Every transition is a disjoint rustc code set, so rounds keep their
+        budget and only the hard round ceiling bounds the loop.
+        """
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-rust-unmask",
+            config=FactoryConfig(name="quality-rust-unmask"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-14T00:00:00+00:00",
+        )
+        diagnostics = (
+            "error[E0432]: unresolved imports `engine::RecipeDraft` --> src/lib.rs:23:50",
+            "error[E0277]: the trait bound `PaletteFixture: Copy` is not satisfied --> src/engine/flavor_rules.rs:162:15",
+            "error[E0507]: cannot move out of a shared reference --> src/engine/flavor_rules.rs:162:15",
+            "error[E0308]: mismatched types --> src/engine/flavor_rules.rs:170:22",
+        )
+        command_calls = 0
+        repair_calls = 0
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            nonlocal command_calls
+            del timeout_seconds
+            diagnostic = diagnostics[min(command_calls, len(diagnostics) - 1)]
+            command_calls += 1
+            return {
+                "command": command,
+                "exit_code": 2,
+                "passed": False,
+                "stdout_tail": diagnostic,
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def fake_apply_workspace_quality_deterministic_repairs(
+            *,
+            run: FactoryRun,
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal repair_calls
+            assert run.id == "factory-quality-rust-unmask"
+            assert artifact_quality_errors
+            repair_calls += 1
+            return (
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {
+                            "source_tool": "deterministic_rust_post_repair",
+                            "file": "src/lib.rs",
+                            "operation": "modify",
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "source_tools": ["deterministic_rust_post_repair"],
+                    "tool_results": 1,
+                    "write_tool_evidence": True,
+                    "attempt": repair_attempt,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["cargo", "test", "--quiet"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_deterministic_repairs",
+            fake_apply_workspace_quality_deterministic_repairs,
+        )
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 3},
+        )
+
+        assert passed is False
+        # Three repair rounds consumed the full budget instead of stopping
+        # after two miscounted "swaps".
+        assert repair_calls == 3
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        repair = payload["repair"]
+        assert repair["consecutive_stagnant_rounds"] == 0
+        assert repair["convergence_stop_reason"] != "two_consecutive_stagnant_repairs"
+        assert [item["verifier_effect"] for item in repair["rounds"]] == [
+            "forward_unmask",
+            "forward_unmask",
+            "forward_unmask",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_rust_unmask_oscillation_still_stops(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A -> B -> A code ping-pong must keep tripping the stagnation breaker.
+
+        Without the seen-code guard, alternating disjoint rustc codes would
+        reset the counter forever and burn the whole round budget on churn.
+        """
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-rust-oscillation",
+            config=FactoryConfig(name="quality-rust-oscillation"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-14T00:00:00+00:00",
+        )
+        diagnostics = (
+            "error[E0277]: the trait bound `PaletteFixture: Copy` is not satisfied --> src/engine/flavor_rules.rs:162:15",
+            "error[E0507]: cannot move out of a shared reference --> src/engine/flavor_rules.rs:162:15",
+        )
+        command_calls = 0
+        repair_calls = 0
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            nonlocal command_calls
+            del timeout_seconds
+            # Alternate A <-> B across every check (including the initial one)
+            # so consecutive revisits are true oscillations.
+            diagnostic = diagnostics[command_calls % len(diagnostics)]
+            command_calls += 1
+            return {
+                "command": command,
+                "exit_code": 2,
+                "passed": False,
+                "stdout_tail": diagnostic,
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def fake_apply_workspace_quality_deterministic_repairs(
+            *,
+            run: FactoryRun,
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal repair_calls
+            del run, artifact_quality_errors
+            repair_calls += 1
+            return (
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {
+                            "source_tool": "deterministic_rust_post_repair",
+                            "file": "src/engine/flavor_rules.rs",
+                            "operation": "modify",
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "source_tools": ["deterministic_rust_post_repair"],
+                    "tool_results": 1,
+                    "write_tool_evidence": True,
+                    "attempt": repair_attempt,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["cargo", "test", "--quiet"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_deterministic_repairs",
+            fake_apply_workspace_quality_deterministic_repairs,
+        )
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 5},
+        )
+
+        assert passed is False
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        repair = payload["repair"]
+        assert repair["convergence_stop_reason"] == "two_consecutive_stagnant_repairs"
+        assert repair["consecutive_stagnant_rounds"] == 2
+        assert len(repair["rounds"]) == 3
 
     @pytest.mark.asyncio
     async def test_workspace_quality_mixed_nonprogress_classes_get_next_bounded_round(
