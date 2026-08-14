@@ -162,6 +162,34 @@ _RUST_FULL_LINE_SUGGESTION_RE = re.compile(
     re.IGNORECASE | re.MULTILINE | re.DOTALL,
 )
 
+# rustc machine-diff help: "132 +     new line"
+_RUST_PLUS_LINE_SUGGESTION_RE = re.compile(
+    r"^\s*-->\s*(?P<path>[^:\n]+\.rs):(?P<line>\d+):\d+.*?"
+    r"help:\s+(?P<help>[^\n]+).*?"
+    r"^\s*(?P=line)\s+\+\s(?P<code>[^\n]+)",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
+
+_RUST_XML_GENERIC_CLOSE_RE = re.compile(r"(?:\n(?:</[A-Za-z_][A-Za-z0-9_]*>)+)+\s*$")
+
+_RUST_VEC_BARE_GENERIC_RE = re.compile(r"\bVec(?P<inner>[A-Z][A-Za-z0-9_]*)\b(?P<tail>\s*=\s*Vec::new\(\))")
+
+_RUST_INTEGER_IS_FINITE_RE = re.compile(
+    r"\n(?P<indent>[ \t]*)if\s*!(?P<name>[A-Za-z_][A-Za-z0-9_]*)\.is_finite\(\)\s*\{"
+    r"(?:[^{}]|\{[^{}]*\})*\}[ \t]*\n",
+    re.MULTILINE,
+)
+
+_RUST_TWO_TUPLE_LET_RE = re.compile(
+    r"(?P<prefix>let\s+)\((?P<a>[A-Za-z_][A-Za-z0-9_]*),\s*(?P<b>[A-Za-z_][A-Za-z0-9_]*)\)"
+    r"(?P<rest>\s*=\s*[^;]+;)"
+)
+
+_RUST_ENUM_VARIANT_MISSING_FIELD_RE = re.compile(
+    r"missing field [`'\"](?P<field>[A-Za-z_][A-Za-z0-9_]*)[`'\"]",
+    re.IGNORECASE,
+)
+
 _RUST_FIELD_RENAME_ERROR_RE = re.compile(
     r"error\[E0609\]:\s*no field [`'\"](?P<wrong>[A-Za-z_][A-Za-z0-9_]*)[`'\"]"
     r".*?^\s*-->\s*(?P<path>[^:\n]+\.rs):(?P<line>\d+):(?P<column>\d+)",

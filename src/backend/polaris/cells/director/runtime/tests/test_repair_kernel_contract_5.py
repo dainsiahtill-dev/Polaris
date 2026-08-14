@@ -1910,6 +1910,70 @@ def test_rust_line_suggestion_coverage_matches_executable_runtime_plan() -> None
     assert planning.composition.ok is True
 
 
+def test_rust_cargo_transcript_splits_independent_error_blocks() -> None:
+    raw = (
+        "error: expected identifier, found `<`\n"
+        "   --> src/engine/alchemy_runner.rs:194:1\n"
+        "    |\n"
+        "194 | </Stardust></String></Stardust>\n"
+        "    | ^ expected identifier\n"
+        "\n"
+        "error: invalid format string: field access isn't supported\n"
+        "   --> src/engine/alchemy_rules.rs:132:57\n"
+        "    |\n"
+        '132 |     let mut combined = Alchemy::new(format!("combined::{head.name}"));\n'
+        "    |                                                         ^^^^^^^^^ not supported in format string\n"
+        "help: consider using a positional formatting argument instead\n"
+        "    |\n"
+        '132 -     let mut combined = Alchemy::new(format!("combined::{head.name}"));\n'
+        '132 +     let mut combined = Alchemy::new(format!("combined::{0}", head.name));\n'
+        "    |\n"
+        "\n"
+        "error[E0432]: unresolved import `thiserror`\n"
+        "  --> src/engine/alchemy_rules.rs:17:5\n"
+        "   |\n"
+        "17 | use thiserror::Error;\n"
+        "   |     ^^^^^^^^^ use of unresolved module or unlinked crate `thiserror`\n"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+    codes = [item.code for item in diagnostics]
+    assert "rust_diagnostic" in codes
+    assert "rust_e0432" in codes
+    assert len(diagnostics) >= 3
+
+
+def test_rust_line_suggestion_applies_plus_help_and_strips_xml_residue() -> None:
+    runner = (
+        "pub fn combine_alchemists() {}\n"
+        "}\n"
+        "</Stardust></String></Stardust>\n"
+    )
+    rules = 'let mut combined = Alchemy::new(format!("combined::{head.name}"));\n'
+    raw = (
+        "error: expected identifier, found `<`\n"
+        "   --> src/engine/alchemy_runner.rs:3:1\n"
+        "    |\n"
+        "3 | </Stardust></String></Stardust>\n"
+        "    | ^ expected identifier\n"
+        "\n"
+        "error: invalid format string: field access isn't supported\n"
+        "   --> src/engine/alchemy_rules.rs:1:57\n"
+        "help: consider using a positional formatting argument instead\n"
+        '1 +     let mut combined = Alchemy::new(format!("combined::{0}", head.name));\n'
+    )
+    planning = plan_runtime_repair(
+        source_tool="deterministic_rust_line_suggestion_repair",
+        base_files={"src/engine/alchemy_runner.rs": runner, "src/engine/alchemy_rules.rs": rules},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+    assert planning.plan is not None
+    assert planning.composition is not None
+    after = {patch.path: patch.content_after for patch in planning.composition.patches}
+    assert "</Stardust>" not in after["src/engine/alchemy_runner.rs"]
+    assert 'format!("combined::{0}", head.name)' in after["src/engine/alchemy_rules.rs"]
+
+
 def test_rust_field_rename_suggestion_rule_builds_span_text_replace_plan_and_runs_with_editor(
     tmp_path: Path,
 ) -> None:

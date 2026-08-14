@@ -263,30 +263,18 @@ def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
         # duplicated.
         return go_test_failures
     rust_location = _RUST_LOCATION_RE.search(blob)
-    if rust_location and re.search(r"(?m)^\s*(?:error|warning):", blob, re.IGNORECASE):
-        # Rust diagnostics without an E-code (parser errors and warnings) are
-        # still one causal block.  Per-line fallback destroys the association
-        # between the headline, ``--> path:line:column`` and source excerpt,
-        # leaving planners without a usable path/raw block.  Keep the complete
-        # block so existing Rust rules can match and compose precise patches.
-        first_line = next((line.strip() for line in blob.splitlines() if line.strip()), "Rust diagnostic")
-        return [
-            RepairDiagnostic(
-                source="compiler",
-                code="rust_diagnostic",
-                severity="warning" if first_line.lower().startswith("warning:") else "error",
-                message=first_line,
-                path=str(rust_location.group("path") or "").strip(),
-                line=_to_int(rust_location.group("line")),
-                column=_to_int(rust_location.group("column")),
-                raw=blob.strip(),
-                metadata={"language": "rust"},
-            )
-        ]
+    if rust_location and re.search(r"(?m)^\s*(?:error(?:\[E\d+\])?|warning):", blob, re.IGNORECASE):
+        # Live L1-09: one cargo transcript carries independent parser, E0432,
+        # format-string, E0063 and serde errors. Collapsing them into a single
+        # rust_diagnostic made coverage pick only line_suggestion (unplannable)
+        # and hid rust_dependency / serde_derive. Keep each error headline as
+        # one causal block with its own --> path and excerpt.
+        rust_blocks = _split_rust_compiler_error_blocks(blob)
+        if rust_blocks:
+            return rust_blocks
     lowered = blob.lower()
-    if (
-        ("npm run test" in lowered or "npm test" in lowered)
-        and ("module_not_found" in lowered or "cannot find module" in lowered or "could not find" in lowered)
+    if ("npm run test" in lowered or "npm test" in lowered) and (
+        "module_not_found" in lowered or "cannot find module" in lowered or "could not find" in lowered
     ):
         # A Node verifier failure is one causal diagnostic. Splitting its stack
         # trace into independent rows discards the conjunction between the npm
@@ -431,11 +419,7 @@ def _normalize_go_test_failures(text: str) -> list[RepairDiagnostic]:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(blob)
         block = blob[match.start() : end].strip()
         name = str(match.group("name") or "test").strip()
-        next_name = (
-            str(matches[index + 1].group("name") or "").strip()
-            if index + 1 < len(matches)
-            else ""
-        )
+        next_name = str(matches[index + 1].group("name") or "").strip() if index + 1 < len(matches) else ""
         location = _GO_TEST_LOCATION_RE.search(block)
         if location is None and next_name.startswith(f"{name}/"):
             # Parent row only summarizes one or more failing subtests.
@@ -448,11 +432,7 @@ def _normalize_go_test_failures(text: str) -> list[RepairDiagnostic]:
     diagnostics: list[RepairDiagnostic] = []
     for match, failure_block, location in candidates[:_GO_TEST_FAILURE_DIAGNOSTIC_LIMIT]:
         name = str(match.group("name") or "test").strip()
-        message = (
-            str(location.group("message") or "").strip()
-            if location is not None
-            else f"Test failed: {name}"
-        )
+        message = str(location.group("message") or "").strip() if location is not None else f"Test failed: {name}"
         diagnostics.append(
             RepairDiagnostic(
                 source="verifier",
@@ -673,6 +653,44 @@ def _looks_like_typescript_commonjs_package_type_runtime(text: str) -> bool:
         and "module" in lowered
         and "commonjs" in lowered
     )
+
+
+def _split_rust_compiler_error_blocks(blob: str) -> list[RepairDiagnostic]:
+    """Split one cargo transcript into one diagnostic per rustc error headline."""
+
+    parts = re.split(r"(?m)(?=^(?:error(?:\[E\d+\])?|warning):)", str(blob or ""))
+    diagnostics: list[RepairDiagnostic] = []
+    seen: set[tuple[str, str, int | None]] = set()
+    for part in parts:
+        block = str(part or "").strip()
+        if not re.match(r"(?:error(?:\[E\d+\])?|warning):", block):
+            continue
+        first_line = next((line.strip() for line in block.splitlines() if line.strip()), "")
+        if first_line.startswith("error: could not compile"):
+            continue
+        location = _RUST_LOCATION_RE.search(block)
+        if location is None and _RUST_ERROR_RE.search(block) is None:
+            continue
+        if _RUST_ERROR_RE.search(block):
+            diagnostic = _normalize_one_error(block)
+        else:
+            diagnostic = RepairDiagnostic(
+                source="compiler",
+                code="rust_diagnostic",
+                severity="warning" if first_line.lower().startswith("warning:") else "error",
+                message=first_line or "Rust diagnostic",
+                path=str(location.group("path") or "").strip() if location else None,
+                line=_to_int(location.group("line")) if location else None,
+                column=_to_int(location.group("column")) if location else None,
+                raw=block,
+                metadata={"language": "rust"},
+            )
+        key = (diagnostic.code, str(diagnostic.path or ""), diagnostic.line)
+        if key in seen:
+            continue
+        seen.add(key)
+        diagnostics.append(diagnostic)
+    return diagnostics
 
 
 def _normalize_one_error(text: str) -> RepairDiagnostic:

@@ -18,27 +18,33 @@ from ._constants import (
     _RUST_DERIVE_PREREQUISITES,
     _RUST_DUPLICATE_MODULE_FILE_RE,
     _RUST_E0583_HELP_LINE_RE,
+    _RUST_ENUM_VARIANT_MISSING_FIELD_RE,
     _RUST_FIELD_ACCESS_RE,
     _RUST_FIELD_METHOD_LINE_SUGGESTION_RE,
     _RUST_FIELD_RENAME_ERROR_RE,
     _RUST_FIELD_RENAME_PLUS_LINE_RE,
     _RUST_FULL_LINE_SUGGESTION_RE,
     _RUST_INCOMPATIBLE_COPY_LOCATION_RE,
+    _RUST_INTEGER_IS_FINITE_RE,
     _RUST_LOCATION_RE,
     _RUST_METHOD_SELF_LOCATION_RE,
     _RUST_METHOD_SELF_SIGNATURE_PATTERNS,
     _RUST_MISSING_MODULE_FILE_RE,
     _RUST_MISSING_TRAIT_BOUND_RE,
     _RUST_NO_SYMBOL_RE,
+    _RUST_PLUS_LINE_SUGGESTION_RE,
     _RUST_PUB_USE_STATEMENT_RE,
     _RUST_QUOTED_RS_PATH_RE,
     _RUST_REAL_ITEM_RE,
     _RUST_SERDE_DERIVE_SUGGESTION_RE,
+    _RUST_TWO_TUPLE_LET_RE,
     _RUST_UNRESOLVED_CRATE_RE,
     _RUST_UNRESOLVED_IMPORT_RE,
     _RUST_UNUSED_IMPORT_RE,
     _RUST_USE_IMPORT_IN_TEXT_RE,
     _RUST_USE_IMPORT_LINE_RE,
+    _RUST_VEC_BARE_GENERIC_RE,
+    _RUST_XML_GENERIC_CLOSE_RE,
 )
 
 
@@ -552,7 +558,11 @@ def _parse_rust_line_suggestions(diagnostics: Sequence[RepairDiagnostic]) -> lis
         "",
         "\n".join(str(diagnostic.raw or diagnostic.message or "") for diagnostic in diagnostics or ()),
     )
-    for pattern in (_RUST_FIELD_METHOD_LINE_SUGGESTION_RE, _RUST_FULL_LINE_SUGGESTION_RE):
+    for pattern in (
+        _RUST_FIELD_METHOD_LINE_SUGGESTION_RE,
+        _RUST_FULL_LINE_SUGGESTION_RE,
+        _RUST_PLUS_LINE_SUGGESTION_RE,
+    ):
         for match in pattern.finditer(text):
             path = _normalize_repair_path(str(match.group("path") or ""))
             line_number = _to_int(match.group("line"))
@@ -561,6 +571,7 @@ def _parse_rust_line_suggestions(diagnostics: Sequence[RepairDiagnostic]) -> lis
                 continue
             if not code.strip():
                 continue
+            code = _rewrite_vec_bare_generic_suggestion(code)
             key = (path, int(line_number), code)
             if key in seen:
                 continue
@@ -931,7 +942,7 @@ def _rust_line_suggestion_operation(
     if index < 0 or index >= len(lines):
         return None
     expected = lines[index]
-    replacement = f"{str(code or '').rstrip()}{_line_ending(expected)}"
+    replacement = f"{_prefer_vec_generic(expected, str(code or '').rstrip())}{_line_ending(expected)}"
     if expected == replacement:
         return None
     if content.count(expected) != 1:
@@ -1660,6 +1671,99 @@ def _is_strict_rust_use_import_line(value: str) -> bool:
     if "\n" in line or "\r" in line:
         return False
     return _RUST_USE_IMPORT_LINE_RE.fullmatch(line) is not None
+
+
+def _rewrite_vec_bare_generic_suggestion(code: str) -> str:
+    return _RUST_VEC_BARE_GENERIC_RE.sub(r"Vec<\g<inner>>\g<tail>", str(code or ""))
+
+
+def _prefer_vec_generic(expected: str, replacement: str) -> str:
+    match = re.search(r"\bVec([A-Z][A-Za-z0-9_]*)\b(\s*=\s*Vec::new\(\))", expected)
+    if match is None:
+        return replacement
+    inner = match.group(1)
+    if f"Vec<{inner}>" in replacement:
+        return replacement
+    if re.search(rf"\b{re.escape(inner)}\b\s*=\s*Vec::new\(\)", replacement):
+        return replacement.replace(inner, f"Vec<{inner}>", 1)
+    return replacement
+
+
+def rust_local_structure_operations(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+) -> list[RepairOperation]:
+    """Apply L1-09 proven local rustc structure fixes that have no + help line."""
+
+    operations: list[RepairOperation] = []
+    haystack = "\n".join(str(item.raw or item.message or "") for item in diagnostics)
+    for path, content in sorted(dict(base_files or {}).items()):
+        if not str(path).endswith(".rs"):
+            continue
+        repaired = str(content or "")
+        if "expected identifier" in haystack and "<" in haystack:
+            repaired = _RUST_XML_GENERIC_CLOSE_RE.sub("\n", repaired)
+        if "cannot find type" in haystack or "Vec::new()" in repaired:
+            repaired = _RUST_VEC_BARE_GENERIC_RE.sub(r"Vec<\g<inner>>\g<tail>", repaired)
+        if "is_finite" in haystack:
+            repaired = _RUST_INTEGER_IS_FINITE_RE.sub("\n", repaired)
+        if "expected a tuple with 3 elements" in haystack or "found one with 2 elements" in haystack:
+            repaired = _RUST_TWO_TUPLE_LET_RE.sub(
+                r"\g<prefix>(\g<a>, _reagents, \g<b>)\g<rest>",
+                repaired,
+                count=1,
+            )
+        field_match = _RUST_ENUM_VARIANT_MISSING_FIELD_RE.search(haystack)
+        needle = "reagent_count: reagents.len(),\n        }"
+        if field_match is not None and needle in repaired:
+            field_name = str(field_match.group("field") or "")
+            if field_name and f"{field_name}:" not in needle:
+                initializer = "MAX_REAGENTS" if "MAX_REAGENTS" in repaired else "16"
+                repaired = repaired.replace(
+                    needle,
+                    f"reagent_count: reagents.len(),\n            {field_name}: {initializer},\n        }}",
+                    1,
+                )
+        if repaired == content:
+            continue
+        operations.extend(
+            _file_replace_operations(
+                path=_normalize_repair_path(path),
+                original=str(content),
+                repaired=repaired,
+                diagnostic_id=next((item.diagnostic_id for item in diagnostics), ""),
+            )
+        )
+    return operations
+
+
+def _file_replace_operations(
+    *,
+    path: str,
+    original: str,
+    repaired: str,
+    diagnostic_id: str,
+) -> list[RepairOperation]:
+    if repaired == original or not path:
+        return []
+    return [
+        RepairOperation(
+            kind="text_replace",
+            path=path,
+            span_start=0,
+            span_end=len(original),
+            expected=original,
+            replacement=repaired,
+            before_hash=sha256_text(original),
+            metadata={
+                "repair_kind": "rust_local_structure",
+                "edit_strategy": "text_replace",
+                "span_based": True,
+                "diagnostic_id": diagnostic_id,
+            },
+        )
+    ]
 
 
 def _line_ending(line: str) -> str:

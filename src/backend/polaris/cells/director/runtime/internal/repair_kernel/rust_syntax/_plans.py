@@ -32,6 +32,7 @@ from ._helpers import (
     _declared_rust_binary_entrypoint_paths,
     _diagnostics_indicate_missing_rust_binary,
     _expand_rust_derive_prerequisites,
+    _file_replace_operations,
     _insert_cargo_dependency,
     _normalize_repair_path,
     _parse_rust_duplicate_module_file_targets,
@@ -64,6 +65,7 @@ from ._helpers import (
     _rust_unresolved_pub_use_symbols,
     _rust_unused_import_operation,
     _rust_wrong_crate_path_operation,
+    rust_local_structure_operations,
 )
 
 
@@ -526,11 +528,12 @@ def build_rust_line_suggestion_plan(
 
     operations: list[RepairOperation] = []
     planned_diagnostics: list[RepairDiagnostic] = []
-    seen_spans: set[tuple[str, int, int]] = set()
+    working = dict(normalized_base)
+    line_ops_by_path: dict[str, list[RepairOperation]] = {}
     for diagnostic in diagnostics:
         diagnostic_planned = False
         for path, line_number, code in _parse_rust_line_suggestions((diagnostic,)):
-            content = normalized_base.get(path)
+            content = working.get(path)
             if content is None:
                 continue
             operation = _rust_line_suggestion_operation(
@@ -542,14 +545,36 @@ def build_rust_line_suggestion_plan(
             )
             if operation is None:
                 continue
-            span_key = (operation.path, int(operation.span_start or 0), int(operation.span_end or 0))
-            if span_key in seen_spans:
-                continue
-            seen_spans.add(span_key)
-            operations.append(operation)
+            working[path] = content[: operation.span_start] + str(operation.replacement) + content[operation.span_end :]
+            line_ops_by_path.setdefault(path, []).append(operation)
             diagnostic_planned = True
         if diagnostic_planned:
             planned_diagnostics.append(diagnostic)
+    local_ops = rust_local_structure_operations(
+        base_files=working,
+        diagnostics=diagnostics,
+    )
+    local_paths = {operation.path for operation in local_ops}
+    for operation in local_ops:
+        working[operation.path] = str(operation.replacement)
+        planned_diagnostics.extend(diagnostics)
+    for path, line_ops in line_ops_by_path.items():
+        if path in local_paths:
+            continue
+        operations.extend(line_ops)
+    for operation in local_ops:
+        original = normalized_base.get(operation.path)
+        repaired = working.get(operation.path)
+        if original is None or repaired is None or repaired == original:
+            continue
+        operations.extend(
+            _file_replace_operations(
+                path=operation.path,
+                original=original,
+                repaired=repaired,
+                diagnostic_id=next((item.diagnostic_id for item in planned_diagnostics), ""),
+            )
+        )
 
     if not operations:
         return None
