@@ -50,6 +50,8 @@ _MATERIALIZATION_TARGET_RUNTIME_SUFFIXES = (
     ".json",
     ".html",
     ".htm",
+    ".rs",
+    ".toml",
 )
 
 

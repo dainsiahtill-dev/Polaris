@@ -623,11 +623,12 @@ class FactorySettlementConsumer:
                 journal_snapshot=journal_snapshot,
             )
         if not barrier.source_fact_visible or not barrier.closed:
-            if (
-                state is not None
-                and state.status is SettlementJournalStatus.PENDING
-                and state.pending_phase is SettlementPendingPhase.WAITING_BARRIER
-            ):
+            if state is not None and state.status is SettlementJournalStatus.PENDING:
+                # Live L1-09 restart: journal already advanced to applying /
+                # waiting_retry while the Run Ledger barrier is still open.
+                # Replaying waiting_barrier with a new barrier_hash reuses the
+                # stable idempotency key and crashes lifespan
+                # (FactStreamError idempotency_conflict fields=payload).
                 return SettlementDecision(
                     source_fact_event_id=source.event_id,
                     source_fact_seq=source.event_seq,

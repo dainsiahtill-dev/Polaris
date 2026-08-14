@@ -36,6 +36,12 @@ _RUST_LOCATION_RE = re.compile(
     r"^\s*-->\s*(?P<path>[^:\n]+\.rs):(?P<line>\d+):(?P<column>\d+)",
     re.IGNORECASE | re.MULTILINE,
 )
+_CARGO_TEST_STDOUT_RE = re.compile(r"^---- (?P<name>\S+) stdout ----\s*$", re.MULTILINE)
+_CARGO_TEST_PANIC_LOC_RE = re.compile(
+    r"panicked at (?P<path>[^:\n]+\.rs):(?P<line>\d+)",
+)
+_CARGO_TEST_FAILURE_DIAGNOSTIC_LIMIT = 16
+
 _GO_ERROR_RE = re.compile(
     r"(?P<path>[^:\n]+\.go):(?P<line>\d+):(?P<column>\d+):\s*(?P<message>[^\n]+)",
     re.IGNORECASE,
@@ -262,6 +268,13 @@ def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
         # fact; parent FAIL rows that only summarize failing subtests are not
         # duplicated.
         return go_test_failures
+    cargo_test_failures = _normalize_cargo_test_failures(blob)
+    if cargo_test_failures:
+        # Live L1-09: cargo test --quiet compiled, then two assertion islands
+        # were shredded into per-line artifact_quality_error rows. Coverage
+        # missed rust.test_assertion_local_structure (raw_terms AND never
+        # held on one line). Keep one verifier diagnostic per failed test.
+        return cargo_test_failures
     rust_location = _RUST_LOCATION_RE.search(blob)
     if rust_location and re.search(r"(?m)^\s*(?:error(?:\[E\d+\])?|warning):", blob, re.IGNORECASE):
         # Live L1-09: one cargo transcript carries independent parser, E0432,
@@ -401,6 +414,41 @@ def _normalize_unittest_failures(text: str) -> list[RepairDiagnostic]:
                 column=normalized.column,
                 raw=failure_block,
                 metadata=metadata,
+            )
+        )
+    return diagnostics
+
+
+def _normalize_cargo_test_failures(text: str) -> list[RepairDiagnostic]:
+    """Project ``cargo test`` assertion islands into causal verifier diagnostics."""
+
+    blob = str(text or "")
+    if "test result: FAILED" not in blob and "--- FAILED" not in blob:
+        return []
+    matches = list(_CARGO_TEST_STDOUT_RE.finditer(blob))
+    if not matches:
+        return []
+    diagnostics: list[RepairDiagnostic] = []
+    for index, match in enumerate(matches[:_CARGO_TEST_FAILURE_DIAGNOSTIC_LIMIT]):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(blob)
+        block = blob[match.start() : end].strip()
+        if "panicked at" not in block and "assertion" not in block.lower():
+            continue
+        name = str(match.group("name") or "test").strip()
+        location = _CARGO_TEST_PANIC_LOC_RE.search(block)
+        message = next(
+            (line.strip() for line in block.splitlines() if "assertion" in line.lower() or line.startswith("left:") or line.startswith("right:")),
+            f"cargo test failed: {name}",
+        )
+        diagnostics.append(
+            RepairDiagnostic(
+                source="verifier",
+                code="verifier_test_failure",
+                message=message,
+                path=str(location.group("path") or "").strip() if location is not None else None,
+                line=_to_int(location.group("line")) if location is not None else None,
+                raw=block,
+                metadata={"framework": "cargo_test", "test_name": name, "language": "rust"},
             )
         )
     return diagnostics

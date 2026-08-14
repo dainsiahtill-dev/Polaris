@@ -879,6 +879,53 @@ async def test_repeated_retryable_apply_uses_claim_scoped_pending_identity(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_restart_replay_open_barrier_after_waiting_retry_does_not_crash(
+    tmp_path: Path,
+) -> None:
+    """Live L1-09: lifespan replay must not rewind waiting_retry to waiting_barrier."""
+
+    workspace = _workspace(tmp_path)
+    fact_stream = FactStreamAdapter()
+    _append_source_fact(fact_stream, workspace)
+    barrier = MutableBarrier(workspace=workspace, fencing_token=7)
+    factory_runs = RetryableFactoryRuns()
+    first, journal = _build_consumer(
+        workspace=workspace,
+        fact_stream=fact_stream,
+        barrier=barrier,
+        factory_runs=factory_runs,
+    )
+    first_report = await first.start()
+    assert first_report.decisions[0].outcome is SettlementOutcome.RETRYABLE
+    barrier.closed = False
+    restarted, _ = _build_consumer(
+        workspace=workspace,
+        fact_stream=fact_stream,
+        barrier=barrier,
+        factory_runs=factory_runs,
+    )
+
+    replay = await restarted.start()
+
+    assert replay.decisions[0].outcome is SettlementOutcome.PENDING
+    assert replay.decisions[0].reason_code == "run_ledger_barrier_open"
+    retry_after = [
+        record
+        for record in journal.records()
+        if record.status is SettlementJournalStatus.PENDING
+        and record.pending_phase is SettlementPendingPhase.WAITING_RETRY
+    ]
+    assert retry_after
+    waiting_barriers = [
+        record
+        for record in journal.records()
+        if record.status is SettlementJournalStatus.PENDING
+        and record.pending_phase is SettlementPendingPhase.WAITING_BARRIER
+    ]
+    assert waiting_barriers == []
+
+
+@pytest.mark.asyncio
 async def test_two_consumers_racing_apply_once(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     fact_stream = FactStreamAdapter()
