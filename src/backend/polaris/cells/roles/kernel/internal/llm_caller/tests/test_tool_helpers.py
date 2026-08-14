@@ -316,6 +316,21 @@ class TestResolveRepairEditTarget:
         assert resolve_repair_edit_target({"last_failure": {"error_message": "x"}}, str(tmp_path)) is None
         assert resolve_repair_edit_target(None, str(tmp_path)) is None
 
+    def test_existing_director_quality_repair_target_returns_target(self, tmp_path: Path) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "lib.rs").write_text("pub mod engine;\n", encoding="utf-8")
+        context = {
+            "director_quality_repair": {
+                "repair_target_files": ["src/lib.rs"],
+                "write_only_single_target": {"target_file": "src/lib.rs"},
+            }
+        }
+        assert resolve_repair_edit_target(context, str(tmp_path)) == "src/lib.rs"
+
+    def test_absent_director_quality_repair_target_returns_none(self, tmp_path: Path) -> None:
+        context = {"director_quality_repair": {"repair_target_files": ["src/lib.rs"]}}
+        assert resolve_repair_edit_target(context, str(tmp_path)) is None
+
     def test_env_off_disables(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         (tmp_path / "main.js").write_text("// real game\n", encoding="utf-8")
         monkeypatch.setenv("KERNELONE_REPAIR_PRESERVE_EDIT", "off")

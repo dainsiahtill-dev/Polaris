@@ -1432,6 +1432,11 @@ class TestRunWorkspaceQualityChecks:
         assert repair_context["factory_run_timeout_seconds"] == 5400
         assert repair_context["factory_director_execution_deadline_epoch_seconds"] == 4_102_444_700.0
         assert repair_context["request_timeout_seconds"] == 600
+        assert repair_context["_transaction_kernel_forced_tool_choice"] == "required"
+        assert repair_context["director_quality_repair"] == {
+            "repair_target_files": ["src/engine/rules.js"],
+            "write_only_single_target": {"target_file": "src/engine/rules.js"},
+        }
         assert repair_context["ce_blueprint"]["artifact"] == "runtime/state/blueprints/factory-context.review.json"
         assert "Chief Engineer blueprint" in repair_context["chief_engineer_blueprint_evidence"]
         # The QA retry must preserve the original TaskRuntime owner contract.
@@ -1786,6 +1791,17 @@ class TestRunWorkspaceQualityChecks:
                     "success_reason": "task_boundary_interface_discrepancy_required",
                     "tool_results": 0,
                     "source_tools": [],
+                    "task_id": "TASK-1",
+                    "task_boundary_owner_evidence": {
+                        "schema_version": "factory.workspace_quality_task_owner.v1",
+                        "source": "task_runtime_execution_attempt",
+                        "task_id": "TASK-1",
+                        "owner_target_files": ["src/main.ts"],
+                        "diagnostic_target_files": ["src/main.ts", "src/engine/rules.ts"],
+                        "in_scope_diagnostic_target_files": ["src/main.ts"],
+                        "out_of_scope_diagnostic_target_files": ["src/engine/rules.ts"],
+                        "director_local_repair_allowed": True,
+                    },
                     "plan_probe_preaudit": {
                         "status": "coverage_matched_but_unplannable",
                         "plannable_source_tools": [],
@@ -1801,11 +1817,13 @@ class TestRunWorkspaceQualityChecks:
             artifact_quality_errors: list[str],
             repair_attempt: int,
             interface_discrepancy_evidence: dict[str, Any] | None = None,
+            owner_target_files: list[str] | None = None,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
             del run, context, artifact_quality_errors, repair_attempt
             assert interface_discrepancy_evidence is not None
             assert interface_discrepancy_evidence["recommended_owner"] == "director"
             assert interface_discrepancy_evidence["director_retry_allowed"] is True
+            assert owner_target_files == ["src/main.ts"]
             llm_repair_contexts.append(interface_discrepancy_evidence)
             state["repaired"] = True
             return (
@@ -1866,9 +1884,9 @@ class TestRunWorkspaceQualityChecks:
             "source": "task_runtime_execution_attempt",
             "task_id": "TASK-1",
             "owner_target_files": ["Cargo.toml", "src/lib.rs", "src/models/mod.rs"],
-            "diagnostic_target_files": ["src/lib.rs"],
+            "diagnostic_target_files": ["src/lib.rs", "src/engine/flavor_rules.rs"],
             "in_scope_diagnostic_target_files": ["src/lib.rs"],
-            "out_of_scope_diagnostic_target_files": [],
+            "out_of_scope_diagnostic_target_files": ["src/engine/flavor_rules.rs"],
             "director_local_repair_allowed": True,
         }
         summary = {
@@ -1892,6 +1910,9 @@ class TestRunWorkspaceQualityChecks:
         assert evidence["director_retry_allowed"] is True
         assert evidence["llm_fallback_blocked"] is False
         assert evidence["metadata"]["task_boundary_owner_evidence"] == owner_evidence
+        assert OrchestrationStageExecutor._workspace_quality_claimed_owner_repair_targets(evidence) == [
+            "src/lib.rs"
+        ]
 
         # A claimed task must never authorize a diagnostic path it does not own.
         out_of_scope = dict(owner_evidence)

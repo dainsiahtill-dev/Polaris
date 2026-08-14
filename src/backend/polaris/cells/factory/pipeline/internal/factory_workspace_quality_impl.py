@@ -652,9 +652,12 @@ async def _apply_workspace_quality_deterministic_repairs(
         "diagnostic_target_files": diagnostic_target_files[:20],
         "in_scope_diagnostic_target_files": in_scope_diagnostic_targets[:20],
         "out_of_scope_diagnostic_target_files": out_of_scope_diagnostic_targets[:20],
-        "director_local_repair_allowed": bool(diagnostic_target_files)
-        and len(in_scope_diagnostic_targets) == len(diagnostic_target_files)
-        and not out_of_scope_diagnostic_targets,
+        # One verifier command can report failures from several PM tasks in a
+        # single stderr payload.  Keep this round on the claimed task's exact
+        # diagnostic subset, re-run the verifier, then let the residual select
+        # the next owner.  Requiring one task to own *every* path turned a
+        # normal two-task compiler batch into a false CE escalation.
+        "director_local_repair_allowed": bool(in_scope_diagnostic_targets),
     }
 
     results: list[dict[str, Any]] = []
@@ -816,15 +819,30 @@ async def _apply_workspace_quality_llm_repairs(
         }
     declared_target_files = executor._workspace_quality_repair_target_files()
     diagnostic_target_files = executor._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors)
+    materialized_declared_targets = [path for path in declared_target_files if path in set(changed_files)]
     target_files = (
         _dedupe_workspace_repair_paths(owner_target_files)
         if owner_target_files
-        else diagnostic_target_files or declared_target_files
+        else diagnostic_target_files or materialized_declared_targets or changed_files
     )
     repair_context: dict[str, Any] = {
         "delivery_mode": "materialize_changes",
         "target_files": (target_files or changed_files)[:80],
         "changed_files": changed_files[:80],
+        # Quality repair is an executable Director turn. ``auto`` allowed the
+        # provider to return prose (r52: "Should proceed: False") even though
+        # the prompt required a physical edit. Force at least one native tool;
+        # the transaction kernel still permits read_file first and then keeps
+        # the same turn alive until an authorized edit receipt or hard blocker.
+        "_transaction_kernel_forced_tool_choice": "required",
+        "director_quality_repair": {
+            "repair_target_files": (target_files or changed_files)[:80],
+            "write_only_single_target": (
+                {"target_file": (target_files or changed_files)[0]}
+                if len(target_files or changed_files) == 1
+                else None
+            ),
+        },
         "factory_workspace_quality_repair": {
             "changed_files": changed_files[:80],
             "target_files": target_files[:80],
@@ -989,6 +1007,18 @@ async def _apply_workspace_quality_llm_repairs(
     normalized_summary["source_tools"] = source_tools
     normalized_summary.setdefault("tool_results", len(results))
     normalized_summary.setdefault("attempted", True)
+    normalized_summary.setdefault("task_id", repair_task_id)
+    if interface_discrepancy_evidence:
+        authorized_retry = executor._workspace_quality_interface_discrepancy_allows_director_retry(
+            interface_discrepancy_evidence
+        )
+        normalized_summary.setdefault("interface_discrepancy_evidence", interface_discrepancy_evidence)
+        normalized_summary["task_boundary_interface_discrepancy_retry_authorized"] = authorized_retry
+        metadata_raw = interface_discrepancy_evidence.get("metadata")
+        interface_metadata = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
+        owner_evidence = interface_metadata.get("task_boundary_owner_evidence")
+        if isinstance(owner_evidence, Mapping):
+            normalized_summary.setdefault("task_boundary_owner_evidence", dict(owner_evidence))
     mutation_committed = not heartbeat_failures and any(
         executor._workspace_quality_repair_result_has_mutation(dict(item))
         for item in results
@@ -1277,6 +1307,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 executor._workspace_quality_repair_result_has_mutation(item) for item in round_repair_results
             ) or bool(round_summary.get("write_tool_evidence"))
             raw_round_summary_evidence = round_summary.get("evidence")
+            llm_repair_attempted_in_round = False
             if isinstance(raw_round_summary_evidence, list | tuple):
                 round_repair_evidence.extend(
                     str(item) for item in raw_round_summary_evidence if str(item or "").strip()
@@ -1289,6 +1320,9 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 if executor._workspace_quality_interface_discrepancy_allows_director_retry(
                     interface_discrepancy_evidence
                 ):
+                    claimed_owner_targets = executor._workspace_quality_claimed_owner_repair_targets(
+                        interface_discrepancy_evidence
+                    )
                     deterministic_noop_summary = dict(round_summary)
                     deadline_detail = workspace_repair_deadline_blocker(
                         f"before_interface_discrepancy_llm_repair_round_{round_index + 1}"
@@ -1308,7 +1342,9 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                         artifact_quality_errors=repair_errors,
                         repair_attempt=round_index + 1,
                         interface_discrepancy_evidence=interface_discrepancy_evidence,
+                        owner_target_files=claimed_owner_targets or None,
                     )
+                    llm_repair_attempted_in_round = True
                     if not round_repair_results:
                         round_summary = dict(round_summary)
                         round_summary["deterministic_no_materialized_evidence"] = deterministic_noop_summary
@@ -1323,6 +1359,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 not round_requires_task_boundary_triage
                 and round_repair_results
                 and not round_write_tool_evidence
+                and not llm_repair_attempted_in_round
             ):
                 # Logs, coverage notes, or failed/no-op tool rows are evidence
                 # of an attempt, not evidence of repair progress. Only an
@@ -1354,7 +1391,11 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 round_requires_task_boundary_triage = executor._workspace_quality_summary_requires_task_boundary_triage(
                     dict(round_summary)
                 )
-            elif not round_requires_task_boundary_triage and not round_repair_results:
+            elif (
+                not round_requires_task_boundary_triage
+                and not round_repair_results
+                and not llm_repair_attempted_in_round
+            ):
                 deadline_detail = workspace_repair_deadline_blocker(f"before_llm_repair_round_{round_index + 1}")
                 if deadline_detail:
                     return write_workspace_validation_failure(

@@ -1015,6 +1015,20 @@ def resolve_repair_edit_target(context_override: Any, workspace: str) -> str | N
         return None
     if not isinstance(context_override, dict):
         return None
+    # Factory/QA same-run repair is not a CE construction step, but it carries
+    # an explicit Director-owned repair contract.  Treat one existing target as
+    # preserve-and-edit authority.  Without this branch the final request kept
+    # every read/write/command tool and ``tool_choice=auto``; the model could
+    # answer with prose and no physical mutation.
+    quality_targets = extract_director_quality_repair_target_files(context_override)
+    if quality_targets:
+        target = next((item for item in quality_targets if not item.startswith("./")), quality_targets[0])
+        ws = str(workspace or ".").strip() or "."
+        try:
+            if os.path.exists(os.path.join(ws, target)):
+                return target
+        except OSError:
+            return None
     step = context_override.get("construction_step")
     if not isinstance(step, dict) or not step:
         return None

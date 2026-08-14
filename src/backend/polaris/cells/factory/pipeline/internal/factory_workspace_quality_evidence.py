@@ -275,26 +275,24 @@ def workspace_quality_interface_discrepancy_evidence(
     in_scope_diagnostic_target_files = _dedupe_workspace_repair_paths(
         owner_evidence.get("in_scope_diagnostic_target_files") or []
     )
-    out_of_scope_diagnostic_target_files = _dedupe_workspace_repair_paths(
-        owner_evidence.get("out_of_scope_diagnostic_target_files") or []
-    )
-    exact_task_owner_allows_director_retry = (
+    claimed_task_subset_allows_director_retry = (
         str(owner_evidence.get("source") or "") == "task_runtime_execution_attempt"
         and bool(str(owner_evidence.get("task_id") or "").strip())
         and bool(owner_target_files)
         and bool(diagnostic_target_files)
-        and set(diagnostic_target_files) == set(in_scope_diagnostic_target_files)
-        and not out_of_scope_diagnostic_target_files
+        and bool(in_scope_diagnostic_target_files)
+        and set(in_scope_diagnostic_target_files).issubset(set(diagnostic_target_files))
+        and set(in_scope_diagnostic_target_files).issubset(set(owner_target_files))
         and bool(owner_evidence.get("director_local_repair_allowed"))
     )
     cross_artifact = any(marker in diagnostic_blob for marker in cross_artifact_markers)
     local_implementation = any(marker in diagnostic_blob for marker in local_implementation_markers)
-    if exact_task_owner_allows_director_retry:
+    if claimed_task_subset_allows_director_retry:
         # An import/symbol diagnostic can cross module files without crossing
-        # the current Director authority.  When TaskRuntime has already claimed
-        # the exact owner of every diagnostic target, keep the repair on that
-        # task and let the next verifier residual select another owner if
-        # needed.  This never authorizes writes outside ``owner_target_files``.
+        # the current Director authority.  A verifier payload may contain paths
+        # from several tasks; repair only this claim's in-scope subset, then
+        # re-run the verifier so the residual selects the next owner.  This
+        # never authorizes writes outside ``owner_target_files``.
         recommended_owner = "director"
         recommended_route = "director_retry_with_interface_discrepancy_context"
         cross_artifact_route = "director_repair_within_claimed_task"
@@ -369,6 +367,26 @@ def workspace_quality_interface_discrepancy_allows_director_retry(evidence: dict
     )
 
 
+def workspace_quality_claimed_owner_repair_targets(evidence: dict[str, Any]) -> list[str]:
+    """Return only diagnostic targets covered by the authorized task claim."""
+
+    if not workspace_quality_interface_discrepancy_allows_director_retry(evidence):
+        return []
+    metadata_raw = evidence.get("metadata")
+    metadata = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
+    owner_raw = metadata.get("task_boundary_owner_evidence")
+    owner = dict(owner_raw) if isinstance(owner_raw, Mapping) else {}
+    if (
+        str(owner.get("source") or "") != "task_runtime_execution_attempt"
+        or not bool(str(owner.get("task_id") or "").strip())
+        or not bool(owner.get("director_local_repair_allowed"))
+    ):
+        return []
+    owner_targets = set(_dedupe_workspace_repair_paths(owner.get("owner_target_files") or []))
+    in_scope_targets = _dedupe_workspace_repair_paths(owner.get("in_scope_diagnostic_target_files") or [])
+    return [path for path in in_scope_targets if path in owner_targets]
+
+
 def workspace_quality_repair_summary_projection(
     summary: dict[str, Any],
     artifact_quality_errors: list[str] | None = None,
@@ -392,6 +410,7 @@ def workspace_quality_repair_summary_projection(
         "rotated_repair_targets",
         "task_boundary_scope_filter",
         "task_boundary_owner_evidence",
+        "task_boundary_interface_discrepancy_retry_authorized",
         "deferred_owner_rebind",
         "plan_probe_preaudit",
         "interface_discrepancy_evidence",

@@ -459,6 +459,10 @@ class _Mixin03:
         return wq_evidence.workspace_quality_interface_discrepancy_allows_director_retry(evidence)
 
     @staticmethod
+    def _workspace_quality_claimed_owner_repair_targets(evidence: dict[str, Any]) -> list[str]:
+        return wq_evidence.workspace_quality_claimed_owner_repair_targets(evidence)
+
+    @staticmethod
     def _workspace_quality_repair_summary_projection(
         summary: dict[str, Any],
         artifact_quality_errors: list[str] | None = None,

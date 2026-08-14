@@ -312,6 +312,52 @@ def test_plan_transaction_tool_surface_forces_write_for_declared_missing_targets
     assert plan.tool_filter_audit["filter_reason"] == "declared_scope_missing_write_targets"
 
 
+def test_plan_transaction_tool_surface_forces_tool_and_preserves_existing_quality_repair_edit(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lib.rs").write_text("pub mod engine;\n", encoding="utf-8")
+    native_tools = [
+        {"type": "function", "function": {"name": "read_file", "parameters": {"type": "object"}}},
+        {"type": "function", "function": {"name": "edit_file", "parameters": {"type": "object"}}},
+        {"type": "function", "function": {"name": "write_file", "parameters": {"type": "object"}}},
+    ]
+    monkeypatch.setattr(tool_surface, "build_native_tool_schemas", lambda _profile: native_tools)
+    monkeypatch.setattr(
+        tool_surface,
+        "_apply_runtime_tool_policy",
+        lambda **kwargs: (kwargs["tool_definitions"], {"runtime_tool_policy_applied": True}),
+    )
+    monkeypatch.setattr(tool_surface, "should_use_weak_director_slim_tool_schema", lambda **_kwargs: False)
+    request = RoleTurnRequest(
+        workspace=str(tmp_path),
+        message="[mode:materialize] repair current verifier failure",
+        context_override={
+            "_transaction_kernel_forced_tool_choice": "required",
+            "director_quality_repair": {
+                "repair_target_files": ["src/lib.rs"],
+                "write_only_single_target": {"target_file": "src/lib.rs"},
+            },
+        },
+    )
+
+    plan = tool_surface.plan_transaction_tool_surface(
+        role="director",
+        profile=_profile(),
+        request=request,
+        context_result=_context_result(),
+        messages=[],
+        workspace=str(tmp_path),
+        mode="turn",
+    )
+
+    assert [item["function"]["name"] for item in plan.tool_definitions] == ["read_file", "edit_file"]
+    assert plan.tool_choice_override == "required"
+    assert plan.tool_filter_audit is not None
+    assert plan.tool_filter_audit["filter_reason"] == "repair_preserve_edit_target"
+
+
 def test_plan_transaction_tool_surface_caps_first_turn_write_output_budget(
     monkeypatch: Any,
     tmp_path: Any,
