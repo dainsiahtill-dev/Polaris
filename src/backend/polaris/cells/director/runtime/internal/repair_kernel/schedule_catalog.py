@@ -337,6 +337,7 @@ _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
     "deterministic_typescript_uninitialized_property_repair",
     "deterministic_typescript_unique_export_import_repair",
     "deterministic_typescript_unresolved_identifier_repair",
+    "deterministic_typescript_private_property_access_repair",
     "deterministic_typescript_unused_import_repair",
     "deterministic_typescript_vitest_globals_repair",
     "deterministic_typescript_zod_type_class_collision_repair",

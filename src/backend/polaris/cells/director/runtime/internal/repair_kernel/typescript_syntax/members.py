@@ -290,6 +290,68 @@ def _build_typescript_private_constructor_access_plan(
         metadata={"repairs": repairs},
     )
 
+def _build_typescript_private_property_access_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str,
+) -> RepairPlan | None:
+    operations: list[RepairOperation] = []
+    repairs: list[dict[str, object]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in _parse_typescript_private_property_access_errors(diagnostics):
+        class_name = item["class"]
+        field_name = item["property"]
+        if not class_name or not field_name:
+            continue
+        owner_path, original = _typescript_class_owner_file(base_files, class_name)
+        if not owner_path or not original:
+            continue
+        key = (owner_path, class_name, field_name)
+        if key in seen:
+            continue
+        span = _typescript_private_field_modifier_span(original, class_name, field_name)
+        if span is None:
+            continue
+        start, end = span
+        expected = original[start:end]
+        if expected != "private ":
+            continue
+        seen.add(key)
+        operations.append(
+            RepairOperation(
+                kind="text_replace",
+                path=owner_path,
+                span_start=start,
+                span_end=end,
+                expected=expected,
+                replacement="",
+                before_hash=sha256_text(original),
+                metadata={
+                    "repair_kind": "typescript_private_property_access",
+                    "class_name": class_name,
+                    "property": field_name,
+                    "visibility_change": "private_to_public_default",
+                },
+            )
+        )
+        repairs.append(
+            {
+                "file": owner_path,
+                "class_name": class_name,
+                "property": field_name,
+                "usage_file": item["file"],
+            }
+        )
+    return _repair_plan_or_none(
+        rule_id="typescript.private_property_access",
+        source_tool=TYPESCRIPT_PRIVATE_PROPERTY_ACCESS_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=diagnostics,
+        mode=mode,
+        metadata={"repairs": repairs},
+    )
+
 def _build_typescript_missing_member_plan(
     *,
     base_files: Mapping[str, str],
@@ -482,6 +544,73 @@ def _parse_typescript_private_constructor_access_errors(
                 seen.add(key)
                 parsed.append(item)
     return parsed
+
+def _parse_typescript_private_property_access_errors(
+    diagnostics: Sequence[RepairDiagnostic],
+) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for diagnostic in diagnostics:
+        text = str(diagnostic.raw or diagnostic.message or "")
+        for match in _TS_PRIVATE_PROPERTY_ACCESS_RAW_RE.finditer(text):
+            item = {
+                "file": _normalize_repair_path(str(match.group("file") or "")),
+                "line": str(match.group("line") or ""),
+                "column": str(match.group("col") or ""),
+                "property": str(match.group("property") or ""),
+                "class": str(match.group("class") or ""),
+            }
+            key = (item["file"], item["line"], item["class"], item["property"])
+            if item["file"] and item["property"] and item["class"] and key not in seen:
+                seen.add(key)
+                parsed.append(item)
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        line = str(diagnostic.line or "")
+        message_match = _TS_PRIVATE_PROPERTY_ACCESS_MESSAGE_RE.search(text)
+        code = str(diagnostic.code or "").lower()
+        if code in {"typescript_ts2341", "ts2341"} and path and message_match:
+            item = {
+                "file": path,
+                "line": line,
+                "column": str(diagnostic.column or ""),
+                "property": str(message_match.group("property") or ""),
+                "class": str(message_match.group("class") or ""),
+            }
+            key = (item["file"], item["line"], item["class"], item["property"])
+            if item["class"] and item["property"] and key not in seen:
+                seen.add(key)
+                parsed.append(item)
+    return parsed
+
+def _typescript_class_owner_file(
+    base_files: Mapping[str, str],
+    class_name: str,
+) -> tuple[str, str]:
+    class_re = re.compile(rf"\bclass\s+{re.escape(class_name)}\b")
+    matches: list[tuple[str, str]] = []
+    for path, content in base_files.items():
+        text = str(content or "")
+        if class_re.search(text):
+            matches.append((_normalize_repair_path(path), text))
+    if len(matches) != 1:
+        return "", ""
+    return matches[0]
+
+def _typescript_private_field_modifier_span(
+    content: str,
+    class_name: str,
+    field_name: str,
+) -> tuple[int, int] | None:
+    class_match = re.search(rf"\bclass\s+{re.escape(class_name)}\b", content)
+    if class_match is None:
+        return None
+    field_re = re.compile(
+        rf"(?P<mod>private\s+)(?:readonly\s+)?{re.escape(field_name)}\b",
+    )
+    match = field_re.search(content, class_match.end())
+    if match is None:
+        return None
+    return match.start("mod"), match.end("mod")
 
 def _typescript_member_alias_replacement(*, receiver: str, missing_member: str, existing_members: set[str]) -> str:
     if missing_member == "checks" and "results" in existing_members:
@@ -690,6 +819,7 @@ __all__ = (
     "build_typescript_unknown_member_access_plan",
     "_build_typescript_member_alias_plan",
     "_build_typescript_private_constructor_access_plan",
+    "_build_typescript_private_property_access_plan",
     "_build_typescript_missing_member_plan",
     "_build_typescript_uninitialized_property_plan",
     "_parse_typescript_private_constructor_access_errors",

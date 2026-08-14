@@ -106,6 +106,7 @@ KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS: frozenset[str] = frozenset(
         "deterministic_typescript_object_literal_missing_props_repair",
         "deterministic_typescript_param_object_property_repair",
         "deterministic_typescript_private_constructor_access_repair",
+        "deterministic_typescript_private_property_access_repair",
         "deterministic_typescript_readonly_array_mutation_repair",
         "deterministic_typescript_readonly_assignment_repair",
         "deterministic_typescript_duplicate_function_repair",

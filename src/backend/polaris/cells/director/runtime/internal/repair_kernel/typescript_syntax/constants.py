@@ -85,6 +85,8 @@ TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL = "deterministic_typescript_missing_member
 
 TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL = "deterministic_typescript_private_constructor_access_repair"
 
+TYPESCRIPT_PRIVATE_PROPERTY_ACCESS_SOURCE_TOOL = "deterministic_typescript_private_property_access_repair"
+
 TYPESCRIPT_EXPORT_AMBIGUITY_SOURCE_TOOL = "deterministic_typescript_export_ambiguity_repair"
 
 TYPESCRIPT_REEXPORT_SOURCE_TOOL = "deterministic_typescript_reexport_repair"
@@ -340,6 +342,21 @@ _TS_PRIVATE_CONSTRUCTOR_ACCESS_RAW_RE = re.compile(
 _TS_PRIVATE_CONSTRUCTOR_ACCESS_MESSAGE_RE = re.compile(
     r"Constructor\s+of\s+class\s+['\"](?P<class>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+"
     r"is\s+private\s+and\s+only\s+accessible\s+within\s+the\s+class\s+declaration",
+    re.IGNORECASE,
+)
+
+_TS_PRIVATE_PROPERTY_ACCESS_RAW_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2341:\s*"
+    r"Property\s+['\"](?P<property>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+"
+    r"is\s+private\s+and\s+only\s+accessible\s+within\s+class\s+"
+    r"['\"](?P<class>[A-Za-z_$][A-Za-z0-9_$]*)['\"]",
+    re.IGNORECASE,
+)
+
+_TS_PRIVATE_PROPERTY_ACCESS_MESSAGE_RE = re.compile(
+    r"Property\s+['\"](?P<property>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+"
+    r"is\s+private\s+and\s+only\s+accessible\s+within\s+class\s+"
+    r"['\"](?P<class>[A-Za-z_$][A-Za-z0-9_$]*)['\"]",
     re.IGNORECASE,
 )
 
@@ -937,6 +954,7 @@ __all__ = (
     "TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL",
     "TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL",
     "TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL",
+    "TYPESCRIPT_PRIVATE_PROPERTY_ACCESS_SOURCE_TOOL",
     "TYPESCRIPT_EXPORT_AMBIGUITY_SOURCE_TOOL",
     "TYPESCRIPT_REEXPORT_SOURCE_TOOL",
     "TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL",
@@ -996,6 +1014,8 @@ __all__ = (
     "_TS_VALUE_USED_AS_TYPE_MESSAGE_RE",
     "_TS_PRIVATE_CONSTRUCTOR_ACCESS_RAW_RE",
     "_TS_PRIVATE_CONSTRUCTOR_ACCESS_MESSAGE_RE",
+    "_TS_PRIVATE_PROPERTY_ACCESS_RAW_RE",
+    "_TS_PRIVATE_PROPERTY_ACCESS_MESSAGE_RE",
     "_TS_SHORTHAND_PROPERTY_SCOPE_RAW_RE",
     "_TS_UNKNOWN_MEMBER_ACCESS_RAW_RE",
     "_TS_NUMBER_TO_FUNCTION_ARGUMENT_RAW_RE",

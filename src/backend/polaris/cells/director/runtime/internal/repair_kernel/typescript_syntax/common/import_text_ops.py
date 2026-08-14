@@ -188,6 +188,21 @@ def _repair_typescript_unresolved_identifier_import(
             f"{original[: match.start('symbols')]}{replacement_symbols}{original[match.end('symbols') :]}",
             f"import:{module_ref}:{missing_symbol}",
         )
+    # A lone `export type { X } from "mod"` does not create a local binding.
+    # When the file already names exactly one reexport module, import the
+    # missing type-position symbol from that same module.
+    reexport_modules: list[str] = []
+    for match in _TS_NAMED_REEXPORT_RE.finditer(original):
+        module_ref = str(match.group("module") or "").strip()
+        if not module_ref:
+            continue
+        reexport_modules.append(module_ref)
+    unique_modules = list(dict.fromkeys(reexport_modules))
+    if len(unique_modules) == 1:
+        module_ref = unique_modules[0]
+        import_line = f'import type {{ {missing_symbol} }} from "{module_ref}";\n'
+        if import_line not in original:
+            return import_line + original, f"import:{module_ref}:{missing_symbol}"
     return original, ""
 
 def _parse_named_import_symbols(symbols: str) -> list[str]:

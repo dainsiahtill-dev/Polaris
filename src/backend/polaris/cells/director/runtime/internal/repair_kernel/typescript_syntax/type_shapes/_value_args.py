@@ -419,6 +419,12 @@ def _repair_typescript_unresolved_identifier_lines(
     target_index = target_line_number - 1
     if target_index < 0 or target_index >= len(lines):
         return str(text or ""), ""
+    # Type-position TS2304 must import a real binding. Fuzzy-aliasing to a
+    # nearby function (FlightReport → renderFlightReport) is a live L1-08
+    # regression, not a local structural repair.
+    type_item = {"symbol": missing_symbol, "line": str(target_line_number)}
+    if _typescript_missing_identifier_usage_is_type_position(str(text or ""), type_item):
+        return str(text or ""), ""
     replacement = _select_typescript_unresolved_identifier_replacement(lines, target_index, missing_symbol)
     line = lines[target_index]
     if replacement:

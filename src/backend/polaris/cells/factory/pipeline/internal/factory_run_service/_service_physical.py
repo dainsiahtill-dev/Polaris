@@ -657,9 +657,17 @@ class _FactoryRunServicePhysicalMixin:
         current = self._physical_attempt_coordinators.get(run.id)
         if current is not None and not current.admission_closed:
             return run
-        replayed = (
-            current if current is not None else await self._replay_failed_retry_physical_attempt_epoch_locked(run)
-        )
+        lease_payload = run.metadata.get(_WORKSPACE_LEASE_METADATA_KEY)
+        lease = lease_payload if isinstance(lease_payload, Mapping) else {}
+        lease_released = str(lease.get("state") or "").strip().lower() == "released"
+        # Closed in-process coordinator + already-released lease can reuse the
+        # coordinator (quality-only retry). Closed coordinator + draining lease
+        # must replay/release first — live L1-08 second retry_phase skipped
+        # replay and raised retry_terminal_settlement_missing.
+        if current is not None and current.admission_closed and lease_released:
+            replayed = current
+        else:
+            replayed = await self._replay_failed_retry_physical_attempt_epoch_locked(run)
         self._require_failed_retry_terminal_release(run)
         return await self._open_fresh_physical_attempt_execution_epoch_locked(
             run,

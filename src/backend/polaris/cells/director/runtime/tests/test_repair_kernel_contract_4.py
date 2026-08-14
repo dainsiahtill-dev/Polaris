@@ -1145,6 +1145,145 @@ def test_typescript_reexported_type_binding_runtime_adds_local_import(tmp_path: 
     assert record["operation"] == "edit_file"
 
 
+def test_typescript_reexported_type_binding_imports_sibling_type_from_same_barrel() -> None:
+    """Live L1-08: export type { FlightReport } does not bind local names.
+
+    QA residual was TS2304 SimulationStep/Meters in the same file. The file
+    already points at one type barrel. Import the missing type-position name
+    from that same module without requiring the symbol to appear in the
+    export type list (plan_probe often lacks sibling file contents).
+    """
+
+    renderer = (
+        'export type { FlightReport } from "../models/index.js";\n'
+        "\n"
+        "function computeViewport(report: FlightReport, width: number): number {\n"
+        "  return report.peakAltitude * width;\n"
+        "}\n"
+        "\n"
+        "function projectPosition(step: SimulationStep): number {\n"
+        "  return step.altitude;\n"
+        "}\n"
+    )
+    diagnostics = (
+        "src/engine/renderer.ts(3,36): error TS2304: Cannot find name 'FlightReport'.",
+        "src/engine/renderer.ts(7,32): error TS2304: Cannot find name 'SimulationStep'.",
+    )
+    base_files = {"src/engine/renderer.ts": renderer}
+
+    probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=diagnostics,
+            base_files=base_files,
+            source_tools=(ts_syntax.TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL,),
+        )
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert probe.status == "covered_plannable"
+    assert probe.plannable_source_tools == (ts_syntax.TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL,)
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert 'import type { FlightReport } from "../models/index.js";' in after
+    assert 'import type { SimulationStep } from "../models/index.js";' in after
+    assert "renderFlightReport" not in after
+
+
+def test_typescript_private_property_access_unprivates_existing_field() -> None:
+    """Live L1-08: web.ts reads FlightController.trajectory / windSpeedMs (TS2341)."""
+
+    consumer = (
+        "import { FlightController } from './engine/simulation.js';\n"
+        "export function paint(controller: FlightController): number {\n"
+        "  return controller.trajectory.length + controller.windSpeedMs;\n"
+        "}\n"
+    )
+    owner = (
+        "export class FlightController {\n"
+        "  private readonly windSpeedMs: number;\n"
+        "  private trajectory: number[] = [];\n"
+        "  public constructor() {\n"
+        "    this.windSpeedMs = 0;\n"
+        "  }\n"
+        "}\n"
+    )
+    diagnostics = (
+        "src/web.ts(3,21): error TS2341: Property 'trajectory' is private "
+        "and only accessible within class 'FlightController'.",
+        "src/web.ts(3,51): error TS2341: Property 'windSpeedMs' is private "
+        "and only accessible within class 'FlightController'.",
+    )
+    base_files = {
+        "src/web.ts": consumer,
+        "src/engine/simulation.ts": owner,
+    }
+    source_tool = ts_syntax.TYPESCRIPT_PRIVATE_PROPERTY_ACCESS_SOURCE_TOOL
+    probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=diagnostics,
+            base_files=base_files,
+            source_tools=(source_tool,),
+        )
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert probe.status == "covered_plannable"
+    assert source_tool in probe.plannable_source_tools
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "private readonly windSpeedMs" not in after
+    assert "private trajectory" not in after
+    assert "readonly windSpeedMs" in after
+    assert "trajectory: number[]" in after
+
+
+def test_typescript_unresolved_identifier_does_not_alias_type_position_to_local_function() -> None:
+    """Live L1-08: unresolved planner rewrote FlightReport → renderFlightReport."""
+
+    renderer = (
+        'export type { FlightReport } from "../models/index.js";\n'
+        "\n"
+        "export function renderFlightReport(): void {}\n"
+        "\n"
+        "function computeViewport(report: FlightReport, width: number): number {\n"
+        "  return width;\n"
+        "}\n"
+    )
+    diagnostic = "src/engine/renderer.ts(5,36): error TS2304: Cannot find name 'FlightReport'."
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL,
+            base_files={"src/engine/renderer.ts": renderer},
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    if planning["planned"]:
+        after = planning["composition_summary"]["patches"][0]["content_after"]
+        assert "report: renderFlightReport" not in after
+        assert "report: FlightReport" in after
+        assert 'import type { FlightReport } from "../models/index.js";' in after
+    else:
+        assert planning["planned"] is False
+
+
 def test_typescript_value_used_as_type_repairs_exported_const_class_alias() -> None:
     diagnostics = (
         "src/models/Fairy.ts(4,24): error TS2749: 'Reputation' refers to a value, "

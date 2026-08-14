@@ -255,23 +255,41 @@ def _build_typescript_reexported_type_binding_plan(
     operations: list[RepairOperation] = []
     imports: list[dict[str, str]] = []
     updated = dict(base_files)
+    grouped: dict[str, list[dict[str, str]]] = {}
     for item in _parse_typescript_cannot_find_name_errors(diagnostics):
         path = item["file"]
         original = str(updated.get(path) or "")
         if not original or not _typescript_missing_identifier_usage_is_type_position(original, item):
             continue
-        repaired, import_meta = _add_typescript_reexported_type_binding(original, missing_symbol=item["symbol"])
-        if repaired == original or not import_meta:
+        grouped.setdefault(path, []).append(item)
+    for path, items in grouped.items():
+        original = str(updated.get(path) or "")
+        repaired = original
+        file_imports: list[dict[str, str]] = []
+        for item in items:
+            repaired, import_meta = _add_typescript_reexported_type_binding(
+                repaired,
+                missing_symbol=item["symbol"],
+            )
+            if import_meta:
+                file_imports.append({"file": path, **import_meta})
+        if repaired == original or not file_imports:
             continue
+        # One forward patch per file. Per-symbol insert-at-0 operations overlap
+        # and the composer keeps only the first (live L1-08: FlightReport landed,
+        # SimulationStep/Meters stayed TS2304).
         path_operations = _text_replace_operations_from_repair(
             path=path,
             original=original,
             repaired=repaired,
-            metadata={"repair_kind": "typescript_reexported_type_binding", **import_meta},
+            metadata={
+                "repair_kind": "typescript_reexported_type_binding",
+                "symbols": ",".join(item["symbol"] for item in file_imports),
+            },
         )
         operations.extend(path_operations)
         updated[path] = repaired
-        imports.append({"file": path, **import_meta})
+        imports.extend(file_imports)
     return _repair_plan_or_none(
         rule_id="typescript.reexported_type_binding",
         source_tool=TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL,
@@ -1388,15 +1406,24 @@ def _add_typescript_reexported_type_binding(text: str, *, missing_symbol: str) -
     symbol = str(missing_symbol or "").strip()
     if not _TS_IDENTIFIER_RE.fullmatch(symbol):
         return text, {}
-    for match in _TS_NAMED_REEXPORT_RE.finditer(str(text or "")):
-        module = str(match.group("module") or "")
-        if symbol not in _parse_named_import_symbols(str(match.group("symbols") or "")):
+    source = str(text or "")
+    named_modules: list[str] = []
+    sibling_modules: list[str] = []
+    for match in _TS_NAMED_REEXPORT_RE.finditer(source):
+        module = str(match.group("module") or "").strip()
+        if not module:
             continue
-        import_line = f'import type {{ {symbol} }} from "{module}";\n'
-        if import_line in text:
-            return text, {}
-        return import_line + text, {"symbol": symbol, "module": module}
-    return text, {}
+        sibling_modules.append(module)
+        if symbol in _parse_named_import_symbols(str(match.group("symbols") or "")):
+            named_modules.append(module)
+    modules = named_modules or list(dict.fromkeys(sibling_modules))
+    if len(modules) != 1:
+        return text, {}
+    module = modules[0]
+    import_line = f'import type {{ {symbol} }} from "{module}";\n'
+    if import_line in source:
+        return text, {}
+    return import_line + source, {"symbol": symbol, "module": module}
 
 def _build_relative_import_plan(
     *,

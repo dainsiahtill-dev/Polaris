@@ -38,6 +38,7 @@ from ..typescript_syntax import (
     TYPESCRIPT_OBJECT_LITERAL_MISSING_PROPS_SOURCE_TOOL,
     TYPESCRIPT_PARAM_OBJECT_PROPERTY_SOURCE_TOOL,
     TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL,
+    TYPESCRIPT_PRIVATE_PROPERTY_ACCESS_SOURCE_TOOL,
     TYPESCRIPT_READONLY_ARRAY_MUTATION_SOURCE_TOOL,
     TYPESCRIPT_READONLY_ASSIGNMENT_SOURCE_TOOL,
     TYPESCRIPT_REEXPORT_SOURCE_TOOL,
@@ -412,6 +413,23 @@ def typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             ),
             runtime_plan_available=True,
             metadata=_executable_runtime_metadata(scope="private_constructor_modifier_text_replace"),
+        ),
+        RepairRuleDefinition(
+            rule_id="typescript.private_property_access",
+            source_tool=TYPESCRIPT_PRIVATE_PROPERTY_ACCESS_SOURCE_TOOL,
+            language="typescript",
+            phase="quality_repair",
+            archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+            priority=1,
+            diagnostic_codes=("typescript_ts2341",),
+            message_terms=("property", "private", "only accessible within class"),
+            risk_level="low",
+            description=(
+                "Unprivates an existing class field when another owner file reads it "
+                "(TS2341). Does not invent members; only removes the private modifier."
+            ),
+            runtime_plan_available=True,
+            metadata=_executable_runtime_metadata(scope="private_property_modifier_text_replace"),
         ),
         RepairRuleDefinition(
             rule_id="typescript.object_literal_missing_member_implementation",
