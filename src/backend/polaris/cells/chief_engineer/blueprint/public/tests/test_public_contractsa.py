@@ -1000,6 +1000,173 @@ class TestChiefEngineerBlueprintPortfolio:
             "test",
         }
 
+    def test_ce_invented_artifacts_outside_pm_targets_are_dropped_and_missing_pm_targets_projected(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Live L1-07: CE extras must not expand delivery authority or fail the portfolio.
+
+        MiniMax emitted BattleModel/CLI/app/build.gradle obligations that PM never
+        authorized, and omitted BeatModel/RhythmEngine. Artifact paths stay PM-owned:
+        drop unauthorized extras, then project every exact missing PM target.
+        """
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-1",
+                objective="Implement pocket rhythm monster Java CLI",
+                target_files=(
+                    "src/main/java/polaris/factory/Main.java",
+                    "src/main/java/polaris/factory/domain/RhythmModel.java",
+                    "src/main/java/polaris/factory/domain/MonsterModel.java",
+                    "src/main/java/polaris/factory/domain/BeatModel.java",
+                    "src/main/java/polaris/factory/engine/RhythmEngine.java",
+                    "src/test/java/polaris/factory/RhythmEngineTest.java",
+                    "tests/test_product.py",
+                    "README.md",
+                ),
+                scope_paths=(
+                    "src/main/java/polaris/factory/Main.java",
+                    "src/main/java/polaris/factory/domain/RhythmModel.java",
+                    "src/main/java/polaris/factory/domain/MonsterModel.java",
+                    "src/main/java/polaris/factory/domain/BeatModel.java",
+                    "src/main/java/polaris/factory/engine/RhythmEngine.java",
+                    "src/test/java/polaris/factory/RhythmEngineTest.java",
+                    "tests/test_product.py",
+                    "README.md",
+                ),
+                entrypoint_targets=("src/main/java/polaris/factory/Main.java",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        requirements["obligations"]["artifacts"] = [
+            {
+                "obligation_id": "ART-MAIN",
+                "path": "src/main/java/polaris/factory/Main.java",
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-1",
+            },
+            {
+                "obligation_id": "ART-RHYTHM",
+                "path": "src/main/java/polaris/factory/domain/RhythmModel.java",
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-1",
+            },
+            {
+                "obligation_id": "ART-MONSTER",
+                "path": "src/main/java/polaris/factory/domain/MonsterModel.java",
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-1",
+            },
+            {
+                "obligation_id": "ART-BATTLE",
+                "path": "src/main/java/polaris/factory/domain/BattleModel.java",
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-1",
+            },
+            {
+                "obligation_id": "ART-ROUTER",
+                "path": "src/main/java/polaris/factory/cli/CommandRouter.java",
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-1",
+            },
+            {
+                "obligation_id": "ART-BUILD",
+                "path": "build.gradle",
+                "semantic_role": "config",
+                "applicability": "required",
+                "owner_task_id": "TASK-1",
+            },
+            {
+                "obligation_id": "ART-TEST-PY",
+                "path": "tests/test_product.py",
+                "semantic_role": "test",
+                "applicability": "required",
+                "owner_task_id": "TASK-1",
+            },
+            {
+                "obligation_id": "ART-README",
+                "path": "README.md",
+                "semantic_role": "docs",
+                "applicability": "required",
+                "owner_task_id": "TASK-1",
+            },
+        ]
+        requirements["obligations"]["entrypoints"] = [
+            {
+                "obligation_id": "EP-CLI-MAIN",
+                "kind": "cli",
+                "applicability": "required",
+                "owner_task_id": "TASK-1",
+                "source_path": "src/main/java/polaris/factory/Main.java",
+                "runtime_path": "build/libs/polaris-rhythm-monster.jar",
+                "command": "java -jar build/libs/polaris-rhythm-monster.jar",
+            }
+        ]
+        requirements["obligations"]["verification"] = [
+            {
+                "obligation_id": "VRF-BUILD",
+                "modality": "build",
+                "command_authority_hash": _command_authority(
+                    "TASK-1", "build", ("python", "-m", "compileall", "src")
+                ).authority_hash,
+                "applicability": "required",
+                "covers_obligation_ids": ["ART-BUILD", "ART-MAIN", "ART-BATTLE", "ART-ROUTER"],
+                "owner_task_id": "TASK-1",
+            },
+            {
+                "obligation_id": "VRF-TEST",
+                "modality": "test",
+                "command_authority_hash": _command_authority("TASK-1", "test", ("pytest", "-q")).authority_hash,
+                "applicability": "required",
+                "covers_obligation_ids": ["ART-TEST-PY", "ART-BATTLE"],
+                "owner_task_id": "TASK-1",
+            },
+        ]
+
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-l107-ce-extra-artifacts",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-l107-ce-extra-artifacts",
+                    entrypoint_owner_task_ids=("TASK-1",),
+                ),
+                llm_blueprint={
+                    "construction_plan": {"project_interface_contract": {}},
+                    "project_completion_contract": requirements,
+                    "risk_flags": [],
+                },
+            )
+        )
+
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        artifact_paths = {item.path for item in completion.obligations.artifacts}
+        assert artifact_paths == set(tasks[0].target_files)
+        assert "src/main/java/polaris/factory/domain/BattleModel.java" not in artifact_paths
+        assert "src/main/java/polaris/factory/cli/CommandRouter.java" not in artifact_paths
+        assert "build.gradle" not in artifact_paths
+        obligation_ids = {item.obligation_id for item in completion.obligations.artifacts}
+        assert "ART-BATTLE" not in obligation_ids
+        assert "ART-ROUTER" not in obligation_ids
+        assert "ART-BUILD" not in obligation_ids
+        assert any(item.path.endswith("BeatModel.java") for item in completion.obligations.artifacts)
+        assert any(item.path.endswith("RhythmEngine.java") for item in completion.obligations.artifacts)
+        assert any(item.path.endswith("RhythmEngineTest.java") for item in completion.obligations.artifacts)
+        build_verifier = next(item for item in completion.obligations.verification if item.modality == "build")
+        assert "ART-BATTLE" not in build_verifier.covers_obligation_ids
+        assert "ART-BUILD" not in build_verifier.covers_obligation_ids
+        assert "ART-MAIN" in build_verifier.covers_obligation_ids
+
     def test_empty_ce_obligations_project_library_authority(self, tmp_path: Path) -> None:
         """Empty CE advice preserves PM environment authority and library no-entrypoint fact."""
 
@@ -2145,6 +2312,15 @@ class TestChiefEngineerBlueprintPortfolio:
             },
         )
 
+        if attack == "artifact_outside_pm_scope":
+            portfolio = build_chief_engineer_blueprint_portfolio(command)
+            completion = portfolio.project_completion_contract
+            assert completion is not None
+            artifact_paths = {item.path for item in completion.obligations.artifacts}
+            assert artifact_paths == {"src/main.py", "tests/test_main.py"}
+            assert "src/rogue.py" not in artifact_paths
+            return
+
         with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
             build_chief_engineer_blueprint_portfolio(command)
 
@@ -2216,12 +2392,14 @@ class TestChiefEngineerBlueprintPortfolio:
             },
         )
 
+        completion = build_chief_engineer_blueprint_portfolio(command).project_completion_contract
+        assert completion is not None
+        artifact_paths = {item.path for item in completion.obligations.artifacts}
         if allowed:
-            assert build_chief_engineer_blueprint_portfolio(command).project_completion_contract
+            assert generated_path in artifact_paths
         else:
-            with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
-                build_chief_engineer_blueprint_portfolio(command)
-            assert exc_info.value.code == "invalid_project_completion_contract"
+            assert generated_path not in artifact_paths
+            assert artifact_paths == {"pyproject.toml", "tests/test_generated.py"}
 
     def test_unknown_llm_task_plan_fails_closed(self, tmp_path: Path) -> None:
         command = BuildChiefEngineerBlueprintPortfolioCommandV1(

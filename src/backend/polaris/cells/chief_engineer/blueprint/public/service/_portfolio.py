@@ -756,36 +756,63 @@ def _build_portfolio_completion_contract(
             }
             return next(iter(terminal)) if len(terminal) == 1 else None
 
+        entrypoint_paths = {path for task in command.tasks for path in task.entrypoint_targets}
+        ordered_pm_paths = tuple(dict.fromkeys(path for task in command.tasks for path in task.target_files))
+
+        def project_pm_target_row(path: str, *, index: int) -> dict[str, Any]:
+            authorized = owners_for_path(path)
+            owner_task_id = next(iter(authorized)) if len(authorized) == 1 else unique_terminal_owner(path)
+            if owner_task_id is None:
+                raise ValueError(
+                    "PM target artifact has no unique authorized terminal owner; "
+                    f"path={path!r}; owners={sorted(authorized)!r}"
+                )
+            return {
+                "obligation_id": f"artifact-pm-{index:03d}",
+                "path": path,
+                "semantic_role": _pm_target_semantic_role(
+                    path=path,
+                    entrypoint_paths=entrypoint_paths,
+                ),
+                "applicability": "required",
+                "owner_task_id": owner_task_id,
+            }
+
         if not artifact_rows:
             # Artifact paths and owners are PM authority, not creative CE
             # content. Some providers repeatedly return an empty artifact list
             # even after a bounded schema-repair turn. Project every exact PM
             # target once and retain fail-closed ownership: shared paths are
             # accepted only when their dependency graph has one terminal writer.
-            entrypoint_paths = {path for task in command.tasks for path in task.entrypoint_targets}
-            ordered_paths = tuple(dict.fromkeys(path for task in command.tasks for path in task.target_files))
-            projected_rows: list[dict[str, Any]] = []
-            for index, path in enumerate(ordered_paths, start=1):
-                authorized = owners_for_path(path)
-                owner_task_id = next(iter(authorized)) if len(authorized) == 1 else unique_terminal_owner(path)
-                if owner_task_id is None:
-                    raise ValueError(
-                        "PM target artifact has no unique authorized terminal owner; "
-                        f"path={path!r}; owners={sorted(authorized)!r}"
-                    )
-                projected_rows.append(
-                    {
-                        "obligation_id": f"artifact-pm-{index:03d}",
-                        "path": path,
-                        "semantic_role": _pm_target_semantic_role(
-                            path=path,
-                            entrypoint_paths=entrypoint_paths,
-                        ),
-                        "applicability": "required",
-                        "owner_task_id": owner_task_id,
-                    }
-                )
-            artifact_rows = tuple(projected_rows)
+            artifact_rows = tuple(
+                project_pm_target_row(path, index=index) for index, path in enumerate(ordered_pm_paths, start=1)
+            )
+
+        # Creative CE extras must not expand delivery obligations. Drop paths
+        # outside exact PM target / component-safe scope, then project every
+        # missing exact PM target. Owner lies on authorized paths stay
+        # fail-closed below.
+        dropped_unauthorized_artifact_ids: set[str] = set()
+        kept_artifact_rows: list[dict[str, Any]] = []
+        for row in artifact_rows:
+            if row["applicability"] == "not_applicable":
+                kept_artifact_rows.append(dict(row))
+                continue
+            path = str(row.get("path") or "")
+            if path and owners_for_path(path):
+                kept_artifact_rows.append(dict(row))
+                continue
+            dropped_unauthorized_artifact_ids.add(str(row["obligation_id"]))
+        required_artifact_paths = {
+            str(row["path"]) for row in kept_artifact_rows if row["applicability"] != "not_applicable"
+        }
+        next_projected_index = 1
+        for path in ordered_pm_paths:
+            if path in required_artifact_paths:
+                continue
+            kept_artifact_rows.append(project_pm_target_row(path, index=next_projected_index))
+            next_projected_index += 1
+        artifact_rows = tuple(kept_artifact_rows)
 
         def normalize_owner_rows(
             rows: tuple[dict[str, Any], ...],
@@ -1089,6 +1116,7 @@ def _build_portfolio_completion_contract(
                 obligation_id
                 for obligation_id in row["covers_obligation_ids"]
                 if str(obligation_id) not in dropped_unexecutable_entrypoint_ids
+                and str(obligation_id) not in dropped_unauthorized_artifact_ids
             ]
             normalized_verification_rows.append(normalized_row)
         used_verification_ids = {str(row["obligation_id"]) for row in normalized_verification_rows}
