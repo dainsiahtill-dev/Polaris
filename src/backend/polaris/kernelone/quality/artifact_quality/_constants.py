@@ -444,6 +444,6 @@ _ARTIFACT_QUALITY_NPM_PYTHON_COMMAND_RE = re.compile(
 )
 
 _ARTIFACT_QUALITY_GO_UNDEFINED_RE = re.compile(
-    r"\bundefined:\s*(?P<identifier>[A-Za-z_][A-Za-z0-9_]*)",
+    r"\bundefined:\s*(?P<identifier>(?:[A-Za-z_][A-Za-z0-9_]*\.)*[A-Za-z_][A-Za-z0-9_]*)",
     re.IGNORECASE,
 )

@@ -47,7 +47,7 @@ _GO_ERROR_RE = re.compile(
     re.IGNORECASE,
 )
 _GO_UNDEFINED_IDENTIFIER_RE = re.compile(
-    r"\bundefined:\s*(?P<identifier>[A-Za-z_][A-Za-z0-9_]*)\b",
+    r"\bundefined:\s*(?P<identifier>(?:[A-Za-z_][A-Za-z0-9_]*\.)*[A-Za-z_][A-Za-z0-9_]*)\b",
     re.IGNORECASE,
 )
 _CPP_ERROR_RE = re.compile(

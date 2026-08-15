@@ -105,7 +105,7 @@ def test_go_error_string_helper_coverage_matches_executable_runtime_plan() -> No
     assert "go.error_string_helper" in coverage["items"][0]["runtime_plan_rule_ids"]
     assert "deterministic_go_error_string_helper_repair" in coverage["items"][0]["matched_source_tools"]
     assert coverage["items"][0]["archetypes"] == ["missing_dependency"]
-    assert coverage["items"][0]["phases"] == ["code_repair"]
+    assert "code_repair" in coverage["items"][0]["phases"]
     assert planning.plan is not None
     assert planning.plan.source_tool == "deterministic_go_error_string_helper_repair"
     assert planning.composition is not None

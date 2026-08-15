@@ -54,6 +54,10 @@ _GO_MOOD_CONSTANT_SYNONYMS: dict[str, str] = {
     "MoodGlad": "MoodJoyful",
     "MoodCheerful": "MoodJoyful",
 }
+_GO_FUNC_ALIASES: dict[str, str] = {
+    "ClampIntensity": "ValidateIntensity",
+    "DoodleForEntry": "ApplyCompositionRule",
+}
 _GO_DECLARATION_LINE_RE = re.compile(
     r"^(?P<indent>\s*)(?P<kind>type|const|var)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b(?P<body>[^\n]*)$"
 )
@@ -495,6 +499,9 @@ def build_go_undefined_selector_plan(
         seen.add(key)
         updated = content
         for operation in selector_operations:
+            if operation.kind == "write_file" and operation.content is not None:
+                updated = str(operation.content)
+                continue
             updated = (
                 updated[: int(operation.span_start or 0)]
                 + str(operation.replacement or "")
@@ -844,15 +851,20 @@ def _go_unused_import_path(diagnostic: RepairDiagnostic) -> str:
 
 def _go_undefined_identifier_name(diagnostic: RepairDiagnostic) -> str:
     metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
+    metadata_identifier = ""
     if str(metadata.get("diagnostic_kind") or "").strip() == "undefined_identifier":
-        identifier = str(metadata.get("identifier") or "").strip()
-        if identifier:
-            return identifier
+        metadata_identifier = str(metadata.get("identifier") or "").strip()
     for candidate in (diagnostic.message, diagnostic.raw):
         match = _GO_UNDEFINED_IDENTIFIER_RE.search(str(candidate or ""))
         if match is not None:
-            return str(match.group("name") or "").strip()
-    return ""
+            parsed = str(match.group("name") or "").strip()
+            if parsed and (
+                not metadata_identifier
+                or parsed == metadata_identifier
+                or parsed.startswith(f"{metadata_identifier}.")
+            ):
+                return parsed
+    return metadata_identifier
 
 
 def _is_go_error_string_helper_name(identifier: str) -> bool:
@@ -981,10 +993,23 @@ def _go_param_arity(params: str) -> int:
 
 
 def _go_call_arity(text: str, selector: str) -> int | None:
-    match = re.search(rf"(?<![\w.]){re.escape(selector)}\s*\((?P<args>[^)]*)\)", str(text or ""))
+    source = str(text or "")
+    match = re.search(rf"(?<![\w.]){re.escape(selector)}\s*\(", source)
     if match is None:
         return None
-    return _go_param_arity(str(match.group("args") or ""))
+    start = match.end()
+    depth = 1
+    index = start
+    while index < len(source):
+        char = source[index]
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return _go_param_arity(source[start:index])
+        index += 1
+    return None
 
 
 def _go_undefined_selector_operations(
@@ -1002,47 +1027,49 @@ def _go_undefined_selector_operations(
         package_name, _, name = token.rpartition(".")
     else:
         package_name, name = "", token
-    constants = inventory.get("constants") if isinstance(inventory.get("constants"), dict) else {}
-    functions = inventory.get("functions") if isinstance(inventory.get("functions"), dict) else {}
-    packages_by_path = inventory.get("packages_by_path") if isinstance(inventory.get("packages_by_path"), dict) else {}
+    raw_constants = inventory.get("constants")
+    raw_functions = inventory.get("functions")
+    raw_packages = inventory.get("packages_by_path")
+    constants: dict[str, list[str]] = raw_constants if isinstance(raw_constants, dict) else {}
+    functions: dict[str, list[tuple[str, int]]] = raw_functions if isinstance(raw_functions, dict) else {}
+    packages_by_path: dict[str, str] = raw_packages if isinstance(raw_packages, dict) else {}
     if name.startswith("Mood") and package_name:
         existing = list(constants.get(package_name) or [])
         if name in existing:
             return ()
         synonym = _GO_MOOD_CONSTANT_SYNONYMS.get(name)
         if synonym and synonym in existing:
-            identifier_operation = _go_replace_identifier_operation(
-                path=path,
-                text=source,
-                expected=token,
-                replacement=f"{package_name}.{synonym}",
-                repair_kind="go_undefined_selector_alias",
-            )
-            if identifier_operation is None:
-                return ()
-            updated = (
-                source[: int(identifier_operation.span_start or 0)]
-                + str(identifier_operation.replacement or "")
-                + source[int(identifier_operation.span_end or 0) :]
-            )
-            operations: list[RepairOperation] = [identifier_operation]
+            updated = source.replace(token, f"{package_name}.{synonym}")
             old_literal = name[4:].lower()
             new_literal = synonym[4:].lower()
             if old_literal and new_literal and old_literal != new_literal:
-                literal_operation = _go_replace_identifier_operation(
-                    path=path,
-                    text=updated,
-                    expected=f'"{old_literal}"',
-                    replacement=f'"{new_literal}"',
-                    repair_kind="go_undefined_selector_alias",
-                )
-                if literal_operation is not None:
-                    operations.append(literal_operation)
-            return tuple(operations)
+                updated = updated.replace(f'"{old_literal}"', f'"{new_literal}"')
+            if updated == source:
+                return ()
+            operation = RepairOperation(
+                kind="write_file",
+                path=path,
+                content=updated,
+                before_hash=sha256_text(source),
+                metadata={"repair_kind": "go_undefined_selector_alias", "identifier": token},
+            )
+            return (operation,)
         list_operation = _go_drop_selector_from_composite_list(path=path, text=source, selector=token)
         return (list_operation,) if list_operation is not None else ()
     if not package_name:
         return ()
+    alias = _GO_FUNC_ALIASES.get(name)
+    if alias:
+        alias_owners = list(functions.get(alias) or [])
+        if any(package == package_name for package, _arity in alias_owners):
+            operation = _go_replace_identifier_operation(
+                path=path,
+                text=source,
+                expected=token,
+                replacement=f"{package_name}.{alias}",
+                repair_kind="go_undefined_selector_alias",
+            )
+            return (operation,) if operation is not None else ()
     owners = list(functions.get(name) or [])
     unique_packages = sorted({package for package, _arity in owners if package})
     if unique_packages and package_name not in unique_packages and len(unique_packages) == 1:
