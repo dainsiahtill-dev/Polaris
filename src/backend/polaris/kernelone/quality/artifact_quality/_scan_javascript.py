@@ -14,9 +14,40 @@ from polaris.kernelone.quality.artifact_quality._models import (
 )
 
 _JS_NAMED_IMPORT_RE = re.compile(r"\bimport\s*\{\s*(?P<symbols>[^}]+)\s*\}\s*from\s*['\"](?P<specifier>\.[^'\"]+)['\"]")
+_JS_NAMESPACE_IMPORT_RE = re.compile(
+    r"\bimport\s*\*\s*as\s+(?P<alias>[A-Za-z_$][\w$]*)\s+from\s*['\"](?P<specifier>\.[^'\"]+)['\"]"
+)
 _JS_RELATIVE_FROM_RE = re.compile(r"\bfrom\s*['\"](?P<specifier>\.[^'\"]+)['\"]")
+_JS_MEMBER_ACCESS_RE = re.compile(r"(?<![./])\b(?P<alias>[A-Za-z_$][\w$]*)\.(?P<member>[A-Za-z_$][\w$]*)")
+_JS_CATALOG_FIXTURE_RE = re.compile(r"\b(?P<name>DEFAULT_[A-Z][A-Z0-9_]*)\b")
+_JS_LOCAL_BINDING_RE = re.compile(r"\b(?:const|let|var|function)\s+(?P<name>DEFAULT_[A-Z][A-Z0-9_]*)\b")
 _JS_IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][\w$]*$")
 _JS_SUFFIXES = (".js", ".mjs", ".cjs")
+_JS_MEMBER_SKIP = frozenset(
+    {
+        "default",
+        "length",
+        "name",
+        "prototype",
+        "then",
+        "catch",
+        "finally",
+        "toString",
+        "valueOf",
+        "keys",
+        "values",
+        "entries",
+        "seeds",
+        "domains",
+        "version",
+        "js",
+        "mjs",
+        "cjs",
+        "ts",
+        "tsx",
+        "json",
+    }
+)
 
 
 def _scan_javascript_named_export_evidence(
@@ -42,6 +73,7 @@ def _scan_javascript_named_export_evidence(
     errors: list[str] = []
     issues: list[Any] = []
     seen: set[str] = set()
+    workspace_exports = _workspace_javascript_named_exports(root_full)
     for importer in importers:
         importer_path = root_full / importer
         try:
@@ -112,7 +144,169 @@ def _scan_javascript_named_export_evidence(
                 )
                 if len(errors) >= 20:
                     return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
+        _append_javascript_namespace_member_issues(
+            root_full,
+            importer=importer,
+            importer_text=importer_text,
+            errors=errors,
+            issues=issues,
+            seen=seen,
+        )
+        if len(errors) >= 20:
+            return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
+        _append_javascript_missing_catalog_fixture_issues(
+            importer=importer,
+            importer_text=importer_text,
+            workspace_exports=workspace_exports,
+            errors=errors,
+            issues=issues,
+            seen=seen,
+        )
+        if len(errors) >= 20:
+            return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
     return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
+
+
+def _append_javascript_namespace_member_issues(
+    root_full: Path,
+    *,
+    importer: str,
+    importer_text: str,
+    errors: list[str],
+    issues: list[Any],
+    seen: set[str],
+) -> None:
+    """Flag ``import * as ns`` member access that sibling modules do not export.
+
+    Live L2-11: tests remapped named imports, then kept ``lost.DEFAULT_LOST_ITEMS``.
+    ``node --check`` and named-import scan stayed green; ``npm test`` failed.
+    """
+
+    for match in _JS_NAMESPACE_IMPORT_RE.finditer(importer_text):
+        alias = str(match.group("alias") or "")
+        specifier = str(match.group("specifier") or "")
+        exporter = _resolve_relative_js_module(root_full, importer, specifier)
+        if not alias or exporter is None:
+            continue
+        try:
+            exporter_text = (root_full / exporter).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        exported = set(_javascript_named_exports(exporter_text))
+        for member_match in _JS_MEMBER_ACCESS_RE.finditer(importer_text):
+            if str(member_match.group("alias") or "") != alias:
+                continue
+            member = str(member_match.group("member") or "")
+            if not member or member in _JS_MEMBER_SKIP or member in exported:
+                continue
+            if not _JS_IDENTIFIER_RE.fullmatch(member):
+                continue
+            # Live L2-11: `lost.js` path and `clue.weight` entity fields are
+            # not module exports. Only flag CONSTANT_CASE catalog bindings.
+            if not re.fullmatch(r"[A-Z][A-Z0-9_]*", member):
+                continue
+            raw = f"{importer}: TypeError: namespace '{alias}' from '{specifier}' has no exported member '{member}'"
+            if raw in seen:
+                continue
+            seen.add(raw)
+            errors.append(raw)
+            issues.append(
+                _file_artifact_quality_issue(
+                    raw,
+                    importer,
+                    code="javascript_missing_namespace_export",
+                    source="javascript_named_export_scanner",
+                    metadata={
+                        "language": "javascript",
+                        "diagnostic_kind": "missing_namespace_export",
+                        "symbol": member,
+                        "alias": alias,
+                        "module": specifier,
+                        "exporter": exporter,
+                    },
+                )
+            )
+            if len(errors) >= 20:
+                return
+
+
+def _append_javascript_missing_catalog_fixture_issues(
+    *,
+    importer: str,
+    importer_text: str,
+    workspace_exports: set[str],
+    errors: list[str],
+    issues: list[Any],
+    seen: set[str],
+) -> None:
+    """Flag DEFAULT_* catalogs that tests require but no sibling exports.
+
+    Live L2-11 QA: after import remap, tests asserted populated
+    ``DEFAULT_LOST_ITEMS`` seeds. Domain modules never exported those names.
+    Inventing them is forbidden; tests must use existing create* factories.
+    """
+
+    if not _is_javascript_test_path(importer):
+        return
+    local_names = {str(match.group("name") or "") for match in _JS_LOCAL_BINDING_RE.finditer(importer_text)}
+    for match in _JS_CATALOG_FIXTURE_RE.finditer(importer_text):
+        name = str(match.group("name") or "")
+        if not name or name in local_names or name in workspace_exports:
+            continue
+        raw = (
+            f"{importer}: unresolved catalog fixture '{name}' "
+            "(sibling modules do not export it; construct fixtures with existing create* factories; "
+            "do not invent DEFAULT_* domain exports)"
+        )
+        if raw in seen:
+            continue
+        seen.add(raw)
+        errors.append(raw)
+        issues.append(
+            _file_artifact_quality_issue(
+                raw,
+                importer,
+                code="javascript_missing_catalog_fixture",
+                source="javascript_named_export_scanner",
+                metadata={
+                    "language": "javascript",
+                    "diagnostic_kind": "missing_catalog_fixture",
+                    "symbol": name,
+                },
+            )
+        )
+        if len(errors) >= 20:
+            return
+
+
+def _workspace_javascript_named_exports(root_full: Path) -> set[str]:
+    names: set[str] = set()
+    try:
+        candidates = list(root_full.rglob("*"))
+    except OSError:
+        return names
+    for path in candidates:
+        if not path.is_file() or path.suffix.lower() not in _JS_SUFFIXES:
+            continue
+        if any(part in {".git", "node_modules", "dist", "build"} for part in path.parts):
+            continue
+        try:
+            names.update(_javascript_named_exports(path.read_text(encoding="utf-8")))
+        except (OSError, UnicodeError):
+            continue
+    return names
+
+
+def _is_javascript_test_path(relative_path: str) -> bool:
+    posix = str(relative_path or "").replace("\\", "/").lstrip("./")
+    name = Path(posix).name.lower()
+    return (
+        "/tests/" in f"/{posix}/"
+        or "/test/" in f"/{posix}/"
+        or name.endswith(".test.js")
+        or name.endswith(".spec.js")
+        or name.startswith("test_")
+    )
 
 
 def _javascript_named_exports(text: str) -> tuple[str, ...]:

@@ -47,6 +47,9 @@ from polaris.kernelone.quality.artifact_quality._scan_package import (
     _scan_cargo_manifest_missing_binary_evidence,
     _scan_package_manifest_evidence,
 )
+from polaris.kernelone.quality.artifact_quality._scan_python import (
+    _scan_python_acceptance_term_pair_evidence,
+)
 from polaris.kernelone.quality.artifact_quality._scan_typescript import (
     _scan_html_typescript_module_script_evidence,
     _scan_typescript_import_evidence,
@@ -174,6 +177,10 @@ def scan_workspace_artifact_quality_evidence(
             js_export_evidence = _scan_javascript_named_export_evidence(root_full, scanned_relative_paths)
             errors.extend(js_export_evidence.errors)
             typed_issues.extend(js_export_evidence.issues)
+        if len(errors) < 50:
+            python_term_evidence = _scan_python_acceptance_term_pair_evidence(root_full, scanned_relative_paths)
+            errors.extend(python_term_evidence.errors)
+            typed_issues.extend(python_term_evidence.issues)
         if len(errors) < 50:
             cross_artifact_issues = tuple(
                 scan_cross_artifact_consistency(

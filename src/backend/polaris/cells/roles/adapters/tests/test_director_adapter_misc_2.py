@@ -46,6 +46,7 @@ from polaris.cells.roles.adapters.internal.director.adapter import (
     _prepare_role_dialogue_context,
 )
 from polaris.cells.roles.adapters.internal.director.execute_method import (
+    _CURRENT_FILE_RETRY_CHAR_CAP,
     _build_empty_write_content_retry_message,
     _build_existing_workspace_task_evidence,
     _build_no_write_materialization_retry_message,
@@ -61,17 +62,20 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _finalize_claimed_execution,
     _handle_claim_required,
     _materialization_task_boundary_triage_summary,
+    _no_effect_write_retry_needed,
     _no_write_materialization_retry_needed,
     _no_write_materialization_retry_tool_definitions,
-    _select_no_write_materialization_retry_tool,
     _pin_file_schema_to_declared_targets,
+    _quality_error_preferred_paths,
     _resolve_claim_external_task_id,
     _run_empty_write_content_materialization_retry,
+    _select_no_write_materialization_retry_tool,
     _suspend_claimed_execution_for_cancellation,
     _task_requires_fresh_materialization,
     _task_runtime_finalization_failed_result,
     _task_runtime_heartbeat_exception_signal,
     _task_runtime_heartbeat_failed_signal,
+    _unique_similar_export,
     _with_decision_signals,
     _with_task_runtime_finalize_evidence,
     execute_director_task,
@@ -1394,6 +1398,122 @@ def test_no_write_retry_message_lists_existing_sibling_exports() -> None:
     assert "Existing named exports in '../src/clue.js'" in message
     assert "CLUE_KIND" in message
     assert "do not invent new import names" in message
+
+
+def test_no_write_retry_edit_file_instruction_rejects_empty_search() -> None:
+    """Live L2-11 epoch 10: forced edit_file still used the write_file body
+    instruction, so MiniMax emitted empty search and DEO dead-lettered.
+    """
+
+    message = _build_no_write_materialization_retry_message(
+        {
+            "subject": "verify",
+            "target_files": ["package.json", "tests/product.test.js", "README.md"],
+        },
+        original_message="fix tests",
+        tool_results=[{"tool_name": "read_file", "success": True}],
+        forced_tool_name="edit_file",
+        strict_write_only=True,
+        quality_errors=[
+            "Artifact quality scan failed: unresolved import symbol 'CLUE_KINDS' "
+            "from '../src/clue.js' in tests/product.test.js (sibling module does not define it)"
+        ],
+        current_files={
+            "tests/product.test.js": "import { CLUE_KINDS } from '../src/clue.js';\n",
+        },
+        existing_exports={"../src/clue.js": ["CLUE_KIND", "validateClue"]},
+        allowed_target_files=["tests/product.test.js"],
+    )
+
+    assert "Emit valid edit_file tool calls now" in message
+    assert "Empty search is invalid" in message
+    assert "Each write_file call must use a complete non-empty UTF-8 file body" not in message
+    assert "Allowed target files: tests/product.test.js." in message
+    assert "package.json" not in message.split("Original task follows:")[0]
+    assert "Suggested remaps (existing exports only):" in message
+    assert "CLUE_KINDS from '../src/clue.js' -> CLUE_KIND" in message
+    assert "Exact import islands" in message
+    assert "import { CLUE_KINDS } from '../src/clue.js';" in message
+
+
+def test_no_write_retry_message_forbids_invented_default_catalogs() -> None:
+    message = _build_no_write_materialization_retry_message(
+        {"subject": "verify", "target_files": ["tests/product.test.js"]},
+        original_message="fix tests",
+        tool_results=[{"tool_name": "read_file", "success": True}],
+        forced_tool_name="edit_file",
+        strict_write_only=True,
+        quality_errors=[
+            "tests/product.test.js: unresolved catalog fixture 'DEFAULT_LOST_ITEMS' "
+            "(sibling modules do not export it; construct fixtures with existing create* factories; "
+            "do not invent DEFAULT_* domain exports)"
+        ],
+    )
+
+    assert "Do not add DEFAULT_* exports to domain modules" in message
+    assert "createLost/createAlien/createClue/createGalaxy" in message
+
+
+def test_no_write_retry_message_covers_python_acceptance_traps() -> None:
+    message = _build_no_write_materialization_retry_message(
+        {
+            "subject": "verify",
+            "target_files": ["tests/product.test.js", "tests/test_product.py"],
+        },
+        original_message="fix tests",
+        tool_results=[{"tool_name": "read_file", "success": True}],
+        forced_tool_name="edit_file",
+        strict_write_only=True,
+        allowed_target_files=["tests/product.test.js", "tests/test_product.py"],
+    )
+
+    assert "Python acceptance tests are in scope" in message
+    assert "REQUIRED_TERM_PAIRS" in message
+    assert "REQUIRED_TERMS" in message
+    assert "unknown-command exit 1" in message
+
+
+def test_no_write_retry_keeps_full_utf8_body_above_legacy_12k_cap() -> None:
+    """Live L2-11 epoch 10: 13391-char test file was clipped at 12000 chars."""
+
+    body = "import { CLUE_KINDS } from '../src/clue.js';\n" + ("x" * 13000) + "\nTRAILER_OK\n"
+    assert len(body) > 12000
+    assert len(body) < _CURRENT_FILE_RETRY_CHAR_CAP
+    message = _build_no_write_materialization_retry_message(
+        {"subject": "verify", "target_files": ["tests/product.test.js"]},
+        original_message="fix tests",
+        tool_results=[{"tool_name": "read_file", "success": True}],
+        forced_tool_name="edit_file",
+        strict_write_only=True,
+        current_files={"tests/product.test.js": body},
+    )
+    assert "TRAILER_OK" in message
+    assert "[truncated after" not in message
+
+
+def test_quality_preferred_paths_and_no_effect_followup_gate() -> None:
+    declared = ["package.json", "tests/product.test.js", "README.md"]
+    errors = [
+        "Artifact quality scan failed: unresolved import symbol 'CLUE_KINDS' "
+        "from '../src/clue.js' in tests/product.test.js (sibling module does not define it)"
+    ]
+    assert _quality_error_preferred_paths(declared, errors) == ["tests/product.test.js"]
+    assert _unique_similar_export("CLUE_KINDS", ["CLUE_KIND", "validateClue"]) == "CLUE_KIND"
+    assert _unique_similar_export("DEFAULT_CLUES", ["CLUE_KIND", "validateClue"]) is None
+    assert (
+        _no_effect_write_retry_needed(
+            {"error": "decoded_tool_calls=4; error_types=director_write_no_effect,deo_member_soft_denied"},
+            [],
+        )
+        is True
+    )
+    assert (
+        _no_effect_write_retry_needed(
+            {"error": "ok"},
+            [{"tool_name": "edit_file", "status": "success", "success": True, "result": {"ok": True}}],
+        )
+        is False
+    )
 
 
 def test_target_candidates_include_explicit_scope_directories_with_target_files() -> None:

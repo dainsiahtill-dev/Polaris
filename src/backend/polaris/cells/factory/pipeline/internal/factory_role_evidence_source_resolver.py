@@ -21,6 +21,7 @@ from polaris.kernelone.events.sourcing import EventEnvelope, decode_strict_event
 
 from .factory_event_chain import validate_factory_event_chain
 from .factory_role_evidence_authority import (
+    _MAX_SOURCE_ITEMS_PER_SLOT,
     FactoryRoleEvidenceAuthorityError,
     FactoryRoleEvidenceResolvedCutV1,
     FactoryRoleEvidenceSourceHeadV1,
@@ -496,19 +497,27 @@ class CanonicalFactoryRoleEvidenceSourceAuthority:
 
         slots: dict[str, FactoryRoleEvidenceSourceSlotV1] = {}
         for ref_kind, items in selected.items():
-            slots[ref_kind] = FactoryRoleEvidenceSourceSlotV1(
-                ref_kind=ref_kind,
-                state="present" if items else "absent_at_request_time",
-                source_head=FactoryRoleEvidenceSourceHeadV1(
-                    canonical_source_ref=self._source_ref(factory_run_id, ref_kind),
-                    source_fact_schema="polaris.event_envelope.v1",
-                    source_fact_version="1",
-                    source_head_fact_id=head_id,
-                    source_head_sequence=head_sequence,
-                    source_head_hash=head_hash,
-                ),
-                items=tuple(items),
-            )
+            # Live L2-11: many QA gate_evaluated facts exceeded 32 items/slot and
+            # Slot.__post_init__ raised ValueError, wrapped as
+            # factory_role_evidence_source_resolver_failed so Director never LLM'd.
+            if len(items) > _MAX_SOURCE_ITEMS_PER_SLOT:
+                items = items[-_MAX_SOURCE_ITEMS_PER_SLOT:]
+            try:
+                slots[ref_kind] = FactoryRoleEvidenceSourceSlotV1(
+                    ref_kind=ref_kind,
+                    state="present" if items else "absent_at_request_time",
+                    source_head=FactoryRoleEvidenceSourceHeadV1(
+                        canonical_source_ref=self._source_ref(factory_run_id, ref_kind),
+                        source_fact_schema="polaris.event_envelope.v1",
+                        source_fact_version="1",
+                        source_head_fact_id=head_id,
+                        source_head_sequence=head_sequence,
+                        source_head_hash=head_hash,
+                    ),
+                    items=tuple(items),
+                )
+            except (TypeError, ValueError) as exc:
+                raise self._fail(f"factory_role_evidence_dynamic_slot_invalid:{exc}") from exc
         return slots
 
     def resolve_source_cut(

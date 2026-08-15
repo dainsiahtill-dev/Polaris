@@ -118,6 +118,7 @@ from ._entry import (
     execute_director_task,
 )
 from ._helpers import (
+    _CURRENT_FILE_RETRY_CHAR_CAP,
     _DIAG_WRITE_TOOL_NAMES,
     _NO_WRITE_MULTI_TARGET_FALLBACK_TOOL_NAMES,
     _NO_WRITE_MULTI_TARGET_RETRY_TOOL_NAMES,
@@ -141,6 +142,7 @@ from ._helpers import (
     _empty_write_retry_tool_definition,
     _invoke_role_dialogue_with_transient_provider_retry,
     _is_transient_llm_provider_exception,
+    _no_effect_write_retry_needed,
     _no_write_materialization_retry_needed,
     _no_write_materialization_retry_tool_definitions,
     _no_write_retry_strict_write_only,
@@ -151,6 +153,7 @@ from ._helpers import (
     _post_execution_convergence_prefers_step_verify,
     _post_execution_convergence_relative_paths,
     _post_execution_convergence_step_verify_command,
+    _quality_error_preferred_paths,
     _quality_repair_progress_evidence,
     _registered_tool_definition,
     _run_empty_write_content_materialization_retry,
@@ -159,6 +162,7 @@ from ._helpers import (
     _select_empty_write_content_retry_tool_name,
     _select_no_write_materialization_retry_tool,
     _task_targets_missing_in_workspace,
+    _unique_similar_export,
 )
 from ._llm_flow import (
     _execute_standard_llm_flow,

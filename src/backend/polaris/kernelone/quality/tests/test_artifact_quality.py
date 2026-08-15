@@ -128,6 +128,116 @@ def test_scan_javascript_reports_missing_relative_module(tmp_path: Path) -> None
     assert "missing_relative_module" in kinds
 
 
+def test_scan_javascript_reports_missing_namespace_member(tmp_path: Path) -> None:
+    """Live L2-11: named imports remapped, tests kept lost.DEFAULT_LOST_ITEMS."""
+
+    (tmp_path / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lost.js").write_text("export function createLost() { return {}; }\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "product.test.js").write_text(
+        "import * as lost from '../src/lost.js';\nassert.ok(Array.isArray(lost.DEFAULT_LOST_ITEMS));\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(
+        str(tmp_path),
+        relative_paths=["tests/product.test.js", "src/lost.js"],
+    )
+
+    assert any("has no exported member 'DEFAULT_LOST_ITEMS'" in error for error in evidence.errors)
+    kinds = {str(issue.metadata.get("diagnostic_kind")) for issue in evidence.issues}
+    assert "missing_namespace_export" in kinds
+    assert not any("exported member 'js'" in error for error in evidence.errors)
+
+
+def test_scan_javascript_ignores_path_suffix_and_entity_fields(tmp_path: Path) -> None:
+    """Live L2-11 epoch 12: './lost.js' and clue.weight were flagged as exports."""
+
+    (tmp_path / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lost.js").write_text("export function createLost() { return {}; }\n", encoding="utf-8")
+    (tmp_path / "src" / "clue.js").write_text("export function createClue() { return {}; }\n", encoding="utf-8")
+    (tmp_path / "src" / "index.js").write_text(
+        "import * as lost from './lost.js';\n"
+        "import * as clue from './clue.js';\n"
+        "export function score(clue) { return clue.weight + clue.kind; }\n"
+        "export { lost, clue };\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(
+        str(tmp_path),
+        relative_paths=["src/index.js", "src/lost.js", "src/clue.js"],
+    )
+
+    assert not any("exported member 'js'" in error for error in errors)
+    assert not any("exported member 'weight'" in error for error in errors)
+    assert not any("exported member 'kind'" in error for error in errors)
+    assert not any("unresolved catalog fixture" in error for error in errors)
+
+
+def test_scan_javascript_reports_unresolved_catalog_fixture(tmp_path: Path) -> None:
+    """Live L2-11 QA: tests demanded populated DEFAULT_* seeds that no module exports."""
+
+    (tmp_path / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lost.js").write_text("export function createLost() { return {}; }\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "product.test.js").write_text(
+        "export function check() {\n  return ['lost', 'DEFAULT_LOST_ITEMS'];\n}\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(
+        str(tmp_path),
+        relative_paths=["tests/product.test.js", "src/lost.js"],
+    )
+
+    assert any("unresolved catalog fixture 'DEFAULT_LOST_ITEMS'" in error for error in evidence.errors)
+    kinds = {str(issue.metadata.get("diagnostic_kind")) for issue in evidence.issues}
+    assert "missing_catalog_fixture" in kinds
+
+
+def test_scan_python_flags_unused_required_term_pairs(tmp_path: Path) -> None:
+    """Live L2-11: REQUIRED_TERM_PAIRS added but REQUIRED_TERMS loops kept."""
+
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_product.py").write_text(
+        "REQUIRED_TERM_PAIRS = (('galaxy', 'galaxies'),)\n"
+        "REQUIRED_TERMS = ('galaxy',)\n"
+        "def check(text):\n"
+        "    for term in REQUIRED_TERMS:\n"
+        "        assert term in text\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(
+        str(tmp_path),
+        relative_paths=["tests/test_product.py"],
+    )
+
+    assert any("unused REQUIRED_TERM_PAIRS" in error for error in evidence.errors)
+    kinds = {str(issue.metadata.get("diagnostic_kind")) for issue in evidence.issues}
+    assert "unused_required_term_pairs" in kinds
+
+
+def test_scan_javascript_ignores_locally_declared_catalog_fixture(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "product.test.js").write_text(
+        "const DEFAULT_LOST_ITEMS = [{ id: 'a' }];\nexport { DEFAULT_LOST_ITEMS };\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(
+        str(tmp_path),
+        relative_paths=["tests/product.test.js"],
+    )
+
+    assert not any("unresolved catalog fixture" in error for error in errors)
+
+
 def test_scan_package_manifest_rejects_invalid_script_shell_syntax(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text(
         """

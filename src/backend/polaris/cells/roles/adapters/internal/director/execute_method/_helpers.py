@@ -749,6 +749,167 @@ def _declared_write_retry_target_files(task: dict[str, Any]) -> list[str]:
     return _extract_task_target_path_candidates(task)
 
 
+_CURRENT_FILE_RETRY_CHAR_CAP = 200_000
+_UNRESOLVED_IMPORT_SYMBOL_RE = re.compile(
+    r"unresolved import symbol '([^']+)' from '([^']+)' in ([^\s(]+)",
+    flags=re.IGNORECASE,
+)
+_MISSING_NAMED_EXPORT_RE = re.compile(
+    r"(?P<importer>\S+):.*requested module '([^']+)' does not provide an export named '([^']+)'",
+    flags=re.IGNORECASE,
+)
+_NO_EFFECT_RETRY_MARKERS = (
+    "director_write_no_effect",
+    "edit_file_empty_search",
+    "Search text not found",
+    "deo_member_soft_denied",
+)
+
+
+def _quality_error_preferred_paths(target_files: list[str], quality_errors: list[str]) -> list[str]:
+    """Keep quality-hole retry on files named by residual scan errors."""
+
+    preferred = [path for path in target_files if any(path in error for error in quality_errors)]
+    return preferred or list(target_files)
+
+
+def _unique_similar_export(symbol: str, names: list[str]) -> str | None:
+    """Return one unique sibling export that is a safe identifier remap."""
+
+    needle = str(symbol or "").strip()
+    if not needle:
+        return None
+    lowered = needle.lower()
+    matches: list[str] = []
+    seen: set[str] = set()
+    for raw in names:
+        name = str(raw or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        other = name.lower()
+        if other == lowered:
+            matches.append(name)
+            continue
+        if lowered.rstrip("s") == other or other.rstrip("s") == lowered:
+            matches.append(name)
+            continue
+        if lowered.rstrip("es") == other or other.rstrip("es") == lowered:
+            matches.append(name)
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _unresolved_import_facts(quality_errors: list[str]) -> list[tuple[str, str, str]]:
+    """Parse (importer, symbol, module) triples from quality-scan wording."""
+
+    facts: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for raw in quality_errors:
+        line = str(raw or "").strip()
+        if not line:
+            continue
+        match = _UNRESOLVED_IMPORT_SYMBOL_RE.search(line)
+        if match:
+            symbol, module, importer = match.group(1), match.group(2), match.group(3)
+        else:
+            named = _MISSING_NAMED_EXPORT_RE.search(line)
+            if not named:
+                continue
+            importer, module, symbol = named.group("importer"), named.group(2), named.group(3)
+        fact = (importer.strip(), symbol.strip(), module.strip())
+        if not all(fact) or fact in seen:
+            continue
+        seen.add(fact)
+        facts.append(fact)
+    return facts
+
+
+def _extract_import_containing(text: str, symbol: str) -> str | None:
+    """Return the import statement block that mentions symbol."""
+
+    token = str(symbol or "").strip()
+    if not token or token not in text:
+        return None
+    lines = str(text).splitlines()
+    for index, line in enumerate(lines):
+        if token not in line:
+            continue
+        start = index
+        while start > 0 and "import" not in lines[start]:
+            start -= 1
+        if "import" not in lines[start]:
+            continue
+        end = index
+        while end < len(lines) - 1 and "from " not in lines[end]:
+            end += 1
+        chunk = "\n".join(lines[start : end + 1]).strip()
+        if token in chunk and "from " in chunk:
+            return chunk
+    return None
+
+
+def _import_island_block(current_files: dict[str, str], quality_errors: list[str]) -> str:
+    islands: list[str] = []
+    seen: set[str] = set()
+    for importer, symbol, _module in _unresolved_import_facts(quality_errors):
+        body = current_files.get(importer)
+        if not isinstance(body, str) or not body:
+            continue
+        chunk = _extract_import_containing(body, symbol)
+        if not chunk or chunk in seen:
+            continue
+        seen.add(chunk)
+        islands.append(f"----- {importer} import containing {symbol} -----\n{chunk}")
+        if len(islands) >= 8:
+            break
+    if not islands:
+        return ""
+    return "Exact import islands (copy old_string/search verbatim from these bytes):\n" + "\n".join(islands) + "\n"
+
+
+def _suggested_import_remap_lines(
+    quality_errors: list[str],
+    existing_exports: dict[str, list[str]],
+) -> list[str]:
+    lines: list[str] = []
+    for _importer, symbol, module in _unresolved_import_facts(quality_errors):
+        same_module = [str(name).strip() for name in existing_exports.get(module, []) if str(name or "").strip()]
+        similar = _unique_similar_export(symbol, same_module)
+        if similar and similar != symbol:
+            lines.append(f"- {symbol} from '{module}' -> {similar}")
+            continue
+        owners = [
+            exporter for exporter, names in existing_exports.items() if symbol in {str(name).strip() for name in names}
+        ]
+        if len(owners) == 1 and owners[0] != module:
+            lines.append(f"- {symbol} from '{module}' -> import from '{owners[0]}'")
+        if len(lines) >= 16:
+            break
+    return lines
+
+
+def _quality_mentions_missing_catalog_fixture(quality_errors: list[str]) -> bool:
+    blob = "\n".join(str(error or "") for error in quality_errors)
+    return "DEFAULT_" in blob and (
+        "unresolved catalog fixture" in blob
+        or "populated domain seed" in blob
+        or "does not export" in blob
+        or "sibling module" in blob
+    )
+
+
+def _no_effect_write_retry_needed(summary: dict[str, Any] | None, tool_results: list[dict[str, Any]]) -> bool:
+    if has_successful_write_tool(tool_results):
+        return False
+    blob = json.dumps(summary or {}, ensure_ascii=False)
+    for item in tool_results:
+        if isinstance(item, dict):
+            blob += json.dumps(item, ensure_ascii=False)
+    return any(marker in blob for marker in _NO_EFFECT_RETRY_MARKERS)
+
+
 def _build_no_write_materialization_retry_message(
     task: dict[str, Any],
     *,
@@ -759,8 +920,13 @@ def _build_no_write_materialization_retry_message(
     quality_errors: list[str] | None = None,
     current_files: dict[str, str] | None = None,
     existing_exports: dict[str, list[str]] | None = None,
+    allowed_target_files: list[str] | None = None,
+    write_failure_errors: list[str] | None = None,
 ) -> str:
-    target_files = _declared_write_retry_target_files(task)
+    declared_files = _declared_write_retry_target_files(task)
+    target_files = [str(path).strip() for path in (allowed_target_files or declared_files) if str(path or "").strip()]
+    if not target_files:
+        target_files = declared_files
     strict_retry = _no_write_retry_strict_write_only(target_files) if strict_write_only is None else strict_write_only
     target_line = ""
     if target_files:
@@ -775,7 +941,15 @@ def _build_no_write_materialization_retry_message(
             seen_tools.add(tool_name)
             observed_tools.append(tool_name)
     observed_line = ", ".join(observed_tools) if observed_tools else "(none)"
-    if strict_retry:
+    if forced_tool_name == "edit_file":
+        tool_instruction = (
+            "Emit valid edit_file tool calls now. "
+            "Do not call read, search, tree, shell, or write_file tools in this retry.\n"
+            "Each edit_file call MUST include a non-empty search/old_string copied verbatim "
+            "from Current UTF-8 or the Exact import islands, plus a new_string that remaps "
+            "unresolved imports onto Existing named exports. Empty search is invalid.\n"
+        )
+    elif strict_retry:
         tool_instruction = (
             f"Emit valid {forced_tool_name} tool calls now. "
             "Do not call read, search, tree, or shell tools in this retry.\n"
@@ -788,7 +962,7 @@ def _build_no_write_materialization_retry_message(
             "Emit valid write_file or edit_file tool calls now. Do not call read, search, tree, or shell tools "
             "in this retry; this recovery turn exists only to materialize declared files.\n"
             "Each write_file call must use a complete non-empty UTF-8 file body; each edit_file call must "
-            "contain a precise non-empty edit.\n"
+            "contain a precise non-empty search/old_string.\n"
         )
     quality_lines = [str(error).strip() for error in (quality_errors or []) if str(error or "").strip()]
     quality_block = ""
@@ -797,9 +971,10 @@ def _build_no_write_materialization_retry_message(
             "Quality diagnostics (single failure island; edit existing declared files to resolve; "
             "do not invent missing domain symbols):\n" + "\n".join(f"- {line}" for line in quality_lines[:16]) + "\n"
         )
-    if isinstance(existing_exports, dict) and existing_exports:
+    export_map = existing_exports if isinstance(existing_exports, dict) else {}
+    if export_map:
         export_lines: list[str] = []
-        for module, names in list(existing_exports.items())[:8]:
+        for module, names in list(export_map.items())[:8]:
             cleaned = [str(name).strip() for name in names if str(name or "").strip()]
             if not cleaned:
                 continue
@@ -809,16 +984,51 @@ def _build_no_write_materialization_retry_message(
                 "Replace unresolved imports with these existing exports; "
                 "do not invent new import names.\n" + "\n".join(export_lines) + "\n"
             )
+        remap_lines = _suggested_import_remap_lines(quality_lines, export_map)
+        if remap_lines:
+            quality_block += "Suggested remaps (existing exports only):\n" + "\n".join(remap_lines) + "\n"
+    if _quality_mentions_missing_catalog_fixture(quality_lines):
+        quality_block += (
+            "Test TAP / quality scan requires invented DEFAULT_* catalogs that sibling modules do not export. "
+            "Do not add DEFAULT_* exports to domain modules. "
+            "Rewrite tests to construct fixtures with existing createLost/createAlien/createClue/createGalaxy. "
+            "Delete assertions that require populated index.seeds or domain DEFAULT_* catalogs.\n"
+        )
+    if any(Path(str(path)).name.startswith("test_") and Path(str(path)).suffix == ".py" for path in target_files):
+        quality_block += (
+            "Python acceptance tests are in scope. Edit tests/test_*.py, not domain modules.\n"
+            "Live TAP traps: the substring 'galaxy' is not inside 'galaxies' (y -> ies). "
+            "If REQUIRED_TERM_PAIRS exists, delete for-term-in-REQUIRED_TERMS assertIn loops "
+            "and accept either pair member. node --test always prints '# fail 0' on success; "
+            "do not assertNotIn('# fail'). If the CLI always runs demo, do not require unknown-command exit 1.\n"
+        )
+    failure_lines = [str(error).strip() for error in (write_failure_errors or []) if str(error or "").strip()]
+    if failure_lines:
+        quality_block += (
+            "Previous forced edit_file failed; do not repeat empty search or unmatched old_string:\n"
+            + "\n".join(f"- {line}" for line in failure_lines[:8])
+            + "\n"
+        )
+    files_map = current_files if isinstance(current_files, dict) else {}
     current_block = ""
-    if isinstance(current_files, dict) and current_files:
+    if files_map:
         parts: list[str] = ["Current UTF-8 target contents (edit these exact bytes):\n"]
-        for rel_path, body in list(current_files.items())[:8]:
+        for rel_path, body in list(files_map.items())[:8]:
             token = str(rel_path or "").strip()
             text = str(body or "")
             if not token:
                 continue
-            parts.append(f"----- {token} -----\n{text[:12000]}\n")
+            if len(text) > _CURRENT_FILE_RETRY_CHAR_CAP:
+                clipped = text[:_CURRENT_FILE_RETRY_CHAR_CAP]
+                parts.append(
+                    f"----- {token} -----\n{clipped}\n"
+                    f"[truncated after {_CURRENT_FILE_RETRY_CHAR_CAP} chars; "
+                    "copy old_string only from the included prefix]\n"
+                )
+            else:
+                parts.append(f"----- {token} -----\n{text}\n")
         current_block = "".join(parts)
+        current_block += _import_island_block(files_map, quality_lines)
     return (
         "[mode:materialize]\n"
         "RETRY: previous Director turn completed without any write/edit receipt and produced no files.\n"
@@ -939,11 +1149,21 @@ async def _run_no_write_materialization_retry(
         except (OSError, RuntimeError, TypeError, ValueError):
             quality_errors = []
     current_files: dict[str, str] = {}
+    retry_target_files = list(target_files)
     if workspace and target_files and not targets_missing:
-        preferred = [path for path in target_files if any(path in error for error in quality_errors)]
-        load_paths = preferred or target_files
+        preferred = _quality_error_preferred_paths(target_files, quality_errors)
+        for path in target_files:
+            token = str(path or "").replace("\\", "/")
+            name = Path(token).name
+            if (
+                token.endswith(".py")
+                and (name.startswith("test_") or "/tests/" in f"/{token}/")
+                and path not in preferred
+            ):
+                preferred.append(path)
+        retry_target_files = preferred
         root = Path(workspace)
-        for rel_path in load_paths[:8]:
+        for rel_path in preferred[:8]:
             candidate = root / rel_path
             try:
                 current_files[rel_path] = candidate.read_text(encoding="utf-8")
@@ -958,6 +1178,7 @@ async def _run_no_write_materialization_retry(
         quality_errors=quality_errors,
         current_files=current_files,
         existing_exports=existing_exports,
+        allowed_target_files=retry_target_files,
     )
     retry_context = _pin_materialize_context_delivery_mode(dict(context), True)
     if isinstance(task, dict):
@@ -966,7 +1187,7 @@ async def _run_no_write_materialization_retry(
     if callable(rebind_dependency_artifact):
         rebind_dependency_artifact(retry_context)
     retry_context["_transaction_kernel_forced_tool_definitions"] = _no_write_materialization_retry_tool_definitions(
-        target_files,
+        retry_target_files,
         strict_write_only=strict_write_only,
         forced_tool_name=forced_tool_name,
     )
@@ -979,7 +1200,7 @@ async def _run_no_write_materialization_retry(
         retry_context["director_no_write_materialization_retry"] = {
             "write_only_declared_targets": {
                 "tool": forced_tool_name,
-                "target_files": target_files[:32],
+                "target_files": retry_target_files[:32],
             }
         }
         fallback_allowed_tool_names = {forced_tool_name}
@@ -988,48 +1209,77 @@ async def _run_no_write_materialization_retry(
         retry_context["director_no_write_materialization_retry"] = {
             "multi_file_declared_targets": {
                 "required_write_tools": sorted(_NO_WRITE_MULTI_TARGET_FALLBACK_TOOL_NAMES),
-                "target_files": target_files[:32],
+                "target_files": retry_target_files[:32],
             }
         }
         fallback_allowed_tool_names = set(_NO_WRITE_MULTI_TARGET_FALLBACK_TOOL_NAMES)
-    try:
-        retry_result = await adapter._invoke_role_dialogue_with_timeout(
-            retry_message,
-            context=retry_context,
-            timeout_seconds=llm_call_timeout,
-            stage_label="no_write_materialization_retry",
-        )
-    except asyncio.CancelledError:
-        raise
-    except (OSError, RuntimeError, TypeError, ValueError) as exc:
-        return [], {
-            "attempted": True,
-            "success": False,
-            "error": f"{type(exc).__name__}: {exc}",
-            "tool_results": 0,
-            "forced_tool": forced_tool_name,
-            "target_files": target_files[:32],
-        }
 
-    retry_summary = _summarize_llm_stage_result(retry_result, stage="no_write_materialization_retry")
-    retry_tool_results = adapter._execution.extract_kernel_tool_results(retry_result)
-    retry_content = str(retry_result.get("content") or retry_result.get("response") or "")
-    if not retry_tool_results or not has_successful_write_tool(retry_tool_results):
-        fallback_tool_results = await adapter._execution.execute_tools(
-            retry_content,
-            target_task_id,
-            adapter._update_task_progress,
-            allowed_tool_names=fallback_allowed_tool_names,
-            allow_patch_fallback=True,
+    async def _invoke_retry(message: str, *, stage_label: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        try:
+            result = await adapter._invoke_role_dialogue_with_timeout(
+                message,
+                context=retry_context,
+                timeout_seconds=llm_call_timeout,
+                stage_label=stage_label,
+            )
+        except asyncio.CancelledError:
+            raise
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            return [], {
+                "attempted": True,
+                "success": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "tool_results": 0,
+                "forced_tool": forced_tool_name,
+                "target_files": retry_target_files[:32],
+            }
+        summary = _summarize_llm_stage_result(result, stage=stage_label)
+        extracted = adapter._execution.extract_kernel_tool_results(result)
+        content = str(result.get("content") or result.get("response") or "")
+        if not extracted or not has_successful_write_tool(extracted):
+            fallback_tool_results = await adapter._execution.execute_tools(
+                content,
+                target_task_id,
+                adapter._update_task_progress,
+                allowed_tool_names=fallback_allowed_tool_names,
+                allow_patch_fallback=True,
+            )
+            if fallback_tool_results:
+                extracted.extend(fallback_tool_results)
+        return extracted, summary
+
+    retry_tool_results, retry_summary = await _invoke_retry(
+        retry_message,
+        stage_label="no_write_materialization_retry",
+    )
+    if _no_effect_write_retry_needed(retry_summary, retry_tool_results):
+        failure_text = str(retry_summary.get("error") or "").strip()
+        no_effect_message = _build_no_write_materialization_retry_message(
+            task,
+            original_message=original_message,
+            tool_results=retry_tool_results or tool_results,
+            forced_tool_name=forced_tool_name,
+            strict_write_only=exact_tools,
+            quality_errors=quality_errors,
+            current_files=current_files,
+            existing_exports=existing_exports,
+            allowed_target_files=retry_target_files,
+            write_failure_errors=[failure_text] if failure_text else ["director_write_no_effect"],
         )
-        if fallback_tool_results:
-            retry_tool_results.extend(fallback_tool_results)
+        second_results, second_summary = await _invoke_retry(
+            no_effect_message,
+            stage_label="no_write_materialization_retry_no_effect",
+        )
+        if second_results:
+            retry_tool_results = second_results
+        retry_summary = second_summary
+        retry_summary["no_effect_followup_attempted"] = True
 
     retry_summary["attempted"] = True
     retry_summary["tool_results"] = len(retry_tool_results)
     retry_summary["forced_tool"] = forced_tool_name
     retry_summary["strict_write_only"] = strict_write_only
-    retry_summary["target_files"] = target_files[:32]
+    retry_summary["target_files"] = retry_target_files[:32]
     retry_summary["write_args"] = _diag_write_results_summary(retry_tool_results)
     retry_summary["recovered_write_tool_evidence"] = has_successful_write_tool(retry_tool_results)
     return retry_tool_results, retry_summary

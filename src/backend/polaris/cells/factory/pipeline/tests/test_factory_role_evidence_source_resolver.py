@@ -208,7 +208,7 @@ def _control_plane_record(
         event_type="gate_evaluated",
         event_version=1,
         seq=seq,
-        occurred_at=f"2026-07-19T00:00:0{seq}+00:00",
+        occurred_at=f"2026-07-19T00:{seq // 60:02d}:{seq % 60:02d}+00:00",
         source="control_plane.run_ledger",
         payload={
             "schema_version": "execution.control_plane.fact.v1",
@@ -241,7 +241,7 @@ def _control_plane_non_gate_record(
         event_type=event_type,
         event_version=1,
         seq=seq,
-        occurred_at=f"2026-07-19T00:00:0{seq}+00:00",
+        occurred_at=f"2026-07-19T00:{seq // 60:02d}:{seq % 60:02d}+00:00",
         source="control_plane.run_ledger",
         payload={
             "schema_version": "execution.control_plane.fact.v1",
@@ -316,6 +316,45 @@ def test_dynamic_views_use_one_exact_unfiltered_query_and_share_physical_head(tm
     assert slots["workspace_quality"].state == "present"
     assert slots["verifier_receipts"].state == "present"
     assert len({slot.source_head.canonical_source_ref for slot in slots.values()}) == 3
+
+
+def test_dynamic_failure_feedback_keeps_latest_32_items(tmp_path: Path) -> None:
+    """Live L2-11: 33+ failed gates made Slot.__post_init__ raise ValueError."""
+
+    run = _run()
+    records = tuple(
+        _control_plane_record(
+            tmp_path,
+            seq=index,
+            factory_run_id=run.id,
+            stage="qa",
+            ok=False,
+        )
+        for index in range(1, 34)
+    )
+
+    def query(query_value: QueryFactEventsV1) -> FactStreamQueryResultV1:
+        del query_value
+        return FactStreamQueryResultV1(
+            workspace=str(tmp_path.resolve()),
+            stream="execution.control_plane",
+            events=records,
+            total=len(records),
+            next_offset=0,
+        )
+
+    resolver = CanonicalFactoryRoleEvidenceSourceAuthority(
+        workspace=tmp_path,
+        factory_store=FactoryStore(tmp_path / "runtime"),
+        factory_event_loader=lambda _run_id: _admission_chain(run),
+        fact_query=query,
+    )
+
+    slots = resolver._capture_dynamic_slots(factory_run_id=run.id)
+    assert slots["failure_feedback"].state == "present"
+    assert len(slots["failure_feedback"].items) == 32
+    assert slots["failure_feedback"].items[0].source_fact_sequence == 2
+    assert slots["failure_feedback"].items[-1].source_fact_sequence == 33
 
 
 def test_dynamic_views_validate_mixed_control_plane_stream_and_project_only_gate_events(tmp_path: Path) -> None:

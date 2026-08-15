@@ -493,7 +493,9 @@ class FactoryRoleEvidenceAuthorityPort:
                 except FactoryRoleEvidenceAuthorityError:
                     raise
                 except Exception as exc:
-                    raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_source_resolver_failed") from exc
+                    raise FactoryRoleEvidenceAuthorityError(
+                        f"factory_role_evidence_source_resolver_failed:{type(exc).__name__}"
+                    ) from exc
                 if type(resolved) is not FactoryRoleEvidenceResolvedCutV1:
                     raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_source_cut_type_invalid")
                 try:
