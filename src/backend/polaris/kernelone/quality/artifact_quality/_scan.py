@@ -36,6 +36,10 @@ from polaris.kernelone.quality.artifact_quality._models import (
     ArtifactQualityIssue,
     _FileArtifactQualityEvidence,
 )
+from polaris.kernelone.quality.artifact_quality._scan_go import (
+    _scan_go_project_compile_evidence,
+    _scan_go_project_test_evidence,
+)
 from polaris.kernelone.quality.artifact_quality._scan_package import (
     _scan_cargo_manifest_missing_binary_evidence,
     _scan_package_manifest_evidence,
@@ -155,6 +159,14 @@ def scan_workspace_artifact_quality_evidence(
             typecheck_evidence = _scan_typescript_project_typecheck_evidence(root_full, scanned_relative_paths)
             errors.extend(typecheck_evidence.errors)
             typed_issues.extend(typecheck_evidence.issues)
+        if len(errors) < 50:
+            go_compile_evidence = _scan_go_project_compile_evidence(root_full, scanned_relative_paths)
+            errors.extend(go_compile_evidence.errors)
+            typed_issues.extend(go_compile_evidence.issues)
+            if len(errors) < 50 and not go_compile_evidence.errors:
+                go_test_evidence = _scan_go_project_test_evidence(root_full, scanned_relative_paths)
+                errors.extend(go_test_evidence.errors)
+                typed_issues.extend(go_test_evidence.issues)
         if len(errors) < 50:
             cross_artifact_issues = tuple(
                 scan_cross_artifact_consistency(

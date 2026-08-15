@@ -336,8 +336,6 @@ def _blueprint_provenance_snapshot_kwargs() -> dict:
     }
 
 
-
-
 class TestChiefEngineerBlueprintPublicService:
     def test_generate_ready_blueprint_records_only_authoritative_file_owners(self, tmp_path) -> None:
         command = GenerateTaskBlueprintCommandV1(
@@ -1051,6 +1049,65 @@ class TestChiefEngineerBlueprintPublicService:
         assert set(semantic_alignment["blueprint_text_matches"]) >= {"meteor", "priority", "queue", "wish"}
         assert semantic_alignment["blockers"] == []
         assert any("CE blueprint overlay" in item for item in semantic_alignment["advisory"])
+
+    def test_generate_task_blueprint_allows_cjk_product_subject_identity(self, tmp_path) -> None:
+        """Live L2-11: Chinese product subject in PM/CE planning is on-domain.
+
+        Catalog core_terms stay English (lost/alien/galaxy/clue) while the
+        decomposed engine-slice objective names 星际失物招领站. ASCII-only
+        token overlap is 0/3, but the delivery product subject is present.
+        """
+
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-1-source-core",
+            workspace=str(tmp_path),
+            objective="在工作区根交付 星际失物招领站 的 JavaScript/npm 项目骨架。 Scope this task to core engine/service modules only.",
+            context={
+                "task_title": "实现 星际失物招领站 JavaScript/npm 项目骨架与核心模块 - core engine/service modules",
+                "language": "javascript",
+                "target_files": ["src/engine/rules.js", "src/engine/runner.js"],
+                "acceptance_criteria": [
+                    "verify src/engine/rules.js exists",
+                    "verify src/engine/runner.js exists",
+                ],
+                "execution_checklist": ["Materialize only the listed core engine files."],
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "title": "星际失物招领站 交付计划",
+                    "product_summary": {
+                        "intent": "交付一个真实可运行的 星际失物招领站。",
+                        "core_terms": ["lost", "alien", "galaxy", "clue"],
+                    },
+                },
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "product_intent": {
+                        "subject": "星际失物招领站",
+                        "primary_entities": ["lost", "alien", "galaxy", "clue"],
+                    },
+                },
+            },
+            llm_blueprint={
+                "construction_plan": {
+                    "objective": "在工作区根交付 星际失物招领站 的 JavaScript/npm 项目骨架。",
+                    "target_files": ["src/engine/rules.js", "src/engine/runner.js"],
+                },
+                "scope_for_apply": ["src/engine/rules.js"],
+                "risk_flags": [],
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        semantic_alignment = persisted["contract_completeness"]["semantic_alignment"]
+        assert persisted["contract_completeness"]["handoff_ready"] is True
+        assert persisted["handoff_ready"] is True
+        assert semantic_alignment["planning_text_matches"] == []
+        assert semantic_alignment["blockers"] == []
+        assert any("product subject identity" in item for item in semantic_alignment["advisory"])
 
     def test_generate_task_blueprint_blocks_zero_match_despite_partial_overlay(self, tmp_path) -> None:
         """Zero-match planning text must still block even if the overlay mentions a domain term.

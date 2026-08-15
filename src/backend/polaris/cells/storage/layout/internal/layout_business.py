@@ -18,6 +18,7 @@ from pathlib import Path
 from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 from polaris.kernelone.storage.layout import (
     StorageLayout as _BaseStorageLayout,
+    resolve_project_runtime_paths,
 )
 
 _logger = logging.getLogger(__name__)
@@ -120,7 +121,12 @@ def resolve_polaris_roots(workspace: str, ramdisk_root: str | None = None) -> Po
     # to guarantee it stays on the same drive as the workspace and does not
     # suffer from Windows cross-drive os.path.join silently discarding the
     # workspace path when runtime_base is on a different drive.
-    runtime_projects = _runtime_projects_root(runtime_base, metadata_dir_name)
+    runtime_projects, runtime_root = resolve_project_runtime_paths(
+        runtime_base,
+        key,
+        metadata_dir_name=metadata_dir_name,
+        projects_root_for_base=_runtime_projects_root,
+    )
     history_root = os.path.join(workspace_abs, metadata_dir_name, "history")
 
     return PolarisStorageRoots(
@@ -134,10 +140,10 @@ def resolve_polaris_roots(workspace: str, ramdisk_root: str | None = None) -> Po
         project_root=project_local_root,
         project_persistent_root=project_local_root,
         runtime_projects_root=runtime_projects,
-        runtime_project_root=os.path.join(runtime_projects, key, "runtime"),
+        runtime_project_root=runtime_root,
         workspace_persistent_root=project_local_root,
         runtime_base=runtime_base,
-        runtime_root=os.path.join(runtime_projects, key, "runtime"),
+        runtime_root=runtime_root,
         runtime_mode=runtime_mode,
         history_root=history_root,
     )
@@ -243,8 +249,13 @@ class PolarisStorageLayout(_BaseStorageLayout):
         self._runtime_base = Path(runtime_base).resolve()
         self._key = self._compute_workspace_key(str(self._workspace))
         metadata_dir_name = _polaris_metadata_dir_name()
-        runtime_projects = Path(_runtime_projects_root(str(self._runtime_base), metadata_dir_name))
-        self._runtime_root = runtime_projects / self._key / "runtime"
+        _projects, runtime_root = resolve_project_runtime_paths(
+            str(self._runtime_base),
+            self._key,
+            metadata_dir_name=metadata_dir_name,
+            projects_root_for_base=_runtime_projects_root,
+        )
+        self._runtime_root = Path(runtime_root)
         self._workspace_root = self._workspace / metadata_dir_name
         # Polaris-specific: config root uses polaris_home(), not kernelone_home()
         self._config_root = Path(polaris_home()) / "config"

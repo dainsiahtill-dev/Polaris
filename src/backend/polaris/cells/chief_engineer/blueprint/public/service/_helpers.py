@@ -553,6 +553,44 @@ def _normalize_llm_blueprint_overlay(value: Any) -> dict[str, Any]:
     return overlay
 
 
+def _delivery_product_subject(
+    *,
+    delivery_depth_contract: dict[str, Any] | None,
+    delivery_plan_document: dict[str, Any] | None,
+) -> str:
+    depth_contract = _mapping(delivery_depth_contract)
+    plan_document = _mapping(delivery_plan_document)
+    product_intent = _mapping(depth_contract.get("product_intent"))
+    product_summary = _mapping(plan_document.get("product_summary"))
+    for candidate in (
+        product_intent.get("subject"),
+        plan_document.get("title"),
+        product_summary.get("intent"),
+    ):
+        token = str(candidate or "").strip()
+        if token:
+            return token
+    return ""
+
+
+def _planning_contains_delivery_product_subject(
+    *,
+    objective: str,
+    title: str,
+    delivery_depth_contract: dict[str, Any] | None,
+    delivery_plan_document: dict[str, Any] | None,
+) -> bool:
+    subject = _delivery_product_subject(
+        delivery_depth_contract=delivery_depth_contract,
+        delivery_plan_document=delivery_plan_document,
+    )
+    needle = subject.casefold()
+    if len(needle) < 2:
+        return False
+    haystack = f"{objective}\n{title}".casefold()
+    return needle in haystack
+
+
 def _semantic_terms_from_delivery_contracts(
     *,
     delivery_depth_contract: dict[str, Any] | None,
@@ -1041,7 +1079,22 @@ def _semantic_alignment_audit(
             f"matched {len(target_matches)}/{minimum_target_matches} required domain terms"
         )
     if len(planning_matches) < required_term_count:
-        if len(target_matches) >= required_term_count:
+        if _planning_contains_delivery_product_subject(
+            objective=objective,
+            title=title,
+            delivery_depth_contract=delivery_depth_contract,
+            delivery_plan_document=delivery_plan_document,
+        ):
+            # Live L2-11: PM/CE planning text names 星际失物招领站 while
+            # core_terms stay English (lost/alien/galaxy/clue). ASCII-only
+            # tokens then score 0/3 and block a correctly decomposed engine
+            # slice. Product-subject identity is on-domain, unlike an
+            # English off-domain objective ("flavor recipe" vs "treasure").
+            advisory.append(
+                "semantic_alignment.plan_text covered by delivery product subject identity: "
+                f"matched {len(planning_matches)}/{required_term_count} latin domain terms"
+            )
+        elif len(target_matches) >= required_term_count:
             advisory.append(
                 "semantic_alignment.plan_text covered by scoped domain target files: "
                 f"matched {len(target_matches)}/{required_term_count} required domain terms"

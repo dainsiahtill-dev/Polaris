@@ -277,9 +277,6 @@ def _collect_director_stage_materialization_diagnostics(executor) -> list[str]:
     """
 
     diagnostics: list[str] = []
-    package_json = executor.workspace / "package.json"
-    if not package_json.is_file():
-        return []
     try:
         from polaris.kernelone.quality import scan_workspace_artifact_quality
 
@@ -290,6 +287,12 @@ def _collect_director_stage_materialization_diagnostics(executor) -> list[str]:
             executor.workspace,
             exc,
         )
+    package_json = executor.workspace / "package.json"
+    if not package_json.is_file():
+        # Go/Rust/Python workspaces have no package.json. Live L1-10 returned
+        # diagnostics=0 / tools=0 here while `go test -count=0` still showed
+        # undefined selectors, so selector repair never entered settle.
+        return diagnostics
     # Missing on-disk tests referenced by package.json scripts.test is a
     # first-class settle diagnostic (not a compiler error).
     try:

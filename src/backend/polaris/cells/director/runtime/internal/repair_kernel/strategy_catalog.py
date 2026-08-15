@@ -24,6 +24,8 @@ KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS: frozenset[str] = frozenset(
         "deterministic_go_dedup_repair",
         "deterministic_go_error_string_helper_repair",
         "deterministic_go_missing_stdlib_import_repair",
+        "deterministic_go_printf_stringer_repair",
+        "deterministic_go_test_assertion_align_repair",
         "deterministic_go_module_import_repair",
         "deterministic_go_nested_import_repair",
         "deterministic_go_subpath_repair",

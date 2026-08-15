@@ -36,6 +36,7 @@ from ._claim import (
     _execution_attempt_identity_from_context,
     _extract_resident_agi_repair_advisory_overlay,
     _finalize_claimed_execution,
+    _record_project_artifacts_before_settlement,
     _task_completion_projection_from_context,
     _task_runtime_finalization_failed_result,
     _with_task_runtime_finalize_evidence,
@@ -420,16 +421,8 @@ def _phase_existing_scope_preflight(
             existing_contract_evidence=preflight_existing_contract_evidence,
         )
     )
-    preflight_can_accept_existing_scope = bool(
-        preflight_existing_contract_evidence.get("ok")
-    ) and _can_accept_existing_workspace_scope(
-        task=task,
-        requires_fresh_materialization=requires_fresh_materialization,
-        write_tool_evidence=False,
-        project_artifact_receipt_evidence=project_artifact_receipt_evidence,
-    )
     preflight_quality_errors: list[str] = []
-    if preflight_can_accept_existing_scope:
+    if preflight_existing_contract_evidence.get("ok"):
         preflight_quality_errors = _collect_materialization_quality_errors(
             adapter,
             task=task,
@@ -451,6 +444,48 @@ def _phase_existing_scope_preflight(
                     "errors": preflight_quality_errors[:20],
                 }
             )
+        elif requires_fresh_materialization and not project_artifact_receipt_evidence:
+            # Live L1-10: settle repaired main_test.go (0.34→0.32) under the
+            # factory-mat-settle task. TASK-3 rematerialize then saw a stale
+            # owner receipt and failed director_no_materialized_changes even
+            # though go test was already green. Record current owned bytes
+            # only after the owned quality scan is clean.
+            projection = _task_completion_projection_from_context(
+                context,
+                target_task_id=target_task_id,
+            )
+            if isinstance(projection, dict):
+                contract_task_id = str(projection.get("task_id") or "").strip() or target_task_id
+                try:
+                    _record_project_artifacts_before_settlement(
+                        adapter,
+                        contract_task_id=contract_task_id,
+                        task_completion_projection=projection,
+                    )
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    logger.warning(
+                        "Existing-scope receipt refresh failed for task=%s: %s",
+                        target_task_id,
+                        exc,
+                    )
+                else:
+                    preflight_existing_contract_evidence, project_artifact_receipt_evidence = (
+                        _attach_current_task_project_receipt_evidence(
+                            adapter,
+                            task=task,
+                            target_task_id=target_task_id,
+                            context=context,
+                            existing_contract_evidence=preflight_existing_contract_evidence,
+                        )
+                    )
+    preflight_can_accept_existing_scope = bool(
+        preflight_existing_contract_evidence.get("ok")
+    ) and _can_accept_existing_workspace_scope(
+        task=task,
+        requires_fresh_materialization=requires_fresh_materialization,
+        write_tool_evidence=False,
+        project_artifact_receipt_evidence=project_artifact_receipt_evidence,
+    )
     if (
         not all_affected_files
         and _director_existing_scope_preflight_enabled(context)
@@ -961,8 +996,7 @@ async def _phase_pre_materialization_quality(
     """
     current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
     rematerialized_dirty_scope = bool(existing_contract_evidence.get("existing_paths")) and (
-        existing_contract_evidence.get("reason")
-        in {"declared_scope_quality_failed", "declared_scope_incomplete"}
+        existing_contract_evidence.get("reason") in {"declared_scope_quality_failed", "declared_scope_incomplete"}
         or bool(existing_contract_evidence.get("artifact_quality_errors"))
     )
     if (

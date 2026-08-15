@@ -604,6 +604,30 @@ def _runtime_projects_root(runtime_base: str, metadata_dir_name: str) -> str:
     return os.path.join(runtime_base, metadata_dir_name, "projects")
 
 
+def resolve_project_runtime_paths(
+    runtime_base: str,
+    workspace_key_value: str,
+    *,
+    metadata_dir_name: str,
+    projects_root_for_base: Callable[[str, str], str] | None = None,
+) -> tuple[str, str]:
+    """Return ``(runtime_projects_root, runtime_root)``.
+
+    ``KERNELONE_RUNTIME_ROOT`` / ``serve --runtime-root`` may already be the
+    resolved project runtime (``.../projects/<workspace_key>/runtime``). Treating
+    that path as a cache *base* nests a second empty ``factory/`` store and
+    makes Factory HTTP return ``RUN_NOT_FOUND`` for a durable run.
+    """
+    normalized = os.path.abspath(os.path.normpath(runtime_base))
+    posix = normalized.replace("\\", "/").rstrip("/")
+    marker = f"/projects/{workspace_key_value}/runtime"
+    if posix.endswith(marker):
+        return os.path.dirname(os.path.dirname(normalized)), normalized
+    builder = projects_root_for_base or _runtime_projects_root
+    runtime_projects_root = builder(normalized, metadata_dir_name)
+    return runtime_projects_root, os.path.join(runtime_projects_root, workspace_key_value, "runtime")
+
+
 def _build_generic_storage_roots(
     *,
     workspace_abs: str,
@@ -615,8 +639,11 @@ def _build_generic_storage_roots(
     home_root = kernelone_home()
     metadata_dir_name = get_workspace_metadata_dir_name()
     project_local_root = os.path.join(workspace_abs, metadata_dir_name)
-    runtime_projects_root = _runtime_projects_root(runtime_base, metadata_dir_name)
-    runtime_project_root = os.path.join(runtime_projects_root, key, "runtime")
+    runtime_projects_root, runtime_project_root = resolve_project_runtime_paths(
+        runtime_base,
+        key,
+        metadata_dir_name=metadata_dir_name,
+    )
     return StorageRoots(
         workspace_abs=workspace_abs,
         workspace_key=key,
@@ -932,8 +959,12 @@ class StorageLayout:
         self._workspace = Path(workspace).resolve()
         self._runtime_base = Path(runtime_base).resolve()
         self._key = workspace_key(str(self._workspace))
-        runtime_projects_root = Path(_runtime_projects_root(str(self._runtime_base), get_workspace_metadata_dir_name()))
-        self._runtime_root = runtime_projects_root / self._key / "runtime"
+        _projects, runtime_root = resolve_project_runtime_paths(
+            str(self._runtime_base),
+            self._key,
+            metadata_dir_name=get_workspace_metadata_dir_name(),
+        )
+        self._runtime_root = Path(runtime_root)
         self._workspace_root = self._workspace / get_workspace_metadata_dir_name()
         self._config_root = Path(kernelone_home()) / "config"
 

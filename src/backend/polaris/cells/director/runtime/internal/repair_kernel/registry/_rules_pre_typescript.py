@@ -27,7 +27,9 @@ from ..go_syntax import (
     GO_MISSING_STDLIB_IMPORT_SOURCE_TOOL,
     GO_MODULE_IMPORT_SOURCE_TOOL,
     GO_NESTED_IMPORT_SOURCE_TOOL,
+    GO_PRINTF_STRINGER_SOURCE_TOOL,
     GO_SUBPATH_IMPORT_SOURCE_TOOL,
+    GO_TEST_ASSERTION_ALIGN_SOURCE_TOOL,
     GO_UNDEFINED_SELECTOR_SOURCE_TOOL,
     GO_UNUSED_IMPORT_SOURCE_TOOL,
 )
@@ -490,6 +492,42 @@ def pre_typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             ),
             runtime_plan_available=True,
             metadata=_executable_runtime_metadata(scope="go_undefined_selector_text_replace"),
+        ),
+        RepairRuleDefinition(
+            rule_id="go.printf_stringer_method",
+            source_tool=GO_PRINTF_STRINGER_SOURCE_TOOL,
+            language="go",
+            phase="code_repair",
+            archetype=RepairArchetype.MISSING_DEPENDENCY,
+            priority=4,
+            depends_on=("go.undefined_selector_alias",),
+            diagnostic_codes=("go_compile_error",),
+            message_terms=("format %s has arg", "of wrong type"),
+            risk_level="low",
+            description=(
+                "Rewrites a fmt %s argument onto an existing Hex() or String() method "
+                "when the compiler reports a printf type mismatch. Never invents methods."
+            ),
+            runtime_plan_available=True,
+            metadata=_executable_runtime_metadata(scope="go_printf_stringer_text_replace"),
+        ),
+        RepairRuleDefinition(
+            rule_id="go.test_assertion_align",
+            source_tool=GO_TEST_ASSERTION_ALIGN_SOURCE_TOOL,
+            language="go",
+            phase="code_repair",
+            archetype=RepairArchetype.RUNTIME_CONTRACT,
+            priority=5,
+            depends_on=("go.printf_stringer_method",),
+            diagnostic_codes=("go_test_assertion_error", "verifier_test_failure"),
+            message_terms=("want ",),
+            risk_level="low",
+            description=(
+                "Aligns a failing owned *_test.go numeric input with an existing "
+                "domain comparison band. Never edits production files or invents symbols."
+            ),
+            runtime_plan_available=True,
+            metadata=_executable_runtime_metadata(scope="go_test_assertion_align_write_file"),
         ),
         RepairRuleDefinition(
             rule_id="cpp.include_path",

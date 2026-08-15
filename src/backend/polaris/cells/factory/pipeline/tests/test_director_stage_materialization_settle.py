@@ -61,6 +61,26 @@ def test_director_stage_should_settle_on_timeout_error_code(tmp_path: Path) -> N
     )
 
 
+def test_collect_director_stage_diagnostics_includes_go_compile_without_package_json(
+    tmp_path: Path,
+) -> None:
+    """Live L1-10: Go workspace has no package.json; settle returned diagnostics=0."""
+    (tmp_path / "go.mod").write_text("module moodwheel\n\ngo 1.22\n", encoding="utf-8")
+    (tmp_path / "engine").mkdir()
+    (tmp_path / "engine" / "rules.go").write_text(
+        "package engine\n\nfunc ApplyMoodRule() {}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "main_test.go").write_text(
+        'package main\n\nimport (\n\t"testing"\n\t"moodwheel/engine"\n)\n\n'
+        "func TestPalette(t *testing.T) {\n\t_ = engine.PaletteForMood()\n}\n",
+        encoding="utf-8",
+    )
+    executor = OrchestrationStageExecutor(tmp_path)
+    diagnostics = executor._collect_director_stage_materialization_diagnostics()
+    assert any("undefined: engine.PaletteForMood" in item for item in diagnostics)
+
+
 def test_director_stage_skips_settle_when_cancelled(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text('{"name":"x"}\n', encoding="utf-8")
     executor = OrchestrationStageExecutor(tmp_path)
@@ -1184,9 +1204,7 @@ def test_collect_materialization_diagnostics_includes_html_entrypoint_quality(
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "web.ts").write_text("export const ready = true;\n", encoding="utf-8")
 
-    diagnostics = OrchestrationStageExecutor(
-        tmp_path
-    )._collect_director_stage_materialization_diagnostics()
+    diagnostics = OrchestrationStageExecutor(tmp_path)._collect_director_stage_materialization_diagnostics()
 
     assert any("HTML module script references TypeScript source" in item for item in diagnostics)
     assert any("./src/web.ts" in item for item in diagnostics)

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -611,6 +612,41 @@ class TestResolvePolarisRoots:
         normalized = roots.runtime_root.replace("\\", "/")
         assert "/.polaris/runtime/projects/" in normalized
         assert "/.polaris/runtime/.polaris/projects/" not in normalized
+
+    def test_explicit_project_runtime_root_is_not_nested_again(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """serve --runtime-root is already ``.../projects/<key>/runtime``.
+
+        Treating that path as a cache *base* nests an empty factory store and
+        makes HTTP ``/v2/factory/runs`` return RUN_NOT_FOUND for a durable run.
+        """
+        from polaris.kernelone.storage.layout import clear_storage_roots_cache
+
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        cache_base = tmp_path / "runtime-cache"
+        cache_base.mkdir()
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(cache_base))
+        clear_storage_roots_cache()
+
+        ws = tmp_path / "f21e79dac015d4f121370610"
+        ws.mkdir()
+        canonical = resolve_polaris_roots(str(ws))
+        project_runtime = Path(canonical.runtime_root)
+        project_runtime.mkdir(parents=True, exist_ok=True)
+        (project_runtime / "factory").mkdir(exist_ok=True)
+
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(project_runtime))
+        monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(project_runtime))
+        clear_storage_roots_cache()
+
+        rebound = resolve_polaris_roots(str(ws))
+        assert Path(rebound.runtime_root).resolve() == project_runtime.resolve()
+        assert "/projects/" + canonical.workspace_key + "/runtime/projects/" not in rebound.runtime_root.replace(
+            "\\", "/"
+        )
 
     def test_extras_runtime_mode_in_result(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         # When ramdisk is explicitly passed, runtime_mode reflects it

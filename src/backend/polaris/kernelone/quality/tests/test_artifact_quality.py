@@ -20,6 +20,48 @@ from polaris.kernelone.quality import (
 from polaris.kernelone.quality.interface_ledger import record_declared_interfaces
 
 
+def test_scan_go_project_compile_reports_undefined_test_selectors(tmp_path: Path) -> None:
+    (tmp_path / "go.mod").write_text("module demo\n\ngo 1.22\n", encoding="utf-8")
+    (tmp_path / "main.go").write_text("package main\n\nfunc main() {}\n", encoding="utf-8")
+    (tmp_path / "main_test.go").write_text(
+        'package main\n\nimport "testing"\n\nfunc TestMissing(t *testing.T) {\n\t_ = PaletteForMood\n}\n',
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(
+        str(tmp_path),
+        relative_paths=["go.mod", "main.go", "main_test.go"],
+    )
+
+    assert any("undefined: PaletteForMood" in error for error in errors)
+
+
+def test_scan_go_project_test_reports_owned_assertion_failures(tmp_path: Path) -> None:
+    (tmp_path / "go.mod").write_text("module demo\n\ngo 1.22\n", encoding="utf-8")
+    (tmp_path / "main.go").write_text(
+        'package main\n\nfunc Bucket(v float64) string {\n\tif v < 0.33 {\n\t\treturn "low"\n\t}\n\treturn "mid"\n}\n\nfunc main() {}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "main_test.go").write_text(
+        'package main\n\nimport "testing"\n\nfunc TestBucket(t *testing.T) {\n'
+        '\tif got := Bucket(0.34); got != "low" {\n'
+        '\t\tt.Fatalf("Bucket(0.34) = %s, want low", got)\n\t}\n}\n',
+        encoding="utf-8",
+    )
+
+    owned = scan_workspace_artifact_quality(
+        str(tmp_path),
+        relative_paths=["go.mod", "main.go", "main_test.go"],
+    )
+    production_only = scan_workspace_artifact_quality(
+        str(tmp_path),
+        relative_paths=["go.mod", "main.go"],
+    )
+
+    assert any("Bucket(0.34)" in error and "want low" in error for error in owned)
+    assert not any("want low" in error for error in production_only)
+
+
 def test_scan_package_manifest_rejects_invalid_script_shell_syntax(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text(
         """
@@ -1141,7 +1183,7 @@ def test_artifact_quality_evidence_detects_inline_module_typescript_import(tmp_p
     """Inline browser modules must not bypass the static TypeScript-entrypoint gate."""
 
     (tmp_path / "index.html").write_text(
-        "<html><body><script type=\"module\">\n"
+        '<html><body><script type="module">\n'
         "import { start } from './src/web.ts';\n"
         "start();\n"
         "</script></body></html>\n",

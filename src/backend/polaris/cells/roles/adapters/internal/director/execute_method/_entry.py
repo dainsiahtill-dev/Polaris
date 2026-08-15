@@ -98,6 +98,18 @@ async def execute_director_task(
     task = adapter._get_task(target_task_id)
     if task:
         selected_from_board = True
+    # Live L1-10: factory drain left TASK-1 as overlay row 42 with no TaskBoard
+    # file. get_task() is overlay-only so lookup succeeded, then claim_execution
+    # failed task_not_found. ensure_task_row rematerializes a claimable row.
+    if requested_task_id:
+        ensured = adapter._materialize_runtime_task(requested_task_id, input_data)
+        if isinstance(ensured, dict) and str(ensured.get("id") or "").strip():
+            found_id = str((task or {}).get("id") or "").strip()
+            ensured_id = str(ensured.get("id") or "").strip()
+            if found_id != ensured_id:
+                selection_source = "materialized_orchestration_task"
+            task = ensured
+            selected_from_board = True
     if not task:
         if task_market_exact_claim or exact_handoff_claim:
             selection_source = "materialized_orchestration_task"

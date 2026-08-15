@@ -31,7 +31,9 @@ from ..go_runtime import (
     plan_go_missing_stdlib_import_repair,
     plan_go_module_import_repair,
     plan_go_nested_import_repair,
+    plan_go_printf_stringer_repair,
     plan_go_subpath_import_repair,
+    plan_go_test_assertion_align_repair,
     plan_go_undefined_selector_repair,
     plan_go_unused_import_repair,
 )
@@ -638,6 +640,70 @@ def _plan_go_missing_stdlib_import_typed(
     mode: str,
 ) -> RuntimeRepairPlanning:
     planning = plan_go_missing_stdlib_import_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_go(planning)
+
+
+def _plan_go_printf_stringer(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_go_printf_stringer_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_go(planning)
+
+
+def _plan_go_printf_stringer_typed(
+    base_files: Mapping[str, str],
+    repair_diagnostics: Sequence[RepairDiagnostic],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_go_printf_stringer_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_go(planning)
+
+
+def _plan_go_test_assertion_align(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_go_test_assertion_align_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_go(planning)
+
+
+def _plan_go_test_assertion_align_typed(
+    base_files: Mapping[str, str],
+    repair_diagnostics: Sequence[RepairDiagnostic],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_go_test_assertion_align_repair(
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         repair_diagnostics=repair_diagnostics,

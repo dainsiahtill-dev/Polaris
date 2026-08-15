@@ -25,6 +25,7 @@ _ARTIFACT_QUALITY_SKIP_DIRS = {
 _ARTIFACT_QUALITY_SOURCE_EXTS = {
     ".cjs",
     ".css",
+    ".go",
     ".html",
     ".js",
     ".jsx",
@@ -332,6 +333,7 @@ _NPM_SCRIPT_FAILURE_SWALLOW_RE = re.compile(
 )
 
 _TSC_PROJECT_CHECK_FLAG = "KERNELONE_TSC_PROJECT_CHECK"
+_GO_PROJECT_CHECK_FLAG = "KERNELONE_GO_PROJECT_CHECK"
 
 _PYTHON_COMMAND_IN_NPM_SCRIPT_RE = re.compile(r"(?:^|[\s;&|])(python3?|pytest|pip3?)(?:$|[\s;&|])", re.IGNORECASE)
 

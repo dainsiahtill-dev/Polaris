@@ -186,8 +186,6 @@ def _run_test_materialization_quality_repair_schedule(
     return _project_deferred_repair_results_for_test(workspace, results), summary
 
 
-
-
 class TestBuildDirectorMessage:
     """_build_director_message constructs prompt text deterministically."""
 
@@ -764,6 +762,75 @@ class TestExistingWorkspaceTaskEvidence:
         assert "src/**/*.test.ts" in evidence["existing_paths"]
         assert "README.md" in evidence["existing_paths"]
 
+    def test_existing_scope_rejects_go_test_compile_errors(self, tmp_path: Any) -> None:
+        (tmp_path / "go.mod").write_text("module demo\n\ngo 1.22\n", encoding="utf-8")
+        (tmp_path / "main.go").write_text("package main\n\nfunc main() {}\n", encoding="utf-8")
+        (tmp_path / "main_test.go").write_text(
+            'package main\n\nimport "testing"\n\nfunc TestMissing(t *testing.T) {\n\t_ = engine.PaletteForMood\n}\n',
+            encoding="utf-8",
+        )
+        task = {"target_files": ["main_test.go", "go.mod"]}
+        current_files = {"main_test.go": "1"}
+
+        evidence = _build_existing_workspace_task_evidence(
+            task=task,
+            current_files=current_files,
+            workspace_full=str(tmp_path),
+        )
+
+        assert evidence["ok"] is False
+        assert evidence["reason"] == "declared_scope_quality_failed"
+        assert any("undefined:" in item for item in evidence["artifact_quality_errors"])
+
+    def test_existing_scope_rejects_go_test_assertion_failures_for_test_owner(self, tmp_path: Any) -> None:
+        (tmp_path / "go.mod").write_text("module demo\n\ngo 1.22\n", encoding="utf-8")
+        (tmp_path / "main.go").write_text(
+            'package main\n\nfunc Bucket(v float64) string {\n\tif v < 0.33 {\n\t\treturn "low"\n\t}\n\treturn "mid"\n}\n\nfunc main() {}\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "main_test.go").write_text(
+            'package main\n\nimport "testing"\n\nfunc TestBucket(t *testing.T) {\n'
+            '\tif got := Bucket(0.34); got != "low" {\n'
+            '\t\tt.Fatalf("Bucket(0.34) = %s, want low", got)\n\t}\n}\n',
+            encoding="utf-8",
+        )
+        task = {"target_files": ["main_test.go", "go.mod"]}
+        current_files = {"main_test.go": "1", "go.mod": "1"}
+
+        evidence = _build_existing_workspace_task_evidence(
+            task=task,
+            current_files=current_files,
+            workspace_full=str(tmp_path),
+        )
+
+        assert evidence["ok"] is False
+        assert evidence["reason"] == "declared_scope_quality_failed"
+        assert any("want low" in item for item in evidence["artifact_quality_errors"])
+
+    def test_existing_scope_accepts_aligned_go_test_for_test_owner(self, tmp_path: Any) -> None:
+        (tmp_path / "go.mod").write_text("module demo\n\ngo 1.22\n", encoding="utf-8")
+        (tmp_path / "main.go").write_text(
+            'package main\n\nfunc Bucket(v float64) string {\n\tif v < 0.33 {\n\t\treturn "low"\n\t}\n\treturn "mid"\n}\n\nfunc main() {}\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "main_test.go").write_text(
+            'package main\n\nimport "testing"\n\nfunc TestBucket(t *testing.T) {\n'
+            '\tif got := Bucket(0.32); got != "low" {\n'
+            '\t\tt.Fatalf("Bucket(0.32) = %s, want low", got)\n\t}\n}\n',
+            encoding="utf-8",
+        )
+        task = {"target_files": ["main_test.go", "go.mod"]}
+        current_files = {"main_test.go": "1", "go.mod": "1"}
+
+        evidence = _build_existing_workspace_task_evidence(
+            task=task,
+            current_files=current_files,
+            workspace_full=str(tmp_path),
+        )
+
+        assert evidence["ok"] is True
+        assert evidence["missing_paths"] == []
+
     def test_existing_scope_rejects_placeholder_tests_when_workspace_is_available(self, tmp_path: Any) -> None:
         test_file = tmp_path / "tests" / "unit" / "card-rules.test.ts"
         test_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1229,5 +1296,3 @@ class TestCollectStepVerifyErrors:
             item["result"]["deferred_request"].command for item in context["_test_deferred_step_verify_tool_results"]
         ]
         assert commands == ["test -f ./style.css", '[ "$(wc -l < ./style.css)" -le 120 ]']
-
-

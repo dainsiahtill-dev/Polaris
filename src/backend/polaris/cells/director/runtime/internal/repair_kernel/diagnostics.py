@@ -437,7 +437,11 @@ def _normalize_cargo_test_failures(text: str) -> list[RepairDiagnostic]:
         name = str(match.group("name") or "test").strip()
         location = _CARGO_TEST_PANIC_LOC_RE.search(block)
         message = next(
-            (line.strip() for line in block.splitlines() if "assertion" in line.lower() or line.startswith("left:") or line.startswith("right:")),
+            (
+                line.strip()
+                for line in block.splitlines()
+                if "assertion" in line.lower() or line.startswith("left:") or line.startswith("right:")
+            ),
             f"cargo test failed: {name}",
         )
         diagnostics.append(
@@ -830,6 +834,23 @@ def _normalize_one_error(text: str) -> RepairDiagnostic:
             column=_to_int(match.group("column")),
             raw=text,
             metadata=metadata,
+        )
+
+    match = _GO_TEST_LOCATION_RE.search(text)
+    if match and "want" in str(match.group("message") or "").lower():
+        message = str(match.group("message") or text).strip()
+        return RepairDiagnostic(
+            source="verifier",
+            code="go_test_assertion_error",
+            message=message,
+            path=str(match.group("path") or "").strip(),
+            line=_to_int(match.group("line")),
+            raw=text,
+            metadata={
+                "language": "go",
+                "diagnostic_kind": "go_test_assertion",
+                "framework": "go_test",
+            },
         )
 
     match = _CPP_ERROR_RE.search(text)

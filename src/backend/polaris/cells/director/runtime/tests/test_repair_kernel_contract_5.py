@@ -151,6 +151,119 @@ def test_go_missing_stdlib_import_covers_undefined_rand() -> None:
     assert '"math/rand"' in planning.composition.patches[0].content_after
 
 
+def test_go_printf_stringer_rewrites_percent_s_to_existing_hex_method() -> None:
+    raw = "./main.go:77:3: fmt.Printf format %s has arg c of wrong type moodwheel/models.Color"
+    planning = plan_runtime_repair(
+        source_tool="deterministic_go_printf_stringer_repair",
+        base_files={
+            "models/entity.go": (
+                'package models\n\ntype Color struct{}\n\nfunc (c Color) Hex() string { return "#fff" }\n'
+            ),
+            "main.go": 'package main\n\nfunc render() {\n\tfmt.Printf("  [%d] %s\\n", i, c)\n}\n',
+        },
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert planning.plan is not None
+    assert planning.plan.source_tool == "deterministic_go_printf_stringer_repair"
+    assert planning.composition is not None
+    assert "c.Hex()" in planning.composition.patches[0].content_after
+
+
+def test_go_printf_stringer_does_not_rewrite_unrelated_letter_c() -> None:
+    """Live L1-10: edit_file of arg ``c`` rewrote ``accepts`` into ``ac.Hex()cepts``."""
+    raw = "./main.go:77:3: fmt.Printf format %s has arg c of wrong type moodwheel/models.Color"
+    planning = plan_runtime_repair(
+        source_tool="deterministic_go_printf_stringer_repair",
+        base_files={
+            "models/entity.go": (
+                'package models\n\ntype Color struct{}\n\nfunc (c Color) Hex() string { return "#fff" }\n'
+            ),
+            "main.go": (
+                "package main\n\n"
+                "// Command moodwheel accepts a mood and an intensity.\n"
+                "func render() {\n"
+                '\tfmt.Printf("  [%d] %s\\n", i, c)\n'
+                "}\n"
+            ),
+        },
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert planning.plan is not None
+    assert planning.composition is not None
+    after = planning.composition.patches[0].content_after
+    assert "ac.Hex()cepts" not in after
+    assert "accepts" in after
+    assert 'fmt.Printf("  [%d] %s\\n", i, c.Hex())' in after
+
+
+def test_go_test_assertion_aligns_owned_input_without_touching_domain() -> None:
+    raw = "main_test.go:124: BucketIntensity(0.34) = mid, want low"
+    domain = (
+        "package models\n\n"
+        "type IntensityTier int\n\n"
+        "const (\n\tTierLow IntensityTier = iota\n\tTierMid\n\tTierHigh\n)\n\n"
+        "func (t IntensityTier) String() string {\n"
+        "\tswitch t {\n"
+        '\tcase TierLow:\n\t\treturn "low"\n'
+        '\tcase TierMid:\n\t\treturn "mid"\n'
+        '\tcase TierHigh:\n\t\treturn "high"\n'
+        '\tdefault:\n\t\treturn "unknown"\n\t}\n}\n\n'
+        "func BucketIntensity(intensity float64) (IntensityTier, error) {\n"
+        "\tswitch {\n"
+        "\tcase intensity < 0.33:\n\t\treturn TierLow, nil\n"
+        "\tcase intensity < 0.66:\n\t\treturn TierMid, nil\n"
+        "\tdefault:\n\t\treturn TierHigh, nil\n"
+        "\t}\n}\n"
+    )
+    test_src = (
+        "package moodwheel\n\n"
+        "func TestBucketIntensity_Boundaries(t *testing.T) {\n"
+        "\tcases := []struct {\n"
+        "\t\tname string\n\t\tintensity float64\n\t\twantTier models.IntensityTier\n"
+        "\t}{\n"
+        '\t\t{"zero_is_low", 0.0, models.TierLow},\n'
+        '\t\t{"just_under_mid", 0.34, models.TierLow},\n'
+        '\t\t{"mid_floor", 0.35, models.TierMid},\n'
+        "\t}\n}\n"
+    )
+    planning = plan_runtime_repair(
+        source_tool="deterministic_go_test_assertion_align_repair",
+        base_files={"models/state.go": domain, "main_test.go": test_src},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert planning.plan is not None
+    assert planning.plan.source_tool == "deterministic_go_test_assertion_align_repair"
+    assert planning.composition is not None
+    after = planning.composition.patches[0].content_after
+    assert '{"just_under_mid", 0.32, models.TierLow}' in after
+    assert '{"just_under_mid", 0.34, models.TierLow}' not in after
+    assert "case intensity < 0.33:" in domain
+    assert planning.composition.patches[0].path == "main_test.go"
+
+
+def test_go_test_assertion_align_refuses_production_files() -> None:
+    raw = "models/state.go:51: BucketIntensity(0.34) = mid, want low"
+    planning = plan_runtime_repair(
+        source_tool="deterministic_go_test_assertion_align_repair",
+        base_files={
+            "models/state.go": (
+                "package models\n\nfunc BucketIntensity(intensity float64) int {\n"
+                "\tswitch {\n\tcase intensity < 0.33:\n\t\treturn TierLow\n\t}\n\treturn TierMid\n}\n"
+            )
+        },
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert planning.plan is None
+
+
 def test_go_undefined_selector_remaps_existing_bindings_without_inventing() -> None:
     raw_errors = (
         "main_test.go:44:10: undefined: models.MoodHappy",
@@ -175,7 +288,7 @@ def test_go_undefined_selector_remaps_existing_bindings_without_inventing() -> N
             "func TestPalette() {\n"
             "\tmoods := []models.Mood{models.MoodHappy, models.MoodCalm, models.MoodExcited}\n"
             "\t_ = engine.PaletteForMood(models.MoodHappy)\n"
-            '\t_, _ = engine.ClampIntensity(0.5)\n'
+            "\t_, _ = engine.ClampIntensity(0.5)\n"
             '\t_, _ = svc.ComposeWheel("happy", 0.5)\n'
             "}\n"
         ),

@@ -24,7 +24,9 @@ from .go_syntax import (
     GO_MISSING_STDLIB_IMPORT_SOURCE_TOOL,
     GO_MODULE_IMPORT_SOURCE_TOOL,
     GO_NESTED_IMPORT_SOURCE_TOOL,
+    GO_PRINTF_STRINGER_SOURCE_TOOL,
     GO_SUBPATH_IMPORT_SOURCE_TOOL,
+    GO_TEST_ASSERTION_ALIGN_SOURCE_TOOL,
     GO_UNDEFINED_SELECTOR_SOURCE_TOOL,
     GO_UNUSED_IMPORT_SOURCE_TOOL,
     build_go_bare_import_string_plan,
@@ -34,7 +36,9 @@ from .go_syntax import (
     build_go_missing_stdlib_import_plan,
     build_go_module_import_plan,
     build_go_nested_import_plan,
+    build_go_printf_stringer_plan,
     build_go_subpath_import_plan,
+    build_go_test_assertion_align_plan,
     build_go_undefined_selector_plan,
     build_go_unused_import_plan,
 )
@@ -257,6 +261,48 @@ def plan_go_missing_stdlib_import_repair(
         mode=mode,
         source_tool=GO_MISSING_STDLIB_IMPORT_SOURCE_TOOL,
         planner=build_go_missing_stdlib_import_plan,
+    )
+
+
+def plan_go_printf_stringer_repair(
+    *,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> GoBareImportStringPlanning:
+    """Plan Go printf %s stringer-method remaps inside the runtime kernel."""
+
+    return _plan_go_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        source_tool=GO_PRINTF_STRINGER_SOURCE_TOOL,
+        planner=build_go_printf_stringer_plan,
+    )
+
+
+def plan_go_test_assertion_align_repair(
+    *,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> GoBareImportStringPlanning:
+    """Plan owned Go test assertion input alignment inside the runtime kernel."""
+
+    return _plan_go_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        source_tool=GO_TEST_ASSERTION_ALIGN_SOURCE_TOOL,
+        planner=build_go_test_assertion_align_plan,
     )
 
 
@@ -577,6 +623,66 @@ def run_go_missing_stdlib_import_repair(
         planner=plan_go_missing_stdlib_import_repair,
         missing_plan_message="No matching Go missing stdlib import repair plan.",
         missing_composition_message="Go missing stdlib import repair composition was not produced.",
+    )
+
+
+def run_go_printf_stringer_repair(
+    *,
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None = None,
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
+    allowed_paths: Sequence[str] | None = None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> GoBareImportStringRun:
+    """Run Go printf %s stringer-method remaps through Plan→Compose→Policy→Execute."""
+
+    return _run_go_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        planner=plan_go_printf_stringer_repair,
+        missing_plan_message="No matching Go printf stringer repair plan.",
+        missing_composition_message="Go printf stringer repair composition was not produced.",
+    )
+
+
+def run_go_test_assertion_align_repair(
+    *,
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None = None,
+    repair_diagnostics: Sequence[RepairDiagnostic] | None = None,
+    allowed_paths: Sequence[str] | None = None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> GoBareImportStringRun:
+    """Run owned Go test assertion input alignment through Plan→Compose→Policy→Execute."""
+
+    return _run_go_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        planner=plan_go_test_assertion_align_repair,
+        missing_plan_message="No matching Go test assertion align repair plan.",
+        missing_composition_message="Go test assertion align repair composition was not produced.",
     )
 
 

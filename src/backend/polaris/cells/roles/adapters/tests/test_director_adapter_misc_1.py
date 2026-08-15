@@ -168,6 +168,7 @@ from ._execution_attempt_helpers import (
     _test_execution_attempt_context,
 )
 
+
 def _install_test_deferred_projection(
     monkeypatch: pytest.MonkeyPatch,
     module: Any,
@@ -247,8 +248,6 @@ def _run_test_materialization_quality_repair_schedule(
         execution_attempt=_test_execution_attempt(workspace, task_id),
     )
     return _project_deferred_repair_results_for_test(workspace, results), summary
-
-
 
 
 def test_quality_repair_context_projects_structured_failure_and_workspace_evidence() -> None:
@@ -1003,6 +1002,154 @@ async def test_execute_director_task_propagates_selected_task_identity_to_role_r
     assert flow_context["metadata"]["pm_task_id"] == "requested-task"
     assert flow_context["metadata"]["task_runtime_session_id"] == "lease-selected-task-2"
     assert captured["backend_context"]["task_id"] == "selected-task-2"
+
+
+@pytest.mark.asyncio
+async def test_execute_director_task_rematerializes_overlay_ghost_before_claim(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live L1-10: overlay row 42 had no TaskBoard file after drain."""
+
+    from polaris.cells.roles.adapters.internal.director.execute_method import _entry as execute_entry
+
+    ghost = {"id": "42", "subject": "Deliver go.mod"}
+    live = {"id": "43", "subject": "Deliver go.mod"}
+    captured: dict[str, Any] = {}
+    execution_attempt = TaskRuntimeExecutionAttemptIdentityV1(
+        workspace=str(tmp_path),
+        task_id=43,
+        external_task_id="TASK-1",
+        session_id="lease-43",
+        attempt=1,
+        role_id="director",
+        worker_id="director-worker",
+        run_id="director-run-1",
+        lease_expires_at="2030-01-01T00:00:00+00:00",
+    )
+
+    class FakeStateTracker:
+        def build_taskboard_observation_snapshot(self, task_runtime: Any) -> dict[str, Any]:
+            del task_runtime
+            return {}
+
+        def collect_workspace_code_files(self) -> list[str]:
+            return []
+
+        def mark_rework_round_started(self, task_id: str, get_task: Any, update_task: Any) -> None:
+            del task_id, get_task, update_task
+
+    class FakeExecution:
+        def resolve_llm_call_timeout_seconds(self, context: dict[str, Any]) -> float:
+            del context
+            return 1.0
+
+    class FakeAdapter:
+        workspace = str(tmp_path)
+        task_runtime = object()
+        _state_tracker = FakeStateTracker()
+        _execution = FakeExecution()
+
+        def _get_task(self, task_id: str) -> dict[str, Any] | None:
+            return ghost if task_id == "TASK-1" else None
+
+        def _materialize_runtime_task(self, task_id: str, input_data: dict[str, Any]) -> dict[str, Any]:
+            captured["materialized"] = task_id
+            del input_data
+            return live
+
+        def _select_pending_board_task(self) -> dict[str, Any] | None:
+            return None
+
+        def _update_task_progress(self, task_id: str, status: str) -> None:
+            del task_id, status
+
+        def _update_board_task(self, task_id: str, updates: dict[str, Any]) -> None:
+            del task_id, updates
+
+        def _resolve_execution_backend_request(
+            self,
+            *,
+            task_id: str,
+            task: dict[str, Any],
+            input_data: dict[str, Any],
+            context: dict[str, Any],
+        ) -> dict[str, Any]:
+            captured["claimed_task_id"] = task_id
+            captured["backend_context"] = dict(context)
+            return {"task_id": task_id, "task": task, "input_data": input_data}
+
+        def _persist_execution_backend_metadata(self, task_id: str, request: dict[str, Any]) -> None:
+            del task_id, request
+
+        def _get_sequential_config(self, context: dict[str, Any]) -> None:
+            del context
+            return None
+
+    async def fake_claim_task_with_retry(
+        adapter: Any,
+        task: dict[str, Any],
+        target_task_id: str,
+        selection_source: str,
+        requested_task_id: str,
+        run_id: str,
+        input_metadata: dict[str, Any] | None = None,
+    ) -> tuple[Any, ...]:
+        del adapter, input_metadata
+        captured["claim"] = {
+            "task_id": str(task.get("id") or ""),
+            "target_task_id": target_task_id,
+            "selection_source": selection_source,
+            "requested_task_id": requested_task_id,
+            "run_id": run_id,
+        }
+        return (
+            live,
+            "43",
+            selection_source,
+            True,
+            {},
+            [],
+            {
+                "session": {"session_id": "lease-43"},
+                "execution_attempt": execution_attempt.to_record(),
+            },
+        )
+
+    async def fake_standard_flow(
+        adapter: Any,
+        task_arg: dict[str, Any],
+        target_task_id: str,
+        run_id: str,
+        context: dict[str, Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        del adapter, task_arg, args, kwargs
+        captured["flow_target"] = target_task_id
+        captured["flow_run"] = run_id
+        captured["flow_context"] = dict(context)
+        return {"success": True, "task_id": target_task_id}
+
+    monkeypatch.setattr(execute_method_module, "_claim_task_with_retry", fake_claim_task_with_retry)
+    monkeypatch.setattr(execute_method_module, "_execute_standard_llm_flow", fake_standard_flow)
+    monkeypatch.setattr(execute_entry, "_claim_task_with_retry", fake_claim_task_with_retry)
+    monkeypatch.setattr(execute_entry, "_execute_standard_llm_flow", fake_standard_flow)
+
+    result = await execute_director_task(
+        FakeAdapter(),
+        "TASK-1",
+        {"task_id": "TASK-1", "metadata": {"pm_task_id": "TASK-1"}},
+        {"run_id": "director-run-1"},
+    )
+
+    assert result["success"] is True
+    assert captured["materialized"] == "TASK-1"
+    assert captured["claim"]["task_id"] == "43"
+    assert captured["claim"]["target_task_id"] == "43"
+    assert captured["claim"]["selection_source"] == "materialized_orchestration_task"
+    assert captured["claimed_task_id"] == "43"
+    assert captured["flow_target"] == "43"
 
 
 @pytest.mark.asyncio
@@ -2614,5 +2761,3 @@ def test_materialization_quality_summary_projects_dark_launch_cutover_blocker() 
         "independent_shadow_required"
         in summary["materialization_quality_runtime_ports"]["dark_launch_cutover_blockers"]
     )
-
-

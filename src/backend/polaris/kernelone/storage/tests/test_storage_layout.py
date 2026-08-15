@@ -99,6 +99,37 @@ def test_runtime_base_writable_probe_is_concurrency_safe(
     assert all(Path(root.runtime_base) == runtime_root for root in roots)
 
 
+def test_explicit_project_runtime_root_is_not_nested_again(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """``KERNELONE_RUNTIME_ROOT`` may already be the resolved project runtime.
+
+    ``serve --runtime-root`` writes that path into the env. Re-appending
+    ``projects/<key>/runtime`` creates a second empty factory store.
+    """
+    cache_base = tmp_path / "runtime-cache"
+    cache_base.mkdir()
+    workspace = tmp_path / "f21e79dac015d4f121370610"
+    workspace.mkdir()
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(cache_base))
+    clear_storage_roots_cache()
+
+    canonical = resolve_storage_roots(str(workspace))
+    project_runtime = Path(canonical.runtime_root)
+    project_runtime.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(project_runtime))
+    monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(project_runtime))
+    clear_storage_roots_cache()
+
+    rebound = resolve_storage_roots(str(workspace))
+    assert Path(rebound.runtime_root).resolve() == project_runtime.resolve()
+    nested = project_runtime / "projects" / canonical.workspace_key / "runtime"
+    assert Path(rebound.runtime_root).resolve() != nested.resolve()
+
+
 def test_storage_roots_polaris_compat(tmp_path: Path) -> None:
     """When bootstrap sets .polaris as metadata dir, paths reflect that."""
     from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
