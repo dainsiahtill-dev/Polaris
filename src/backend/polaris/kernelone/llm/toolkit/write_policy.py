@@ -232,13 +232,18 @@ def validate_tool_write_policy(
                     and not scripts_diff.changed
                 ):
                     reasons.append("package.json writes may not remove all existing scripts")
-                reasons.extend(
-                    _unowned_helper_entrypoint_reasons(
-                        package_after=package_after,
-                        package_diff=package_diff,
-                        allowed_scope=allowed_scope,
+                # First create of package.json may declare future helper scripts.
+                # Editing an existing manifest still requires those helpers in
+                # write scope so Director cannot sneak unowned scripts/tools/bin
+                # entrypoints into a later mutation.
+                if not _is_empty_package_manifest(package_before):
+                    reasons.extend(
+                        _unowned_helper_entrypoint_reasons(
+                            package_after=package_after,
+                            package_diff=package_diff,
+                            allowed_scope=allowed_scope,
+                        )
                     )
-                )
 
     return ToolWritePolicyVerdict(
         allowed=not reasons,
@@ -250,6 +255,17 @@ def validate_tool_write_policy(
         write_gate_reason=write_gate.reason,
         extra_files=tuple(write_gate.extra_files or ()),
     )
+
+
+def _is_empty_package_manifest(text: str | None) -> bool:
+    token = str(text or "").strip()
+    if not token:
+        return True
+    try:
+        payload = json.loads(token)
+    except json.JSONDecodeError:
+        return False
+    return payload == {}
 
 
 def _parse_json_object(text: str) -> dict[str, Any]:

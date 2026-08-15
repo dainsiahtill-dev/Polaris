@@ -1498,6 +1498,71 @@ class TestChiefEngineerBlueprintPortfolio:
         )
         assert entrypoint_verifier.owner_task_id == "TASK-B"
 
+    def test_completion_contract_collapses_duplicate_shared_artifact_path(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """L2-11 r02: CE reaffirmed package.json on a later task; contract is path-unique."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Scaffold the application entrypoint",
+                target_files=("src/main.py",),
+                scope_paths=("src/main.py",),
+                entrypoint_targets=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Integrate the final application entrypoint and tests",
+                target_files=("src/main.py", "tests/test_main.py"),
+                scope_paths=("src/main.py", "tests/test_main.py"),
+                entrypoint_targets=("src/main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        requirements["obligations"]["artifacts"].append(
+            {
+                "obligation_id": "A12-main-reaffirm",
+                "path": "src/main.py",
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-B",
+            }
+        )
+        requirements["obligations"]["verification"][1]["covers_obligation_ids"] = [
+            "artifact-tests",
+            "A12-main-reaffirm",
+        ]
+
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-collapse-duplicate-shared-artifact",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-collapse-duplicate-shared-artifact",
+                ),
+                llm_blueprint={
+                    "construction_plan": {"implementation": ["Build the application"]},
+                    "project_completion_contract": requirements,
+                },
+            )
+        )
+
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        main_rows = [item for item in completion.obligations.artifacts if item.path == "src/main.py"]
+        assert len(main_rows) == 1
+        assert main_rows[0].obligation_id == "A12-main-reaffirm"
+        assert main_rows[0].owner_task_id == "TASK-B"
+        test_verifier = next(item for item in completion.obligations.verification if item.obligation_id == "verify-test")
+        assert "A12-main-reaffirm" in test_verifier.covers_obligation_ids
+        assert "artifact-main" not in test_verifier.covers_obligation_ids
+
     def test_completion_contract_rejects_unowned_shared_path_without_terminal_pm_owner(
         self,
         tmp_path: Path,

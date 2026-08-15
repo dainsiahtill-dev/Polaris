@@ -40,6 +40,9 @@ from polaris.kernelone.quality.artifact_quality._scan_go import (
     _scan_go_project_compile_evidence,
     _scan_go_project_test_evidence,
 )
+from polaris.kernelone.quality.artifact_quality._scan_javascript import (
+    _scan_javascript_named_export_evidence,
+)
 from polaris.kernelone.quality.artifact_quality._scan_package import (
     _scan_cargo_manifest_missing_binary_evidence,
     _scan_package_manifest_evidence,
@@ -167,6 +170,10 @@ def scan_workspace_artifact_quality_evidence(
                 go_test_evidence = _scan_go_project_test_evidence(root_full, scanned_relative_paths)
                 errors.extend(go_test_evidence.errors)
                 typed_issues.extend(go_test_evidence.issues)
+        if len(errors) < 50:
+            js_export_evidence = _scan_javascript_named_export_evidence(root_full, scanned_relative_paths)
+            errors.extend(js_export_evidence.errors)
+            typed_issues.extend(js_export_evidence.issues)
         if len(errors) < 50:
             cross_artifact_issues = tuple(
                 scan_cross_artifact_consistency(

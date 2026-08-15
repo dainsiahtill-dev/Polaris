@@ -62,6 +62,45 @@ def test_scan_go_project_test_reports_owned_assertion_failures(tmp_path: Path) -
     assert not any("want low" in error for error in production_only)
 
 
+def test_scan_javascript_named_export_reports_importer_missing_symbol(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+    engine = tmp_path / "src" / "engine"
+    engine.mkdir(parents=True)
+    (engine / "rules.js").write_text("export function evaluateCandidate() { return 0; }\n", encoding="utf-8")
+    (tmp_path / "src" / "index.js").write_text(
+        "import { evaluateCase, computeVerdict } from './engine/rules.js';\nexport { evaluateCase, computeVerdict };\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(
+        str(tmp_path),
+        relative_paths=["src/index.js", "src/engine/rules.js"],
+    )
+
+    assert any("does not provide an export named 'computeVerdict'" in error for error in evidence.errors)
+    assert any("does not provide an export named 'evaluateCase'" in error for error in evidence.errors)
+    kinds = {str(issue.metadata.get("diagnostic_kind")) for issue in evidence.issues}
+    assert "missing_named_export" in kinds
+
+
+def test_scan_javascript_named_export_ignores_existing_named_export(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+    engine = tmp_path / "src" / "engine"
+    engine.mkdir(parents=True)
+    (engine / "rules.js").write_text("export function evaluateCandidate() { return 0; }\n", encoding="utf-8")
+    (tmp_path / "src" / "index.js").write_text(
+        "import { evaluateCandidate } from './engine/rules.js';\nexport { evaluateCandidate };\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(
+        str(tmp_path),
+        relative_paths=["src/index.js", "src/engine/rules.js"],
+    )
+
+    assert not any("does not provide an export named" in error for error in errors)
+
+
 def test_scan_package_manifest_rejects_invalid_script_shell_syntax(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text(
         """

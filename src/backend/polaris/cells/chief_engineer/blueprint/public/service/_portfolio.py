@@ -844,6 +844,75 @@ def _build_portfolio_completion_contract(
         artifact_rows = normalize_owner_rows(artifact_rows, path_field="path")
         entrypoint_rows = normalize_owner_rows(entrypoint_rows, path_field="source_path")
 
+        def collapse_duplicate_artifact_paths(
+            rows: tuple[dict[str, Any], ...],
+        ) -> tuple[tuple[dict[str, Any], ...], dict[str, str]]:
+            """Keep one completion artifact obligation per path.
+
+            PM often authorizes a shared manifest on later tasks.  CE then
+            reaffirms that same path under a second obligation_id.  The
+            canonical contract is path-unique.  Collapse to the required
+            PM-terminal (or first required) row and remap covers.  Do not
+            invent paths, owners, or semantic roles.
+            """
+
+            kept_not_applicable: list[dict[str, Any]] = []
+            by_path: dict[str, list[dict[str, Any]]] = {}
+            for row in rows:
+                if row["applicability"] == "not_applicable":
+                    kept_not_applicable.append(dict(row))
+                    continue
+                path = str(row.get("path") or "")
+                by_path.setdefault(path, []).append(dict(row))
+
+            collapsed: list[dict[str, Any]] = []
+            remapped: dict[str, str] = {}
+            for path, group in by_path.items():
+                if len(group) == 1:
+                    collapsed.append(group[0])
+                    continue
+                terminal = unique_terminal_owner(path) if path else None
+
+                def sort_key(
+                    item: dict[str, Any],
+                    *,
+                    terminal_owner: str | None = terminal,
+                ) -> tuple[int, int, str]:
+                    owner = item.get("owner_task_id")
+                    return (
+                        0 if item.get("applicability") == "required" else 1,
+                        0 if terminal_owner is not None and owner == terminal_owner else 1,
+                        str(item.get("obligation_id") or ""),
+                    )
+
+                winner = sorted(group, key=sort_key)[0]
+                winner_id = str(winner["obligation_id"])
+                collapsed.append(winner)
+                for item in group:
+                    dropped_id = str(item["obligation_id"])
+                    if dropped_id != winner_id:
+                        remapped[dropped_id] = winner_id
+            return (*kept_not_applicable, *collapsed), remapped
+
+        artifact_rows, artifact_id_remap = collapse_duplicate_artifact_paths(artifact_rows)
+        if artifact_id_remap:
+            remapped_verification_rows: list[dict[str, Any]] = []
+            for row in verification_rows:
+                remapped_row = dict(row)
+                covers = remapped_row.get("covers_obligation_ids")
+                if isinstance(covers, list):
+                    remapped_covers: list[str] = []
+                    seen_covers: set[str] = set()
+                    for raw_cover in covers:
+                        cover = artifact_id_remap.get(str(raw_cover), str(raw_cover))
+                        if cover in seen_covers:
+                            continue
+                        seen_covers.add(cover)
+                        remapped_covers.append(cover)
+                    remapped_row["covers_obligation_ids"] = remapped_covers
+                remapped_verification_rows.append(remapped_row)
+            verification_rows = tuple(remapped_verification_rows)
+
         artifact_owner_by_id = {
             str(row["obligation_id"]): str(row["owner_task_id"])
             for row in artifact_rows
