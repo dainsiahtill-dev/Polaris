@@ -1345,7 +1345,7 @@ def _collect_materialization_go_base_files(workspace_path: Path) -> dict[str, st
         with suppress(OSError, UnicodeDecodeError):
             base_files["go.mod"] = go_mod.read_text(encoding="utf-8")
     for go_file in sorted(workspace_path.rglob("*.go")):
-        if not go_file.is_file() or go_file.name.endswith("_test.go"):
+        if not go_file.is_file():
             continue
         with suppress(ValueError):
             relative_path = go_file.relative_to(workspace_path).as_posix()

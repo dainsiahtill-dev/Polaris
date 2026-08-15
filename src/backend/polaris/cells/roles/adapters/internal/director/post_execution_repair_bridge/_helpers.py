@@ -187,7 +187,7 @@ def _collect_go_base_files(workspace: Path) -> dict[str, str]:
         with contextlib.suppress(OSError, UnicodeDecodeError):
             base_files["go.mod"] = go_manifest.read_text(encoding="utf-8")
     for path in sorted(workspace.rglob("*.go")):
-        if not path.is_file() or _is_generated_build_path(path) or path.name.endswith("_test.go"):
+        if not path.is_file() or _is_generated_build_path(path):
             continue
         try:
             relative_path = path.relative_to(workspace).as_posix()

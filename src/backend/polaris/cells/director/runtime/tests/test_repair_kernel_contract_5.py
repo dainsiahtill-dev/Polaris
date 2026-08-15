@@ -2,112 +2,28 @@
 
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
-from polaris.cells.control_plane.run_ledger.public import TaskBoundaryFailureClassV1
 from polaris.cells.director.runtime.internal.repair_kernel import (
-    PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL,
     PatchComposer,
-    RepairAdvisorNote,
-    RepairArchetype,
-    RepairConvergenceScheduler,
     RepairDiagnostic,
     RepairOperation,
-    RepairPlan,
-    RepairPolicyContext,
-    RepairPolicyGate,
-    RepairReceipt,
-    RepairRevalidationEvidence,
-    RepairRuleDefinition,
-    RepairRuleRegistry,
-    RepairVerifierSnapshot,
-    TransactionalRepairExecutor,
-    build_cpp_failing_smoke_translation_unit_plan,
-    build_cpp_include_path_plan,
-    build_cpp_missing_private_members_plan,
-    build_cpp_placeholder_declaration_plan,
-    build_cpp_post_plan,
-    build_cpp_standard_include_plan,
-    build_cpp_struct_getter_field_access_plan,
-    build_go_bare_import_string_plan,
-    build_go_bare_local_import_plan,
     build_go_error_string_helper_plan,
-    build_go_nested_import_plan,
-    build_go_subpath_import_plan,
-    build_go_unused_import_plan,
     build_java_accessor_alias_plan,
-    build_patch_residue_cleanup_plan,
-    build_python_readme_required_token_plan,
-    build_repair_coverage_report,
-    build_repair_receipt_context,
     build_rust_dependency_plan,
     build_rust_missing_binary_entrypoint_plan,
-    build_typescript_canvas_scale_return_type_plan,
-    build_typescript_duplicate_object_property_plan,
-    build_typescript_enum_member_separator_plan,
-    build_typescript_hyphenated_identifier_plan,
-    build_typescript_missing_closing_brace_plan,
-    build_typescript_nullable_canvas_context_plan,
-    build_typescript_number_property_call_plan,
-    build_typescript_number_to_string_argument_plan,
     build_typescript_object_literal_comma_plan,
-    build_typescript_readonly_assignment_plan,
-    build_typescript_shorthand_property_scope_plan,
-    build_typescript_string_literal_suggestion_plan,
     default_repair_rule_registry,
-    deterministic_repair_source_tool_known,
-    javascript_syntax as js_syntax,
     normalize_artifact_quality_errors,
-    order_repair_plans,
     plan_runtime_repair,
-    plan_typescript_canvas_scale_return_type_repair,
-    plan_typescript_duplicate_object_property_repair,
-    plan_typescript_enum_member_separator_repair,
-    plan_typescript_nullable_canvas_context_repair,
-    plan_typescript_object_literal_comma_repair,
-    remove_patch_residue_lines,
-    repair_cpp_failing_smoke_translation_unit_text,
-    repair_cpp_include_paths_text,
-    repair_cpp_invalid_placeholder_declarations_text,
-    repair_cpp_missing_private_members_text,
-    repair_cpp_missing_standard_includes_text,
-    repair_cpp_struct_getter_field_access_text,
-    repair_go_bare_import_strings_text,
-    repair_go_nested_import_keywords_text,
     repair_java_common_accessor_aliases_text,
-    repair_typescript_missing_closing_braces,
-    repair_typescript_nullable_canvas_context_guards,
     repair_typescript_object_literal_commas,
-    run_materialization_quality_repair_schedule_callbacks,
-    run_post_execution_repair_schedule_callbacks,
     run_runtime_repair,
-    runtime_dispatch as runtime_dispatch_module,
-    runtime_repair_bindings,
     runtime_repair_source_tools,
-    typescript_syntax as ts_syntax,
-)
-from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy import (
-    FORBIDDEN_REPAIR_ADVISORY_METADATA_FIELDS,
-    FORBIDDEN_REPAIR_ADVISORY_SUGGESTED_RULE_FIELDS,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.contracts import (
-    FILE_ABSENT_HASH,
-    ComposedPatch,
-    CompositionResult,
     sha256_text,
-)
-from polaris.cells.director.runtime.internal.repair_kernel.generic_hygiene_syntax import (
-    SCAFFOLD_MARKER_QUALITY_CLEANUP_SOURCE_TOOL,
-    build_scaffold_marker_cleanup_plan,
-)
-from polaris.cells.director.runtime.internal.repair_kernel.java_syntax import (
-    build_java_eof_truncation_plan,
-    build_java_test_dependency_plan,
-    repair_java_eof_truncation_text,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.rust_syntax import (
     build_rust_crate_import_rewrite_plan,
@@ -123,73 +39,15 @@ from polaris.cells.director.runtime.internal.repair_kernel.rust_syntax import (
     build_rust_wrong_crate_path_plan,
 )
 from polaris.cells.director.runtime.public import (
-    AttachDirectorRepairRevalidationEvidenceV1,
-    CompareDirectorRepairShadowRunV1,
-    DirectorRepairAdvisoryPolicyResultV1,
-    DirectorRepairAdvisoryValidationResultV1,
-    DirectorRepairCoverageReportV1,
-    DirectorRepairEffectPlanV1,
-    DirectorRepairEffectV1,
-    DirectorRepairKernelSummaryProjectionResultV1,
-    DirectorRepairLanguageSlotsResultV1,
-    DirectorRepairLanguageSlotV1,
-    DirectorRepairMaterializationAllowedPathsResultV1,
-    DirectorRepairMaterializationPlanProbeResultV1,
-    DirectorRepairMaterializationQualityFacadeResultV1,
-    DirectorRepairMaterializationQualityScheduleResultV1,
-    DirectorRepairMetricsResultV1,
     DirectorRepairPlanningResultV1,
-    DirectorRepairPostExecutionScheduleResultV1,
-    DirectorRepairRevalidationProjectionResultV1,
-    DirectorRepairShadowComparisonResultV1,
-    EvaluateDirectorRepairCutoverReadinessV1,
     PlanDirectorRepairCommandV1,
-    ProjectDirectorRepairKernelSummaryV1,
-    ProjectDirectorRepairMaterializationBridgeMetadataV1,
-    ProjectDirectorRepairMetricsV1,
-    QueryDirectorRepairAdvisoryPolicyV1,
-    QueryDirectorRepairAdvisoryValidationV1,
-    QueryDirectorRepairCoverageV1,
-    QueryDirectorRepairLanguageSlotsV1,
-    QueryDirectorRepairMaterializationAllowedPathsV1,
-    QueryDirectorRepairMaterializationPlanProbeV1,
-    QueryDirectorRepairMaterializationQualityScheduleV1,
     QueryDirectorRepairPlanProbeV1,
-    QueryDirectorRepairPostExecutionScheduleV1,
-    QueryDirectorRepairStrategyCatalogV1,
     RepairAdvisoryV1,
-    RepairDiagnosticV1,
-    RepairReceiptV1,
     RunDirectorRepairCommandV1,
-    attach_director_repair_revalidation_evidence,
-    build_director_repair_kernel_summary,
-    compare_director_repair_shadow_run,
-    evaluate_director_repair_cutover_readiness,
-    hash_director_repair_effect_plan,
-    normalize_director_repair_issue_diagnostics,
     plan_director_repair,
-    project_director_repair_kernel_summary,
-    project_director_repair_materialization_bridge_metadata,
-    project_director_repair_metrics,
-    project_director_repair_revalidation_evidence,
-    query_director_repair_advisory_policy,
-    query_director_repair_coverage,
-    query_director_repair_language_slots,
-    query_director_repair_materialization_allowed_paths,
-    query_director_repair_materialization_plan_probe,
-    query_director_repair_materialization_quality_schedule,
     query_director_repair_plan_probe,
-    query_director_repair_post_execution_schedule,
-    query_director_repair_strategy_catalog,
-    run_director_materialization_quality_repair_facade,
     run_director_repair,
-    service as runtime_public_service,
-    validate_director_repair_advisory,
 )
-from polaris.cells.director.runtime.public.directed_effect_contracts import hash_directed_effect_arguments
-from polaris.cells.director.runtime.public.service import normalize_director_repair_diagnostics
-from polaris.kernelone.quality import artifact_quality_issues_from_errors
-from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
 
 
 def test_go_error_string_helper_coverage_uses_typed_identifier_metadata() -> None:
@@ -265,7 +123,82 @@ def test_go_error_string_helper_rule_rejects_non_error_undefined_symbols() -> No
     coverage = default_repair_rule_registry().coverage(diagnostics).to_dict()
 
     assert plan is None
-    assert coverage["items"][0]["known_rule_matched"] is False
+    assert "deterministic_go_error_string_helper_repair" not in coverage["items"][0]["matched_source_tools"]
+
+
+def test_go_missing_stdlib_import_covers_undefined_rand() -> None:
+    raw = "engine/rules.go:106:66: undefined: rand"
+    diagnostics = normalize_artifact_quality_errors([raw])
+    source = (
+        "package engine\n\n"
+        'import (\n\t"fmt"\n\n\t"moodwheel/models"\n)\n\n'
+        "func ApplyCompositionRule(m models.Mood, rng *rand.Rand) {}\n"
+    )
+    coverage = default_repair_rule_registry().coverage(diagnostics).to_dict()
+    planning = plan_runtime_repair(
+        source_tool="deterministic_go_missing_stdlib_import_repair",
+        base_files={"engine/rules.go": source},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert coverage["items"][0]["known_rule_matched"] is True
+    assert "deterministic_go_missing_stdlib_import_repair" in coverage["items"][0]["matched_source_tools"]
+    assert planning.plan is not None
+    assert planning.plan.source_tool == "deterministic_go_missing_stdlib_import_repair"
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+    assert '"math/rand"' in planning.composition.patches[0].content_after
+
+
+def test_go_undefined_selector_remaps_existing_bindings_without_inventing() -> None:
+    raw_errors = (
+        "main_test.go:44:10: undefined: models.MoodHappy",
+        "main_test.go:55:27: undefined: engine.PaletteForMood",
+        "main_test.go:146:23: undefined: engine.ClampIntensity",
+        "main_test.go:48:10: undefined: models.MoodExcited",
+    )
+    diagnostics = normalize_artifact_quality_errors(list(raw_errors))
+    base_files = {
+        "models/entity.go": (
+            "package models\n\n"
+            'const (\n\tMoodJoyful Mood = "joyful"\n\tMoodCalm Mood = "calm"\n)\n\n'
+            "func PaletteForMood(m Mood) {}\n"
+        ),
+        "engine/rules.go": (
+            "package engine\n\n"
+            "func ValidateIntensity(intensity float64) (float64, error) { return intensity, nil }\n"
+            "func ApplyMoodRule(m models.Mood) {}\n"
+        ),
+        "main_test.go": (
+            "package main\n\n"
+            "func TestPalette() {\n"
+            "\tmoods := []models.Mood{models.MoodHappy, models.MoodCalm, models.MoodExcited}\n"
+            "\t_ = engine.PaletteForMood(models.MoodHappy)\n"
+            '\t_, _ = engine.ClampIntensity(0.5)\n'
+            '\t_, _ = svc.ComposeWheel("happy", 0.5)\n'
+            "}\n"
+        ),
+    }
+    planning = plan_runtime_repair(
+        source_tool="deterministic_go_undefined_selector_repair",
+        base_files=base_files,
+        artifact_quality_errors=raw_errors,
+        mode="shadow",
+    )
+
+    assert planning.plan is not None
+    assert planning.plan.source_tool == "deterministic_go_undefined_selector_repair"
+    assert planning.composition is not None
+    repaired = planning.composition.patches[0].content_after
+    assert "models.MoodJoyful" in repaired
+    assert "models.MoodHappy" not in repaired
+    assert "models.MoodExcited" not in repaired
+    assert "models.PaletteForMood" in repaired
+    assert "engine.ClampIntensity" not in repaired
+    assert "engine.ValidateIntensity" in repaired
+    assert '"joyful"' in repaired
+    assert '"happy"' not in repaired
 
 
 def test_rust_dependency_rule_builds_canonical_plan_from_diagnostics() -> None:

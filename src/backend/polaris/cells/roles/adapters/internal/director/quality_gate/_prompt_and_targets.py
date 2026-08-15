@@ -1717,6 +1717,26 @@ def _director_existing_scope_preflight_enabled(context: dict[str, Any]) -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
+def _declared_path_exists_on_workspace_disk(workspace_full: str, relative_path: str) -> bool:
+    """Observe a declared contract path on disk, not only the in-memory file set.
+
+    Director ``current_files`` snapshots are code-oriented and routinely omit
+    manifests such as ``go.mod``. Rematerialized retries then mark an already
+    delivered module file as missing and fail ``director_no_materialized_changes``.
+    """
+
+    root = str(workspace_full or "").strip()
+    token = str(relative_path or "").strip().replace("\\", "/").lstrip("/")
+    if not root or not token or any(character in token for character in "*?"):
+        return False
+    if token.startswith("/") or ".." in token.split("/"):
+        return False
+    try:
+        return (Path(root) / token).exists()
+    except OSError:
+        return False
+
+
 def _build_existing_workspace_task_evidence(
     *,
     task: dict[str, Any],
@@ -1748,7 +1768,7 @@ def _build_existing_workspace_task_evidence(
         normalized = _normalize_declared_task_path(candidate, workspace_name=workspace_name)
         if not normalized:
             continue
-        if _path_candidate_exists_in_file_set(normalized, current):
+        if _path_candidate_exists_in_file_set(normalized, current) or _declared_path_exists_on_workspace_disk(workspace_full, normalized):
             existing.append(normalized)
         else:
             missing.append(normalized)

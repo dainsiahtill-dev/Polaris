@@ -28,9 +28,11 @@ from ..go_runtime import (
     plan_go_bare_local_import_repair,
     plan_go_dedup_repair,
     plan_go_error_string_helper_repair,
+    plan_go_missing_stdlib_import_repair,
     plan_go_module_import_repair,
     plan_go_nested_import_repair,
     plan_go_subpath_import_repair,
+    plan_go_undefined_selector_repair,
     plan_go_unused_import_repair,
 )
 from ..java_runtime import (
@@ -604,6 +606,70 @@ def _plan_go_error_string_helper_typed(
     mode: str,
 ) -> RuntimeRepairPlanning:
     planning = plan_go_error_string_helper_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_go(planning)
+
+
+def _plan_go_missing_stdlib_import(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_go_missing_stdlib_import_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_go(planning)
+
+
+def _plan_go_missing_stdlib_import_typed(
+    base_files: Mapping[str, str],
+    repair_diagnostics: Sequence[RepairDiagnostic],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_go_missing_stdlib_import_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_go(planning)
+
+
+def _plan_go_undefined_selector(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_go_undefined_selector_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_go(planning)
+
+
+def _plan_go_undefined_selector_typed(
+    base_files: Mapping[str, str],
+    repair_diagnostics: Sequence[RepairDiagnostic],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_go_undefined_selector_repair(
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         repair_diagnostics=repair_diagnostics,

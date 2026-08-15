@@ -359,6 +359,8 @@ _MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS = (
     "deterministic_go_subpath_repair",
     "deterministic_go_unused_import_repair",
     "deterministic_go_error_string_helper_repair",
+    "deterministic_go_missing_stdlib_import_repair",
+    "deterministic_go_undefined_selector_repair",
     "deterministic_go_dedup_repair",
 )
 _MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS = (

@@ -11,22 +11,13 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
-import json
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from polaris.cells.chief_engineer.blueprint.public import BlueprintPersistence
-from polaris.cells.control_plane.run_ledger.public import FailureClassV1
-from polaris.cells.director.runtime.public.repair_kernel_contracts import (
-    build_substantive_node_test_script as _build_substantive_node_test_script,
-    is_overstrict_node_test_script_contract as _is_overstrict_node_test_script_contract,
-    remove_patch_residue_lines as _remove_patch_residue_lines,
-)
 from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
     bootstrap_fact_stream_workspace,
@@ -38,80 +29,26 @@ from polaris.cells.roles.adapters.internal.director import (
 )
 from polaris.cells.roles.adapters.internal.director.adapter import (
     DirectorAdapter,
-    _build_director_blueprint_handoff_lines,
-    _director_actual_interface_injection_enabled,
-    _load_ce_blueprint_contract_payload,
-    _merge_ce_blueprint_contract_payload,
-    _normalize_director_role_response,
-    _prepare_role_dialogue_context,
 )
 from polaris.cells.roles.adapters.internal.director.execute_method import (
-    _build_empty_write_content_retry_message,
     _build_existing_workspace_task_evidence,
-    _build_no_write_materialization_retry_message,
     _can_accept_existing_workspace_scope,
-    _deterministic_repair_profile_summary_from_tool_results,
-    _deterministic_repair_source_tools_from_tool_results,
-    _director_direct_text_patch_only_enabled,
-    _director_existing_scope_preflight_enabled,
-    _emit_director_adapter_cognitive_receipt,
-    _empty_write_content_retry_needed,
-    _execution_attempt_authority_from_context,
-    _extract_task_target_path_candidates,
-    _finalize_claimed_execution,
-    _handle_claim_required,
-    _materialization_task_boundary_triage_summary,
-    _no_write_materialization_retry_needed,
-    _no_write_materialization_retry_tool_definitions,
-    _pin_file_schema_to_declared_targets,
-    _resolve_claim_external_task_id,
-    _run_empty_write_content_materialization_retry,
-    _suspend_claimed_execution_for_cancellation,
     _task_requires_fresh_materialization,
-    _task_runtime_finalization_failed_result,
-    _task_runtime_heartbeat_exception_signal,
-    _task_runtime_heartbeat_failed_signal,
-    _with_decision_signals,
-    _with_task_runtime_finalize_evidence,
-    execute_director_task,
 )
-from polaris.cells.roles.adapters.internal.director.execute_method_repair_bridge import (
-    run_patch_residue_cleanup,
-    run_python_runtime_smoke,
-    run_python_static_smoke,
-)
-from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor
 from polaris.cells.roles.adapters.internal.director.quality_gate import (
     _build_materialization_quality_failure_evidence_context,
     _build_materialization_quality_workspace_evidence_context,
-    _extract_task_interface_contract,
-    _go_runtime_smoke_repair_target_files,
-    _materialization_interface_discrepancy_evidence,
-    _materialization_interface_discrepancy_retry_authorized,
-    _materialization_plan_probe_requires_task_boundary_triage,
-    _quality_repair_edit_file_tool_definition,
-    _quality_repair_execute_command_tool_definition,
-    _quality_repair_write_file_tool_definition,
-)
-from polaris.cells.roles.adapters.internal.director.runtime_repair_tool_adapter import (
-    run_runtime_repair_with_director_tools,
 )
 from polaris.cells.roles.adapters.public import service as roles_adapters_public_service
 from polaris.cells.roles.adapters.public.contracts import RunDirectorMaterializationQualityRepairScheduleCommandV1
-from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1, RoleExecutionResultV1
 from polaris.cells.runtime.task_runtime.public.contracts import (
-    TaskRuntimeExecutionAttemptHeartbeatVerdictV1,
     TaskRuntimeExecutionAttemptIdentityV1,
-    TaskRuntimeExecutionAttemptSettlementVerdictV1,
 )
 from polaris.cells.runtime.task_runtime.public.service import create_task_runtime_execution_attempt_authority
 from polaris.kernelone.events.final_request_evidence import (
-    looks_like_ce_blueprint_payload,
     looks_like_failed_gate_evidence_context_payload,
-    looks_like_pm_contract_payload,
     looks_like_workspace_quality_evidence_payload,
 )
-from polaris.kernelone.quality import scan_workspace_artifact_quality
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -165,8 +102,8 @@ def _make_adapter(tmp_path: Any, task_runtime: Any = None) -> DirectorAdapter:
 from ._execution_attempt_helpers import (
     _project_deferred_repair_results_for_test,
     _test_execution_attempt,
-    _test_execution_attempt_context,
 )
+
 
 def _install_test_deferred_projection(
     monkeypatch: pytest.MonkeyPatch,
@@ -752,6 +689,23 @@ class TestExistingWorkspaceTaskEvidence:
 
         assert evidence["ok"] is False
         assert evidence["reason"] == "declared_scope_incomplete"
+
+    def test_declared_manifest_on_disk_counts_when_missing_from_current_files(self, tmp_path: Any) -> None:
+        (tmp_path / "go.mod").write_text("module moodwheel\n\ngo 1.22\n", encoding="utf-8")
+        (tmp_path / "main.go").write_text("package main\n\nfunc main() {}\n", encoding="utf-8")
+        task = {"target_files": ["go.mod", "main.go"]}
+        current_files = {"main.go": "package main\n\nfunc main() {}\n"}
+
+        evidence = _build_existing_workspace_task_evidence(
+            task=task,
+            current_files=current_files,
+            workspace_full=str(tmp_path),
+        )
+
+        assert evidence["ok"] is True
+        assert evidence["reason"] == "declared_scope_present"
+        assert evidence["existing_paths"] == ["go.mod", "main.go"]
+        assert evidence["missing_paths"] == []
 
     def test_high_coverage_scope_with_missing_declared_targets_is_not_enough(self) -> None:
         task = {

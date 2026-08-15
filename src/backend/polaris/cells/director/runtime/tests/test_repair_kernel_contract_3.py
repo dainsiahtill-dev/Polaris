@@ -587,6 +587,8 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
         "deterministic_javascript_missing_method_runtime_repair",
         "deterministic_javascript_test_missing_target_repair",
         "deterministic_go_error_string_helper_repair",
+        "deterministic_go_missing_stdlib_import_repair",
+        "deterministic_go_undefined_selector_repair",
         "deterministic_python_package_child_reexport_repair",
         "deterministic_python_package_shadow_bridge_repair",
         "deterministic_python_readme_required_token_repair",
@@ -617,6 +619,16 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
         "source_tool": "deterministic_go_error_string_helper_repair",
         "language": "go",
         "rule_id": "go.error_string_helper",
+    }
+    assert bindings_by_tool["deterministic_go_missing_stdlib_import_repair"] == {
+        "source_tool": "deterministic_go_missing_stdlib_import_repair",
+        "language": "go",
+        "rule_id": "go.missing_stdlib_import",
+    }
+    assert bindings_by_tool["deterministic_go_undefined_selector_repair"] == {
+        "source_tool": "deterministic_go_undefined_selector_repair",
+        "language": "go",
+        "rule_id": "go.undefined_selector_alias",
     }
     assert bindings_by_tool[ts_syntax.TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL] == {
         "source_tool": ts_syntax.TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,

@@ -27,9 +27,11 @@ from ..go_runtime import (
     run_go_bare_local_import_repair,
     run_go_dedup_repair,
     run_go_error_string_helper_repair,
+    run_go_missing_stdlib_import_repair,
     run_go_module_import_repair,
     run_go_nested_import_repair,
     run_go_subpath_import_repair,
+    run_go_undefined_selector_repair,
     run_go_unused_import_repair,
 )
 from ..java_runtime import (
@@ -462,6 +464,106 @@ def _run_go_error_string_helper_typed(
     mode: str,
 ) -> RuntimeRepairRun:
     run = run_go_error_string_helper_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_go(run)
+
+
+def _run_go_missing_stdlib_import(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_go_missing_stdlib_import_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_go(run)
+
+
+def _run_go_missing_stdlib_import_typed(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    repair_diagnostics: Sequence[RepairDiagnostic],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_go_missing_stdlib_import_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        repair_diagnostics=repair_diagnostics,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_go(run)
+
+
+def _run_go_undefined_selector(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_go_undefined_selector_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_go(run)
+
+
+def _run_go_undefined_selector_typed(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    repair_diagnostics: Sequence[RepairDiagnostic],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_go_undefined_selector_repair(
         workspace=workspace,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,

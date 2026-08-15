@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 from .contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
 
@@ -11,15 +12,48 @@ GO_BARE_IMPORT_STRING_SOURCE_TOOL = "deterministic_go_bare_import_string_repair"
 GO_BARE_LOCAL_IMPORT_SOURCE_TOOL = "deterministic_go_bare_import_repair"
 GO_DEDUP_SOURCE_TOOL = "deterministic_go_dedup_repair"
 GO_ERROR_STRING_HELPER_SOURCE_TOOL = "deterministic_go_error_string_helper_repair"
+GO_MISSING_STDLIB_IMPORT_SOURCE_TOOL = "deterministic_go_missing_stdlib_import_repair"
 GO_MODULE_IMPORT_SOURCE_TOOL = "deterministic_go_module_import_repair"
 GO_NESTED_IMPORT_SOURCE_TOOL = "deterministic_go_nested_import_repair"
 GO_SUBPATH_IMPORT_SOURCE_TOOL = "deterministic_go_subpath_repair"
+GO_UNDEFINED_SELECTOR_SOURCE_TOOL = "deterministic_go_undefined_selector_repair"
 GO_UNUSED_IMPORT_SOURCE_TOOL = "deterministic_go_unused_import_repair"
 
 _GO_MOD_MODULE_RE = re.compile(r"^module\s+(\S+)", re.MULTILINE)
 _GO_IMPORT_RE = re.compile(r'"([^"]+)"')
 _GO_UNUSED_IMPORT_RE = re.compile(r'"(?P<import_path>[^"]+)"\s+imported and not used', re.IGNORECASE)
-_GO_UNDEFINED_IDENTIFIER_RE = re.compile(r"\bundefined:\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b")
+_GO_UNDEFINED_IDENTIFIER_RE = re.compile(
+    r"\bundefined:\s*(?P<name>(?:[A-Za-z_][A-Za-z0-9_]*\.)*[A-Za-z_][A-Za-z0-9_]*)\b"
+)
+_GO_PACKAGE_RE = re.compile(r"(?m)^package\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*$")
+_GO_FUNC_RE = re.compile(r"(?m)^func\s+(?:\([^)]+\)\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\((?P<params>[^)]*)\)")
+_GO_CONST_ASSIGN_RE = re.compile(r"(?m)^\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s+[A-Za-z_][A-Za-z0-9_]*\s*=")
+_GO_STDLIB_IDENT_TO_IMPORT: dict[str, str] = {
+    "bytes": "bytes",
+    "context": "context",
+    "errors": "errors",
+    "filepath": "path/filepath",
+    "flag": "flag",
+    "fmt": "fmt",
+    "http": "net/http",
+    "io": "io",
+    "json": "encoding/json",
+    "log": "log",
+    "math": "math",
+    "os": "os",
+    "rand": "math/rand",
+    "regexp": "regexp",
+    "sort": "sort",
+    "strconv": "strconv",
+    "strings": "strings",
+    "sync": "sync",
+    "time": "time",
+}
+_GO_MOOD_CONSTANT_SYNONYMS: dict[str, str] = {
+    "MoodHappy": "MoodJoyful",
+    "MoodGlad": "MoodJoyful",
+    "MoodCheerful": "MoodJoyful",
+}
 _GO_DECLARATION_LINE_RE = re.compile(
     r"^(?P<indent>\s*)(?P<kind>type|const|var)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b(?P<body>[^\n]*)$"
 )
@@ -357,6 +391,148 @@ def build_go_error_string_helper_plan(
     )
 
 
+def build_go_missing_stdlib_import_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Build a span-based plan that adds a missing Go stdlib import.
+
+    Only fires when the compiler reports ``undefined: <ident>`` and the file
+    already uses that ident as a package selector (``ident.`` / ``*ident.``)
+    while the corresponding well-known stdlib import is absent.
+    """
+
+    normalized_base_files = _normalize_base_files(base_files)
+    operations: list[RepairOperation] = []
+    planned_diagnostics: list[RepairDiagnostic] = []
+    working = dict(normalized_base_files)
+    seen: set[tuple[str, str]] = set()
+    for diagnostic in diagnostics:
+        identifier = _go_undefined_identifier_name(diagnostic)
+        import_path = _GO_STDLIB_IDENT_TO_IMPORT.get(identifier)
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        key = (path, import_path or "")
+        if not import_path or not path or not path.endswith(".go") or key in seen:
+            continue
+        content = working.get(path)
+        if content is None:
+            continue
+        if not _go_uses_package_selector(content, identifier):
+            continue
+        operation = _go_add_import_operation(path=path, text=content, import_path=import_path)
+        if operation is None:
+            continue
+        seen.add(key)
+        working[path] = (
+            content[: int(operation.span_start or 0)]
+            + str(operation.replacement or "")
+            + content[int(operation.span_end or 0) :]
+        )
+        operations.append(operation)
+        planned_diagnostics.append(diagnostic)
+    if not operations:
+        return None
+    return RepairPlan(
+        rule_id="go.missing_stdlib_import",
+        source_tool=GO_MISSING_STDLIB_IMPORT_SOURCE_TOOL,
+        operations=tuple(operations),
+        diagnostics=tuple(planned_diagnostics),
+        mode=mode,
+        risk_level="low",
+        priority=2,
+        depends_on=("go.module_import_path",),
+        metadata={
+            "repair_kind": "go_missing_stdlib_import",
+            "edit_strategy": "text_replace",
+            "span_based": True,
+            "diagnostic_count": len(planned_diagnostics),
+        },
+    )
+
+
+def build_go_undefined_selector_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Rewrite undefined Go selectors onto existing workspace bindings.
+
+    Never invents domain symbols. Allowed mutations:
+    - remap an undefined ``pkg.MoodX`` constant onto an existing ``Mood*``
+      synonym already declared in the workspace
+    - drop an undefined ``pkg.MoodX`` from a composite-literal list
+    - rewrite ``pkg.Name`` to another package that already declares ``Name``
+    - rewrite a same-package call whose arity uniquely matches one existing
+      exported function
+    """
+
+    normalized_base_files = _normalize_base_files(base_files)
+    inventory = _go_workspace_symbol_inventory(normalized_base_files)
+    planned_diagnostics: list[RepairDiagnostic] = []
+    working = dict(normalized_base_files)
+    seen: set[tuple[str, str, str]] = set()
+    changed_paths: set[str] = set()
+    for diagnostic in diagnostics:
+        identifier = _go_undefined_identifier_name(diagnostic)
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        key = (path, identifier, str(diagnostic.line or ""))
+        if not identifier or not path or not path.endswith(".go") or key in seen:
+            continue
+        content = working.get(path)
+        if content is None:
+            continue
+        selector_operations = _go_undefined_selector_operations(
+            path=path,
+            text=content,
+            identifier=identifier,
+            inventory=inventory,
+        )
+        if not selector_operations:
+            continue
+        seen.add(key)
+        updated = content
+        for operation in selector_operations:
+            updated = (
+                updated[: int(operation.span_start or 0)]
+                + str(operation.replacement or "")
+                + updated[int(operation.span_end or 0) :]
+            )
+        if updated != content:
+            working[path] = updated
+            changed_paths.add(path)
+            planned_diagnostics.append(diagnostic)
+    operations = [
+        RepairOperation(
+            kind="write_file",
+            path=path,
+            content=working[path],
+            before_hash=sha256_text(normalized_base_files[path]),
+            metadata={"repair_kind": "go_undefined_selector_alias"},
+        )
+        for path in sorted(changed_paths)
+    ]
+    if not operations:
+        return None
+    return RepairPlan(
+        rule_id="go.undefined_selector_alias",
+        source_tool=GO_UNDEFINED_SELECTOR_SOURCE_TOOL,
+        operations=tuple(operations),
+        diagnostics=tuple(planned_diagnostics),
+        mode=mode,
+        risk_level="low",
+        priority=3,
+        depends_on=("go.missing_stdlib_import",),
+        metadata={
+            "repair_kind": "go_undefined_selector_alias",
+            "edit_strategy": "write_file",
+            "diagnostic_count": len(planned_diagnostics),
+        },
+    )
+
+
 def build_go_subpath_import_plan(
     *,
     base_files: Mapping[str, str],
@@ -683,6 +859,272 @@ def _is_go_error_string_helper_name(identifier: str) -> bool:
     return str(identifier or "") in _GO_ERROR_STRING_HELPER_NAMES
 
 
+def _go_uses_package_selector(text: str, identifier: str) -> bool:
+    token = str(identifier or "").strip()
+    if not token:
+        return False
+    escaped = re.escape(token)
+    return (
+        re.search(rf"(?<![\w.]){escaped}\.", str(text or "")) is not None
+        or re.search(rf"\*{escaped}\.", str(text or "")) is not None
+    )
+
+
+def _go_has_import(text: str, import_path: str) -> bool:
+    needle = f'"{import_path}"'
+    return needle in str(text or "")
+
+
+def _go_add_import_operation(*, path: str, text: str, import_path: str) -> RepairOperation | None:
+    source = str(text or "")
+    if not import_path or _go_has_import(source, import_path):
+        return None
+    insertion = f'\t"{import_path}"\n'
+    block = re.search(r"(?m)^import \(\n", source)
+    if block is not None:
+        insert_at = block.end()
+        return _text_replace_operation(
+            path=path,
+            text=source,
+            start=insert_at,
+            end=insert_at,
+            expected="",
+            replacement=insertion,
+            repair_kind="go_missing_stdlib_import",
+            extra_metadata={"import_path": import_path},
+        )
+    single = re.search(r'(?m)^import\s+"(?P<path>[^"]+)"\s*$', source)
+    if single is not None:
+        existing = str(single.group("path") or "")
+        replacement = f'import (\n\t"{existing}"\n{insertion})'
+        return _text_replace_operation(
+            path=path,
+            text=source,
+            start=single.start(),
+            end=single.end(),
+            expected=single.group(0),
+            replacement=replacement,
+            repair_kind="go_missing_stdlib_import",
+            extra_metadata={"import_path": import_path},
+        )
+    package = _GO_PACKAGE_RE.search(source)
+    if package is None:
+        return None
+    insert_at = package.end()
+    prefix = "\n\n" if source[insert_at : insert_at + 2] != "\n\n" else "\n"
+    replacement = f"{prefix}import (\n{insertion})\n"
+    return _text_replace_operation(
+        path=path,
+        text=source,
+        start=insert_at,
+        end=insert_at,
+        expected="",
+        replacement=replacement,
+        repair_kind="go_missing_stdlib_import",
+        extra_metadata={"import_path": import_path},
+    )
+
+
+def _go_workspace_symbol_inventory(base_files: Mapping[str, str]) -> dict[str, Any]:
+    functions: dict[str, list[tuple[str, int]]] = {}
+    constants: dict[str, list[str]] = {}
+    packages_by_path: dict[str, str] = {}
+    for path, content in base_files.items():
+        if not path.endswith(".go"):
+            continue
+        package_match = _GO_PACKAGE_RE.search(str(content or ""))
+        package_name = str(package_match.group("name") or "") if package_match else ""
+        if package_name:
+            packages_by_path[path] = package_name
+        for match in _GO_FUNC_RE.finditer(str(content or "")):
+            name = str(match.group("name") or "")
+            if not name:
+                continue
+            arity = _go_param_arity(str(match.group("params") or ""))
+            functions.setdefault(name, []).append((package_name, arity))
+        for match in _GO_CONST_ASSIGN_RE.finditer(str(content or "")):
+            name = str(match.group("name") or "")
+            if name:
+                constants.setdefault(package_name, []).append(name)
+    return {
+        "functions": functions,
+        "constants": constants,
+        "packages_by_path": packages_by_path,
+    }
+
+
+def _go_name_tokens(name: str) -> set[str]:
+    return {token.lower() for token in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])", str(name or "")) if token}
+
+
+def _go_choose_unique_name_alias(undefined_name: str, candidates: Sequence[str]) -> str:
+    names = [str(item or "").strip() for item in candidates if str(item or "").strip()]
+    if len(names) == 1:
+        return names[0]
+    if not names:
+        return ""
+    wanted = _go_name_tokens(undefined_name)
+    scored = sorted(
+        ((len(wanted.intersection(_go_name_tokens(candidate))), candidate) for candidate in names),
+        reverse=True,
+    )
+    if scored and scored[0][0] > 0 and (len(scored) == 1 or scored[0][0] > scored[1][0]):
+        return scored[0][1]
+    return ""
+
+
+def _go_param_arity(params: str) -> int:
+    token = str(params or "").strip()
+    if not token:
+        return 0
+    return len([part for part in token.split(",") if part.strip()])
+
+
+def _go_call_arity(text: str, selector: str) -> int | None:
+    match = re.search(rf"(?<![\w.]){re.escape(selector)}\s*\((?P<args>[^)]*)\)", str(text or ""))
+    if match is None:
+        return None
+    return _go_param_arity(str(match.group("args") or ""))
+
+
+def _go_undefined_selector_operations(
+    *,
+    path: str,
+    text: str,
+    identifier: str,
+    inventory: Mapping[str, Any],
+) -> tuple[RepairOperation, ...]:
+    source = str(text or "")
+    token = str(identifier or "").strip()
+    if not token:
+        return ()
+    if "." in token:
+        package_name, _, name = token.rpartition(".")
+    else:
+        package_name, name = "", token
+    constants = inventory.get("constants") if isinstance(inventory.get("constants"), dict) else {}
+    functions = inventory.get("functions") if isinstance(inventory.get("functions"), dict) else {}
+    packages_by_path = inventory.get("packages_by_path") if isinstance(inventory.get("packages_by_path"), dict) else {}
+    if name.startswith("Mood") and package_name:
+        existing = list(constants.get(package_name) or [])
+        if name in existing:
+            return ()
+        synonym = _GO_MOOD_CONSTANT_SYNONYMS.get(name)
+        if synonym and synonym in existing:
+            identifier_operation = _go_replace_identifier_operation(
+                path=path,
+                text=source,
+                expected=token,
+                replacement=f"{package_name}.{synonym}",
+                repair_kind="go_undefined_selector_alias",
+            )
+            if identifier_operation is None:
+                return ()
+            updated = (
+                source[: int(identifier_operation.span_start or 0)]
+                + str(identifier_operation.replacement or "")
+                + source[int(identifier_operation.span_end or 0) :]
+            )
+            operations: list[RepairOperation] = [identifier_operation]
+            old_literal = name[4:].lower()
+            new_literal = synonym[4:].lower()
+            if old_literal and new_literal and old_literal != new_literal:
+                literal_operation = _go_replace_identifier_operation(
+                    path=path,
+                    text=updated,
+                    expected=f'"{old_literal}"',
+                    replacement=f'"{new_literal}"',
+                    repair_kind="go_undefined_selector_alias",
+                )
+                if literal_operation is not None:
+                    operations.append(literal_operation)
+            return tuple(operations)
+        list_operation = _go_drop_selector_from_composite_list(path=path, text=source, selector=token)
+        return (list_operation,) if list_operation is not None else ()
+    if not package_name:
+        return ()
+    owners = list(functions.get(name) or [])
+    unique_packages = sorted({package for package, _arity in owners if package})
+    if unique_packages and package_name not in unique_packages and len(unique_packages) == 1:
+        operation = _go_replace_identifier_operation(
+            path=path,
+            text=source,
+            expected=token,
+            replacement=f"{unique_packages[0]}.{name}",
+            repair_kind="go_undefined_selector_alias",
+        )
+        return (operation,) if operation is not None else ()
+    local_package = str(packages_by_path.get(path) or "")
+    call_arity = _go_call_arity(source, token)
+    if call_arity is None:
+        return ()
+    same_package_matches = [
+        func_name
+        for func_name, entries in functions.items()
+        if func_name != name
+        and any(package == (package_name or local_package) and arity == call_arity for package, arity in entries)
+    ]
+    chosen = _go_choose_unique_name_alias(name, same_package_matches)
+    if not chosen:
+        return ()
+    replacement = f"{package_name}.{chosen}"
+    operation = _go_replace_identifier_operation(
+        path=path,
+        text=source,
+        expected=token,
+        replacement=replacement,
+        repair_kind="go_undefined_selector_alias",
+    )
+    return (operation,) if operation is not None else ()
+
+
+def _go_replace_identifier_operation(
+    *,
+    path: str,
+    text: str,
+    expected: str,
+    replacement: str,
+    repair_kind: str,
+) -> RepairOperation | None:
+    source = str(text or "")
+    start = source.find(expected)
+    if start < 0 or expected == replacement:
+        return None
+    return _text_replace_operation(
+        path=path,
+        text=source,
+        start=start,
+        end=start + len(expected),
+        expected=expected,
+        replacement=replacement,
+        repair_kind=repair_kind,
+        extra_metadata={"identifier": expected, "replacement": replacement},
+    )
+
+
+def _go_drop_selector_from_composite_list(*, path: str, text: str, selector: str) -> RepairOperation | None:
+    source = str(text or "")
+    patterns = (
+        rf",\s*{re.escape(selector)}\s*",
+        rf"{re.escape(selector)}\s*,\s*",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, source)
+        if match is None:
+            continue
+        return _text_replace_operation(
+            path=path,
+            text=source,
+            start=match.start(),
+            end=match.end(),
+            expected=match.group(0),
+            replacement="",
+            repair_kind="go_undefined_selector_alias",
+            extra_metadata={"identifier": selector, "replacement": ""},
+        )
+    return None
+
+
 def _go_error_string_helper_operation(path: str, text: str, *, identifier: str) -> RepairOperation | None:
     if _go_error_string_helper_declared(text, identifier=identifier):
         return None
@@ -973,17 +1415,21 @@ __all__ = [
     "GO_BARE_LOCAL_IMPORT_SOURCE_TOOL",
     "GO_DEDUP_SOURCE_TOOL",
     "GO_ERROR_STRING_HELPER_SOURCE_TOOL",
+    "GO_MISSING_STDLIB_IMPORT_SOURCE_TOOL",
     "GO_MODULE_IMPORT_SOURCE_TOOL",
     "GO_NESTED_IMPORT_SOURCE_TOOL",
     "GO_SUBPATH_IMPORT_SOURCE_TOOL",
+    "GO_UNDEFINED_SELECTOR_SOURCE_TOOL",
     "GO_UNUSED_IMPORT_SOURCE_TOOL",
     "build_go_bare_import_string_plan",
     "build_go_bare_local_import_plan",
     "build_go_dedup_plan",
     "build_go_error_string_helper_plan",
+    "build_go_missing_stdlib_import_plan",
     "build_go_module_import_plan",
     "build_go_nested_import_plan",
     "build_go_subpath_import_plan",
+    "build_go_undefined_selector_plan",
     "build_go_unused_import_plan",
     "repair_go_bare_import_strings_text",
     "repair_go_nested_import_keywords_text",

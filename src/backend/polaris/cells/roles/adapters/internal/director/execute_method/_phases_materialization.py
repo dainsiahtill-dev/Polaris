@@ -960,10 +960,15 @@ async def _phase_pre_materialization_quality(
     ``quality_repair_attempts`` is appended in place.
     """
     current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
+    rematerialized_dirty_scope = bool(existing_contract_evidence.get("existing_paths")) and (
+        existing_contract_evidence.get("reason")
+        in {"declared_scope_quality_failed", "declared_scope_incomplete"}
+        or bool(existing_contract_evidence.get("artifact_quality_errors"))
+    )
     if (
         not all_affected_files
         and not can_accept_existing_scope
-        and write_tool_evidence
+        and (write_tool_evidence or rematerialized_dirty_scope)
         and (requires_fresh_materialization or not bool(existing_contract_evidence.get("ok")))
     ):
         pre_materialization_quality_errors = _collect_materialization_quality_errors(

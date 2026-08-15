@@ -24,9 +24,11 @@ from ..go_syntax import (
     GO_BARE_LOCAL_IMPORT_SOURCE_TOOL,
     GO_DEDUP_SOURCE_TOOL,
     GO_ERROR_STRING_HELPER_SOURCE_TOOL,
+    GO_MISSING_STDLIB_IMPORT_SOURCE_TOOL,
     GO_MODULE_IMPORT_SOURCE_TOOL,
     GO_NESTED_IMPORT_SOURCE_TOOL,
     GO_SUBPATH_IMPORT_SOURCE_TOOL,
+    GO_UNDEFINED_SELECTOR_SOURCE_TOOL,
     GO_UNUSED_IMPORT_SOURCE_TOOL,
 )
 from ..java_syntax import JAVA_POST_SOURCE_TOOL, JAVA_TEST_DEPENDENCY_SOURCE_TOOL
@@ -451,6 +453,43 @@ def pre_typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             ),
             runtime_plan_available=True,
             metadata=_executable_runtime_metadata(scope="go_error_string_helper_text_insert"),
+        ),
+        RepairRuleDefinition(
+            rule_id="go.missing_stdlib_import",
+            source_tool=GO_MISSING_STDLIB_IMPORT_SOURCE_TOOL,
+            language="go",
+            phase="dependency_resolution",
+            archetype=RepairArchetype.MISSING_DEPENDENCY,
+            priority=2,
+            depends_on=("go.module_import_path",),
+            diagnostic_codes=("go_compile_error",),
+            message_terms=("undefined:",),
+            risk_level="low",
+            description=(
+                "Adds a well-known Go stdlib import only when the compiler reports "
+                "undefined: ident and the file already uses that ident as a package selector."
+            ),
+            runtime_plan_available=True,
+            metadata=_executable_runtime_metadata(scope="go_missing_stdlib_import_text_insert"),
+        ),
+        RepairRuleDefinition(
+            rule_id="go.undefined_selector_alias",
+            source_tool=GO_UNDEFINED_SELECTOR_SOURCE_TOOL,
+            language="go",
+            phase="code_repair",
+            archetype=RepairArchetype.MISSING_DEPENDENCY,
+            priority=3,
+            depends_on=("go.missing_stdlib_import",),
+            diagnostic_codes=("go_compile_error",),
+            message_terms=("undefined:",),
+            risk_level="low",
+            description=(
+                "Rewrites undefined Go selectors onto existing workspace bindings: "
+                "Mood* synonyms, unique package-level functions, or unique same-arity "
+                "exports. Never invents domain symbols."
+            ),
+            runtime_plan_available=True,
+            metadata=_executable_runtime_metadata(scope="go_undefined_selector_text_replace"),
         ),
         RepairRuleDefinition(
             rule_id="cpp.include_path",
