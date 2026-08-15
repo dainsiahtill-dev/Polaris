@@ -163,6 +163,106 @@ def test_non_strict_query_reuses_parsed_stream_until_head_advances(
     assert full_scans == 1
 
 
+def test_stale_parsed_cache_publish_does_not_wipe_newer_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An in-flight scan of an older head must not evict a newer append snapshot.
+
+    L2-12 live: heartbeat appended seq N+1 and published the incremental cache,
+    then a 10s full-scan of seq N finished and ``_publish_parsed_stream_cache``
+    deleted every other identity key. The next observer missed and re-parsed
+    301MiB, starving Director persist.
+    """
+
+    store = _prepared_store(tmp_path / "workspace", "task_runtime.execution")
+    store.append(
+        stream="task_runtime.execution",
+        event_type="created",
+        source="runtime.task_runtime",
+        payload={"task_id": "task-1"},
+    )
+    store.append(
+        stream="task_runtime.execution",
+        event_type="heartbeat_renewed",
+        source="runtime.task_runtime",
+        payload={"task_id": "task-1"},
+    )
+    with file_store._PARSED_STREAM_CACHE_LOCK:
+        file_store._PARSED_STREAM_CACHE.clear()
+
+    first = store.query(stream="task_runtime.execution")
+    assert [event.seq for event in first.events] == [1, 2]
+
+    original_read = store._read_lease_records
+    full_scans = 0
+
+    def read_spy(*args: Any, **kwargs: Any) -> list[EventEnvelope]:
+        nonlocal full_scans
+        full_scans += 1
+        return original_read(*args, **kwargs)
+
+    monkeypatch.setattr(store, "_read_lease_records", read_spy)
+    stale_records = list(first.events)[:1]
+    store._publish_parsed_stream_cache(
+        logical_path=store.stream_logical_path("task_runtime.execution"),
+        stream_head=1,
+        records=stale_records,
+    )
+
+    replayed = store.query(stream="task_runtime.execution")
+    assert [event.seq for event in replayed.events] == [1, 2]
+    assert full_scans == 0
+
+
+def test_small_stream_parses_do_not_evict_large_execution_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DEO one-key streams must not LRU-evict a large task_runtime.execution parse."""
+
+    execution_stream = "task_runtime.execution"
+    extra_streams = tuple(f"deo_parent_registry_v1_{index:02d}" for index in range(20))
+    store = _prepared_store(tmp_path / "workspace", execution_stream, *extra_streams)
+    for index in range(file_store._PARSED_STREAM_PIN_MIN_RECORDS):
+        store.append(
+            stream=execution_stream,
+            event_type="heartbeat_renewed",
+            source="runtime.task_runtime",
+            payload={"task_id": "task-1", "index": index},
+        )
+    with file_store._PARSED_STREAM_CACHE_LOCK:
+        file_store._PARSED_STREAM_CACHE.clear()
+
+    original_read = store._read_lease_records
+    full_scans = 0
+
+    def read_spy(*args: Any, **kwargs: Any) -> list[EventEnvelope]:
+        nonlocal full_scans
+        full_scans += 1
+        return original_read(*args, **kwargs)
+
+    monkeypatch.setattr(store, "_read_lease_records", read_spy)
+    pinned = store.query(stream=execution_stream, limit=file_store._PARSED_STREAM_PIN_MIN_RECORDS)
+    assert pinned.total == file_store._PARSED_STREAM_PIN_MIN_RECORDS
+    pinned_scans = full_scans
+    assert pinned_scans == 1
+
+    for stream in extra_streams:
+        store.append(
+            stream=stream,
+            event_type="recorded",
+            source="runtime.task_runtime",
+            payload={"binding": stream},
+        )
+        store.query(stream=stream)
+
+    scans_before_replay = full_scans
+    replayed = store.query(stream=execution_stream, limit=file_store._PARSED_STREAM_PIN_MIN_RECORDS)
+    assert replayed.total == file_store._PARSED_STREAM_PIN_MIN_RECORDS
+    assert full_scans == scans_before_replay
+
+
 def test_jsonl_event_store_query_filters_by_event_type_run_and_task(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     store = _prepared_store(workspace, "task_runtime.execution")
@@ -1227,5 +1327,7 @@ def test_jsonl_event_store_strict_append_is_multiprocess_monotonic(tmp_path: Pat
         assert process.exitcode == 0
 
     assert sorted(output.get(timeout=2) for _ in processes) == [1, 2, 3, 4]
-    result = _prepared_store(workspace, "multiprocess.strict").query(stream="multiprocess.strict", strict_integrity=True)
+    result = _prepared_store(workspace, "multiprocess.strict").query(
+        stream="multiprocess.strict", strict_integrity=True
+    )
     assert [event.seq for event in result.events] == [1, 2, 3, 4]

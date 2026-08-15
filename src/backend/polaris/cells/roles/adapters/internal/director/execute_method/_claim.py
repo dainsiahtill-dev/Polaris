@@ -218,6 +218,18 @@ def _attach_dependency_artifact_receipt_evidence(
     projected = _project_dependency_artifact_tool_results(tool_results)
     if projected:
         adapter_result["tool_results"] = projected
+    for nested_key in ("no_write_materialization_retry", "empty_write_content_retry"):
+        nested = adapter_result.get(nested_key)
+        if not isinstance(nested, dict):
+            continue
+        nested_batch = nested.get("batch_receipt")
+        if isinstance(nested_batch, dict) and nested_batch and "batch_receipt" not in adapter_result:
+            adapter_result["batch_receipt"] = dict(nested_batch)
+        nested_tools = nested.get("tool_results")
+        if isinstance(nested_tools, list) and nested_tools and "tool_results" not in adapter_result:
+            nested_projected = _project_dependency_artifact_tool_results(nested_tools)
+            if nested_projected:
+                adapter_result["tool_results"] = nested_projected
     if isinstance(primary_llm_summary, dict):
         batch_receipt = primary_llm_summary.get("batch_receipt")
         if isinstance(batch_receipt, dict) and batch_receipt:
@@ -687,6 +699,28 @@ def _task_runtime_heartbeat_exception_signal(exc: BaseException) -> dict[str, An
             "exception_type": type(exc).__name__,
         }
     )
+
+
+_RETRYABLE_TASK_RUNTIME_HEARTBEAT_CODES = frozenset(
+    {
+        "authority_lock_timeout",
+        "authority_operation_in_progress",
+        "file_lock_timeout",
+    }
+)
+
+
+def _task_runtime_heartbeat_is_retryable(reason: str) -> bool:
+    """Return whether a heartbeat rejection is transient contention.
+
+    Live L2-12 TASK-3-docs: execute held the attempt authority / session
+    file lock while preflight/cognitive/sqlite ran. The 15s heartbeat then
+    received ``authority_operation_in_progress`` or ``file_lock_timeout``
+    and the loop exited. Lease died at 120s, execute kept running, health
+    stalled. Contention is not a terminal heartbeat failure.
+    """
+
+    return str(reason or "").strip() in _RETRYABLE_TASK_RUNTIME_HEARTBEAT_CODES
 
 
 def _with_decision_signals(

@@ -1126,16 +1126,111 @@ def _annotate_current_task_missing_target_continuation(
         artifact_quality_issues,
     )
     in_scope_missing, out_of_scope_missing = _partition_paths_by_task_write_scope(missing_targets, task=task)
-    if not in_scope_missing:
+    if in_scope_missing:
+        updated = dict(summary)
+        updated["task_boundary_director_continuation_allowed"] = True
+        updated["task_boundary_continuation_reason"] = "current_task_missing_targets"
+        updated["task_boundary_continuation_route"] = "director_retry_with_missing_target_context"
+        updated["task_boundary_continuation_target_files"] = in_scope_missing[:12]
+        if out_of_scope_missing:
+            updated["task_boundary_continuation_deferred_target_files"] = out_of_scope_missing[:12]
+        return updated
+    return _annotate_current_task_unresolved_import_continuation(
+        summary,
+        task=task,
+        artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=artifact_quality_issues,
+    )
+
+
+def _python_module_specifier_to_paths(module: str) -> list[str]:
+    """Map ``src.engine.forecast`` to authored-file candidates."""
+
+    token = str(module or "").strip().strip(".").replace(".", "/")
+    if not token:
+        return []
+    return [f"{token}.py", f"{token}.pyi", f"{token}/__init__.py"]
+
+
+def _unresolved_import_importer_paths(
+    artifact_quality_errors: list[str],
+    artifact_quality_issues: tuple[dict[str, Any], ...] = (),
+) -> list[str]:
+    """Return importer and exporter-module paths from unresolved-import diagnostics.
+
+    Live L2-12 TASK-3-source-core: ``src/engine/__init__.py`` re-exported
+    ``known_weather_to_genre`` from ``src.engine.forecast`` while the owner
+    write-scope was only ``forecast.py``. Continuation that looks only at the
+    importer treats the discrepancy as CE-only and fail-closes after a real
+    write. The ``from`` module is the in-scope edit target.
+    """
+
+    paths: list[str] = []
+    for error in artifact_quality_errors:
+        match = _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE.search(str(error or ""))
+        if not match:
+            continue
+        for raw in (match.group("path"), *_python_module_specifier_to_paths(match.group("module"))):
+            normalized = _normalize_declared_task_path(raw)
+            if normalized:
+                paths.append(normalized)
+    for issue in artifact_quality_issues:
+        if not isinstance(issue, Mapping):
+            continue
+        metadata = issue.get("metadata")
+        metadata_map = metadata if isinstance(metadata, Mapping) else {}
+        for raw in (
+            metadata_map.get("importer_path"),
+            metadata_map.get("path"),
+            metadata_map.get("exporter_path"),
+            metadata_map.get("module"),
+            metadata_map.get("source_module"),
+            issue.get("importer_path"),
+            issue.get("path"),
+        ):
+            if raw is None:
+                continue
+            text = str(raw or "").strip()
+            candidates = [text]
+            if "." in text and "/" not in text and not text.endswith((".py", ".pyi")):
+                candidates = _python_module_specifier_to_paths(text)
+            for candidate in candidates:
+                normalized = _normalize_declared_task_path(candidate)
+                if normalized:
+                    paths.append(normalized)
+    return _dedupe_preserve_order(paths)
+
+
+def _annotate_current_task_unresolved_import_continuation(
+    summary: dict[str, Any],
+    *,
+    task: dict[str, Any],
+    artifact_quality_errors: list[str],
+    artifact_quality_issues: tuple[dict[str, Any], ...] = (),
+) -> dict[str, Any]:
+    """Keep same-Director repair when the importer is in the current write scope.
+
+    Live L2-12 TASK-2: ``src/main.py`` imported ``render_broadcast`` from an
+    existing sibling ``src.radio`` that only exported ``broadcast``. Coverage
+    matched ``deterministic_unresolved_import_symbol_repair`` but the probe was
+    ``covered_unplannable``. Escalating that to CE blocked the required local
+    edit of the current task's importer.
+    """
+
+    if not _materialization_plan_probe_requires_task_boundary_triage(summary):
+        return summary
+    importer_paths = _unresolved_import_importer_paths(artifact_quality_errors, artifact_quality_issues)
+    in_scope_importers, out_of_scope_importers = _partition_paths_by_task_write_scope(importer_paths, task=task)
+    if not in_scope_importers:
         return summary
 
     updated = dict(summary)
     updated["task_boundary_director_continuation_allowed"] = True
-    updated["task_boundary_continuation_reason"] = "current_task_missing_targets"
-    updated["task_boundary_continuation_route"] = "director_retry_with_missing_target_context"
-    updated["task_boundary_continuation_target_files"] = in_scope_missing[:12]
-    if out_of_scope_missing:
-        updated["task_boundary_continuation_deferred_target_files"] = out_of_scope_missing[:12]
+    updated["task_boundary_continuation_reason"] = "current_task_unresolved_import"
+    updated["task_boundary_continuation_route"] = "director_retry_with_interface_discrepancy_context"
+    updated["task_boundary_continuation_target_files"] = in_scope_importers[:12]
+    if out_of_scope_importers:
+        updated["task_boundary_continuation_deferred_target_files"] = out_of_scope_importers[:12]
     return updated
 
 
@@ -1712,6 +1807,7 @@ __all__ = [
     "_TS_TYPE_ONLY_VALUE_QUALITY_RE",
     "_TS_UNKNOWN_VALUE_QUALITY_RE",
     "_annotate_current_task_missing_target_continuation",
+    "_annotate_current_task_unresolved_import_continuation",
     "_compiler_diagnostic_anchor_files",
     "_context_float_value",
     "_extract_task_interface_contract",

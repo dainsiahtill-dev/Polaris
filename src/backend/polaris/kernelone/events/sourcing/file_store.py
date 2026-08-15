@@ -55,10 +55,15 @@ _STRICT_REASON_BY_CODE = {
     "missing_integrity_digest": _STRICT_REASON_MIDDLE_CORRUPTION,
 }
 _STRICT_STREAM_REASONS = frozenset(_STRICT_REASON_BY_CODE.values())
-_PARSED_STREAM_CACHE_MAX = 4
-_PARSED_STREAM_CACHE: OrderedDict[
-    tuple[str, str, int], tuple[EventEnvelope, ...]
-] = OrderedDict()
+# Live L2-12: Factory wait, settlement, turn_outcomes, and control-plane
+# all query distinct JSONL streams. A 4-slot LRU evicted the 130MiB
+# ``task_runtime.execution`` parse and forced a full rescan every poll.
+# DEO parent/operation streams are one-key-per-binding, so a flat LRU of 16
+# still evicts the large execution parse on every heartbeat wave. Pin large
+# parses. Never let a stale in-flight scan publish over a newer head.
+_PARSED_STREAM_CACHE_MAX = 16
+_PARSED_STREAM_PIN_MIN_RECORDS = 64
+_PARSED_STREAM_CACHE: OrderedDict[tuple[str, str, int], tuple[EventEnvelope, ...]] = OrderedDict()
 _PARSED_STREAM_CACHE_LOCK = threading.RLock()
 
 
@@ -691,17 +696,37 @@ class JsonlEventStore:
         key = self._parsed_stream_cache_key(logical_path=logical_path, stream_head=stream_head)
         identity = key[:2]
         with _PARSED_STREAM_CACHE_LOCK:
+            if any(candidate[:2] == identity and candidate[2] > stream_head for candidate in _PARSED_STREAM_CACHE):
+                # A later append already installed a newer snapshot. Publishing
+                # this stale scan would delete that head and force the next
+                # observer to re-parse the whole 300MiB execution stream.
+                return
             stale_keys = [
                 candidate
                 for candidate in _PARSED_STREAM_CACHE
-                if candidate[:2] == identity and candidate != key
+                if candidate[:2] == identity and candidate[2] < stream_head
             ]
             for stale_key in stale_keys:
                 _PARSED_STREAM_CACHE.pop(stale_key, None)
             _PARSED_STREAM_CACHE[key] = tuple(records)
             _PARSED_STREAM_CACHE.move_to_end(key)
             while len(_PARSED_STREAM_CACHE) > _PARSED_STREAM_CACHE_MAX:
-                _PARSED_STREAM_CACHE.popitem(last=False)
+                victim = next(
+                    (
+                        candidate
+                        for candidate in _PARSED_STREAM_CACHE
+                        if candidate != key and len(_PARSED_STREAM_CACHE[candidate]) < _PARSED_STREAM_PIN_MIN_RECORDS
+                    ),
+                    None,
+                )
+                if victim is None:
+                    victim = next(
+                        (candidate for candidate in _PARSED_STREAM_CACHE if candidate != key),
+                        None,
+                    )
+                if victim is None:
+                    break
+                _PARSED_STREAM_CACHE.pop(victim, None)
 
     def _read_lease_records_cached(
         self,

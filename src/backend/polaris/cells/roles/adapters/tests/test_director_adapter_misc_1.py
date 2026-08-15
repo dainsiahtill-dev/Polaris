@@ -780,6 +780,50 @@ def test_materialization_plan_probe_triage_allows_current_task_missing_target_co
     assert _materialization_plan_probe_requires_task_boundary_triage(summary) is False
 
 
+def test_materialization_plan_probe_triage_allows_current_task_unresolved_import_continuation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.py").write_text("from src.radio import render_broadcast\n", encoding="utf-8")
+    (tmp_path / "src" / "radio.py").write_text("def broadcast():\n    return ''\n", encoding="utf-8")
+
+    def _fake_runtime_boundary(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        del args, kwargs
+        return [], {
+            "plan_probe_preaudit": {
+                "status": "coverage_matched_but_unplannable",
+                "covered_unplannable_source_tools": ["deterministic_unresolved_import_symbol_repair"],
+                "covered_unplannable_diagnostic_count": 1,
+            }
+        }
+
+    monkeypatch.setattr(
+        quality_gate_module,
+        "run_materialization_quality_public_boundary",
+        _fake_runtime_boundary,
+    )
+
+    _tool_results, summary = quality_gate_module._run_materialization_quality_public_boundary(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task={"target_files": ["src/main.py", "src/radio.py"]},
+        task_id="TASK-2",
+        artifact_quality_errors=[
+            (
+                "Artifact quality scan failed: unresolved import symbol "
+                "'render_broadcast' from 'src.radio' in src/main.py "
+                "(sibling module does not define it)"
+            )
+        ],
+    )
+
+    assert summary["task_boundary_director_continuation_allowed"] is True
+    assert summary["task_boundary_continuation_reason"] == "current_task_unresolved_import"
+    assert summary["task_boundary_continuation_route"] == "director_retry_with_interface_discrepancy_context"
+    assert summary["task_boundary_continuation_target_files"] == ["src/main.py", "src/radio.py"]
+    assert _materialization_plan_probe_requires_task_boundary_triage(summary) is False
+
+
 def test_materialization_plan_probe_triage_stays_fail_closed_without_current_missing_targets() -> None:
     summary = {
         "plan_probe_preaudit": {

@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any, AsyncContextManager, NoReturn, TypeVar, cast, final
 
@@ -14,7 +16,10 @@ from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     validate_factory_role_frozen_semantic_evidence_policy,
 )
 from polaris.kernelone.events.final_request_evidence import redact_provider_transport
-from polaris.kernelone.llm.engine.context_store_retention import ContextSnapshotAuditPinRepository
+from polaris.kernelone.llm.engine.context_store_retention import (
+    ContextSnapshotAuditPinError,
+    ContextSnapshotAuditPinRepository,
+)
 from polaris.kernelone.llm.engine.provider_native_request import (
     FactoryProviderDispatchMode,
     project_factory_provider_native_request,
@@ -40,6 +45,14 @@ from .final_request_metrics import provider_native_request_metrics
 _DispatchResultT = TypeVar("_DispatchResultT")
 _StreamResponseT = TypeVar("_StreamResponseT")
 FACTORY_SEMANTIC_DISPATCH_NOT_ENABLED = "factory_role_semantic_request_frozen_physical_dispatch_not_enabled"
+_FINAL_PHYSICAL_SNAPSHOT_PERSIST_ATTEMPTS = 3
+_RETRYABLE_SNAPSHOT_PERSIST_MARKERS = (
+    "lock unavailable",
+    "lock_acquisition_timeout",
+    "busy",
+    "durable reread mismatch",
+)
+logger = logging.getLogger(__name__)
 
 
 def _live_pairing_projection(
@@ -397,19 +410,40 @@ class FactorySemanticDispatchPropagationPort:
             },
         }
         provider_request_id = f"{identity.call_id}-{wire_hash[:16]}"
-        try:
-            pin = ContextSnapshotAuditPinRepository(workspace=self._workspace).persist_snapshot_and_pin(
-                snapshot=snapshot,
-                factory_run_id=self._authority.factory_run_id,
-                role=self._authority.role,
-                verification_scope="factory",
-                request_freeze_id=identity.request_freeze_id,
-                provider_request_id=provider_request_id,
-                composite_request_hash=wire_hash,
-                snapshot_source="roles.kernel.final_physical_provider_request",
-            )
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            raise FinalProviderAttemptQualificationError("final_physical_context_snapshot_persist_failed") from exc
+        persist_exc: Exception | None = None
+        pin = None
+        for persist_attempt in range(1, _FINAL_PHYSICAL_SNAPSHOT_PERSIST_ATTEMPTS + 1):
+            try:
+                pin = ContextSnapshotAuditPinRepository(workspace=self._workspace).persist_snapshot_and_pin(
+                    snapshot=snapshot,
+                    factory_run_id=self._authority.factory_run_id,
+                    role=self._authority.role,
+                    verification_scope="factory",
+                    request_freeze_id=identity.request_freeze_id,
+                    provider_request_id=provider_request_id,
+                    composite_request_hash=wire_hash,
+                    snapshot_source="roles.kernel.final_physical_provider_request",
+                )
+                persist_exc = None
+                break
+            except (ContextSnapshotAuditPinError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                persist_exc = exc
+                retryable = any(marker in str(exc).lower() for marker in _RETRYABLE_SNAPSHOT_PERSIST_MARKERS)
+                logger.warning(
+                    "final physical context snapshot persist failed attempt=%s/%s retryable=%s: %s",
+                    persist_attempt,
+                    _FINAL_PHYSICAL_SNAPSHOT_PERSIST_ATTEMPTS,
+                    retryable,
+                    exc,
+                    exc_info=True,
+                )
+                if not retryable or persist_attempt >= _FINAL_PHYSICAL_SNAPSHOT_PERSIST_ATTEMPTS:
+                    break
+                time.sleep(0.05 * persist_attempt)
+        if persist_exc is not None or pin is None:
+            raise FinalProviderAttemptQualificationError(
+                "final_physical_context_snapshot_persist_failed"
+            ) from persist_exc
         final_audit = copy.deepcopy(snapshot_audit)
         final_coverage = final_audit.get("final_request_evidence_coverage")
         if not isinstance(final_coverage, dict):

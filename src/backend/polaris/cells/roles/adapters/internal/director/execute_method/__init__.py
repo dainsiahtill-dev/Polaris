@@ -111,6 +111,7 @@ from ._claim import (
     _task_runtime_finalize_failed_signal,
     _task_runtime_heartbeat_exception_signal,
     _task_runtime_heartbeat_failed_signal,
+    _task_runtime_heartbeat_is_retryable,
     _with_decision_signals,
     _with_task_runtime_finalize_evidence,
 )

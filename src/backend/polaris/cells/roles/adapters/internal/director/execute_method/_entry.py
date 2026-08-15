@@ -36,6 +36,7 @@ from ._claim import (
     _task_runtime_finalization_failed_result,
     _task_runtime_heartbeat_exception_signal,
     _task_runtime_heartbeat_failed_signal,
+    _task_runtime_heartbeat_is_retryable,
     _with_decision_signals,
     _with_task_runtime_finalize_evidence,
 )
@@ -147,7 +148,7 @@ async def execute_director_task(
     metadata["target_task_id"] = target_task_id
     metadata.setdefault("pm_task_id", requested_task_id or target_task_id)
     context["metadata"] = metadata
-    baseline_files = adapter._state_tracker.collect_workspace_code_files()
+    baseline_files = await asyncio.to_thread(adapter._state_tracker.collect_workspace_code_files)
     run_id = str(context.get("run_id") or "").strip()
 
     # 任务声明阶段
@@ -242,23 +243,28 @@ async def execute_director_task(
     heartbeat_task: asyncio.Task[Any] | None = None
 
     async def _run_task_claim_heartbeat() -> None:
+        # Live L2-12: rematerialize preflight/quality is sync and can occupy
+        # the event loop for the whole 120s lease. Waiting 15s before the
+        # first heartbeat meant the lease expired with last_heartbeat=claimed_at
+        # and zero InvokerCall. Pulse immediately, then on the interval.
         while True:
             try:
-                await asyncio.wait_for(
-                    heartbeat_stop.wait(),
-                    timeout=_TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS,
+                if task_execution_attempt_authority is None:
+                    raise RuntimeError("director_task_runtime_execution_attempt_authority_missing")
+                heartbeat_verdict = task_execution_attempt_authority.heartbeat(
+                    lease_ttl_seconds=_DEFAULT_TASK_LEASE_TTL_SECONDS,
+                    lock_timeout_seconds=5.0,
+                    context_summary=selected_subject,
                 )
-                return
-            except asyncio.TimeoutError:
-                try:
-                    if task_execution_attempt_authority is None:
-                        raise RuntimeError("director_task_runtime_execution_attempt_authority_missing")
-                    heartbeat_verdict = task_execution_attempt_authority.heartbeat(
-                        lease_ttl_seconds=_DEFAULT_TASK_LEASE_TTL_SECONDS,
-                        lock_timeout_seconds=5.0,
-                        context_summary=selected_subject,
-                    )
-                    if heartbeat_verdict.success is not True:
+                if heartbeat_verdict.success is not True:
+                    reason = str(heartbeat_verdict.code or "").strip()
+                    if _task_runtime_heartbeat_is_retryable(reason):
+                        logger.warning(
+                            "Director TaskRuntime heartbeat retryable contention task=%s reason=%s",
+                            target_task_id,
+                            reason,
+                        )
+                    else:
                         decision_signals.append(
                             _task_runtime_heartbeat_failed_signal(
                                 {
@@ -273,9 +279,17 @@ async def execute_director_task(
                             )
                         )
                         return
-                except (OSError, RuntimeError, TypeError, ValueError) as exc:
-                    decision_signals.append(_task_runtime_heartbeat_exception_signal(exc))
-                    return
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                decision_signals.append(_task_runtime_heartbeat_exception_signal(exc))
+                return
+            try:
+                await asyncio.wait_for(
+                    heartbeat_stop.wait(),
+                    timeout=_TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS,
+                )
+                return
+            except asyncio.TimeoutError:
+                continue
 
     async def _stop_task_claim_heartbeat() -> None:
         if heartbeat_task is None:
@@ -286,6 +300,7 @@ async def execute_director_task(
 
     if board_claim_applied and task_execution_attempt_authority is not None:
         heartbeat_task = asyncio.create_task(_run_task_claim_heartbeat())
+        await asyncio.sleep(0)
 
     try:
         if not board_claim_applied:

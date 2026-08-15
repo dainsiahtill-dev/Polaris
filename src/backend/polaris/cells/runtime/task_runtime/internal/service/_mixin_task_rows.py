@@ -65,6 +65,12 @@ _EXECUTION_FACT_ROWS_PROJECTION_CACHE: ContextVar[dict[tuple[str, int], tuple[di
 _EXECUTION_FACT_ROWS_HEAD_CACHE_MAX = 16
 _EXECUTION_FACT_ROWS_HEAD_CACHE: OrderedDict[tuple[str, int, int], tuple[dict[str, Any], ...]] = OrderedDict()
 _EXECUTION_FACT_ROWS_HEAD_CACHE_LOCK = threading.RLock()
+# Latest-per-task snapshot keyed by workspace.  The 500-event tail window is
+# only a query page size; Factory cutover treats this projection as complete
+# coverage.  A long rematerialize stream (L2-12: 1645 events) otherwise drops
+# the oldest still-present file rows (101-103) and fail-closes director_dispatch.
+_EXECUTION_FACT_ROWS_COMPLETE_CACHE_MAX = 16
+_EXECUTION_FACT_ROWS_COMPLETE_CACHE: OrderedDict[str, tuple[int, dict[str, dict[str, Any]]]] = OrderedDict()
 
 
 class _TaskRowsMixin(_ServiceMixinBase):
@@ -1290,14 +1296,105 @@ class _TaskRowsMixin(_ServiceMixinBase):
             while len(_EXECUTION_FACT_ROWS_HEAD_CACHE) > _EXECUTION_FACT_ROWS_HEAD_CACHE_MAX:
                 _EXECUTION_FACT_ROWS_HEAD_CACHE.popitem(last=False)
 
+    def _complete_execution_fact_snapshot(
+        self,
+    ) -> tuple[int, dict[str, dict[str, Any]]] | None:
+        with _EXECUTION_FACT_ROWS_HEAD_CACHE_LOCK:
+            snapshot = _EXECUTION_FACT_ROWS_COMPLETE_CACHE.get(self.workspace)
+            if snapshot is None:
+                return None
+            _EXECUTION_FACT_ROWS_COMPLETE_CACHE.move_to_end(self.workspace)
+            head, latest_by_task = snapshot
+            return head, {task_id: dict(row) for task_id, row in latest_by_task.items()}
+
+    def _store_complete_execution_fact_snapshot(
+        self,
+        *,
+        stream_head: int,
+        latest_by_task: dict[str, dict[str, Any]],
+    ) -> None:
+        with _EXECUTION_FACT_ROWS_HEAD_CACHE_LOCK:
+            _EXECUTION_FACT_ROWS_COMPLETE_CACHE[self.workspace] = (
+                stream_head,
+                {task_id: dict(row) for task_id, row in latest_by_task.items()},
+            )
+            _EXECUTION_FACT_ROWS_COMPLETE_CACHE.move_to_end(self.workspace)
+            while len(_EXECUTION_FACT_ROWS_COMPLETE_CACHE) > _EXECUTION_FACT_ROWS_COMPLETE_CACHE_MAX:
+                _EXECUTION_FACT_ROWS_COMPLETE_CACHE.popitem(last=False)
+
+    def _merge_execution_fact_events(
+        self,
+        latest_by_task: dict[str, dict[str, Any]],
+        events: list[Any],
+    ) -> None:
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            row = self._project_execution_fact_event_row(event)
+            if row is None:
+                continue
+            task_id = str(row.get("task_id") or row.get("id") or "").strip()
+            if not task_id:
+                continue
+            existing = latest_by_task.get(task_id)
+            if existing is not None:
+                incoming_seq = _coerce_fact_event_seq(row.get("fact_event_seq")) or -1
+                existing_seq = _coerce_fact_event_seq(existing.get("fact_event_seq")) or -1
+                if incoming_seq < existing_seq:
+                    continue
+            latest_by_task[task_id] = row
+
+    def _finalize_execution_fact_rows(
+        self,
+        latest_by_task: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        rows = [
+            dict(row)
+            for row in latest_by_task.values()
+            if str(row.get("execution_state") or row.get("status") or "").strip().lower() != "removed"
+        ]
+        rows.sort(key=self._row_sort_key)
+        return rows
+
+    def _query_execution_fact_event_span(
+        self,
+        *,
+        offset: int,
+        count: int,
+        page_size: int,
+    ) -> list[dict[str, Any]]:
+        remaining = max(0, int(count))
+        cursor = max(0, int(offset))
+        events: list[dict[str, Any]] = []
+        while remaining > 0:
+            page_limit = min(max(1, int(page_size)), remaining)
+            result = self._query_execution_fact_events(limit=page_limit, offset=cursor)
+            page = [event for event in list(result.events or []) if isinstance(event, dict)]
+            if not page:
+                break
+            events.extend(page)
+            consumed = len(page)
+            cursor += consumed
+            remaining -= consumed
+            if consumed < page_limit:
+                break
+        return events
+
     def list_task_rows_from_execution_facts(self, *, limit: int = 500) -> list[dict[str, Any]]:
-        """Return latest task-row read models from ``task_runtime.execution`` facts.
+        """Return latest-per-task read models from ``task_runtime.execution`` facts.
 
         Boundary:
             This is a read projection only. It does not authorize claims,
             writes, or dependency transitions. Transitional claim paths must
             continue to use the row/session APIs until the storage owner is fully
             event-sourced.
+
+        ``limit`` is the FactStream *page size*, not an authority window.
+        Factory cutover/coverage compares every file-backed TaskRuntime row
+        against this projection. Query the newest page first so later facts
+        win, then walk older pages so a task whose latest event sits behind a
+        long rematerialize tail remains visible. After the first complete
+        snapshot, later observers merge only events after the cached head.
 
         The queried FactStream event wrapper exposes the canonical
         ``FactEventAppendedV1.appended_seq`` value as the ``seq`` field on
@@ -1311,8 +1408,9 @@ class _TaskRowsMixin(_ServiceMixinBase):
         cause the top-level field to be omitted entirely.
 
         Complexity:
-            O(e + t log t) time over queried events and projected tasks, O(t)
-            memory for latest-by-task rows.
+            O(e + t log t) first rebuild over the stream; O(delta + t log t)
+            after the complete snapshot is warm; O(t) memory for latest-by-task
+            rows.
         """
 
         event_limit = max(1, int(limit))
@@ -1329,31 +1427,62 @@ class _TaskRowsMixin(_ServiceMixinBase):
             if cache is not None:
                 cache[cache_key] = tuple(dict(row) for row in cached_rows)
             return cached_rows
-        try:
-            result = self._query_execution_fact_events(limit=event_limit)
-            if result.total > len(result.events):
-                latest_offset = max(0, int(result.total) - event_limit)
-                if latest_offset:
-                    result = self._query_execution_fact_events(limit=event_limit, offset=latest_offset)
-        except (FactStreamError, RuntimeError, TypeError, ValueError) as exc:
-            logger.debug("failed to load task runtime execution fact rows: %s", exc)
-            return []
+
         latest_by_task: dict[str, dict[str, Any]] = {}
-        for event in result.events:
-            if not isinstance(event, dict):
-                continue
-            row = self._project_execution_fact_event_row(event)
-            if row is None:
-                continue
-            task_id = str(row.get("task_id") or row.get("id") or "").strip()
-            if task_id:
-                latest_by_task[task_id] = row
-        rows = [
-            row
-            for row in latest_by_task.values()
-            if str(row.get("execution_state") or row.get("status") or "").strip().lower() != "removed"
-        ]
-        rows.sort(key=self._row_sort_key)
+        complete_head: int | None = None
+        snapshot = self._complete_execution_fact_snapshot()
+        if snapshot is not None and stream_head is not None and snapshot[0] == stream_head:
+            latest_by_task = snapshot[1]
+            complete_head = stream_head
+        elif snapshot is not None and stream_head is not None and 0 <= snapshot[0] < stream_head:
+            try:
+                delta_events = self._query_execution_fact_event_span(
+                    offset=snapshot[0],
+                    count=stream_head - snapshot[0],
+                    page_size=event_limit,
+                )
+            except (FactStreamError, RuntimeError, TypeError, ValueError) as exc:
+                logger.debug("failed to incrementally load task runtime execution fact rows: %s", exc)
+            else:
+                latest_by_task = snapshot[1]
+                self._merge_execution_fact_events(latest_by_task, delta_events)
+                complete_head = stream_head
+
+        if complete_head is None:
+            try:
+                result = self._query_execution_fact_events(limit=event_limit)
+                total = int(getattr(result, "total", 0) or 0)
+                latest_events = [event for event in list(result.events or []) if isinstance(event, dict)]
+                if total > len(latest_events):
+                    latest_offset = max(0, total - event_limit)
+                    if latest_offset:
+                        result = self._query_execution_fact_events(
+                            limit=event_limit,
+                            offset=latest_offset,
+                        )
+                        latest_events = [event for event in list(result.events or []) if isinstance(event, dict)]
+                self._merge_execution_fact_events(latest_by_task, latest_events)
+                older_cursor = max(0, total - event_limit)
+                while older_cursor > 0:
+                    older_offset = max(0, older_cursor - event_limit)
+                    older_page = self._query_execution_fact_events(
+                        limit=event_limit,
+                        offset=older_offset,
+                    )
+                    self._merge_execution_fact_events(
+                        latest_by_task,
+                        [event for event in list(older_page.events or []) if isinstance(event, dict)],
+                    )
+                    if older_offset == 0:
+                        break
+                    older_cursor = older_offset
+            except (FactStreamError, RuntimeError, TypeError, ValueError) as exc:
+                logger.debug("failed to load task runtime execution fact rows: %s", exc)
+                return []
+            if stream_head is not None:
+                complete_head = stream_head
+
+        rows = self._finalize_execution_fact_rows(latest_by_task)
         if cache is not None:
             cache[cache_key] = tuple(dict(row) for row in rows)
         self._cache_execution_fact_rows(
@@ -1361,6 +1490,11 @@ class _TaskRowsMixin(_ServiceMixinBase):
             stream_head=stream_head,
             rows=rows,
         )
+        if complete_head is not None:
+            self._store_complete_execution_fact_snapshot(
+                stream_head=complete_head,
+                latest_by_task=latest_by_task,
+            )
         return rows
 
     def _find_latest_execution_fact_row_for_task(

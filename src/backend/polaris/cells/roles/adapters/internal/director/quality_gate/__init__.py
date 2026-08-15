@@ -299,6 +299,7 @@ from ._repair_loop import (
     _TS_TYPE_ONLY_VALUE_QUALITY_RE,
     _TS_UNKNOWN_VALUE_QUALITY_RE,
     _annotate_current_task_missing_target_continuation,
+    _annotate_current_task_unresolved_import_continuation,
     _context_float_value,
     _extract_task_interface_contract,
     _filter_materialization_quality_errors_for_repair_targets,

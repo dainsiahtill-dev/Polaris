@@ -160,6 +160,47 @@ def _primary_llm_provider_failure_payload(primary_llm_summary: dict[str, Any] | 
     return None
 
 
+def _no_write_retry_platform_failure_payload(
+    no_write_retry_summary: dict[str, Any] | None,
+) -> dict[str, str] | None:
+    """Classify a forced write retry that never reached the provider.
+
+    Live L2-12 TASK-3-source-core: first turn sealed ``no_write_tool_available``,
+    then the forced ``edit_file`` retry died on
+    ``final_physical_context_snapshot_persist_failed`` with ``llm_calls=0``.
+    Settling ``director_no_materialized_changes`` hid the ContextOS persist
+    miss and skipped same-task repair.
+    """
+
+    if not isinstance(no_write_retry_summary, dict) or bool(no_write_retry_summary.get("success")):
+        return None
+    metadata = no_write_retry_summary.get("metadata")
+    metadata_map = metadata if isinstance(metadata, dict) else {}
+    tokens = " ".join(
+        (
+            str(no_write_retry_summary.get("error") or ""),
+            str(no_write_retry_summary.get("error_message") or ""),
+            str(metadata_map.get("error_message") or ""),
+            str(metadata_map.get("error") or ""),
+        )
+    ).lower()
+    if "final_physical_context_snapshot_persist_failed" not in tokens:
+        return None
+    return {
+        "error": "director_final_request_context_persist_failed",
+        "error_code": "final_physical_context_snapshot_persist_failed",
+        "failure_class": FailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
+        "responsible_layer": "execution_control_plane",
+        "materialization_mode": "final_request_context_persist_failed",
+        "failure_stage": "director_no_write_materialization_retry",
+        "root_cause_hint": "final_physical_context_snapshot_persist_failed",
+        "detail": (
+            "Forced Director write retry never reached the provider because "
+            "the final physical ContextOS snapshot could not be persisted."
+        ),
+    }
+
+
 def _lifecycle_tool_dispatch_failure_from_summary(
     primary_llm_summary: dict[str, Any],
 ) -> dict[str, str] | None:
@@ -413,6 +454,9 @@ def _phase_no_materialized_changes(
         primary_llm_claimed_success = bool(primary_llm_summary.get("success")) if primary_llm_summary else False
         direct_side_effect_success = primary_llm_claimed_success and not tool_results
         lifecycle_failure = _primary_llm_tool_dispatch_failure(primary_llm_summary)
+        retry_platform_failure = _no_write_retry_platform_failure_payload(
+            no_write_materialization_retry_summary
+        )
         if lifecycle_failure is not None:
             error = lifecycle_failure["error"]
             materialization_mode = lifecycle_failure["materialization_mode"]
@@ -422,6 +466,15 @@ def _phase_no_materialized_changes(
             failure_stage = lifecycle_failure["failure_stage"]
             root_cause_hint = lifecycle_failure["root_cause_hint"]
             failure_detail = lifecycle_failure["detail"]
+        elif retry_platform_failure is not None:
+            error = retry_platform_failure["error"]
+            materialization_mode = retry_platform_failure["materialization_mode"]
+            public_error_code = retry_platform_failure["error_code"]
+            failure_class = retry_platform_failure["failure_class"]
+            responsible_layer = retry_platform_failure["responsible_layer"]
+            failure_stage = retry_platform_failure["failure_stage"]
+            root_cause_hint = retry_platform_failure["root_cause_hint"]
+            failure_detail = retry_platform_failure["detail"]
         elif (provider_failure := _primary_llm_provider_failure_payload(primary_llm_summary)) is not None:
             error = provider_failure["error"]
             materialization_mode = provider_failure["materialization_mode"]

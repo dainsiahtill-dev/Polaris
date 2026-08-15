@@ -1224,6 +1224,65 @@ def test_list_task_rows_from_execution_facts_uses_latest_fact_window(tmp_path: P
     assert rows[0]["fact_event_seq"] == 3
 
 
+def test_list_task_rows_from_execution_facts_keeps_older_tasks_outside_latest_page(
+    tmp_path: Path,
+) -> None:
+    """A long rematerialize tail must not drop older tasks' latest facts.
+
+    L2-12 live: file rows 101-103 had completed facts at seq 1111-1139, but
+    the default 500-event tail started at seq ~1146. Coverage then reported
+    ``file_row_ids_without_execution_fact=['101','102','103']`` and Factory
+    fail-closed ``task_runtime_fact_projection_not_ready``.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+
+    _append_execution_fact_probe(
+        workspace,
+        task_id="101",
+        event_type="created",
+        status="pending",
+        run_id="run-old-101",
+        subject="older pending 101",
+    )
+    for task_id in ("102", "103"):
+        _append_execution_fact_probe(
+            workspace,
+            task_id=task_id,
+            event_type="completed",
+            status="completed",
+            run_id=f"run-old-{task_id}",
+            subject=f"older completed {task_id}",
+        )
+    _append_execution_fact_probe(
+        workspace,
+        task_id="101",
+        event_type="completed",
+        status="completed",
+        run_id="run-old-101",
+        subject="older completed 101",
+    )
+    for index in range(3):
+        _append_execution_fact_probe(
+            workspace,
+            task_id="119",
+            event_type="updated",
+            status="failed" if index == 2 else "in_progress",
+            run_id="run-tail-119",
+            subject="newer rematerialize tail",
+        )
+
+    rows = service.list_task_rows_from_execution_facts(limit=3)
+    by_id = {str(row.get("task_id") or row.get("id")): row for row in rows}
+    assert set(by_id) == {"101", "102", "103", "119"}
+    assert by_id["101"]["status"] == "completed"
+    assert by_id["102"]["status"] == "completed"
+    assert by_id["103"]["status"] == "completed"
+    assert by_id["119"]["status"] == "failed"
+
+
 def test_list_task_rows_from_execution_facts_queries_gateway_and_keeps_latest_window(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1256,7 +1315,9 @@ def test_list_task_rows_from_execution_facts_queries_gateway_and_keeps_latest_wi
 
     rows = service.list_task_rows_from_execution_facts(limit=2)
 
-    assert gateway_calls == [(2, 0), (2, 1)]
+    # Newest page first (offset 1), then one older page so tasks whose latest
+    # event sits behind the requested page size stay in the latest-per-task map.
+    assert gateway_calls == [(2, 0), (2, 1), (2, 0)]
     assert len(rows) == 1
     assert rows[0]["task_id"] == "TASK-GATEWAY-WINDOW"
     assert rows[0]["status"] == "completed"
@@ -1301,7 +1362,7 @@ def test_list_task_rows_from_execution_facts_reuses_projection_until_stream_head
     second = service.list_task_rows_from_execution_facts(limit=2)
 
     assert first == second
-    assert gateway_calls == [(2, 0), (2, 1)]
+    assert gateway_calls == [(2, 0), (2, 1), (2, 0)]
 
     _append_execution_fact_probe(
         workspace,
@@ -1315,7 +1376,8 @@ def test_list_task_rows_from_execution_facts_reuses_projection_until_stream_head
     advanced = service.list_task_rows_from_execution_facts(limit=2)
 
     assert advanced[0]["status"] == "failed"
-    assert gateway_calls == [(2, 0), (2, 1), (2, 0), (2, 2)]
+    # Head advance must merge only the new suffix, not rescan the whole stream.
+    assert gateway_calls == [(2, 0), (2, 1), (2, 0), (1, 3)]
 
 
 def test_find_latest_execution_fact_row_for_task_pages_backward_through_gateway(

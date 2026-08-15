@@ -1200,9 +1200,9 @@ async def test_durable_wake_bridge_withholds_ack_when_replay_is_not_ack_safe() -
         source_fact_seq=1,
         factory_run_id="factory-1",
         workspace_fencing_token=7,
-        outcome=SettlementOutcome.PENDING,
+        outcome=SettlementOutcome.RETRYABLE,
         ack_safe=False,
-        reason_code="run_ledger_barrier_open",
+        reason_code="factory_settlement_retryable",
     )
 
     async def wake() -> SettlementReplayReport:
@@ -1223,7 +1223,52 @@ async def test_durable_wake_bridge_withholds_ack_when_replay_is_not_ack_safe() -
         assert bridge.durable_ack_supported is True
         assert bridge.delivery_mode == "jetstream_durable_explicit_ack"
         assert report.ack_safe is False
+        assert report.transport_ack_safe is False
         assert message.ack_calls == 0
+    finally:
+        await bridge.stop()
+
+
+@pytest.mark.asyncio
+async def test_durable_wake_bridge_acks_open_run_ledger_barrier() -> None:
+    """L2-12 retry-5: durable waiting_barrier must ACK or JetStream storms.
+
+    TASK-2 completed while director_dispatch was still in flight.  The
+    consumer correctly stayed at checkpoint 1133, but withholding the
+    transport ACK redelivered the same wake and starved TASK-3-tests.
+    """
+
+    subscription = RecordingJetStreamSubscription()
+    jetstream = RecordingJetStreamContext(subscription)
+    message = AckTrackingMessage(data=_task_runtime_wake_payload())
+    decision = SettlementDecision(
+        source_fact_event_id="fact-1",
+        source_fact_seq=1,
+        factory_run_id="factory-1",
+        workspace_fencing_token=7,
+        outcome=SettlementOutcome.PENDING,
+        ack_safe=False,
+        reason_code="run_ledger_barrier_open",
+    )
+
+    async def wake() -> SettlementReplayReport:
+        return SettlementReplayReport(decisions=(decision,))
+
+    bridge = DurableJetStreamSettlementWakeBridge(
+        client=RecordingWakeClient(jetstream),
+        subject="hp.runtime.workspace.>",
+        durable_name="factory-settlement-workspace",
+        wake=wake,
+        wake_by_source_fact=lambda _: wake(),
+    )
+    await bridge.start()
+    try:
+        subscription.deliver(message)
+        report = await _wait_for_bridge_report(bridge)
+
+        assert report.ack_safe is False
+        assert report.transport_ack_safe is True
+        assert message.ack_calls == 1
     finally:
         await bridge.stop()
 
@@ -1262,7 +1307,7 @@ async def test_durable_wake_bridge_replays_open_barrier_once_per_delivery() -> N
         await asyncio.sleep(0.1)
 
         assert len(call_times) == 1
-        assert first.ack_calls == 0
+        assert first.ack_calls == 1
     finally:
         await bridge.stop()
 
@@ -1424,7 +1469,7 @@ async def test_durable_wake_bridge_routes_task_runtime_delivery_by_fact_id() -> 
         await asyncio.sleep(0.05)
 
         assert hints == ["fact-terminal-1"]
-        assert message.ack_calls == 0
+        assert message.ack_calls == 1
     finally:
         await bridge.stop()
 

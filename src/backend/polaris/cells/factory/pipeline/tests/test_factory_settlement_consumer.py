@@ -473,6 +473,37 @@ async def test_empty_replay_is_ack_safe(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_wake_skips_open_barrier_replay_during_cooldown(tmp_path: Path) -> None:
+    """L2-12 retry-5: control-plane wakes must not rescan while barrier stays open.
+
+    Live backend read 11 GiB in 12 minutes by replaying checkpoint 1132 on
+    every heartbeat.  Source checkpoint stays put; transport ACK is separate.
+    """
+
+    workspace = _workspace(tmp_path)
+    fact_stream = FactStreamAdapter()
+    _append_source_fact(fact_stream, workspace)
+    barrier = MutableBarrier(workspace=workspace, fencing_token=7)
+    barrier.closed = False
+    factory_runs = RecordingFactoryRuns()
+    consumer, _journal = _build_consumer(
+        workspace=workspace,
+        fact_stream=fact_stream,
+        barrier=barrier,
+        factory_runs=factory_runs,
+    )
+
+    started = await consumer.start()
+    assert started.decisions[0].reason_code == "run_ledger_barrier_open"
+    queries_after_start = len(barrier.queries)
+
+    rechecked = await consumer.wake()
+
+    assert [decision.reason_code for decision in rechecked.decisions] == ["run_ledger_barrier_open"]
+    assert len(barrier.queries) == queries_after_start + 1
+
+
+@pytest.mark.asyncio
 async def test_replay_reads_source_and_journal_once_per_page(tmp_path: Path) -> None:
     """Regression: replay page reads grow with pages, not source facts squared."""
 

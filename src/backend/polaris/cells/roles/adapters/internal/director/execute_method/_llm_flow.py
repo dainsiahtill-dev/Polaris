@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch as fnmatch
 import json as json
 import logging
@@ -77,7 +78,7 @@ async def _execute_standard_llm_flow(
 ) -> dict[str, Any]:
     """执行标准 LLM 流程"""
     await _attach_director_file_event_bus(adapter)
-    message = adapter._build_director_message(task, context=context)
+    message = await asyncio.to_thread(adapter._build_director_message, task, context=context)
     requires_fresh_materialization = _task_requires_fresh_materialization(task)
     context = _pin_materialize_context_delivery_mode(context, requires_fresh_materialization)
     message = _pin_materialize_delivery_mode(message, requires_fresh_materialization)
@@ -96,7 +97,8 @@ async def _execute_standard_llm_flow(
         all_affected_files=[],
         tool_results=[],
     )
-    state = _phase_deterministic_cleanup(
+    state = await asyncio.to_thread(
+        _phase_deterministic_cleanup,
         adapter,
         task=task,
         target_task_id=target_task_id,
@@ -105,7 +107,8 @@ async def _execute_standard_llm_flow(
         state=state,
     )
 
-    preflight_result = _phase_existing_scope_preflight(
+    preflight_result = await asyncio.to_thread(
+        _phase_existing_scope_preflight,
         adapter,
         task=task,
         target_task_id=target_task_id,

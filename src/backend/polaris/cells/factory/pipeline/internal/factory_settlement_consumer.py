@@ -39,6 +39,7 @@ from .factory_settlement_journal import (
 _FACT_STREAM_ENVELOPE_VERSION = 1
 _SOURCE_PAGE_SIZE = 1000
 _TASK_RUNTIME_SCHEMA_PREFIX = "task-runtime.execution-fact/"
+_OPEN_BARRIER_REPLAY_COOLDOWN_SECONDS = 5.0
 
 logger = logging.getLogger(__name__)
 
@@ -269,6 +270,26 @@ class SettlementReplayReport:
     def ack_safe(self) -> bool:
         return all(decision.ack_safe for decision in self.decisions)
 
+    @property
+    def transport_ack_safe(self) -> bool:
+        """Return whether the JetStream wake may be ACKed.
+
+        ``ack_safe`` still owns source-checkpoint advancement.  A durable
+        ``run_ledger_barrier_open`` pending must not advance the checkpoint,
+        but withholding the transport ACK caused JetStream to redeliver the
+        same wake immediately.  Live L2-12 retry-5: TASK-2 completed sat in
+        waiting_barrier while director_dispatch was still in flight; the
+        redelivery storm starved TASK-3-tests before its first LLM call.
+        """
+
+        if self.ack_safe:
+            return True
+        if not self.decisions:
+            return False
+        return all(
+            decision.ack_safe or decision.reason_code == "run_ledger_barrier_open" for decision in self.decisions
+        )
+
 
 _RUN_LOCKS_GUARD = threading.Lock()
 _RUN_LOCKS: weakref.WeakValueDictionary[tuple[int, str, str, int], asyncio.Lock] = weakref.WeakValueDictionary()
@@ -420,6 +441,7 @@ class FactorySettlementConsumer:
         self._started = False
         self._stopped = False
         self._journal_snapshot: SettlementJournalReplaySnapshot | None = None
+        self._last_open_barrier_replay_at = 0.0
 
     @property
     def workspace(self) -> str:
@@ -484,7 +506,41 @@ class FactorySettlementConsumer:
             )
 
     async def _replay_locked(self, *, recover_applying: bool) -> tuple[SettlementDecision, ...]:
+        prefix_decisions: tuple[SettlementDecision, ...] = ()
         journal_snapshot = self._journal_snapshot
+        if (
+            not recover_applying
+            and journal_snapshot is not None
+            and self._last_open_barrier_replay_at > 0.0
+            and (time.monotonic() - self._last_open_barrier_replay_at) < _OPEN_BARRIER_REPLAY_COOLDOWN_SECONDS
+        ):
+            checkpoint = journal_snapshot.latest_checkpoint_offset(source_stream=TASK_RUNTIME_EXECUTION_STREAM)
+            # source_events is keyed as query_offset+1.  The journal checkpoint
+            # is the next 0-based source offset to process.
+            head_event = journal_snapshot.source_events.get(checkpoint + 1)
+            if head_event is not None:
+                logger.warning(
+                    "[settlement.startup] phase=decision_replay status=head_recheck checkpoint=%d",
+                    checkpoint,
+                )
+                head_decision = await self._process_source_event(
+                    head_event,
+                    recover_applying=False,
+                    journal_snapshot=journal_snapshot,
+                )
+                if not head_decision.ack_safe:
+                    if head_decision.reason_code == "run_ledger_barrier_open":
+                        self._last_open_barrier_replay_at = time.monotonic()
+                    return (head_decision,)
+                self._checkpoint(
+                    head_decision,
+                    next_source_offset=checkpoint + 1,
+                    source_event=head_event,
+                    journal_snapshot=journal_snapshot,
+                )
+                self._last_open_barrier_replay_at = 0.0
+                prefix_decisions = (head_decision,)
+                # Barrier closed: continue into the normal tail replay below.
         if journal_snapshot is None:
             source_started_at = time.monotonic()
             logger.warning("[settlement.startup] phase=source_snapshot status=started")
@@ -546,6 +602,8 @@ class FactorySettlementConsumer:
             )
             decisions.append(decision)
             if not decision.ack_safe:
+                if decision.reason_code == "run_ledger_barrier_open":
+                    self._last_open_barrier_replay_at = time.monotonic()
                 return tuple(decisions)
             self._checkpoint(
                 decision,
@@ -556,9 +614,9 @@ class FactorySettlementConsumer:
         logger.warning(
             "[settlement.startup] phase=decision_replay status=completed duration_ms=%d decisions=%d",
             int((time.monotonic() - replay_started_at) * 1000),
-            len(decisions),
+            len(prefix_decisions) + len(decisions),
         )
-        return tuple(decisions)
+        return (*prefix_decisions, *decisions)
 
     async def _process_source_event(
         self,

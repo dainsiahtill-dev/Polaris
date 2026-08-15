@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import inspect
 import logging
+import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from enum import Enum
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 _CANONICAL_OUTCOME_SETTLEMENT_SECONDS = 2.0
 _CANONICAL_POLL_SECONDS = 0.05
+_TASK_RUNTIME_PROJECTION_CACHE_TTL_SECONDS = 0.5
 _TASK_RUNTIME_TERMINAL_STATES = frozenset(
     {"blocked", "cancelled", "completed", "completed_verified", "failed", "timeout"}
 )
@@ -61,19 +63,39 @@ class RunCompletionWaiter:
 
     def __init__(self, workspace: Path) -> None:
         self.workspace = Path(workspace)
+        self._task_runtime_projection_cache: ObservableTaskRowsProjectionV1 | None = None
+        self._task_runtime_projection_cached_at = 0.0
 
     def _observable_task_rows_projection(self) -> ObservableTaskRowsProjectionV1 | None:
-        """Read TaskRuntime rows through the typed public authority boundary."""
+        """Read TaskRuntime rows through the typed public authority boundary.
 
+        Factory wait polls at 20 Hz. Each miss re-enters TaskRuntime fact
+        projection, which tail-reads (and on miss, full-parses) the
+        ``task_runtime.execution`` stream. Live L2-12 evidence: 130MiB stream,
+        1MiB tail/tick, multi-GiB rchar, event-loop/GIL starve, Director
+        heartbeat death. Cache the typed projection briefly so the wait loop
+        only re-reads when the TTL expires.
+        """
+
+        now = time.monotonic()
+        cached = self._task_runtime_projection_cache
+        if (
+            cached is not None
+            and (now - self._task_runtime_projection_cached_at) < _TASK_RUNTIME_PROJECTION_CACHE_TTL_SECONDS
+        ):
+            return cached
         try:
             from polaris.cells.runtime.task_runtime.public.service import (
                 TaskRuntimeService,
             )
 
-            return TaskRuntimeService(str(self.workspace)).query_observable_task_rows_projection()
+            projection = TaskRuntimeService(str(self.workspace)).query_observable_task_rows_projection()
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.debug("TaskRuntime typed observable projection unavailable: %s", exc)
             return None
+        self._task_runtime_projection_cache = projection
+        self._task_runtime_projection_cached_at = now
+        return projection
 
     def _execution_rows(
         self,
@@ -432,20 +454,39 @@ class RunCompletionWaiter:
                 },
             )
 
+        if projection is None:
+            return CommandResult(
+                run_id=run_id,
+                status="blocked",
+                message="TaskRuntime fact-only observable projection is not ready",
+                reason_code="task_runtime_fact_projection_not_ready",
+                metadata={
+                    "canonical_authoritative": False,
+                    "degraded": True,
+                    "terminal_source": "task_runtime_cutover_readiness",
+                    "task_row_read_model_source": "unavailable",
+                    "task_row_read_model_cutover_readiness": readiness,
+                },
+            )
+
         task_runtime_result = self._task_runtime_terminal_result(
             run_id=run_id,
             projection=projection,
-        )
-        turn_outcome_result = self._committed_turn_outcome_result(
-            run_id=run_id,
-            process_terminal=process_terminal,
         )
         if task_runtime_result is None:
             # A TransactionKernel turn outcome settles one role turn, not the
             # Director task execution. Under TaskRuntime authority it may veto
             # an already-terminal TaskRuntime result through the conflict
             # matrix below, but it must never grant completion by itself.
+            # Querying roles.kernel.turn_outcomes before TaskRuntime is
+            # terminal is also a live event-loop hazard: JsonlEventStore
+            # still full-scans the stream (11MiB+/tick on L2-12) even when
+            # this method discards the result.
             return None
+        turn_outcome_result = self._committed_turn_outcome_result(
+            run_id=run_id,
+            process_terminal=process_terminal,
+        )
         if turn_outcome_result is None:
             return task_runtime_result
 
@@ -523,6 +564,28 @@ class RunCompletionWaiter:
 
         return self.active_execution_barrier_result(run_id=run_id, reason=reason)
 
+    @staticmethod
+    def _is_missing_orchestration_snapshot(result: CommandResult | None) -> bool:
+        """Return whether a lifecycle hint is 'run not created yet', not a failure."""
+
+        if result is None:
+            return False
+        return str(result.reason_code or "").strip() == "RUN_NOT_FOUND"
+
+    async def _canonical_terminal_result_offloop(
+        self,
+        *,
+        run_id: str,
+        process_terminal: bool,
+    ) -> CommandResult | None:
+        """Project the canonical terminal result off the asyncio event loop."""
+
+        return await asyncio.to_thread(
+            self.canonical_terminal_result,
+            run_id=run_id,
+            process_terminal=process_terminal,
+        )
+
     def build_orchestration_service(self, context: dict[str, Any]) -> Any:
         from polaris.bootstrap.config import Settings
         from polaris.cells.orchestration.pm_dispatch.public.service import OrchestrationCommandService
@@ -534,7 +597,7 @@ class RunCompletionWaiter:
         normalized_run_id = str(run_id or "").strip()
         if not normalized_run_id:
             return None
-        canonical_result = self.canonical_terminal_result(
+        canonical_result = await self._canonical_terminal_result_offloop(
             run_id=normalized_run_id,
             process_terminal=True,
         )
@@ -654,7 +717,7 @@ class RunCompletionWaiter:
         lifecycle_failure_deferred_for_active_execution = False
 
         while True:
-            canonical = self.canonical_terminal_result(
+            canonical = await self._canonical_terminal_result_offloop(
                 run_id=run_id,
                 process_terminal=process_terminal,
             )
@@ -665,7 +728,7 @@ class RunCompletionWaiter:
                 return canonical
 
             lifecycle_status = str(lifecycle_result.status or "").strip().lower()
-            if lifecycle_status in failure_statuses:
+            if lifecycle_status in failure_statuses and not self._is_missing_orchestration_snapshot(lifecycle_result):
                 active_execution = self._active_task_runtime_barrier_result(
                     run_id=run_id,
                     reason="orchestration_lifecycle_failure",
@@ -721,7 +784,10 @@ class RunCompletionWaiter:
                 barrier_result = await self.cancel_active_run(run_id, reason="factory_cancelled")
                 if barrier_result is not None:
                     return barrier_result
-                canonical = self.canonical_terminal_result(run_id=run_id, process_terminal=True)
+                canonical = await self._canonical_terminal_result_offloop(
+                    run_id=run_id,
+                    process_terminal=True,
+                )
                 if canonical is not None:
                     return canonical
                 return CommandResult(
@@ -781,17 +847,23 @@ class RunCompletionWaiter:
                 continue
 
             if not isinstance(active_task, asyncio.Task):
-                observed = cast("CommandResult", await service.query_run_status(run_id))
-                observed_status = str(observed.status or "").strip().lower()
-                lifecycle_result = observed
-                if observed_status in terminal_statuses and not process_terminal:
-                    process_terminal = True
-                    settlement_deadline = settlement_deadline or min(
-                        deadline,
-                        loop.time() + _CANONICAL_OUTCOME_SETTLEMENT_SECONDS,
-                    )
-                    settlement_progress_marker = self.active_execution_progress_marker(run_id=run_id)
-                    continue
+                live_execution = self._active_task_runtime_barrier_result(
+                    run_id=run_id,
+                    reason="orchestration_snapshot_deferred",
+                )
+                if live_execution is None:
+                    observed = cast("CommandResult", await service.query_run_status(run_id))
+                    if not self._is_missing_orchestration_snapshot(observed):
+                        observed_status = str(observed.status or "").strip().lower()
+                        lifecycle_result = observed
+                        if observed_status in terminal_statuses and not process_terminal:
+                            process_terminal = True
+                            settlement_deadline = settlement_deadline or min(
+                                deadline,
+                                loop.time() + _CANONICAL_OUTCOME_SETTLEMENT_SECONDS,
+                            )
+                            settlement_progress_marker = self.active_execution_progress_marker(run_id=run_id)
+                            continue
 
             now = loop.time()
             if settlement_deadline is not None and now >= settlement_deadline:

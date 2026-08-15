@@ -986,6 +986,45 @@ async def test_waiter_rejects_completed_session_without_canonical_outcome(
 
 
 @pytest.mark.asyncio
+async def test_waiter_treats_missing_orchestration_snapshot_as_non_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _Lifecycle:
+        _active_runs: dict[str, asyncio.Task[Any]] = {}
+
+    class _MissingSnapshotService:
+        async def query_run_status(self, run_id: str) -> CommandResult:
+            return CommandResult(
+                run_id=run_id,
+                status="failed",
+                message=f"Run {run_id} not found",
+                reason_code="RUN_NOT_FOUND",
+            )
+
+    async def get_lifecycle() -> _Lifecycle:
+        return _Lifecycle()
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.workflow_runtime.public.get_orchestration_service",
+        get_lifecycle,
+    )
+    waiter = RunCompletionWaiter(tmp_path)
+    monkeypatch.setattr(waiter, "canonical_terminal_result", lambda **_kwargs: None)
+
+    result = await waiter.wait(
+        _MissingSnapshotService(),
+        CommandResult(run_id="director-missing-snapshot", status="running", message="submitted"),
+        timeout_seconds=1,
+    )
+
+    assert result.status == "timeout"
+    assert result.reason_code is None or result.reason_code != "RUN_NOT_FOUND"
+    assert result.metadata is not None
+    assert result.metadata["terminal_source"] == "canonical_projection_barrier"
+
+
+@pytest.mark.asyncio
 async def test_waiter_extends_settlement_for_active_execution_progress(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -609,9 +609,7 @@ class DurableJetStreamSettlementWakeBridge:
         if replay_backoff_seconds <= 0:
             raise ValueError("replay_backoff_seconds must be > 0")
         if replay_max_backoff_seconds < replay_backoff_seconds:
-            raise ValueError(
-                "replay_max_backoff_seconds must be >= replay_backoff_seconds"
-            )
+            raise ValueError("replay_max_backoff_seconds must be >= replay_backoff_seconds")
         self._client = client
         self._subject = normalized_subject
         self._durable_name = normalized_durable_name
@@ -897,20 +895,21 @@ class DurableJetStreamSettlementWakeBridge:
                     )
                 else:
                     self._last_report = report
-                    if report.ack_safe or directive.ack_after_replay:
+                    if report.transport_ack_safe or directive.ack_after_replay:
                         await self._ack_delivery(message)
                         logger.debug(
                             "Factory settlement wake replay complete "
                             "subject=%s decisions=%d source_fact_hint=%s "
-                            "settlement_ack_safe=%s durable_ack=true",
+                            "settlement_ack_safe=%s transport_ack_safe=%s durable_ack=true",
                             self._subject,
                             len(report.decisions),
                             directive.source_fact_event_id or "",
                             report.ack_safe,
+                            report.transport_ack_safe,
                         )
                     else:
                         logger.debug(
-                            "Factory settlement wake barrier remains open; "
+                            "Factory settlement wake replay is not transport-ack-safe; "
                             "delivery retained for transport redelivery "
                             "subject=%s decisions=%d",
                             self._subject,

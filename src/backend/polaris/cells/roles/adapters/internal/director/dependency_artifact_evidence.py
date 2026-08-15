@@ -143,16 +143,29 @@ def _parent_identity(parent: Mapping[str, Any]) -> tuple[str, str]:
 def _receipt_result_rows(adapter_result: Mapping[str, Any]) -> list[dict[str, Any]]:
     primary_llm = _mapping(adapter_result.get("primary_llm"))
     primary_metadata = _mapping(primary_llm.get("metadata"))
+    no_write_retry = _mapping(adapter_result.get("no_write_materialization_retry"))
+    no_write_metadata = _mapping(no_write_retry.get("metadata"))
+    empty_write_retry = _mapping(adapter_result.get("empty_write_content_retry"))
+    empty_write_metadata = _mapping(empty_write_retry.get("metadata"))
     candidate_batches = (
         _mapping(adapter_result.get("batch_receipt")),
         _mapping(primary_llm.get("batch_receipt")),
         _mapping(primary_metadata.get("batch_receipt")),
+        _mapping(no_write_retry.get("batch_receipt")),
+        _mapping(no_write_metadata.get("batch_receipt")),
+        _mapping(empty_write_retry.get("batch_receipt")),
+        _mapping(empty_write_metadata.get("batch_receipt")),
     )
     rows: list[dict[str, Any]] = []
     for batch in candidate_batches:
         rows.extend(_list_of_mappings(batch.get("raw_results")))
+        rows.extend(_list_of_mappings(batch.get("results")))
     rows.extend(_list_of_mappings(adapter_result.get("tool_results")))
     rows.extend(_list_of_mappings(primary_metadata.get("tool_results")))
+    rows.extend(_list_of_mappings(no_write_retry.get("tool_results")))
+    rows.extend(_list_of_mappings(no_write_metadata.get("tool_results")))
+    rows.extend(_list_of_mappings(empty_write_retry.get("tool_results")))
+    rows.extend(_list_of_mappings(empty_write_metadata.get("tool_results")))
     return rows
 
 

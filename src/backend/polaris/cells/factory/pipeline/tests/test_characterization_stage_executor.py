@@ -495,6 +495,99 @@ def test_run_completion_does_not_promote_turn_outcome_over_active_task_runtime(
     assert result is None
 
 
+def test_waiter_reuses_task_runtime_projection_within_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls = {"n": 0}
+    fake = SimpleNamespace(
+        authoritative=True,
+        degraded=False,
+        source="task_runtime.execution_fact",
+        rows=(),
+        readiness={"ready": True},
+    )
+
+    class _Svc:
+        def __init__(self, _workspace: str) -> None:
+            calls["n"] += 1
+
+        def query_observable_task_rows_projection(self) -> Any:
+            return fake
+
+    monkeypatch.setattr(
+        "polaris.cells.runtime.task_runtime.public.service.TaskRuntimeService",
+        _Svc,
+    )
+    waiter = RunCompletionWaiter(tmp_path)
+    first = waiter._observable_task_rows_projection()
+    second = waiter._observable_task_rows_projection()
+    assert first is fake
+    assert second is fake
+    assert calls["n"] == 1
+
+
+def test_canonical_terminal_skips_turn_outcome_query_until_task_runtime_terminal(
+    tmp_path: Path,
+) -> None:
+    waiter = RunCompletionWaiter(tmp_path)
+    projection = _authoritative_task_projection(
+        tmp_path,
+        (
+            {
+                "id": "TASK-1",
+                "workflow_run_id": "run-1",
+                "execution_state": "in_progress",
+                "fact_event_seq": 12,
+                "metadata": {
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                },
+            },
+        ),
+    )
+    waiter._observable_task_rows_projection = lambda: projection  # type: ignore[method-assign]
+    turn_outcome_calls = {"n": 0}
+
+    def _turn_outcome(**_kwargs: Any) -> CommandResult | None:
+        turn_outcome_calls["n"] += 1
+        raise AssertionError("turn outcome must not be queried while TaskRuntime is non-terminal")
+
+    waiter._committed_turn_outcome_result = _turn_outcome  # type: ignore[method-assign]
+
+    result = waiter.canonical_terminal_result(run_id="run-1", process_terminal=True)
+
+    assert result is None
+    assert turn_outcome_calls["n"] == 0
+
+
+def test_canonical_terminal_queries_turn_outcome_only_after_task_runtime_terminal(
+    tmp_path: Path,
+) -> None:
+    waiter = RunCompletionWaiter(tmp_path)
+    projection = _authoritative_task_projection(tmp_path, ())
+    waiter._observable_task_rows_projection = lambda: projection  # type: ignore[method-assign]
+    waiter._task_runtime_terminal_result = lambda **_kwargs: CommandResult(  # type: ignore[method-assign]
+        run_id="run-1",
+        status="completed",
+        message="task runtime complete",
+        metadata={"canonical_authoritative": True, "fact_event_seq": 11},
+    )
+    turn_outcome_calls = {"n": 0}
+
+    def _turn_outcome(**_kwargs: Any) -> CommandResult | None:
+        turn_outcome_calls["n"] += 1
+        return None
+
+    waiter._committed_turn_outcome_result = _turn_outcome  # type: ignore[method-assign]
+
+    result = waiter.canonical_terminal_result(run_id="run-1", process_terminal=True)
+
+    assert result is not None
+    assert result.status == "completed"
+    assert turn_outcome_calls["n"] == 1
+
+
 @pytest.mark.asyncio
 async def test_run_completion_cancel_during_dispatch_waits_for_canonical_terminal(
     monkeypatch: pytest.MonkeyPatch,

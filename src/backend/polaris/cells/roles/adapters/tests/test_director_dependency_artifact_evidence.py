@@ -178,6 +178,81 @@ def test_completion_adapter_result_tool_results_feed_sibling_snapshot(tmp_path: 
     assert snapshot.payload()["modules"][0]["body"] == body
 
 
+def test_no_write_retry_receipts_bind_sibling_exports_for_failed_parent(tmp_path: Path) -> None:
+    """L2-12 retry-4: quality-failed TASK-2 still sealed a no-write edit receipt.
+
+    Completion metadata stored write_tool_evidence + modified_files, but the
+    committed effect receipt lived only under no_write_materialization_retry.
+    Child TASK-3-source-models then failed closed as model_provider_failure
+    with missing_required_refs=actual_sibling_exports.
+    """
+
+    path = "src/main.py"
+    source = tmp_path / path
+    source.parent.mkdir(parents=True)
+    body = "from src.radio import broadcast\n"
+    source.write_text(body, encoding="utf-8")
+    receipt_row = _effect_receipt(path, suffix="8")
+    parent = {
+        "id": 93,
+        "status": "failed",
+        "metadata": {
+            "external_task_id": "TASK-2",
+            "adapter_result": {
+                "write_tool_evidence": True,
+                "modified_files": [path],
+                "new_files": [],
+                "materialization_error": "director_materialization_quality_failed",
+                "no_write_materialization_retry": {
+                    "attempted": True,
+                    "success": True,
+                    "tool_results": 2,
+                    "batch_receipt": {"raw_results": [receipt_row]},
+                },
+            },
+        },
+    }
+    child = {
+        "id": 95,
+        "metadata": {
+            "external_task_id": "TASK-3-source-models",
+            "depends_on": ["TASK-2", "TASK-3-foundation"],
+        },
+    }
+    foundation = {
+        "id": 94,
+        "status": "completed",
+        "metadata": {
+            "external_task_id": "TASK-3-foundation",
+            "task_completion_projection": {
+                "task_id": "TASK-3-foundation",
+                "project_id": "L2-12",
+                "run_id": "factory_a1b49b0460f2",
+                "project_contract_hash": "e" * 64,
+                "owned_artifacts": [],
+            },
+        },
+    }
+
+    snapshot = build_director_dependency_artifact_snapshot(
+        workspace=str(tmp_path),
+        child_task=child,
+        get_task=_resolver({"TASK-2": parent, "TASK-3-foundation": foundation}),
+    )
+
+    assert type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2
+    payload = snapshot.payload()
+    assert payload["covered_parent_task_ids"] == ["TASK-2", "TASK-3-foundation"]
+    assert payload["zero_artifact_parent_task_ids"] == ["TASK-3-foundation"]
+    assert payload["modules"][0]["path"] == path
+    assert payload["modules"][0]["body"] == body
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+        _looks_like_actual_sibling_exports,
+    )
+
+    assert _looks_like_actual_sibling_exports(payload, messages=None) is True
+
+
 def test_existing_scope_retry_uses_current_project_artifact_receipts(tmp_path: Path) -> None:
     """R48: retry preflight must reuse project receipts when no new tool write occurs."""
 
