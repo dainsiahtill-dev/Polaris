@@ -23,6 +23,9 @@ from polaris.kernelone.quality import (
     scan_workspace_artifact_quality as scan_workspace_artifact_quality,
     scan_workspace_artifact_quality_evidence as scan_workspace_artifact_quality_evidence,
 )
+from polaris.kernelone.quality.artifact_quality._scan_javascript import (
+    _javascript_named_exports,
+)
 from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
 from ..contract_verify import resolve_contract_step_verify_command
@@ -673,6 +676,7 @@ def _no_write_materialization_retry_tool_definitions(
     target_files: list[str],
     *,
     strict_write_only: bool,
+    forced_tool_name: str = "write_file",
 ) -> list[dict[str, Any]]:
     """Empty-write retry tools via Forced Tool Surface SSOT (R127).
 
@@ -683,6 +687,8 @@ def _no_write_materialization_retry_tool_definitions(
 
     if strict_write_only:
         return build_forced_tool_surface(("write_file",), pin_write_paths=target_files)
+    if forced_tool_name == "edit_file":
+        return build_forced_tool_surface(("edit_file",))
 
     # write_file pinned + edit_file unpinned (registry only)
     write_surface = build_forced_tool_surface(("write_file",), pin_write_paths=target_files)
@@ -692,6 +698,24 @@ def _no_write_materialization_retry_tool_definitions(
 
 def _no_write_retry_strict_write_only(target_files: list[str]) -> bool:
     return len(target_files) <= 1
+
+
+def _select_no_write_materialization_retry_tool(
+    task: dict[str, Any],
+    *,
+    workspace: str,
+) -> tuple[str, bool]:
+    """Choose forced retry tool after a no-write MATERIALIZE_CHANGES miss.
+
+    Live L2-11 TASK-1-entrypoints: ``write_file`` rewrote an existing
+    ``src/index.js`` and invented ``src/domains/*.js`` plus ``decideMatch``.
+    Existing declared targets must force ``edit_file``. Missing create
+    targets still need whole-file ``write_file``.
+    """
+
+    if _task_targets_missing_in_workspace(task, workspace):
+        return "write_file", _no_write_retry_strict_write_only(_declared_write_retry_target_files(task))
+    return "edit_file", True
 
 
 def _declared_write_retry_target_files(task: dict[str, Any]) -> list[str]:
@@ -732,6 +756,9 @@ def _build_no_write_materialization_retry_message(
     tool_results: list[dict[str, Any]],
     forced_tool_name: str = "write_file",
     strict_write_only: bool | None = None,
+    quality_errors: list[str] | None = None,
+    current_files: dict[str, str] | None = None,
+    existing_exports: dict[str, list[str]] | None = None,
 ) -> str:
     target_files = _declared_write_retry_target_files(task)
     strict_retry = _no_write_retry_strict_write_only(target_files) if strict_write_only is None else strict_write_only
@@ -763,6 +790,35 @@ def _build_no_write_materialization_retry_message(
             "Each write_file call must use a complete non-empty UTF-8 file body; each edit_file call must "
             "contain a precise non-empty edit.\n"
         )
+    quality_lines = [str(error).strip() for error in (quality_errors or []) if str(error or "").strip()]
+    quality_block = ""
+    if quality_lines:
+        quality_block = (
+            "Quality diagnostics (single failure island; edit existing declared files to resolve; "
+            "do not invent missing domain symbols):\n" + "\n".join(f"- {line}" for line in quality_lines[:16]) + "\n"
+        )
+    if isinstance(existing_exports, dict) and existing_exports:
+        export_lines: list[str] = []
+        for module, names in list(existing_exports.items())[:8]:
+            cleaned = [str(name).strip() for name in names if str(name or "").strip()]
+            if not cleaned:
+                continue
+            export_lines.append(f"Existing named exports in '{module}': {', '.join(cleaned[:24])}.")
+        if export_lines:
+            quality_block += (
+                "Replace unresolved imports with these existing exports; "
+                "do not invent new import names.\n" + "\n".join(export_lines) + "\n"
+            )
+    current_block = ""
+    if isinstance(current_files, dict) and current_files:
+        parts: list[str] = ["Current UTF-8 target contents (edit these exact bytes):\n"]
+        for rel_path, body in list(current_files.items())[:8]:
+            token = str(rel_path or "").strip()
+            text = str(body or "")
+            if not token:
+                continue
+            parts.append(f"----- {token} -----\n{text[:12000]}\n")
+        current_block = "".join(parts)
     return (
         "[mode:materialize]\n"
         "RETRY: previous Director turn completed without any write/edit receipt and produced no files.\n"
@@ -770,8 +826,39 @@ def _build_no_write_materialization_retry_message(
         f"{tool_instruction}"
         "Use only task-scoped relative paths. Do not write TODO/FIXME/placeholder content.\n"
         f"{target_line}"
+        f"{quality_block}"
+        f"{current_block}"
         "Original task follows:\n"
         f"{original_message[:8000]}"
+    )
+
+
+def _primary_llm_no_write_mutation_miss(primary_llm_summary: dict[str, Any] | None) -> bool:
+    """True when MATERIALIZE_CHANGES first turn sealed a no-write miss.
+
+    Live L2-11 TASK-1-entrypoints: kernel set ``success=False`` /
+    ``error=no_write_tool_available`` / ``workflow_reason=mutation_bypass_blocked``
+    after read-only tools. That is a recoverable Director-local miss, not a
+    provider crash. Treating it like a hard first-call failure skipped the
+    forced write retry even though declared targets existed.
+    """
+
+    if not isinstance(primary_llm_summary, dict):
+        return False
+    metadata = primary_llm_summary.get("metadata")
+    metadata_map = metadata if isinstance(metadata, dict) else {}
+    tokens = {
+        str(primary_llm_summary.get("error") or "").strip().lower(),
+        str(primary_llm_summary.get("blocked_reason") or "").strip().lower(),
+        str(metadata_map.get("blocked_reason") or "").strip().lower(),
+        str(metadata_map.get("workflow_reason") or "").strip().lower(),
+    }
+    return bool(
+        tokens
+        & {
+            "no_write_tool_available",
+            "mutation_bypass_blocked",
+        }
     )
 
 
@@ -782,13 +869,30 @@ def _no_write_materialization_retry_needed(
     tool_results: list[dict[str, Any]],
     workspace: str,
 ) -> bool:
-    if not primary_llm_summary or primary_llm_summary.get("success") is not True:
+    if not primary_llm_summary:
         return False
     if has_successful_write_tool(tool_results):
         return False
     if not _declared_write_retry_target_files(task):
         return False
-    return _task_targets_missing_in_workspace(task, workspace)
+    mutation_miss = _primary_llm_no_write_mutation_miss(primary_llm_summary)
+    if primary_llm_summary.get("success") is not True and not mutation_miss:
+        return False
+    if mutation_miss:
+        return True
+    if _task_targets_missing_in_workspace(task, workspace):
+        return True
+    # Live L2-11 epoch 9: first call succeeded with only reads/commands while
+    # declared files still had named-export holes. Missing-file gating skipped
+    # the forced edit_file retry and settled no_materialized_changes.
+    try:
+        residual = scan_workspace_artifact_quality(
+            workspace,
+            relative_paths=_declared_write_retry_target_files(task)[:32],
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+    return any(str(error or "").strip() for error in residual)
 
 
 async def _run_no_write_materialization_retry(
@@ -801,15 +905,59 @@ async def _run_no_write_materialization_retry(
     tool_results: list[dict[str, Any]],
     llm_call_timeout: float,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    forced_tool_name = "write_file"
     target_files = _declared_write_retry_target_files(task)
-    strict_write_only = _no_write_retry_strict_write_only(target_files)
+    workspace = str(getattr(adapter, "workspace", "") or "")
+    targets_missing = _task_targets_missing_in_workspace(task, workspace)
+    forced_tool_name, exact_tools = _select_no_write_materialization_retry_tool(
+        task,
+        workspace=workspace,
+    )
+    strict_write_only = forced_tool_name == "write_file" and exact_tools and targets_missing
+    quality_errors: list[str] = []
+    existing_exports: dict[str, list[str]] = {}
+    if workspace and target_files and not targets_missing:
+        try:
+            evidence = scan_workspace_artifact_quality_evidence(
+                workspace,
+                relative_paths=target_files[:32],
+            )
+            quality_errors = [str(error).strip() for error in evidence.errors if str(error or "").strip()]
+            root = Path(workspace)
+            for issue in evidence.issues:
+                raw_metadata = getattr(issue, "metadata", None)
+                metadata: dict[str, Any] = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+                specifier = str(metadata.get("module") or "").strip()
+                exporter = str(metadata.get("exporter") or "").strip()
+                if not specifier or not exporter or specifier in existing_exports:
+                    continue
+                try:
+                    names = list(_javascript_named_exports((root / exporter).read_text(encoding="utf-8")))
+                except (OSError, UnicodeError):
+                    continue
+                if names:
+                    existing_exports[specifier] = names
+        except (OSError, RuntimeError, TypeError, ValueError):
+            quality_errors = []
+    current_files: dict[str, str] = {}
+    if workspace and target_files and not targets_missing:
+        preferred = [path for path in target_files if any(path in error for error in quality_errors)]
+        load_paths = preferred or target_files
+        root = Path(workspace)
+        for rel_path in load_paths[:8]:
+            candidate = root / rel_path
+            try:
+                current_files[rel_path] = candidate.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                continue
     retry_message = _build_no_write_materialization_retry_message(
         task,
         original_message=original_message,
         tool_results=tool_results,
         forced_tool_name=forced_tool_name,
-        strict_write_only=strict_write_only,
+        strict_write_only=exact_tools,
+        quality_errors=quality_errors,
+        current_files=current_files,
+        existing_exports=existing_exports,
     )
     retry_context = _pin_materialize_context_delivery_mode(dict(context), True)
     if isinstance(task, dict):
@@ -820,8 +968,9 @@ async def _run_no_write_materialization_retry(
     retry_context["_transaction_kernel_forced_tool_definitions"] = _no_write_materialization_retry_tool_definitions(
         target_files,
         strict_write_only=strict_write_only,
+        forced_tool_name=forced_tool_name,
     )
-    if strict_write_only:
+    if exact_tools:
         retry_context["_transaction_kernel_forced_tool_choice"] = {
             "type": "function",
             "function": {"name": forced_tool_name},

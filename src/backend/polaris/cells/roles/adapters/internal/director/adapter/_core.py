@@ -977,6 +977,32 @@ class DirectorAdapter(BaseRoleAdapter):
         """获取任务信息"""
         return self.task_runtime.get_task(task_id)
 
+    def _task_row_needs_rematerialize(self, task: dict[str, Any] | None, requested_task_id: str) -> bool:
+        """Return True only for missing/ghost/terminal rows.
+
+        Live L2-11: always calling ensure_task_row replaced a claimable
+        ``TASK-1-entrypoints`` board row with a new numeric sibling (26, 37,
+        …). Those siblings completed while the PM contract tasks stayed
+        pending. Rematerialize only when lookup missed, the row is terminal,
+        or the TaskBoard file is gone (L1-10 overlay ghost).
+        """
+
+        if not isinstance(task, dict):
+            return True
+        found_id = str(task.get("id") or "").strip()
+        if not found_id:
+            return True
+        status = str(task.get("execution_state") or task.get("status") or "").strip().lower()
+        if status in {"completed", "failed", "cancelled", "canceled", "timeout"}:
+            return True
+        board = getattr(self.task_runtime, "_board", None)
+        getter = getattr(board, "get", None)
+        if callable(getter):
+            normalize = getattr(self.task_runtime, "normalize_task_id", None)
+            normalized = normalize(task.get("id")) if callable(normalize) else task.get("id")
+            return getter(normalized) is None
+        return found_id != str(requested_task_id or "").strip()
+
     def _select_pending_board_task(self) -> dict[str, Any] | None:
         """当编排任务没有 TaskBoard 映射时，回退到可执行的真实待办任务。"""
         return self.task_runtime.select_next_task(prefer_resumable=True)

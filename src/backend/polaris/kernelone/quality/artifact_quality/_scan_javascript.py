@@ -14,6 +14,7 @@ from polaris.kernelone.quality.artifact_quality._models import (
 )
 
 _JS_NAMED_IMPORT_RE = re.compile(r"\bimport\s*\{\s*(?P<symbols>[^}]+)\s*\}\s*from\s*['\"](?P<specifier>\.[^'\"]+)['\"]")
+_JS_RELATIVE_FROM_RE = re.compile(r"\bfrom\s*['\"](?P<specifier>\.[^'\"]+)['\"]")
 _JS_IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][\w$]*$")
 _JS_SUFFIXES = (".js", ".mjs", ".cjs")
 
@@ -47,6 +48,30 @@ def _scan_javascript_named_export_evidence(
             importer_text = importer_path.read_text(encoding="utf-8")
         except (OSError, UnicodeError):
             continue
+        for spec_match in _JS_RELATIVE_FROM_RE.finditer(importer_text):
+            specifier = str(spec_match.group("specifier") or "")
+            if _resolve_relative_js_module(root_full, importer, specifier) is not None:
+                continue
+            raw = f"{importer}: Error [ERR_MODULE_NOT_FOUND]: Cannot find module '{specifier}'"
+            if raw in seen:
+                continue
+            seen.add(raw)
+            errors.append(raw)
+            issues.append(
+                _file_artifact_quality_issue(
+                    raw,
+                    importer,
+                    code="javascript_missing_relative_module",
+                    source="javascript_named_export_scanner",
+                    metadata={
+                        "language": "javascript",
+                        "diagnostic_kind": "missing_relative_module",
+                        "module": specifier,
+                    },
+                )
+            )
+            if len(errors) >= 20:
+                return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
         for match in _JS_NAMED_IMPORT_RE.finditer(importer_text):
             exporter = _resolve_relative_js_module(root_full, importer, str(match.group("specifier") or ""))
             if exporter is None:
@@ -90,14 +115,32 @@ def _scan_javascript_named_export_evidence(
     return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
 
 
+def _javascript_named_exports(text: str) -> tuple[str, ...]:
+    """Return declared ESM named exports. Live L2-11 tests imported CLUE_KINDS
+    while the sibling module exported CLUE_KIND.
+    """
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(
+        r"(?m)^\s*export\s+(?:async\s+)?(?:class|function|const|let|var)\s+(?P<name>[A-Za-z_$][\w$]*)",
+        text,
+    ):
+        name = str(match.group("name") or "")
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    for match in re.finditer(r"(?m)^\s*export\s*\{(?P<body>[^}]+)\}", text):
+        for raw in str(match.group("body") or "").split(","):
+            token = raw.split(" as ", 1)[-1].strip()
+            if _JS_IDENTIFIER_RE.fullmatch(token) and token not in seen:
+                seen.add(token)
+                names.append(token)
+    return tuple(names)
+
+
 def _javascript_module_exports_symbol(text: str, symbol: str) -> bool:
-    escaped = re.escape(symbol)
-    patterns = (
-        rf"(?m)^\s*export\s+(?:async\s+)?(?:class|function)\s+{escaped}\b",
-        rf"(?m)^\s*export\s+(?:const|let|var)\s+{escaped}\b",
-        rf"(?m)^\s*export\s*\{{[^}}]*\b{escaped}\b",
-    )
-    return any(re.search(pattern, text) for pattern in patterns)
+    return symbol in set(_javascript_named_exports(text))
 
 
 def _resolve_relative_js_module(root_full: Path, importer: str, specifier: str) -> str | None:

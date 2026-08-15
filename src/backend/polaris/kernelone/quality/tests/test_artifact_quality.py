@@ -101,6 +101,33 @@ def test_scan_javascript_named_export_ignores_existing_named_export(tmp_path: Pa
     assert not any("does not provide an export named" in error for error in errors)
 
 
+def test_scan_javascript_reports_missing_relative_module(tmp_path: Path) -> None:
+    """Live L2-11: write_file retry invented import * as lost from './domains/lost.js'
+    while authored modules live at src/lost.js. Named-export scan skipped
+    unresolved specifiers, so quality only saw decideMatch later.
+    """
+
+    (tmp_path / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lost.js").write_text("export function normalizeLost() { return {}; }\n", encoding="utf-8")
+    (tmp_path / "src" / "index.js").write_text(
+        "import * as lost from './domains/lost.js';\n"
+        "import { decideMatch } from './engine/rules.js';\n"
+        "export { lost, decideMatch };\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(
+        str(tmp_path),
+        relative_paths=["src/index.js", "src/lost.js"],
+    )
+
+    assert any("Cannot find module './domains/lost.js'" in error for error in evidence.errors)
+    assert any("Cannot find module './engine/rules.js'" in error for error in evidence.errors)
+    kinds = {str(issue.metadata.get("diagnostic_kind")) for issue in evidence.issues}
+    assert "missing_relative_module" in kinds
+
+
 def test_scan_package_manifest_rejects_invalid_script_shell_syntax(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text(
         """

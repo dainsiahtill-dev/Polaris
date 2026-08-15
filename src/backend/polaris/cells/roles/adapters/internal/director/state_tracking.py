@@ -113,6 +113,7 @@ class DirectorStateTracker:
             return {}
         ignored_roots = {
             ".polaris",
+            ".polaris.kernelone.tags.cache.v1",
             "stress_reports",
             ".git",
             ".pytest_cache",
@@ -128,9 +129,9 @@ class DirectorStateTracker:
             rel = path.relative_to(root)
             if not rel.parts:
                 continue
-            if rel.parts[0] in ignored_roots:
+            if rel.parts[0] in ignored_roots or str(rel.parts[0]).startswith(".polaris"):
                 continue
-            if any(part in ignored_roots for part in rel.parts):
+            if any(part in ignored_roots or str(part).startswith(".polaris") for part in rel.parts):
                 continue
             from .helpers import is_project_code_file
 

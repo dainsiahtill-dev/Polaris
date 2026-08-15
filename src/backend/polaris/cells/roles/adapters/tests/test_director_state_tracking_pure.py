@@ -249,3 +249,21 @@ def test_append_director_llm_event_projects_final_request_audit(tmp_path: Any) -
     assert row["final_request_context_audit"] == final_audit
     assert row["final_request_context_audit_present"] is True
     assert row["final_request_context_audit_hash"]
+
+
+def test_collect_workspace_code_files_ignores_kernelone_tags_cache(tmp_path: Any) -> None:
+    """Live L2-11: .polaris.kernelone.tags.cache.v1/*.json counted as
+    director_materialized_out_of_scope even though Director only read
+    src/index.js. Platform tag cache is not a delivery artifact.
+    """
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "index.js").write_text("export const ok = 1;\n", encoding="utf-8")
+    cache_dir = tmp_path / ".polaris.kernelone.tags.cache.v1"
+    cache_dir.mkdir()
+    (cache_dir / "deadbeef.json").write_text("{}", encoding="utf-8")
+
+    snapshot = DirectorStateTracker(str(tmp_path)).collect_workspace_code_files()
+
+    assert "src/index.js" in snapshot
+    assert not any(path.startswith(".polaris") for path in snapshot)

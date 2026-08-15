@@ -101,15 +101,24 @@ async def execute_director_task(
     # Live L1-10: factory drain left TASK-1 as overlay row 42 with no TaskBoard
     # file. get_task() is overlay-only so lookup succeeded, then claim_execution
     # failed task_not_found. ensure_task_row rematerializes a claimable row.
+    # Live L2-11: do not rematerialize a still-claimable PM row; that minted
+    # numeric siblings and left the contract tasks pending.
     if requested_task_id:
-        ensured = adapter._materialize_runtime_task(requested_task_id, input_data)
-        if isinstance(ensured, dict) and str(ensured.get("id") or "").strip():
-            found_id = str((task or {}).get("id") or "").strip()
-            ensured_id = str(ensured.get("id") or "").strip()
-            if found_id != ensured_id:
-                selection_source = "materialized_orchestration_task"
-            task = ensured
-            selected_from_board = True
+        needs_rematerialize = True
+        checker = getattr(adapter, "_task_row_needs_rematerialize", None)
+        if callable(checker):
+            needs_rematerialize = bool(checker(task, requested_task_id))
+        elif isinstance(task, dict) and str(task.get("id") or "").strip() == requested_task_id:
+            needs_rematerialize = False
+        if needs_rematerialize:
+            ensured = adapter._materialize_runtime_task(requested_task_id, input_data)
+            if isinstance(ensured, dict) and str(ensured.get("id") or "").strip():
+                found_id = str((task or {}).get("id") or "").strip()
+                ensured_id = str(ensured.get("id") or "").strip()
+                if found_id != ensured_id:
+                    selection_source = "materialized_orchestration_task"
+                task = ensured
+                selected_from_board = True
     if not task:
         if task_market_exact_claim or exact_handoff_claim:
             selection_source = "materialized_orchestration_task"

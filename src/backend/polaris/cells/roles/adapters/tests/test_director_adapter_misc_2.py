@@ -63,6 +63,7 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _materialization_task_boundary_triage_summary,
     _no_write_materialization_retry_needed,
     _no_write_materialization_retry_tool_definitions,
+    _select_no_write_materialization_retry_tool,
     _pin_file_schema_to_declared_targets,
     _resolve_claim_external_task_id,
     _run_empty_write_content_materialization_retry,
@@ -168,6 +169,7 @@ from ._execution_attempt_helpers import (
     _test_execution_attempt_context,
 )
 
+
 def _install_test_deferred_projection(
     monkeypatch: pytest.MonkeyPatch,
     module: Any,
@@ -247,8 +249,6 @@ def _run_test_materialization_quality_repair_schedule(
         execution_attempt=_test_execution_attempt(workspace, task_id),
     )
     return _project_deferred_repair_results_for_test(workspace, results), summary
-
-
 
 
 def test_materialization_quality_scheduler_bridge_projects_callback_receipts_without_inflating_kernel() -> None:
@@ -1198,6 +1198,52 @@ def test_no_write_materialization_retry_needed_only_after_successful_no_write(tm
     )
 
 
+def test_no_write_retry_needed_after_mutation_bypass_on_existing_targets(tmp_path: Any) -> None:
+    """Live L2-11: TASK-1-entrypoints already had src/index.js, quality scan
+    reported missing ESM named exports, and the first MATERIALIZE_CHANGES
+    turn only called read_file. Kernel sealed mutation_bypass_blocked /
+    no_write_tool_available (success=False). The adapter then skipped the
+    forced write retry because it required success=True and missing files.
+    Existing declared targets with a no-write miss must still retry.
+    """
+
+    target = tmp_path / "src" / "index.js"
+    target.parent.mkdir(parents=True)
+    target.write_text("export function existing() { return 1; }\n", encoding="utf-8")
+    task = {
+        "subject": "runtime entrypoints and exports",
+        "target_files": ["src/index.js"],
+        "scope_paths": ["src/index.js"],
+    }
+    read_only = [{"tool_name": "read_file", "success": True, "status": "success"}]
+
+    assert (
+        _no_write_materialization_retry_needed(
+            primary_llm_summary={
+                "success": False,
+                "error": "no_write_tool_available",
+                "metadata": {
+                    "blocked_reason": "no_write_tool_available",
+                    "workflow_reason": "mutation_bypass_blocked",
+                },
+            },
+            task=task,
+            tool_results=read_only,
+            workspace=str(tmp_path),
+        )
+        is True
+    )
+    assert (
+        _no_write_materialization_retry_needed(
+            primary_llm_summary={"success": False, "error": "provider_stream_timeout"},
+            task=task,
+            tool_results=read_only,
+            workspace=str(tmp_path),
+        )
+        is False
+    )
+
+
 def test_no_write_materialization_retry_message_pins_declared_targets() -> None:
     task = {
         "subject": "Create TypeScript modules",
@@ -1214,6 +1260,140 @@ def test_no_write_materialization_retry_message_pins_declared_targets() -> None:
     assert "Allowed target files: package.json, src/index.ts." in message
     assert "Do not call read, search, tree, or shell tools" in message
     assert "write_file or edit_file" in message
+
+
+def test_no_write_retry_message_includes_named_export_quality_island() -> None:
+    message = _build_no_write_materialization_retry_message(
+        {
+            "subject": "runtime entrypoints",
+            "target_files": ["src/index.js"],
+        },
+        original_message="[mode:materialize]\n范围: src/index.js",
+        tool_results=[{"tool_name": "read_file", "success": True}],
+        quality_errors=[
+            "src/index.js: SyntaxError: The requested module './engine/rules.js' "
+            "does not provide an export named 'computeVerdict'"
+        ],
+    )
+
+    assert "does not provide an export named 'computeVerdict'" in message
+    assert "Quality diagnostics" in message
+
+
+def test_no_write_retry_existing_targets_force_edit_file(tmp_path: Any) -> None:
+    """Live L2-11: existing src/index.js + write_file rewrite invented
+    src/domains/*.js and decideMatch. Existing declared targets must force
+    edit_file, not whole-file write_file.
+    """
+
+    target = tmp_path / "src" / "index.js"
+    target.parent.mkdir(parents=True)
+    target.write_text("import { evaluateCandidate } from './engine/rules.js';\n", encoding="utf-8")
+    task = {"subject": "entrypoints", "target_files": ["src/index.js"]}
+
+    tool_name, exact = _select_no_write_materialization_retry_tool(task, workspace=str(tmp_path))
+    assert tool_name == "edit_file"
+    assert exact is True
+
+    missing_task = {"subject": "create", "target_files": ["src/missing.js"]}
+    create_tool, create_exact = _select_no_write_materialization_retry_tool(
+        missing_task,
+        workspace=str(tmp_path),
+    )
+    assert create_tool == "write_file"
+    assert create_exact is True
+
+
+def test_no_write_retry_needed_when_successful_read_leaves_quality_hole(tmp_path: Any) -> None:
+    """Live L2-11 epoch 9 TASK-2: first call succeeded with read_file +
+    execute_command only. Targets already existed, so the retry gate
+    treated the turn as done and settled director_no_materialized_changes
+    without the forced edit_file that carries sibling exports.
+    """
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "clue.js").write_text("export const CLUE_KIND = Object.freeze({});\n", encoding="utf-8")
+    (src / "index.js").write_text(
+        "import { CLUE_KINDS } from './clue.js';\nexport { CLUE_KINDS };\n",
+        encoding="utf-8",
+    )
+    task = {"subject": "verify", "target_files": ["src/index.js"]}
+    read_only = [
+        {"tool_name": "read_file", "success": True, "status": "success"},
+        {"tool_name": "execute_command", "success": True, "status": "success"},
+    ]
+    assert (
+        _no_write_materialization_retry_needed(
+            primary_llm_summary={"success": True},
+            task=task,
+            tool_results=read_only,
+            workspace=str(tmp_path),
+        )
+        is True
+    )
+    (src / "index.js").write_text(
+        "import { CLUE_KIND } from './clue.js';\nexport { CLUE_KIND };\n",
+        encoding="utf-8",
+    )
+    assert (
+        _no_write_materialization_retry_needed(
+            primary_llm_summary={"success": True},
+            task=task,
+            tool_results=read_only,
+            workspace=str(tmp_path),
+        )
+        is False
+    )
+
+
+def test_no_write_retry_message_includes_current_utf8_target() -> None:
+    """Live L2-11 TASK-2: forced edit_file x4 produced DEO no-effect because
+    the retry prompt lacked the current test file. Existing-file recovery
+    must carry the UTF-8 target body plus the quality island.
+    """
+
+    message = _build_no_write_materialization_retry_message(
+        {"subject": "verify", "target_files": ["tests/product.test.js"]},
+        original_message="[mode:materialize]\n范围: tests/product.test.js",
+        tool_results=[{"tool_name": "read_file", "success": True}],
+        forced_tool_name="edit_file",
+        strict_write_only=True,
+        quality_errors=[
+            "tests/product.test.js: SyntaxError: The requested module '../src/clue.js' "
+            "does not provide an export named 'CLUE_KINDS'"
+        ],
+        current_files={
+            "tests/product.test.js": "import { CLUE_KINDS } from '../src/clue.js';\n",
+        },
+    )
+
+    assert "import { CLUE_KINDS } from '../src/clue.js';" in message
+    assert "Current UTF-8" in message
+    assert "CLUE_KINDS" in message
+
+
+def test_no_write_retry_message_lists_existing_sibling_exports() -> None:
+    """Live L2-11 TASK-2: edit_file kept CLUE_KINDS and invented DEFAULT_CLUES.
+    Retry must list sibling named exports so the model remaps to CLUE_KIND.
+    """
+
+    message = _build_no_write_materialization_retry_message(
+        {"subject": "verify", "target_files": ["tests/product.test.js"]},
+        original_message="fix tests",
+        tool_results=[{"tool_name": "read_file", "success": True}],
+        forced_tool_name="edit_file",
+        strict_write_only=True,
+        quality_errors=[
+            "tests/product.test.js: SyntaxError: The requested module '../src/clue.js' "
+            "does not provide an export named 'CLUE_KINDS'"
+        ],
+        existing_exports={"../src/clue.js": ["CLUE_KIND", "validateClue", "createClue"]},
+    )
+
+    assert "Existing named exports in '../src/clue.js'" in message
+    assert "CLUE_KIND" in message
+    assert "do not invent new import names" in message
 
 
 def test_target_candidates_include_explicit_scope_directories_with_target_files() -> None:
@@ -2735,5 +2915,3 @@ def test_typescript_relative_import_case_repair_rewrites_importer_only(tmp_path:
     )
     assert "from './moon'" in garden.read_text(encoding="utf-8")
     assert moon.read_text(encoding="utf-8") == "export class Moon {}\n"
-
-

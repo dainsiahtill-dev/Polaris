@@ -1153,6 +1153,153 @@ async def test_execute_director_task_rematerializes_overlay_ghost_before_claim(
 
 
 @pytest.mark.asyncio
+async def test_execute_director_task_keeps_claimable_pm_row_without_numeric_sibling(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live L2-11: rematerialize must not replace TASK-1-entrypoints with id 26."""
+
+    from polaris.cells.roles.adapters.internal.director.execute_method import _entry as execute_entry
+
+    live = {"id": "TASK-1-entrypoints", "subject": "Implement entrypoint", "status": "ready"}
+    captured: dict[str, Any] = {}
+    execution_attempt = TaskRuntimeExecutionAttemptIdentityV1(
+        workspace=str(tmp_path),
+        task_id=8,
+        external_task_id="TASK-1-entrypoints",
+        session_id="lease-8",
+        attempt=1,
+        role_id="director",
+        worker_id="director-worker",
+        run_id="director-run-1",
+        lease_expires_at="2030-01-01T00:00:00+00:00",
+    )
+
+    class FakeStateTracker:
+        def build_taskboard_observation_snapshot(self, task_runtime: Any) -> dict[str, Any]:
+            del task_runtime
+            return {}
+
+        def collect_workspace_code_files(self) -> list[str]:
+            return []
+
+        def mark_rework_round_started(self, task_id: str, get_task: Any, update_task: Any) -> None:
+            del task_id, get_task, update_task
+
+    class FakeExecution:
+        def resolve_llm_call_timeout_seconds(self, context: dict[str, Any]) -> float:
+            del context
+            return 1.0
+
+    class FakeAdapter:
+        workspace = str(tmp_path)
+        task_runtime = object()
+        _state_tracker = FakeStateTracker()
+        _execution = FakeExecution()
+
+        def _get_task(self, task_id: str) -> dict[str, Any] | None:
+            return live if task_id == "TASK-1-entrypoints" else None
+
+        def _task_row_needs_rematerialize(self, task: dict[str, Any] | None, requested_task_id: str) -> bool:
+            del requested_task_id
+            return not isinstance(task, dict) or str(task.get("id") or "") != "TASK-1-entrypoints"
+
+        def _materialize_runtime_task(self, task_id: str, input_data: dict[str, Any]) -> dict[str, Any]:
+            captured["materialized"] = task_id
+            del input_data
+            return {"id": "26", "subject": "ghost sibling"}
+
+        def _select_pending_board_task(self) -> dict[str, Any] | None:
+            return None
+
+        def _update_task_progress(self, task_id: str, status: str) -> None:
+            del task_id, status
+
+        def _update_board_task(self, task_id: str, updates: dict[str, Any]) -> None:
+            del task_id, updates
+
+        def _resolve_execution_backend_request(
+            self,
+            *,
+            task_id: str,
+            task: dict[str, Any],
+            input_data: dict[str, Any],
+            context: dict[str, Any],
+        ) -> dict[str, Any]:
+            captured["claimed_task_id"] = task_id
+            captured["backend_context"] = dict(context)
+            return {"task_id": task_id, "task": task, "input_data": input_data}
+
+        def _persist_execution_backend_metadata(self, task_id: str, request: dict[str, Any]) -> None:
+            del task_id, request
+
+        def _get_sequential_config(self, context: dict[str, Any]) -> None:
+            del context
+            return None
+
+    async def fake_claim_task_with_retry(
+        adapter: Any,
+        task: dict[str, Any],
+        target_task_id: str,
+        selection_source: str,
+        requested_task_id: str,
+        run_id: str,
+        input_metadata: dict[str, Any] | None = None,
+    ) -> tuple[Any, ...]:
+        del adapter, input_metadata
+        captured["claim"] = {
+            "task_id": str(task.get("id") or ""),
+            "target_task_id": target_task_id,
+            "selection_source": selection_source,
+            "requested_task_id": requested_task_id,
+            "run_id": run_id,
+        }
+        return (
+            live,
+            "TASK-1-entrypoints",
+            selection_source,
+            True,
+            {},
+            [],
+            {
+                "session": {"session_id": "lease-8"},
+                "execution_attempt": execution_attempt.to_record(),
+            },
+        )
+
+    async def fake_standard_flow(
+        adapter: Any,
+        task_arg: dict[str, Any],
+        target_task_id: str,
+        run_id: str,
+        context: dict[str, Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        del adapter, task_arg, args, kwargs
+        captured["flow_target"] = target_task_id
+        return {"success": True, "task_id": target_task_id}
+
+    monkeypatch.setattr(execute_method_module, "_claim_task_with_retry", fake_claim_task_with_retry)
+    monkeypatch.setattr(execute_method_module, "_execute_standard_llm_flow", fake_standard_flow)
+    monkeypatch.setattr(execute_entry, "_claim_task_with_retry", fake_claim_task_with_retry)
+    monkeypatch.setattr(execute_entry, "_execute_standard_llm_flow", fake_standard_flow)
+
+    result = await execute_director_task(
+        FakeAdapter(),
+        "TASK-1-entrypoints",
+        {"task_id": "TASK-1-entrypoints", "metadata": {"pm_task_id": "TASK-1-entrypoints"}},
+        {"run_id": "director-run-1"},
+    )
+
+    assert result["success"] is True
+    assert "materialized" not in captured
+    assert captured["claim"]["task_id"] == "TASK-1-entrypoints"
+    assert captured["claim"]["target_task_id"] == "TASK-1-entrypoints"
+    assert captured["flow_target"] == "TASK-1-entrypoints"
+
+
+@pytest.mark.asyncio
 async def test_execute_director_task_does_not_call_llm_when_exact_claim_conflicts(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
