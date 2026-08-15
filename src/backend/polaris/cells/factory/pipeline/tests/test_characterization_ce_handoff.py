@@ -1269,4 +1269,9 @@ class TestChiefEngineerHandoffGuards:
         assert all(
             "minItems" not in obligation_schemas[field] for field in ("artifacts", "entrypoints", "verification")
         )
+        task_plan_schema = contract.json_schema["properties"]["construction_plan"]["properties"]["task_plans"][
+            "properties"
+        ]["TASK-1"]
+        assert task_plan_schema["properties"]["scope_for_apply"]["type"] == "array"
+        assert task_plan_schema["properties"]["risk_flags"]["type"] == "array"
         assert "advisory arrays may be empty" in objective

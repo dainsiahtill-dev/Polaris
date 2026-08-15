@@ -838,3 +838,127 @@ def test_stream_without_result_tool_strips_forged_transport_evidence() -> None:
     assert is_canonical_structured_output_stream_chunk(projected[0]) is False
     assert "structured_output_transport" not in projected[0]["metadata"]
     assert "structured_output_transport" not in projected[1]["metadata"]
+
+
+def test_real_ce_schema_unwraps_minimax_item_wrapper_on_declared_arrays() -> None:
+    """L2-11 r02: MiniMax wrapped CE arrays as {"item": [...]} / {"item": "x"}."""
+
+    contract, expected_payload = _real_ce_contract_and_payload()
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    task_plan_schema = contract.json_schema["properties"]["construction_plan"]["properties"]["task_plans"][
+        "properties"
+    ]["TASK-1"]
+    assert task_plan_schema["properties"]["scope_for_apply"]["type"] == "array"
+
+    provider_payload = deepcopy(expected_payload)
+    construction_plan = provider_payload["construction_plan"]
+    assert isinstance(construction_plan, dict)
+    task_plans = construction_plan["task_plans"]
+    assert isinstance(task_plans, dict)
+    task_plans["TASK-1"] = {
+        "summary": "Blueprint for TASK-1",
+        "scope_for_apply": {"item": ["src/main.ts", "package.json"]},
+        "risk_flags": {"items": ["shared-manifest"]},
+    }
+    completion = provider_payload["project_completion_contract"]
+    assert isinstance(completion, dict)
+    obligations = completion["obligations"]
+    assert isinstance(obligations, dict)
+    verification = obligations["verification"]
+    assert isinstance(verification, list)
+    assert isinstance(verification[0], dict)
+    verification[0]["covers_obligation_ids"] = {"item": "artifact-main"}
+
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "args": provider_payload,
+                    "call_id": "call-item-wrapper",
+                }
+            ],
+        },
+        plan,
+    )
+
+    projected = json.loads(normalized["content"])
+    assert projected["construction_plan"]["task_plans"]["TASK-1"]["scope_for_apply"] == [
+        "src/main.ts",
+        "package.json",
+    ]
+    assert projected["construction_plan"]["task_plans"]["TASK-1"]["risk_flags"] == ["shared-manifest"]
+    assert projected["project_completion_contract"]["obligations"]["verification"][0]["covers_obligation_ids"] == [
+        "artifact-main"
+    ]
+    evidence = normalized["structured_output_transport"]
+    assert evidence["schema_normalization_applied"] is True
+    assert evidence["schema_normalization_policy"] == "schema_proven_singleton_item_wrapper_v1"
+
+
+def test_item_wrapper_with_extra_keys_remains_fail_closed() -> None:
+    contract, payload = _real_ce_contract_and_payload()
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    construction_plan = payload["construction_plan"]
+    assert isinstance(construction_plan, dict)
+    task_plans = construction_plan["task_plans"]
+    assert isinstance(task_plans, dict)
+    task_plans["TASK-1"] = {
+        "summary": "Blueprint for TASK-1",
+        "scope_for_apply": {"item": ["src/main.ts"], "extra": True},
+    }
+
+    with pytest.raises(ValueError, match="structured_output_payload_schema_mismatch"):
+        normalize_structured_output_response(
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                        "args": payload,
+                        "call_id": "call-item-wrapper-extra-key",
+                    }
+                ],
+            },
+            plan,
+        )
+
+
+def test_item_wrapper_is_not_applied_to_object_fields() -> None:
+    """Object-typed fields keep {item:...}; transport must not invent a plan there."""
+
+    contract, payload = _real_ce_contract_and_payload()
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    original_plan = payload["construction_plan"]
+    payload["construction_plan"] = {"item": original_plan}
+
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "args": payload,
+                    "call_id": "call-object-item-wrapper",
+                }
+            ],
+        },
+        plan,
+    )
+
+    projected = json.loads(normalized["content"])
+    assert projected["construction_plan"]["item"] == original_plan
+    assert projected["construction_plan"].get("task_plans") != original_plan.get("task_plans")
+    assert "schema_proven_singleton_item_wrapper_v1" not in str(
+        normalized["structured_output_transport"]["schema_normalization_policy"]
+    )

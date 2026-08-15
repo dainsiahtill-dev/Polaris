@@ -1087,6 +1087,10 @@ class _Mixin01:
             task_id: {
                 "type": "object",
                 "minProperties": 1,
+                "properties": {
+                    "scope_for_apply": {"type": "array", "items": {}},
+                    "risk_flags": {"type": "array", "items": {}},
+                },
                 "additionalProperties": True,
             }
             for task_id in portfolio_task_ids

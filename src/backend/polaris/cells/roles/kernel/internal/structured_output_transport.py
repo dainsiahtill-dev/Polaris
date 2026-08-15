@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError, ValidationError
 from polaris.cells.roles.kernel.public.structured_output_contracts import (
     STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
     RoleStructuredOutputContractV1,
@@ -27,6 +28,7 @@ _STRUCTURED_OUTPUT_DESCRIPTION_SUFFIX = (
     "Call this result-submission tool exactly once. It records no side effect and is not an executable workspace tool."
 )
 _MAX_SCHEMA_CONTAINER_STRING_CHARS = 262_144
+_SINGLETON_ITEM_WRAPPER_KEYS = frozenset({"item", "items"})
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +371,88 @@ def _schema_container_type(schema: Mapping[str, Any]) -> type[dict[str, Any]] | 
     return None
 
 
+def _schema_type_includes(schema: Mapping[str, Any], expected: str) -> bool:
+    schema_type = schema.get("type")
+    if schema_type == expected:
+        return True
+    return isinstance(schema_type, list) and expected in schema_type
+
+
+def _payload_matches_schema(value: Any, schema: Mapping[str, Any]) -> bool:
+    try:
+        Draft202012Validator(dict(schema)).validate(value)
+    except (ValidationError, SchemaError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _unwrap_singleton_item_wrapper(value: Any) -> Any | None:
+    """Return the inner payload of a one-key ``item``/``items`` wrapper, else None."""
+
+    if not isinstance(value, Mapping):
+        return None
+    keys = list(value)
+    if len(keys) != 1 or keys[0] not in _SINGLETON_ITEM_WRAPPER_KEYS:
+        return None
+    return value[keys[0]]
+
+
+def _normalize_schema_proven_singleton_item_wrapper(
+    value: Any,
+    schema: Mapping[str, Any],
+) -> tuple[Any, bool]:
+    """Unwrap provider ``{"item": ...}`` only where the caller schema is an array.
+
+    MiniMax and some OpenAPI-strict tool runtimes serialize a JSON-Schema
+    ``array`` as a singleton object keyed ``item``/``items``.  That envelope is
+    protocol noise: the caller already declared ``type=array``.  Unwrap one
+    layer when the reconstructed value still satisfies that exact array
+    schema.  Do not unwrap object fields, invent members, or accept wrappers
+    that keep extra keys.
+    """
+
+    if _schema_type_includes(schema, "array"):
+        wrapped = _unwrap_singleton_item_wrapper(value)
+        if wrapped is not None:
+            candidate = wrapped if isinstance(wrapped, list) else [wrapped]
+            inner, _inner_changed = _normalize_schema_proven_singleton_item_wrapper(candidate, schema)
+            if _payload_matches_schema(inner, schema):
+                return inner, True
+        if isinstance(value, list):
+            item_schema = schema.get("items")
+            if isinstance(item_schema, Mapping):
+                result_items: list[Any] = []
+                changed = False
+                for item in value:
+                    normalized_item, item_changed = _normalize_schema_proven_singleton_item_wrapper(
+                        item,
+                        item_schema,
+                    )
+                    result_items.append(normalized_item)
+                    changed = changed or item_changed
+                return result_items, changed
+        return value, False
+
+    if _schema_type_includes(schema, "object") and isinstance(value, Mapping):
+        properties = schema.get("properties")
+        declared = properties if isinstance(properties, Mapping) else {}
+        result = dict(value)
+        changed = False
+        for key, child_schema in declared.items():
+            if key not in result or not isinstance(child_schema, Mapping):
+                continue
+            normalized_child, child_changed = _normalize_schema_proven_singleton_item_wrapper(
+                result[key],
+                child_schema,
+            )
+            if child_changed:
+                result[key] = normalized_child
+                changed = True
+        return result, changed
+
+    return value, False
+
+
 def _bounded_json_container_candidates(raw_value: str) -> tuple[str, ...]:
     """Return strict, bounded JSON candidates for one wrongly stringified container.
 
@@ -535,6 +619,19 @@ def _validate_payload_with_normalization(
     if not isinstance(schema, Mapping):
         raise ValueError("structured_output_json_schema_must_be_object")
     normalized, normalization_policy = _normalize_schema_proven_json_containers(payload, schema)
+    normalized_item_wrapper, item_wrapper_changed = _normalize_schema_proven_singleton_item_wrapper(
+        normalized,
+        schema,
+    )
+    if not isinstance(normalized_item_wrapper, dict):
+        raise ValueError("structured_output_payload_must_be_json_object")
+    normalized = normalized_item_wrapper
+    if item_wrapper_changed:
+        normalization_policy = (
+            f"{normalization_policy}+schema_proven_singleton_item_wrapper_v1"
+            if normalization_policy != "none"
+            else "schema_proven_singleton_item_wrapper_v1"
+        )
     normalized_text_noise, text_noise_changed = _normalize_schema_closed_object_text_noise(normalized, schema)
     if not isinstance(normalized_text_noise, dict):
         raise ValueError("structured_output_payload_must_be_json_object")
