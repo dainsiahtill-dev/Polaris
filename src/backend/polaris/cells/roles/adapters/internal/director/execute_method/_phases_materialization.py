@@ -693,6 +693,7 @@ async def _phase_no_write_materialization_retry(
     llm_call_timeout: float,
     message: str,
     primary_llm_summary: dict[str, Any] | None,
+    requires_fresh_materialization: bool,
     target_task_id: str,
     task: dict[str, Any],
     workspace_name: str,
@@ -705,6 +706,7 @@ async def _phase_no_write_materialization_retry(
         task=task,
         tool_results=tool_results,
         workspace=str(getattr(adapter, "workspace", "") or ""),
+        requires_fresh_materialization=requires_fresh_materialization,
     ):
         retry_tool_results, no_write_retry_summary = await _run_no_write_materialization_retry(
             adapter,

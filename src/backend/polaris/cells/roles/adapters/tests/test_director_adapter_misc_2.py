@@ -1351,6 +1351,35 @@ def test_no_write_retry_needed_when_successful_read_leaves_quality_hole(tmp_path
     )
 
 
+def test_no_write_retry_needed_when_fresh_materialization_has_clean_existing_targets(
+    tmp_path: Any,
+) -> None:
+    """L2-12 TASK-3-source-core: rematerialize requires fresh writes, but
+    engine files already exist and scan clean.  The quality-hole gate
+    skipped forced edit_file and settled director_no_materialized_changes.
+    """
+
+    engine = tmp_path / "src" / "engine"
+    engine.mkdir(parents=True)
+    (engine / "__init__.py").write_text("from src.engine.forecast import compose_forecast\n", encoding="utf-8")
+    task = {
+        "subject": "implement core engine modules",
+        "target_files": ["src/engine/__init__.py"],
+        "phase": "implementation",
+    }
+    read_only = [{"tool_name": "read_file", "success": True, "status": "success"}]
+    assert (
+        _no_write_materialization_retry_needed(
+            primary_llm_summary={"success": True},
+            task=task,
+            tool_results=read_only,
+            workspace=str(tmp_path),
+            requires_fresh_materialization=True,
+        )
+        is True
+    )
+
+
 def test_no_write_retry_message_includes_current_utf8_target() -> None:
     """Live L2-11 TASK-2: forced edit_file x4 produced DEO no-effect because
     the retry prompt lacked the current test file. Existing-file recovery

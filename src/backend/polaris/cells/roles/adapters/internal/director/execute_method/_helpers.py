@@ -1080,6 +1080,7 @@ def _no_write_materialization_retry_needed(
     task: dict[str, Any],
     tool_results: list[dict[str, Any]],
     workspace: str,
+    requires_fresh_materialization: bool = False,
 ) -> bool:
     if not primary_llm_summary:
         return False
@@ -1104,7 +1105,14 @@ def _no_write_materialization_retry_needed(
         )
     except (OSError, RuntimeError, TypeError, ValueError):
         return False
-    return any(str(error or "").strip() for error in residual)
+    if any(str(error or "").strip() for error in residual):
+        return True
+    # Live L2-12 TASK-3-source-core: rematerialize requires fresh writes, but
+    # engine files already exist and scan clean.  Skipping the forced
+    # edit_file then settled director_no_materialized_changes.  One bounded
+    # existing-target edit retry is required; verification-only tasks stay
+    # on the residual-quality path above.
+    return bool(requires_fresh_materialization)
 
 
 async def _run_no_write_materialization_retry(

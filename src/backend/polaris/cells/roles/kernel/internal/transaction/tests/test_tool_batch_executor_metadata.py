@@ -259,6 +259,87 @@ def test_unknown_write_failure_remains_fail_closed() -> None:
     assert batch_write_failures_require_llm_replan(receipt) is False
 
 
+def test_destructive_shrink_write_failure_requires_fresh_edit_replan() -> None:
+    """L2-12 TASK-3-source-models: 297→87 line replace is retryable, not terminal.
+
+    Live director-7f44e0903ce0 rejected the batch as destructive_shrink, then
+    tool_dispatch_failed closed the task.  The shrink gate is correct; the
+    model must get another invocation to emit a span-unique edit_file.
+    """
+
+    receipt = {
+        "results": [
+            {
+                "tool_name": "edit_file",
+                "status": "error",
+                "error": (
+                    "deo_physical_execution_failed:Destructive shrink rejected: "
+                    "this edit would replace 297 lines of src/models/__init__.py "
+                    "with only 87 line(s). Large deletions disguised as edits "
+                    "destroy working code."
+                ),
+                "result": {
+                    "ok": False,
+                    "error_type": "destructive_shrink",
+                    "retryable": True,
+                    "physical_error": (
+                        "Destructive shrink rejected: this edit would replace "
+                        "297 lines of src/models/__init__.py with only 87 line(s)."
+                    ),
+                },
+            }
+        ]
+    }
+
+    assert batch_write_failure_error_types(receipt) == ("destructive_shrink",)
+    assert batch_write_failures_require_llm_replan(receipt) is True
+
+
+def test_source_syntax_regression_write_failure_requires_fresh_edit_replan() -> None:
+    """L2-12 TASK-3-source-modules: syntax regression is a replan, not dispatch fail."""
+
+    receipt = {
+        "results": [
+            {
+                "tool_name": "edit_file",
+                "status": "error",
+                "result": {
+                    "ok": False,
+                    "error_type": "source_syntax_regression",
+                    "retryable": True,
+                },
+            }
+        ]
+    }
+
+    assert batch_write_failure_error_types(receipt) == ("source_syntax_regression",)
+    assert batch_write_failures_require_llm_replan(receipt) is True
+
+
+def test_directed_effect_no_effect_failure_requires_fresh_edit_replan() -> None:
+    """L2-12 TASK-3-source-core: proven no-effect after fence is a replan, not unknown."""
+
+    receipt = {
+        "results": [
+            {
+                "tool_name": "edit_file",
+                "status": "error",
+                "error": "deo_physical_execution_failed:physical mutation produced no effect",
+                "result": {
+                    "schema_version": "roles.adapters.directed_effect_physical_failure.v1",
+                    "error_code": "deo_physical_execution_failed",
+                    "failure_kind": "physical_result_failed",
+                    "physical_error": "physical mutation produced no effect",
+                    "physical_error_type": "",
+                },
+            }
+        ]
+    }
+
+    assert batch_write_failure_error_types(receipt) == ("director_write_no_effect",)
+    assert batch_write_failures_require_llm_replan(receipt) is True
+
+
 def test_directed_effect_no_replacement_failure_requires_fresh_edit_replan() -> None:
     """A physical no-match is a stale edit, not an unknown hard failure."""
 

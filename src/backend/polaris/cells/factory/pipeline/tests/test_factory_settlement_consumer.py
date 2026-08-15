@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -267,6 +268,8 @@ def _append_source_fact(
     payload_workspace: str | None = None,
     payload_schema: object = TASK_RUNTIME_EXECUTION_FACT_SCHEMA_V1,
     suffix: str = "1",
+    adapter_result: Mapping[str, Any] | None = None,
+    task_completion_projection: Mapping[str, Any] | None = None,
 ) -> FactEventAppendedV1:
     typed_fact = TaskRuntimeExecutionFactV1(
         transition_id=f"transition-{suffix}",
@@ -295,6 +298,13 @@ def _append_source_fact(
         payload.pop("factory_run_id", None)
     else:
         payload["factory_run_id"] = factory_run_id
+    if adapter_result is not None or task_completion_projection is not None:
+        metadata: dict[str, Any] = {}
+        if adapter_result is not None:
+            metadata["adapter_result"] = dict(adapter_result)
+        if task_completion_projection is not None:
+            metadata["task_completion_projection"] = dict(task_completion_projection)
+        payload["task_row_snapshot"] = {"metadata": metadata}
     return fact_stream.append(
         AppendFactEventCommandV1(
             workspace=workspace,
@@ -630,6 +640,84 @@ async def test_non_factory_terminal_fact_is_ignored_checkpointed_and_does_not_bl
 
 
 @pytest.mark.asyncio
+async def test_rematerialize_no_write_complete_is_ignored_and_does_not_block_write_fact(
+    tmp_path: Path,
+) -> None:
+    """L2-12 epoch 7: rematerialize complete must not park settlement FIFO.
+
+    Live factory_a1b49b0460f2 seq 515 was TASK-1 rematerialize completed
+    (write_tool_evidence=None, new_files=[], CE projection present).  That
+    fact entered waiting_barrier because the factory-run barrier was still
+    open (TASK-3-* in flight).  FIFO stayed at checkpoint 514, later
+    source-models/core write facts never applied, and every wake re-scanned
+    the TaskRuntime jsonl + Run Ledger barrier on the asyncio loop until
+    the Director heartbeat/lease died.
+    """
+
+    workspace = _workspace(tmp_path)
+    fact_stream = FactStreamAdapter()
+    rematerialize = _append_source_fact(
+        fact_stream,
+        workspace,
+        suffix="rematerialize-task-1",
+        adapter_result={"write_tool_evidence": None, "new_files": [], "modified_files": []},
+        task_completion_projection={
+            "task_id": "TASK-1",
+            "project_id": "L2-12",
+            "run_id": "factory-run-1",
+        },
+    )
+    written = _append_source_fact(
+        fact_stream,
+        workspace,
+        suffix="source-models-write",
+        adapter_result={
+            "write_tool_evidence": True,
+            "new_files": [],
+            "modified_files": ["src/models/weather.py"],
+        },
+    )
+    barrier = MutableBarrier(
+        workspace=workspace,
+        fencing_token=7,
+        source_fact_visible=False,
+        closed=False,
+        release_allowed=False,
+    )
+    factory_runs = RecordingFactoryRuns()
+    consumer, journal = _build_consumer(
+        workspace=workspace,
+        fact_stream=fact_stream,
+        barrier=barrier,
+        factory_runs=factory_runs,
+    )
+
+    report = await consumer.start()
+
+    assert [decision.outcome for decision in report.decisions] == [
+        SettlementOutcome.IGNORED,
+        SettlementOutcome.PENDING,
+    ]
+    assert report.decisions[0].source_fact_event_id == rematerialize.event_id
+    assert report.decisions[0].reason_code == "rematerialize_no_write_terminal_fact"
+    assert report.decisions[1].source_fact_event_id == written.event_id
+    assert report.decisions[1].reason_code == "run_ledger_barrier_open"
+    assert report.ack_safe is False
+    assert factory_runs.settle_calls == []
+    assert [query.source_fact_event_id for query in barrier.queries] == [written.event_id]
+    assert journal.latest_checkpoint_offset(source_stream=TASK_RUNTIME_EXECUTION_STREAM) == 1
+
+    barrier.source_fact_visible = True
+    barrier.closed = True
+    barrier.release_allowed = True
+    applied = await consumer.wake()
+
+    assert applied.ack_safe is True
+    assert applied.decisions[-1].outcome is SettlementOutcome.APPLIED
+    assert factory_runs.settle_calls == ["factory-run-1"]
+
+
+@pytest.mark.asyncio
 async def test_duplicate_delivery_is_ack_safe_without_second_settlement(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     fact_stream = FactStreamAdapter()
@@ -787,11 +875,7 @@ def test_stale_replay_snapshots_reuse_concurrent_waiting_barrier(tmp_path: Path)
     )
 
     assert recovered.event_id == first.event_id
-    pending = [
-        record
-        for record in journal.records()
-        if record.status is SettlementJournalStatus.PENDING
-    ]
+    pending = [record for record in journal.records() if record.status is SettlementJournalStatus.PENDING]
     assert len(pending) == 1
     assert pending[0].payload["barrier_hash"] == "barrier-1"
 
@@ -948,12 +1032,22 @@ async def test_two_consumers_racing_apply_once(tmp_path: Path) -> None:
     first_task = asyncio.create_task(first.start())
     await factory_runs.entered.wait()
     second_task = asyncio.create_task(second.start())
+    # start() now awaits to_thread for the source snapshot.  If first is
+    # released before that snapshot is captured, first checkpoints the
+    # source offset and second replays an empty tail (no DUPLICATE
+    # decision).  Hold APPLYING until second has the in-memory snapshot.
+    deadline = asyncio.get_running_loop().time() + 2.0
+    while getattr(second, "_journal_snapshot", None) is None:
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError("second consumer never captured a source snapshot")
+        await asyncio.sleep(0)
     factory_runs.release.set()
     first_report, second_report = await asyncio.gather(first_task, second_task)
 
     assert factory_runs.settle_calls == ["factory-run-1"]
     assert first_report.ack_safe is True
     assert second_report.ack_safe is True
+    assert second_report.decisions
     assert second_report.decisions[0].outcome is SettlementOutcome.DUPLICATE
 
 
@@ -1077,7 +1171,7 @@ def test_invalid_dead_letter_reuses_exact_event_after_stale_expected_sequence(tm
     invalid_commands = [
         command
         for command in fact_stream.appends
-        if command.idempotency_key.endswith("dead_letter:unsupported_source_schema")
+        if str(command.idempotency_key or "").endswith("dead_letter:unsupported_source_schema")
     ]
     assert [command.expected_seq for command in invalid_commands] == [None, 2, 1]
 
@@ -1145,8 +1239,7 @@ async def test_dead_letter_idempotency_conflict_recovers_first_terminal_record(
     terminals = [
         record
         for record in journal.records()
-        if record.status is SettlementJournalStatus.DEAD_LETTER
-        and record.settlement_key == identity.digest
+        if record.status is SettlementJournalStatus.DEAD_LETTER and record.settlement_key == identity.digest
     ]
     assert len(terminals) == 1
 

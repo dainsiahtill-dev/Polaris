@@ -1051,8 +1051,10 @@ def batch_write_results_all_failed_on_argument_shape(batch_receipt: Mapping[str,
 
 _REPLANNABLE_WRITE_ERROR_TYPES = frozenset(
     {
+        "destructive_shrink",
         "director_write_no_effect",
         "director_write_policy_denied",
+        "source_syntax_regression",
         "invalid_arg",
         "invalid_args",
         "parameter_validation",
@@ -1075,6 +1077,11 @@ _TERMINAL_WRITE_ERROR_TYPES = frozenset(
 _STALE_EDIT_PHYSICAL_ERROR_ANCHORS = (
     "no replacements made",
     "search text not found in file",
+)
+_NO_EFFECT_PHYSICAL_ERROR_ANCHORS = (
+    "physical mutation produced no effect",
+    "proven no-effect result",
+    "produced no effect",
 )
 
 
@@ -1112,6 +1119,8 @@ def _structured_write_failure_error_type(item: Mapping[str, Any]) -> str:
     physical_error = "\n".join(physical_fragments)
     if any(anchor in physical_error for anchor in _STALE_EDIT_PHYSICAL_ERROR_ANCHORS):
         return "stale_edit"
+    if any(anchor in physical_error for anchor in _NO_EFFECT_PHYSICAL_ERROR_ANCHORS):
+        return "director_write_no_effect"
 
     for source in sources:
         error_code = str(source.get("error_code") or "").strip().lower()

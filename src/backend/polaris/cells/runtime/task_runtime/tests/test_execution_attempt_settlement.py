@@ -1091,6 +1091,50 @@ def test_every_active_to_inactive_writer_blocks_on_open_parent_without_writes(
     assert len(_registry_events(identity)) == 1
 
 
+def test_factory_force_abort_terminalizes_expired_open_parent_session(
+    tmp_path: Path,
+) -> None:
+    """L2-12 drain: expired Director session + OPEN DEO parent must not pin lease.
+
+    Live factory_a1b49b0460f2 task 60: session lease expired 06:33:52Z, DEO
+    members were RECEIPT/DEAD_LETTER, parent registry stayed OPEN.  Cancel
+    then returned settlement_parent_close_required and force_fail never
+    ran because it only accepted factory_abort_active_session.
+    """
+
+    workspace = tmp_path / "expired-open-parent"
+    service, task_id, identity = _claim_attempt(workspace)
+    _enroll_parent_registry(identity)
+    _admit_parent(identity)
+    expired_session = service._read_session(task_id)
+    assert expired_session is not None
+    expired_session.lease_expires_at = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+    assert service._write_session(expired_session) is True
+
+    result = service.terminalize_open_tasks_for_factory_abort(
+        factory_run_id="settlement-run",
+        reason="factory_failed",
+        source="factory_terminal_drain_force_active",
+        force_active_sessions=True,
+    )
+
+    assert result["ok"] is True
+    force_failed_count = result.get("force_failed_active_count")
+    force_failed_ids = result.get("force_failed_active_task_ids")
+    assert isinstance(force_failed_count, int)
+    assert isinstance(force_failed_ids, list)
+    assert force_failed_count >= 1
+    assert str(task_id) in {str(item) for item in force_failed_ids}
+    row = service.get_task(task_id)
+    assert row is not None
+    status = row.get("status")
+    status_token = str(getattr(status, "value", status) or "")
+    assert status_token.lower() == "failed"
+    session = service._read_session(task_id)
+    assert session is not None
+    assert str(session.status).lower() != "active"
+
+
 def _director_materialization_attempt(
     workspace: Path,
     *,
@@ -1485,9 +1529,12 @@ def test_failed_materialization_uses_projection_locked_latest_task_row(
         )
     )
 
+    assert result is not None
     assert result["success"] is True
     assert result["dependency_satisfaction"]["materialized_paths"] == ["main.go"]
-    assert service.get_task(parent_id)["status"] == "failed"
+    parent_after = service.get_task(parent_id)
+    assert parent_after is not None
+    assert parent_after["status"] == "failed"
     child = service.get_task(child_id)
     assert child is not None
     assert child["status"] == "pending"
@@ -1611,9 +1658,12 @@ def test_failed_materialization_stays_failed_but_releases_and_replays_dependency
 
     first = service.settle_execution_attempt(command)
 
+    assert first is not None
     assert first["success"] is True
     assert first["code"] == "settled"
-    assert service.get_task(parent_id)["status"] == "failed"
+    parent_after = service.get_task(parent_id)
+    assert parent_after is not None
+    assert parent_after["status"] == "failed"
     child = service.get_task(child_id)
     assert child is not None
     assert child["status"] == "pending"

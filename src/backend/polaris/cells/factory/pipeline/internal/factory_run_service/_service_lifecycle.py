@@ -480,7 +480,11 @@ class _FactoryRunServiceLifecycleMixin:
                 and current_claim is not None
                 and current_claim.operation == operation
             )
-            nonce = current_claim.nonce if resumable_restart_claim and current_claim is not None else f"lifecycle_{uuid.uuid4().hex}"
+            nonce = (
+                current_claim.nonce
+                if resumable_restart_claim and current_claim is not None
+                else f"lifecycle_{uuid.uuid4().hex}"
+            )
             claimed = False
             try:
                 lease = self._claim_lifecycle_operation(
@@ -1232,6 +1236,18 @@ class _FactoryRunServiceLifecycleMixin:
                         details={"physical_attempt_drain": physical_drain_evidence},
                     )
 
+                # Live L2-12: expired Director session + OPEN DEO parent
+                # made fence_expired_factory_run_sessions fail-closed
+                # (settlement_parent_close_required).  Factory stale-owner
+                # recovery already owns the workspace; force-fail that
+                # orphan first, then fence any residual expired session.
+                abort_summary = TaskRuntimeService(str(self.workspace)).terminalize_open_tasks_for_factory_abort(
+                    factory_run_id=run_id,
+                    reason=reason,
+                    source="factory_stale_owner_force_expired_child",
+                    force_active_sessions=True,
+                )
+                run.metadata["factory_task_runtime_abort"] = abort_summary
                 fence_result = fence_expired_factory_run_sessions(
                     FenceExpiredFactoryRunSessionsCommandV1(
                         workspace=str(self.workspace),

@@ -66,11 +66,18 @@ from polaris.cells.roles.kernel.public.physical_attempt_control import (
     ReserveFactoryPhysicalAttemptV1,
 )
 from polaris.cells.runtime.task_runtime.public.contracts import (
+    AdmitDirectedEffectParentCommandV1,
     BindRuntimeTaskToFactoryRunCommandV1,
+    EnrollDirectedEffectParentRegistryStreamCommandV1,
+    ParentCorrelationV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
 )
-from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
+from polaris.cells.runtime.task_runtime.public.service import (
+    TaskRuntimeService,
+    admit_directed_effect_parent,
+    enroll_directed_effect_parent_registry_stream,
+)
 
 
 class _MutableClock:
@@ -2534,6 +2541,74 @@ async def test_explicit_stale_owner_recovery_fences_old_session_before_takeover(
 
 
 @pytest.mark.asyncio
+async def test_stale_owner_recovery_force_fails_expired_open_parent_session(
+    tmp_path: Path,
+) -> None:
+    """L2-12: recover-stale must not die on OPEN DEO parent after heartbeat death.
+
+    fence_expired_factory_run_sessions still settle-first.  Factory FAILED
+    closeout already owns force-fail; stale-owner recovery must use it
+    before the fence or lease stays draining forever.
+    """
+
+    workspace = tmp_path / "workspace"
+    state_root = tmp_path / "runtime" / "factory"
+    workspace.mkdir()
+    clock = _MutableClock()
+    admission = FactoryWorkspaceRunAdmission(
+        workspace,
+        state_root=state_root,
+        lease_ttl_seconds=10,
+        clock=clock,
+    )
+    service = FactoryRunService(
+        workspace,
+        cache_root=tmp_path / "runtime",
+        executor=_SuccessfulStageExecutor(),
+        admission=admission,
+    )
+    run = await service.create_run(FactoryConfig(name="stale-open-parent"))
+    run = await service.start_run(run.id)
+    runtime, task_id, identity = _create_active_factory_child(
+        workspace,
+        factory_run_id=run.id,
+    )
+    enroll = enroll_directed_effect_parent_registry_stream(
+        EnrollDirectedEffectParentRegistryStreamCommandV1(execution_attempt=identity)
+    )
+    assert enroll.ok is True
+    admitted = admit_directed_effect_parent(
+        AdmitDirectedEffectParentCommandV1(
+            workspace=identity.workspace,
+            task_id=identity.task_id,
+            execution_attempt=identity,
+            correlation=ParentCorrelationV1(turn_id="stale-turn", batch_id="stale-batch"),
+            admission_idempotency_key="stale-expired-parent",
+            expected_version=0,
+            expected_seq=1,
+            actor="factory-stale-test",
+        )
+    )
+    assert admitted.code == "parent_admitted"
+    _expire_task_runtime_session(runtime, identity)
+    clock.advance(11)
+    stale = admission.current()
+    assert stale is not None
+
+    released = await service.recover_stale_workspace_owner(
+        run.id,
+        expected_fencing_token=stale.fencing_token,
+        reason="owner process disappeared after director heartbeat death",
+    )
+
+    assert released.state.value == "released"
+    row = runtime.get_task(task_id)
+    assert row is not None
+    status = row.get("status")
+    assert str(getattr(status, "value", status) or "").lower() == "failed"
+
+
+@pytest.mark.asyncio
 async def test_restarted_service_replays_physical_attempts_before_stale_owner_release(
     tmp_path: Path,
 ) -> None:
@@ -2776,6 +2851,59 @@ async def test_retry_run_rejects_active_factory_child(tmp_path: Path) -> None:
     assert stored is not None
     assert stored.status == FactoryRunStatus.FAILED
     assert stored.metadata["factory_child_sessions_settled"] is False
+
+
+@pytest.mark.asyncio
+async def test_retry_run_force_aborts_expired_open_parent_child(tmp_path: Path) -> None:
+    """L2-12: retry_phase=implementation must not pin on expired OPEN-parent session.
+
+    complete_run already failed drain with the old abort codes.  Retry must
+    force-fail the leftover expired Director child before re-entering
+    director_dispatch.  A still-live child stays blocked by
+    test_retry_run_rejects_active_factory_child.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    service = FactoryRunService(
+        workspace,
+        cache_root=tmp_path / "runtime",
+        executor=_SuccessfulStageExecutor(),
+    )
+    run = await service.create_run(FactoryConfig(name="retry-expired-open-parent", stages=["director_dispatch"]))
+    await service.start_run(run.id)
+    failed = await service.complete_run(run.id, success=False)
+    assert failed.status is FactoryRunStatus.FAILED
+    assert failed.metadata["factory_workspace_run_lease"]["state"] == "released"
+
+    runtime, task_id, identity = _create_active_factory_child(workspace, factory_run_id=run.id)
+    enroll = enroll_directed_effect_parent_registry_stream(
+        EnrollDirectedEffectParentRegistryStreamCommandV1(execution_attempt=identity)
+    )
+    assert enroll.ok is True
+    admitted = admit_directed_effect_parent(
+        AdmitDirectedEffectParentCommandV1(
+            workspace=identity.workspace,
+            task_id=identity.task_id,
+            execution_attempt=identity,
+            correlation=ParentCorrelationV1(turn_id="retry-turn", batch_id="retry-batch"),
+            admission_idempotency_key="retry-expired-parent",
+            expected_version=0,
+            expected_seq=1,
+            actor="factory-retry-test",
+        )
+    )
+    assert admitted.code == "parent_admitted"
+    _expire_task_runtime_session(runtime, identity)
+
+    retried = await service.retry_run_from_stage(run.id, target_stage="director_dispatch", reason="l2-12 retry")
+
+    assert retried.status is FactoryRunStatus.RECOVERING
+    assert retried.metadata["factory_child_sessions_settled"] is True
+    row = runtime.get_task(task_id)
+    assert row is not None
+    status = row.get("status")
+    assert str(getattr(status, "value", status) or "").lower() == "failed"
 
 
 @pytest.mark.asyncio

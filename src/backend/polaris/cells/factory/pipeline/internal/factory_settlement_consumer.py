@@ -43,6 +43,37 @@ _TASK_RUNTIME_SCHEMA_PREFIX = "task-runtime.execution-fact/"
 logger = logging.getLogger(__name__)
 
 
+def _mapping(value: object) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _adapter_result_from_payload(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    snapshot = _mapping(payload.get("task_row_snapshot"))
+    metadata = _mapping(snapshot.get("metadata")) or _mapping(payload.get("metadata"))
+    adapter = metadata.get("adapter_result")
+    if isinstance(adapter, Mapping):
+        return adapter
+    adapter = payload.get("adapter_result")
+    return adapter if isinstance(adapter, Mapping) else {}
+
+
+def _is_rematerialize_no_write_terminal(payload: Mapping[str, Any]) -> bool:
+    """Return True for rematerialize completes that must not enter waiting_barrier.
+
+    Live L2-12 seq 515: TASK-1 rematerialize completed with a CE projection,
+    write_tool_evidence=None, and empty new/modified files.  That fact still
+    had factory_run_id so settlement treated it as a factory terminal and
+    parked FIFO on an open run-level barrier.
+    """
+
+    adapter = _adapter_result_from_payload(payload)
+    if not adapter or adapter.get("write_tool_evidence") is True:
+        return False
+    snapshot = _mapping(payload.get("task_row_snapshot"))
+    metadata = _mapping(snapshot.get("metadata")) or _mapping(payload.get("metadata"))
+    return bool(metadata.get("task_completion_projection"))
+
+
 class FactorySettlementConsumerError(RuntimeError):
     """Base error raised by the settlement consumer boundary."""
 
@@ -266,10 +297,6 @@ def _canonical_workspace(value: str) -> str:
     return os.path.normcase(str(Path(normalized).expanduser().resolve(strict=False)))
 
 
-def _mapping(value: object) -> Mapping[str, Any]:
-    return value if isinstance(value, Mapping) else {}
-
-
 def _barrier_evidence_refs(snapshot: FactorySettlementBarrierSnapshot) -> tuple[str, ...]:
     """Validate and detach evidence references from one barrier snapshot."""
 
@@ -461,7 +488,7 @@ class FactorySettlementConsumer:
         if journal_snapshot is None:
             source_started_at = time.monotonic()
             logger.warning("[settlement.startup] phase=source_snapshot status=started")
-            source_snapshot = self._read_source_replay_snapshot()
+            source_snapshot = await asyncio.to_thread(self._read_source_replay_snapshot)
             logger.warning(
                 "[settlement.startup] phase=source_snapshot status=completed duration_ms=%d events=%d",
                 int((time.monotonic() - source_started_at) * 1000),
@@ -489,7 +516,10 @@ class FactorySettlementConsumer:
             # records plus the durable source tail.  Appends during this
             # lifecycle continue to update the replacement snapshot.
             checkpoint = journal_snapshot.latest_checkpoint_offset(source_stream=TASK_RUNTIME_EXECUTION_STREAM)
-            source_snapshot = self._read_source_replay_snapshot(start_offset=checkpoint)
+            source_snapshot = await asyncio.to_thread(
+                self._read_source_replay_snapshot,
+                start_offset=checkpoint,
+            )
             source_events = dict(journal_snapshot.source_events)
             source_events.update(source_snapshot.events_by_offset)
             journal_snapshot = SettlementJournalReplaySnapshot.create(
@@ -497,9 +527,7 @@ class FactorySettlementConsumer:
                 source_events=source_events,
                 records=journal_snapshot.records,
                 current_seq=journal_snapshot.current_seq,
-                checkpoint_chain=journal_snapshot.checkpoint_chain(
-                    source_stream=TASK_RUNTIME_EXECUTION_STREAM
-                ),
+                checkpoint_chain=journal_snapshot.checkpoint_chain(source_stream=TASK_RUNTIME_EXECUTION_STREAM),
             )
             replay_events = source_snapshot.events
         self._journal_snapshot = journal_snapshot
@@ -569,6 +597,11 @@ class FactorySettlementConsumer:
                 validated,
                 reason_code="non_factory_terminal_fact",
             )
+        if _is_rematerialize_no_write_terminal(validated.payload):
+            return self._ignored_decision(
+                validated,
+                reason_code="rematerialize_no_write_terminal_fact",
+            )
         try:
             source = self._to_settlement_fact(validated)
         except SourceFactValidationError as exc:
@@ -610,7 +643,7 @@ class FactorySettlementConsumer:
                 reason_code=str(state.payload.get("reason_code") or "already_dead_lettered"),
             )
 
-        barrier = self._query_barrier(source)
+        barrier = await self._query_barrier(source)
         evidence_refs = _barrier_evidence_refs(barrier)
         if barrier.workspace_fencing_token != source.workspace_fencing_token:
             return self._append_dead_letter_decision(
@@ -784,20 +817,22 @@ class FactorySettlementConsumer:
                 reason="factory_settlement_consumer_lease_expired",
             )
 
-    def _query_barrier(
+    async def _query_barrier(
         self,
         source: TaskRuntimeSettlementFact,
     ) -> FactorySettlementBarrierSnapshot:
-        snapshot = self._barrier.query(
-            FactorySettlementBarrierQuery(
-                workspace=self._workspace,
-                factory_run_id=source.factory_run_id,
-                source_fact_event_id=source.event_id,
-                source_fact_seq=source.event_seq,
-                source_run_id=source.source_run_id,
-                workspace_fencing_token=source.workspace_fencing_token,
-            )
+        # Live L2-12 epoch 7: query_factory_settlement_barrier is O(T+C) and
+        # synchronous.  Running it on the asyncio loop while rematerialize
+        # completes sat in waiting_barrier starved Director heartbeats.
+        query = FactorySettlementBarrierQuery(
+            workspace=self._workspace,
+            factory_run_id=source.factory_run_id,
+            source_fact_event_id=source.event_id,
+            source_fact_seq=source.event_seq,
+            source_run_id=source.source_run_id,
+            workspace_fencing_token=source.workspace_fencing_token,
         )
+        snapshot = await asyncio.to_thread(self._barrier.query, query)
         if _canonical_workspace(snapshot.workspace) != self._workspace:
             raise FactorySettlementConsumerError(
                 "Run Ledger barrier returned a foreign workspace",

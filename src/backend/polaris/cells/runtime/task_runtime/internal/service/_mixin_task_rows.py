@@ -51,9 +51,9 @@ if TYPE_CHECKING:
     )
 
 
-_EXECUTION_FACT_ROWS_PROJECTION_CACHE: ContextVar[
-    dict[tuple[str, int], tuple[dict[str, Any], ...]] | None
-] = ContextVar("task_runtime_execution_fact_rows_projection_cache", default=None)
+_EXECUTION_FACT_ROWS_PROJECTION_CACHE: ContextVar[dict[tuple[str, int], tuple[dict[str, Any], ...]] | None] = (
+    ContextVar("task_runtime_execution_fact_rows_projection_cache", default=None)
+)
 
 # Cross-call projection cache, keyed by the durable FactStream head.  Factory
 # polling creates a fresh TaskRuntimeService on every observation, so the
@@ -63,9 +63,7 @@ _EXECUTION_FACT_ROWS_PROJECTION_CACHE: ContextVar[
 # CPU.  The cheap descriptor-bound head query invalidates the cache immediately
 # after any append, including appends from another process.
 _EXECUTION_FACT_ROWS_HEAD_CACHE_MAX = 16
-_EXECUTION_FACT_ROWS_HEAD_CACHE: OrderedDict[
-    tuple[str, int, int], tuple[dict[str, Any], ...]
-] = OrderedDict()
+_EXECUTION_FACT_ROWS_HEAD_CACHE: OrderedDict[tuple[str, int, int], tuple[dict[str, Any], ...]] = OrderedDict()
 _EXECUTION_FACT_ROWS_HEAD_CACHE_LOCK = threading.RLock()
 
 
@@ -605,7 +603,23 @@ class _TaskRowsMixin(_ServiceMixinBase):
                 already_terminal.append(str(task_id))
                 continue
             if result.get("ok") is False:
-                if force_active_sessions and str(result.get("code") or "") == "factory_abort_active_session":
+                # Live L2-12: an expired Director session still looked
+                # "inactive" to cancel, so DEO pre-barrier returned
+                # settlement_parent_close_required and force_fail never ran.
+                # Factory FAILED/CANCELLED closeout must force-fail that
+                # orphan the same way as a still-active session.
+                force_code = str(result.get("code") or "")
+                if force_active_sessions and force_code in {
+                    "factory_abort_active_session",
+                    "settlement_parent_close_required",
+                    "settlement_parent_close_proof_required",
+                    "settlement_parent_registry_invalid",
+                    "settlement_parent_registry_unavailable",
+                    "settlement_directed_effect_unresolved",
+                    "settlement_effect_outcome_conflict",
+                    "settlement_terminal_intent_conflict",
+                    "settlement_parent_close_failed",
+                }:
                     forced = self.force_fail_active_session_for_factory_abort(
                         task_id,
                         factory_run_id=authority,

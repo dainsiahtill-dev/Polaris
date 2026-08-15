@@ -144,6 +144,7 @@ async def _execute_standard_llm_flow(
         baseline_files=baseline_files,
         llm_call_timeout=llm_call_timeout,
         primary_llm_summary=primary_llm_summary,
+        requires_fresh_materialization=requires_fresh_materialization,
         workspace_name=workspace_name,
         state=state,
     )

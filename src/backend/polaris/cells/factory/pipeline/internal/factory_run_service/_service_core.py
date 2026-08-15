@@ -777,6 +777,28 @@ class _FactoryRunServiceCore:
             factory_run_id=run_id,
         )
 
+    @staticmethod
+    def _only_expired_owned_factory_children(evidence: Mapping[str, object]) -> bool:
+        """True when leftover children are expired and owned by this Factory run.
+
+        Live L2-12 retry: task 60 stayed ``active_expired_session`` after
+        Director heartbeat died.  A still-live child must keep blocking
+        reentry (``test_retry_run_rejects_active_factory_child``).
+        """
+
+        sessions = evidence.get("active_sessions")
+        if not isinstance(sessions, (list, tuple)) or not sessions:
+            return False
+        for raw in sessions:
+            if not isinstance(raw, Mapping):
+                return False
+            if raw.get("lease_expired") is not True:
+                return False
+            ownership = str(raw.get("ownership") or "").strip()
+            if ownership != "requested_factory_run":
+                return False
+        return True
+
     async def _require_child_session_settlement_for_reentry(
         self: Any,
         run: FactoryRun,
@@ -784,6 +806,17 @@ class _FactoryRunServiceCore:
         operation: str,
     ) -> dict[str, object]:
         evidence = self._query_child_session_settlement(run.id)
+        if evidence.get("settled") is not True and self._only_expired_owned_factory_children(evidence):
+            from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
+
+            abort_summary = TaskRuntimeService(str(self.workspace)).terminalize_open_tasks_for_factory_abort(
+                factory_run_id=run.id,
+                reason=f"factory_retry_{operation}",
+                source="factory_retry_force_expired_child",
+                force_active_sessions=True,
+            )
+            run.metadata["factory_task_runtime_abort"] = abort_summary
+            evidence = self._query_child_session_settlement(run.id)
         settled = evidence.get("settled") is True
         run.metadata[_CHILD_SESSIONS_SETTLED_METADATA_KEY] = settled
         run.metadata[_CHILD_SESSION_SETTLEMENT_EVIDENCE_METADATA_KEY] = evidence
