@@ -186,6 +186,70 @@ def _run_test_materialization_quality_repair_schedule(
     return _project_deferred_repair_results_for_test(workspace, results), summary
 
 
+class TestResolveDependencyParentTask:
+    """Live L2-12: projection-only rematerialized parents must not hide CE rehydrate."""
+
+    def test_projection_only_live_parent_falls_through_to_ce_handoff(
+        self,
+        tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.adapter import _core as adapter_core
+
+        live_parent = {
+            "id": 21,
+            "status": "completed",
+            "metadata": {
+                "external_task_id": "TASK-2",
+                "adapter_result": {
+                    "write_tool_evidence": False,
+                    "new_files": [],
+                    "tool_results": [],
+                },
+                "task_completion_projection": {"run_id": "factory_a1b49b0460f2"},
+            },
+        }
+        task_runtime = MagicMock()
+        task_runtime.get_task.return_value = live_parent
+        adapter = _make_adapter(tmp_path, task_runtime=task_runtime)
+        reconstructed = {
+            "id": "TASK-2",
+            "metadata": {
+                "external_task_id": "TASK-2",
+                "factory_run_id": "factory_a1b49b0460f2",
+                "task_completion_projection": {
+                    "run_id": "factory_a1b49b0460f2",
+                    "owned_artifacts": [{"path": "src/engine/forecast.py"}],
+                },
+                "dependency_artifact_authority_source": "chief_engineer.strict_handoff",
+            },
+        }
+
+        monkeypatch.setattr(
+            adapter_core,
+            "get_blueprint_status",
+            lambda query: SimpleNamespace(ok=True, blueprint_id="ce_TASK-2_demo"),
+        )
+        monkeypatch.setattr(
+            adapter_core,
+            "validate_director_handoff_from_payload",
+            lambda workspace, payload, require_strict=False: {
+                "allowed": True,
+                "task_completion_projection": reconstructed["metadata"]["task_completion_projection"],
+            },
+        )
+
+        resolved = adapter._resolve_dependency_parent_task(
+            "TASK-2",
+            child_task={"metadata": {"factory_run_id": "factory_a1b49b0460f2"}},
+            context={"metadata": {}},
+        )
+
+        assert resolved is not None
+        assert resolved["metadata"]["dependency_artifact_authority_source"].startswith("chief_engineer.strict_handoff")
+        assert resolved["id"] == "TASK-2"
+
+
 class TestBuildDirectorMessage:
     """_build_director_message constructs prompt text deterministically."""
 

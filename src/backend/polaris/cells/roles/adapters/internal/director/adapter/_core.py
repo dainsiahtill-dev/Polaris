@@ -1269,10 +1269,20 @@ class DirectorAdapter(BaseRoleAdapter):
 
         task_metadata = _copy_mapping_payload(task.get("metadata")) or {}
         context_metadata = _copy_mapping_payload(context.get("metadata")) or {}
-        for source in (task, task_metadata, context, context_metadata):
-            for key in ("factory_run_id", "workflow_run_id", "run_id"):
+        sources = (task, task_metadata, context, context_metadata)
+        # Live L2-12 epoch 5: rematerialized child rows keep factory_run_id in
+        # metadata but put the Director session on workflow_run_id/run_id
+        # (director-*).  Accepting the first non-empty run_id made CE handoff
+        # look up the session instead of factory_a1b49b0460f2, so TASK-2
+        # reconstructed as parent_missing despite sealed project receipts.
+        for source in sources:
+            value = str(source.get("factory_run_id") or "").strip()
+            if value:
+                return value
+        for source in sources:
+            for key in ("workflow_run_id", "run_id"):
                 value = str(source.get(key) or "").strip()
-                if value:
+                if value.startswith("factory_"):
                     return value
         return ""
 
@@ -1301,15 +1311,16 @@ class DirectorAdapter(BaseRoleAdapter):
                 live_adapter_result.get(key) not in (None, "", [], (), {})
                 for key in ("tool_results", "batch_receipt", "primary_llm")
             )
-            has_live_completion_authority = isinstance(
-                live_metadata.get("task_completion_projection"),
-                Mapping,
-            ) or isinstance(live_parent.get("task_completion_projection"), Mapping)
-            if has_live_receipt_evidence or has_live_completion_authority:
+            if has_live_receipt_evidence:
                 return dict(live_parent)
-            # QA-local reset may recreate a skeletal pending parent row after the
-            # original TaskRuntime has drained.  That row has no delivery authority
-            # and must not shadow the same-run strict CE completion projection.
+            # Live L2-12 epoch 2/3: rematerialized TASK-1/TASK-2 completed with a
+            # CE completion projection but empty adapter_result (no new writes).
+            # Treating that projection-only row as sufficient shadowed the CE
+            # handoff + project-receipt rehydrate path, so TASK-3-source-models
+            # failed closed with missing_required_refs=actual_sibling_exports.
+            # QA-local reset may also recreate a skeletal parent after drain.
+            # Those rows have no write-receipt authority and must not shadow
+            # the same-run strict CE completion projection.
 
         factory_run_id = self._dependency_artifact_factory_run_id(task=child_task, context=context)
         if not factory_run_id:

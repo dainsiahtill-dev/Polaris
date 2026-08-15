@@ -753,3 +753,207 @@ def test_snapshot_rejects_resolver_returning_wrong_parent(tmp_path: Path) -> Non
         )
 
     assert exc_info.value.code == "dependency_artifact_parent_identity_mismatch"
+
+
+def _completion_parent(
+    *,
+    task_id: str,
+    run_id: str,
+    project_id: str,
+    contract_hash: str,
+    owned_artifacts: list[dict[str, str]],
+) -> dict[str, Any]:
+    return {
+        "id": task_id,
+        "status": "completed",
+        "metadata": {
+            "external_task_id": task_id,
+            "adapter_result": {
+                "write_tool_evidence": None,
+                "new_files": [],
+                "modified_files": [],
+            },
+            "task_completion_projection": {
+                "schema_version": "polaris.task_completion_projection.v1",
+                "task_id": task_id,
+                "project_id": project_id,
+                "run_id": run_id,
+                "project_contract_hash": contract_hash,
+                "owned_artifacts": owned_artifacts,
+            },
+        },
+    }
+
+
+def test_zero_owned_artifact_split_parent_keeps_sibling_project_receipts(tmp_path: Path) -> None:
+    """L2-12: CE split parent with zero owned artifacts must not wipe sibling exports.
+
+    Live factory_a1b49b0460f2 TASK-3-source-models depends on TASK-2 (sealed
+    project receipts for engine/radio/main) plus TASK-3-foundation (valid CE
+    completion projection, owned_artifacts=[]).  Snapshot used to raise
+    dependency_artifact_receipt_missing for the empty foundation parent, the
+    adapter swallowed it, and final-request coverage failed closed with
+    missing_required_refs=actual_sibling_exports even though TASK-2 bytes and
+    receipts were current.
+    """
+
+    bodies = {
+        "src/engine/__init__.py": "from .forecast import forecast\n",
+        "src/engine/forecast.py": "def forecast() -> str:\n    return 'sun'\n",
+        "src/main.py": "from src.radio import Radio\n",
+        "src/radio.py": "class Radio:\n    pass\n",
+    }
+    for path, body in bodies.items():
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+    contract_hash = "d" * 64
+    run_id = "factory_a1b49b0460f2"
+    project_id = "L2-12"
+    task2 = _completion_parent(
+        task_id="TASK-2",
+        run_id=run_id,
+        project_id=project_id,
+        contract_hash=contract_hash,
+        owned_artifacts=[
+            {
+                "applicability": "required",
+                "obligation_id": f"ART-{path.replace('/', '-')}",
+                "owner_task_id": "TASK-2",
+                "path": path,
+            }
+            for path in bodies
+        ],
+    )
+    foundation = _completion_parent(
+        task_id="TASK-3-foundation",
+        run_id=run_id,
+        project_id=project_id,
+        contract_hash=contract_hash,
+        owned_artifacts=[],
+    )
+    child = {
+        "id": 32,
+        "metadata": {
+            "external_task_id": "TASK-3-source-models",
+            "depends_on": ["TASK-2", "TASK-3-foundation"],
+        },
+    }
+
+    def lookup(query: Any) -> dict[str, str] | None:
+        payload = dict(query)
+        path = str(payload.get("path") or "")
+        if payload.get("owner_task_id") != "TASK-2" or path not in bodies:
+            return None
+        receipt_hash = hashlib.sha256(path.encode("utf-8")).hexdigest()
+        return {
+            **payload,
+            "artifact_hash": hashlib.sha256(bodies[path].encode("utf-8")).hexdigest(),
+            "authority_revision": "b" * 64,
+            "receipt_hash": receipt_hash,
+            "receipt_ref": "execution-broker://project-verification/artifact/" + receipt_hash,
+        }
+
+    snapshot = build_director_dependency_artifact_snapshot(
+        workspace=str(tmp_path),
+        child_task=child,
+        get_task=_resolver({"TASK-2": task2, "TASK-3-foundation": foundation}),
+        get_project_artifact_receipt=lookup,
+    )
+
+    assert type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2
+    payload = snapshot.payload()
+    assert payload["dependency_task_ids"] == ["TASK-2", "TASK-3-foundation"]
+    assert payload["covered_parent_task_ids"] == ["TASK-2", "TASK-3-foundation"]
+    assert payload["zero_artifact_parent_task_ids"] == ["TASK-3-foundation"]
+    assert [module["path"] for module in payload["modules"]] == sorted(bodies)
+    assert payload["receipt_coverage_complete"] is True
+    assert payload["uncovered_artifacts"] == []
+    rendered = "\n".join(snapshot.message_lines())
+    assert "class Radio" in rendered
+    assert "def forecast" in rendered
+    # Live L2-12 epoch 6: snapshot bodies reached messages, but journal
+    # _looks_like_actual_sibling_exports rejected the payload because
+    # module parents != dependency_ids when a CE split parent has 0 artifacts.
+    # Coverage then failed closed with missing_required_refs=actual_sibling_exports.
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+        _looks_like_actual_sibling_exports,
+    )
+
+    assert _looks_like_actual_sibling_exports(payload, messages=None) is True
+    assert (
+        _looks_like_actual_sibling_exports(
+            payload,
+            messages=[{"role": "system", "content": rendered}],
+        )
+        is True
+    )
+
+
+def test_dependency_factory_run_id_prefers_factory_over_director_session() -> None:
+    """L2-12 epoch 5: Director session workflow_run_id must not shadow Factory id.
+
+    Live task 41 had metadata.factory_run_id=factory_a1b49b0460f2 and
+    task.workflow_run_id=director-88d39ad5985a.  The resolver returned the
+    Director session first, CE handoff looked up the wrong run, and snapshot
+    failed closed with dependency_artifact_parent_missing parent=TASK-2
+    despite sealed TASK-2 project receipts.
+    """
+    from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
+
+    task = {
+        "id": 41,
+        "workflow_run_id": "director-88d39ad5985a",
+        "run_id": "director-88d39ad5985a",
+        "metadata": {
+            "external_task_id": "TASK-3-source-models",
+            "factory_run_id": "factory_a1b49b0460f2",
+            "workflow_run_id": "director-88d39ad5985a",
+            "depends_on": ["TASK-2", "TASK-3-foundation"],
+        },
+    }
+    context = {
+        "run_id": "director-88d39ad5985a",
+        "workflow_run_id": "director-88d39ad5985a",
+        "metadata": {"workflow_run_id": "director-88d39ad5985a"},
+    }
+    got = DirectorAdapter._dependency_artifact_factory_run_id(task=task, context=context)
+    assert got == "factory_a1b49b0460f2"
+
+
+def test_dependency_factory_run_id_ignores_director_session_when_factory_absent() -> None:
+    from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
+
+    got = DirectorAdapter._dependency_artifact_factory_run_id(
+        task={"id": 41, "workflow_run_id": "director-88d39ad5985a", "metadata": {}},
+        context={"run_id": "director-88d39ad5985a"},
+    )
+    assert got == ""
+
+
+def test_projectionless_empty_parent_still_requires_receipt(tmp_path: Path) -> None:
+    """Zero-artifact skip is only for a sealed CE projection, not a skeletal row."""
+
+    parent = {
+        "id": "TASK-2",
+        "status": "completed",
+        "metadata": {
+            "external_task_id": "TASK-2",
+            "adapter_result": {
+                "write_tool_evidence": None,
+                "new_files": [],
+                "modified_files": [],
+            },
+        },
+    }
+    with pytest.raises(DirectorDependencyArtifactEvidenceError) as exc_info:
+        build_director_dependency_artifact_snapshot(
+            workspace=str(tmp_path),
+            child_task={
+                "id": 32,
+                "metadata": {"external_task_id": "TASK-3-source-models", "depends_on": ["TASK-2"]},
+            },
+            get_task=_resolver({"TASK-2": parent}),
+        )
+    assert exc_info.value.code == "dependency_artifact_receipt_missing"
+    assert exc_info.value.details["parent_task_id"] == "TASK-2"

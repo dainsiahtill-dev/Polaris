@@ -77,11 +77,7 @@ def test_context_os_prompt_audit_allows_director_quality_repair_protocol_text() 
 
 def test_context_os_prompt_audit_still_rejects_capability_token_in_system_with_repair() -> None:
     """Real control-plane dumps still fail even when repair protocol text is present."""
-    repair_user = (
-        "[director_quality_repair:edit_preferred_single_target]\n"
-        "- Target path: src/main.ts\n"
-        "Fix the file."
-    )
+    repair_user = "[director_quality_repair:edit_preferred_single_target]\n- Target path: src/main.ts\nFix the file."
     audit = audit_context_os_prompt_messages(
         messages=[
             {
@@ -304,6 +300,47 @@ def test_context_os_prompt_audit_accepts_qa_workspace_quality_data_plane() -> No
     assert audit["control_plane"]["isolated"] is True
 
 
+def test_context_os_prompt_audit_allows_domain_noun_in_director_prompt() -> None:
+    """Live L2-12: TASK-2 materialize retry died on content hit domain:/domain.
+
+    Director system/CE text says ``Shared domain types`` and ``domain models``.
+    That is product language, not factory_run_id / job_token leakage.
+    """
+
+    current_user_instruction = (
+        "[mode:materialize]\n"
+        "Emit valid edit_file tool calls now.\n"
+        "The entrypoint runs a real business rule for every supported mood in\n"
+        "the domain registry, then prints a single composed broadcast."
+    )
+    audit = audit_context_os_prompt_messages(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Shared domain types should have one owner module; "
+                    "dependent files must import from that owner.\n"
+                    "The package depends only on the Python standard library so "
+                    "that the domain models, engine, and radio logic stay portable."
+                ),
+            },
+            {
+                "role": "system",
+                "content": "  - 4: blocked - domain owner/model modules\n",
+            },
+            {"role": "user", "content": current_user_instruction},
+        ],
+        context_sources=("state_first_context_os.project",),
+        metadata={"state_first_mode_active": True},
+        current_user_instruction=current_user_instruction,
+        expected=True,
+    )
+
+    assert audit["ok"] is True
+    assert audit["control_plane"]["content_hits"] == []
+    assert audit["control_plane"]["isolated"] is True
+
+
 @pytest.mark.parametrize("authority_key", ("workspace_root", "factory_run_id", "job_token"))
 def test_context_os_prompt_audit_still_rejects_strong_authority_content_key(authority_key: str) -> None:
     current_user_instruction = "Verify the workspace."
@@ -322,7 +359,7 @@ def test_context_os_prompt_audit_still_rejects_strong_authority_content_key(auth
     assert authority_key in audit["control_plane"]["content_hits"]
 
 
-@pytest.mark.parametrize("metadata_key", ("workspace", "metrics"))
+@pytest.mark.parametrize("metadata_key", ("workspace", "metrics", "domain"))
 def test_context_os_prompt_audit_still_rejects_generic_terms_as_message_metadata(metadata_key: str) -> None:
     current_user_instruction = "Verify the workspace."
     audit = audit_context_os_prompt_messages(

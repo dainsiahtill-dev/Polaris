@@ -355,7 +355,18 @@ def _looks_like_actual_sibling_exports(
             if type(guarded_snapshot.get(field)) is not int or guarded_snapshot[field] < 0:
                 return False
         total_bytes += len(body_bytes)
-    if module_parent_ids != set(dependency_ids):
+    # L2-12: CE split parents can be covered with zero owned artifacts
+    # (TASK-3-foundation).  Journal used to require every declared parent to
+    # contribute a module, so TASK-2 sealed bodies were present in messages
+    # but has_actual_sibling_exports stayed false.
+    zero_artifact_parent_ids = _string_list(value.get("zero_artifact_parent_task_ids"))
+    if len(set(zero_artifact_parent_ids)) != len(zero_artifact_parent_ids):
+        return False
+    if any(parent_id not in dependency_ids for parent_id in zero_artifact_parent_ids):
+        return False
+    if module_parent_ids & set(zero_artifact_parent_ids):
+        return False
+    if module_parent_ids | set(zero_artifact_parent_ids) != set(dependency_ids):
         return False
     if type(value.get("total_byte_count")) is not int or value.get("total_byte_count") != total_bytes:
         return False

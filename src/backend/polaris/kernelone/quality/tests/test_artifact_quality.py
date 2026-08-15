@@ -222,6 +222,32 @@ def test_scan_python_flags_unused_required_term_pairs(tmp_path: Path) -> None:
     assert "unused_required_term_pairs" in kinds
 
 
+def test_scan_python_flags_node_assert_against_npm_run_alias(tmp_path: Path) -> None:
+    """Live L2-11: scripts.test='npm run test:js' while test:js already runs node --test."""
+
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"npm run test:js","test:js":"node --test tests/product.test.js"}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_product.py").write_text(
+        "def test_test_script_runs_real_command():\n"
+        "    test_script = parsed.get('scripts', {}).get('test', '')\n"
+        "    lowered = test_script.lower()\n"
+        "    self.assertIn('node', lowered, f'scripts.test must invoke node: {test_script!r}')\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(
+        str(tmp_path),
+        relative_paths=["tests/test_product.py", "package.json"],
+    )
+
+    assert any("npm-run alias" in error for error in evidence.errors)
+    kinds = {str(issue.metadata.get("diagnostic_kind")) for issue in evidence.issues}
+    assert "npm_run_node_alias_assert" in kinds
+
+
 def test_scan_javascript_ignores_locally_declared_catalog_fixture(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
     (tmp_path / "tests").mkdir()

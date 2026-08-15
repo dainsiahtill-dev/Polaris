@@ -1471,6 +1471,8 @@ def test_no_write_retry_message_covers_python_acceptance_traps() -> None:
     assert "REQUIRED_TERM_PAIRS" in message
     assert "REQUIRED_TERMS" in message
     assert "unknown-command exit 1" in message
+    assert "npm run <name>" in message
+    assert "assertIn('node', scripts.test)" in message
 
 
 def test_no_write_retry_keeps_full_utf8_body_above_legacy_12k_cap() -> None:

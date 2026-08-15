@@ -1000,7 +1000,9 @@ def _build_no_write_materialization_retry_message(
             "Live TAP traps: the substring 'galaxy' is not inside 'galaxies' (y -> ies). "
             "If REQUIRED_TERM_PAIRS exists, delete for-term-in-REQUIRED_TERMS assertIn loops "
             "and accept either pair member. node --test always prints '# fail 0' on success; "
-            "do not assertNotIn('# fail'). If the CLI always runs demo, do not require unknown-command exit 1.\n"
+            "do not assertNotIn('# fail'). If the CLI always runs demo, do not require unknown-command exit 1. "
+            "scripts.test may be `npm run <name>` whose target already invokes node --test; "
+            "do not assertIn('node', scripts.test) against the alias string.\n"
         )
     failure_lines = [str(error).strip() for error in (write_failure_errors or []) if str(error or "").strip()]
     if failure_lines:

@@ -1394,6 +1394,13 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         created_metadata.setdefault("source_task_id", external_id)
         created_metadata.setdefault("materialized_by", "runtime.task_runtime")
         created_metadata.setdefault("materialized_at", utc_now_iso())
+        # Live L2-12 epoch 2: rematerialized TASK-1/TASK-2 completed without new
+        # writes, so adapter_result receipts were dropped. Child
+        # TASK-3-source-models then failed closed with
+        # missing_required_refs=actual_sibling_exports. Inherit completed
+        # parent receipt authority onto the new numeric sibling.
+        if isinstance(existing, dict):
+            self._inherit_completed_dependency_receipt_metadata(created_metadata, existing)
 
         _, row, created_event, reverse_dependency_events = self._create_with_execution_event(
             subject=safe_subject,
@@ -1412,6 +1419,35 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             execution_event,
             execution_events=(created_event, *reverse_dependency_events, execution_event),
         )
+
+    @staticmethod
+    def _inherit_completed_dependency_receipt_metadata(
+        created_metadata: dict[str, Any],
+        existing: Mapping[str, Any],
+    ) -> None:
+        """Copy completed parent receipt authority onto a rematerialized row."""
+
+        existing_metadata = existing.get("metadata")
+        if not isinstance(existing_metadata, Mapping):
+            return
+        adapter_result = existing_metadata.get("adapter_result")
+        has_write_receipts = isinstance(adapter_result, Mapping) and adapter_result.get("write_tool_evidence") is True
+        has_completion_projection = isinstance(existing_metadata.get("task_completion_projection"), Mapping)
+        if not has_write_receipts and not has_completion_projection:
+            return
+        inherited_keys: list[str] = []
+        for key in ("adapter_result", "task_completion_projection"):
+            if key in created_metadata:
+                continue
+            value = existing_metadata.get(key)
+            if value in (None, "", [], (), {}):
+                continue
+            created_metadata[key] = dict(value) if isinstance(value, Mapping) else value
+            inherited_keys.append(key)
+        if not inherited_keys:
+            return
+        created_metadata["inherited_dependency_receipt_from"] = str(existing.get("id") or "").strip()
+        created_metadata["inherited_dependency_receipt_keys"] = inherited_keys
 
     def bind_task_to_factory_run(
         self,

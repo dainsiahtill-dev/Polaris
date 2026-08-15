@@ -256,6 +256,16 @@ def _validated_receipt_by_path(
     return receipts, missing_paths
 
 
+def _task_completion_projection(parent: Mapping[str, Any]) -> dict[str, Any]:
+    """Read the sealed CE completion projection from a parent row or reconstruct."""
+
+    metadata = _mapping(parent.get("metadata"))
+    projection = _mapping(metadata.get("task_completion_projection"))
+    if projection:
+        return projection
+    return _mapping(parent.get("task_completion_projection"))
+
+
 def _completion_artifact_queries(
     *,
     parent: Mapping[str, Any],
@@ -264,10 +274,7 @@ def _completion_artifact_queries(
 ) -> list[dict[str, str]]:
     """Project exact owned-artifact queries from the sealed CE completion projection."""
 
-    metadata = _mapping(parent.get("metadata"))
-    projection = _mapping(metadata.get("task_completion_projection"))
-    if not projection:
-        projection = _mapping(parent.get("task_completion_projection"))
+    projection = _task_completion_projection(parent)
     if not projection:
         return []
     external_task_id = _parent_identity(parent)[1]
@@ -484,6 +491,7 @@ def build_director_dependency_artifact_snapshot(
     modules: list[dict[str, Any]] = []
     uncovered_artifacts: list[dict[str, str]] = []
     covered_parent_ids: list[str] = []
+    zero_artifact_parent_ids: list[str] = []
     total_bytes = 0
     for dependency_id in dependency_ids:
         parent = get_task(dependency_id)
@@ -524,6 +532,16 @@ def build_director_dependency_artifact_snapshot(
         candidate_missing_paths = tuple(dict.fromkeys((*effect_missing_paths, *project_missing_paths)))
         missing_paths = tuple(path for path in candidate_missing_paths if path not in receipts)
         if not receipts:
+            # CE split parents (L2-12 TASK-3-foundation) can have a sealed
+            # completion projection with zero required owned artifacts.  That
+            # parent contributes no sibling bodies.  Failing the whole snapshot
+            # here wiped TASK-2 sealed receipts from the child final request
+            # (missing_required_refs=actual_sibling_exports).  A skeletal row
+            # without a completion projection still fail-closes.
+            if not candidate_missing_paths and _task_completion_projection(parent):
+                covered_parent_ids.append(dependency_id)
+                zero_artifact_parent_ids.append(dependency_id)
+                continue
             raise _fail(
                 "dependency_artifact_receipt_missing",
                 "parent task has no artifact bound to a committed receipt",
@@ -635,6 +653,7 @@ def build_director_dependency_artifact_snapshot(
         "source": _SOURCE,
         "dependency_task_ids": dependency_ids,
         "covered_parent_task_ids": covered_parent_ids,
+        "zero_artifact_parent_task_ids": zero_artifact_parent_ids,
         "modules": modules,
         "module_count": len(modules),
         "total_byte_count": total_bytes,

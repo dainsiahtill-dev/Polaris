@@ -868,6 +868,118 @@ def test_ensure_task_row_recreates_board_file_when_fact_row_is_a_ghost(
     assert claim.get("success") is True
 
 
+def test_ensure_task_row_inherits_completed_adapter_result_after_drain(
+    tmp_path: Path,
+) -> None:
+    """Live L2-12: rematerialized TASK-1 dropped receipts child needed.
+
+    After Factory drain + retry, the new numeric sibling must keep
+    adapter_result so TASK-3-source-models can bind actual_sibling_exports.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    receipt = {
+        "write_tool_evidence": True,
+        "tool_results": [
+            {
+                "success": True,
+                "tool_name": "write_file",
+                "result": {"file": "src/models/mood.py"},
+                "effect_receipt": {"schema_version": "roles.adapters.director_physical_effect_receipt.v2"},
+            }
+        ],
+    }
+    created = service.ensure_task_row(
+        external_task_id="TASK-1",
+        subject="owner models",
+        metadata={"external_task_id": "TASK-1", "adapter_result": receipt},
+    )
+    created_id = int(created["id"])
+    claimed = service.claim_execution(
+        created_id,
+        worker_id="director",
+        role_id="director",
+        run_id="factory-1",
+        selection_source="test",
+        external_task_id="TASK-1",
+    )
+    assert claimed.get("success") is True
+    settled = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="")
+    assert settled.get("success") is True
+    _task_file_path(workspace, created_id).unlink()
+    service = _create_bootstrapped_task_runtime_service(workspace)
+
+    ensured = service.ensure_task_row(
+        external_task_id="TASK-1",
+        subject="rematerialized owner",
+        metadata={"external_task_id": "TASK-1"},
+    )
+
+    metadata = ensured.get("metadata") if isinstance(ensured.get("metadata"), dict) else {}
+    assert int(ensured["id"]) != created_id
+    assert metadata.get("adapter_result") == receipt
+    assert metadata.get("inherited_dependency_receipt_from") == str(created_id)
+    assert "adapter_result" in list(metadata.get("inherited_dependency_receipt_keys") or [])
+
+
+def test_ensure_task_row_inherits_failed_parent_write_receipts_after_drain(
+    tmp_path: Path,
+) -> None:
+    """Live L2-12: TASK-2 wrote files then failed coverage; receipts still count."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    receipt = {
+        "write_tool_evidence": True,
+        "new_files": ["src/engine/forecast.py"],
+        "tool_results": [
+            {
+                "success": True,
+                "tool_name": "write_file",
+                "result": {"file": "src/engine/forecast.py"},
+                "effect_receipt": {"schema_version": "roles.adapters.director_physical_effect_receipt.v2"},
+            }
+        ],
+    }
+    created = service.ensure_task_row(
+        external_task_id="TASK-2",
+        subject="engine",
+        metadata={"external_task_id": "TASK-2", "adapter_result": receipt},
+    )
+    created_id = int(created["id"])
+    claimed = service.claim_execution(
+        created_id,
+        worker_id="director",
+        role_id="director",
+        run_id="factory-1",
+        selection_source="test",
+        external_task_id="TASK-2",
+    )
+    assert claimed.get("success") is True
+    settled = _settle_claimed_execution_attempt(
+        service,
+        claimed,
+        outcome="failed",
+        summary="final_request_context_quality_failed",
+    )
+    assert settled.get("success") is True
+    _task_file_path(workspace, created_id).unlink()
+    service = _create_bootstrapped_task_runtime_service(workspace)
+
+    ensured = service.ensure_task_row(
+        external_task_id="TASK-2",
+        subject="rematerialized engine",
+        metadata={"external_task_id": "TASK-2"},
+    )
+
+    metadata = ensured.get("metadata") if isinstance(ensured.get("metadata"), dict) else {}
+    assert metadata.get("adapter_result") == receipt
+    assert metadata.get("inherited_dependency_receipt_from") == str(created_id)
+
+
 # ---------------------------------------------------------------------------
 # task_exists observable fact-overlay regression
 # ---------------------------------------------------------------------------
