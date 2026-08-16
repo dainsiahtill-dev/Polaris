@@ -11,22 +11,12 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 import json
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
-from polaris.cells.chief_engineer.blueprint.public import BlueprintPersistence
-from polaris.cells.control_plane.run_ledger.public import FailureClassV1
-from polaris.cells.director.runtime.public.repair_kernel_contracts import (
-    build_substantive_node_test_script as _build_substantive_node_test_script,
-    is_overstrict_node_test_script_contract as _is_overstrict_node_test_script_contract,
-    remove_patch_residue_lines as _remove_patch_residue_lines,
-)
 from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
     bootstrap_fact_stream_workspace,
@@ -38,80 +28,21 @@ from polaris.cells.roles.adapters.internal.director import (
 )
 from polaris.cells.roles.adapters.internal.director.adapter import (
     DirectorAdapter,
-    _build_director_blueprint_handoff_lines,
-    _director_actual_interface_injection_enabled,
-    _load_ce_blueprint_contract_payload,
-    _merge_ce_blueprint_contract_payload,
-    _normalize_director_role_response,
-    _prepare_role_dialogue_context,
 )
 from polaris.cells.roles.adapters.internal.director.execute_method import (
-    _build_empty_write_content_retry_message,
-    _build_existing_workspace_task_evidence,
-    _build_no_write_materialization_retry_message,
-    _can_accept_existing_workspace_scope,
-    _deterministic_repair_profile_summary_from_tool_results,
-    _deterministic_repair_source_tools_from_tool_results,
-    _director_direct_text_patch_only_enabled,
-    _director_existing_scope_preflight_enabled,
-    _emit_director_adapter_cognitive_receipt,
-    _empty_write_content_retry_needed,
-    _execution_attempt_authority_from_context,
-    _extract_task_target_path_candidates,
-    _finalize_claimed_execution,
-    _handle_claim_required,
-    _materialization_task_boundary_triage_summary,
-    _no_write_materialization_retry_needed,
     _no_write_materialization_retry_tool_definitions,
     _pin_file_schema_to_declared_targets,
-    _resolve_claim_external_task_id,
-    _run_empty_write_content_materialization_retry,
-    _suspend_claimed_execution_for_cancellation,
-    _task_requires_fresh_materialization,
-    _task_runtime_finalization_failed_result,
-    _task_runtime_heartbeat_exception_signal,
-    _task_runtime_heartbeat_failed_signal,
-    _with_decision_signals,
-    _with_task_runtime_finalize_evidence,
-    execute_director_task,
 )
-from polaris.cells.roles.adapters.internal.director.execute_method_repair_bridge import (
-    run_patch_residue_cleanup,
-    run_python_runtime_smoke,
-    run_python_static_smoke,
-)
-from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor
 from polaris.cells.roles.adapters.internal.director.quality_gate import (
-    _build_materialization_quality_failure_evidence_context,
-    _build_materialization_quality_workspace_evidence_context,
-    _extract_task_interface_contract,
-    _go_runtime_smoke_repair_target_files,
-    _materialization_interface_discrepancy_evidence,
-    _materialization_interface_discrepancy_retry_authorized,
-    _materialization_plan_probe_requires_task_boundary_triage,
     _quality_repair_edit_file_tool_definition,
     _quality_repair_execute_command_tool_definition,
     _quality_repair_write_file_tool_definition,
 )
-from polaris.cells.roles.adapters.internal.director.runtime_repair_tool_adapter import (
-    run_runtime_repair_with_director_tools,
-)
 from polaris.cells.roles.adapters.public import service as roles_adapters_public_service
 from polaris.cells.roles.adapters.public.contracts import RunDirectorMaterializationQualityRepairScheduleCommandV1
-from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1, RoleExecutionResultV1
 from polaris.cells.runtime.task_runtime.public.contracts import (
-    TaskRuntimeExecutionAttemptHeartbeatVerdictV1,
     TaskRuntimeExecutionAttemptIdentityV1,
-    TaskRuntimeExecutionAttemptSettlementVerdictV1,
 )
-from polaris.cells.runtime.task_runtime.public.service import create_task_runtime_execution_attempt_authority
-from polaris.kernelone.events.final_request_evidence import (
-    looks_like_ce_blueprint_payload,
-    looks_like_failed_gate_evidence_context_payload,
-    looks_like_pm_contract_payload,
-    looks_like_workspace_quality_evidence_payload,
-)
-from polaris.kernelone.quality import scan_workspace_artifact_quality
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -167,6 +98,7 @@ from ._execution_attempt_helpers import (
     _test_execution_attempt,
     _test_execution_attempt_context,
 )
+
 
 def _install_test_deferred_projection(
     monkeypatch: pytest.MonkeyPatch,
@@ -247,8 +179,6 @@ def _run_test_materialization_quality_repair_schedule(
         execution_attempt=_test_execution_attempt(workspace, task_id),
     )
     return _project_deferred_repair_results_for_test(workspace, results), summary
-
-
 
 
 def test_typescript_unresolved_unused_import_repair_removes_import(tmp_path: Any) -> None:
@@ -864,7 +794,7 @@ def test_explicit_quality_repair_extracts_rust_compile_target_files(tmp_path: An
 
     engine_dir = tmp_path / "src" / "engine"
     engine_dir.mkdir(parents=True)
-    (tmp_path / "Cargo.toml").write_text("[package]\nname = \"kitchen\"\n", encoding="utf-8")
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "kitchen"\n', encoding="utf-8")
     (tmp_path / "src" / "lib.rs").write_text("pub mod engine;\n", encoding="utf-8")
     (engine_dir / "mod.rs").write_text("pub mod flavor_rules;\n", encoding="utf-8")
     (engine_dir / "flavor_rules.rs").write_text("pub struct PaletteFixture;\n", encoding="utf-8")
@@ -938,6 +868,113 @@ def test_explicit_quality_repair_extracts_cpp_and_java_compile_target_files(tmp_
     assert "src/engine/generator.hpp" in cpp_targets
     assert "src/models/stamp.hpp" in cpp_targets
     assert "Main.java" in java_targets
+
+
+def test_cpp_cmake_lists_case_error_targets_existing_lowercase_manifest(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _explicit_artifact_quality_repair_target_files,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+    (tmp_path / "cmakelists.txt").write_text("cmake_minimum_required(VERSION 3.16)\n", encoding="utf-8")
+    text = "cmakelists.txt:1:1: error: official CMakeLists.txt basename required (found cmakelists.txt)\n"
+    targets = _explicit_artifact_quality_repair_target_files(
+        artifact_quality_errors=[text],
+        changed_files=["src/main.cpp", "cmakelists.txt"],
+        workspace_full=str(tmp_path),
+    )
+    assert "CMakeLists.txt" in targets
+    assert "cmakelists.txt" in targets
+
+
+def test_docs_task_owning_lowercase_cmake_lists_keeps_official_basename_in_scope() -> None:
+    """Linux official CMakeLists.txt must stay writable on the docs owner.
+
+    Live L2-15 remint-16 leased TASK-1-docs with only ``cmakelists.txt``.
+    The LLM no_op'd the existing lowercase file and never created
+    ``CMakeLists.txt``.
+    """
+
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _partition_paths_by_task_write_scope,
+    )
+
+    in_scope, out_of_scope = _partition_paths_by_task_write_scope(
+        ["CMakeLists.txt", "cmakelists.txt", "src/main.cpp"],
+        task={
+            "task_id": "TASK-1-docs",
+            "target_files": ["cmakelists.txt", "readme.md"],
+        },
+    )
+    assert "CMakeLists.txt" in in_scope
+    assert "cmakelists.txt" in in_scope
+    assert "src/main.cpp" in out_of_scope
+
+
+def test_cpp_quality_rotate_skips_same_stem_after_first_attempt(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _select_materialization_quality_repair_target_batch,
+        _should_rotate_materialization_quality_repair_targets,
+    )
+
+    errors = [
+        "src/engine/generator.cpp:86:18: error: ‘const class Robot’ has no member named ‘energy’\n"
+        "src/main.cpp:196:42: error: no matching function for call to ‘Patrol::Patrol’\n"
+        "cmakelists.txt:1:1: error: official CMakeLists.txt basename required (found cmakelists.txt)\n"
+    ]
+    assert _should_rotate_materialization_quality_repair_targets(errors) is True
+    candidates = [
+        "src/engine/generator.cpp",
+        "src/engine/generator.hpp",
+        "src/main.cpp",
+        "cmakelists.txt",
+    ]
+    assert _select_materialization_quality_repair_target_batch(
+        candidates,
+        repair_attempt=2,
+        rotate_after_first_attempt=True,
+    ) == ["src/main.cpp"]
+    assert _select_materialization_quality_repair_target_batch(
+        candidates,
+        repair_attempt=3,
+        rotate_after_first_attempt=True,
+    ) == ["cmakelists.txt"]
+
+
+def test_cpp_class_member_error_keeps_use_site_not_class_header(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _explicit_artifact_quality_repair_target_files,
+    )
+    from polaris.cells.roles.adapters.internal.director.quality_gate._language_targets import (
+        _cpp_undeclared_type_declaration_target_files,
+    )
+
+    models = tmp_path / "src" / "models"
+    engine = tmp_path / "src" / "engine"
+    models.mkdir(parents=True)
+    engine.mkdir(parents=True)
+    (models / "robot.hpp").write_text("#pragma once\n", encoding="utf-8")
+    (models / "energy.hpp").write_text("#pragma once\n", encoding="utf-8")
+    (engine / "generator.cpp").write_text("int x;\n", encoding="utf-8")
+    (tmp_path / "src" / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+    text = (
+        "### src/engine/generator.cpp\n"
+        "src/engine/generator.cpp:49:42: error: ‘const class patrol_chess::models::Robot’ "
+        "has no member named ‘energy’\n"
+        "src/main.cpp:196:42: error: no matching function for call to "
+        "‘patrol_chess::models::Patrol::Patrol(const std::size_t&)’\n"
+    )
+
+    assert _cpp_undeclared_type_declaration_target_files(text, tmp_path) == []
+    targets = _explicit_artifact_quality_repair_target_files(
+        artifact_quality_errors=[text],
+        changed_files=["src/engine/generator.cpp", "src/main.cpp"],
+        workspace_full=str(tmp_path),
+    )
+    assert "src/engine/generator.cpp" in targets
+    assert "src/main.cpp" in targets
+    assert "src/models/robot.hpp" not in targets
 
 
 def test_cpp_undeclared_type_maps_to_existing_owner_header(tmp_path: Any) -> None:

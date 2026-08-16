@@ -901,27 +901,52 @@ def build_rust_trait_import_plan(
     operations: list[RepairOperation] = []
     planned_diagnostics: list[RepairDiagnostic] = []
     seen: set[tuple[str, str]] = set()
+    working = dict(normalized_base)
+    ops_by_path: dict[str, list[RepairOperation]] = {}
     for diagnostic in diagnostics:
         diagnostic_planned = False
         for path, import_line in _parse_rust_trait_import_suggestions((diagnostic,)):
-            if path not in normalized_base or not path.endswith(".rs"):
+            if path not in working or not path.endswith(".rs"):
                 continue
             key = (path, import_line)
             if key in seen:
                 continue
             operation = _rust_trait_import_operation(
                 path=path,
-                content=normalized_base[path],
+                content=working[path],
                 import_line=import_line,
                 diagnostic=diagnostic,
             )
             if operation is None:
                 continue
             seen.add(key)
-            operations.append(operation)
+            current = working[path]
+            working[path] = (
+                current[: int(operation.span_start or 0)]
+                + str(operation.replacement)
+                + current[int(operation.span_end or 0) :]
+            )
+            ops_by_path.setdefault(path, []).append(operation)
             diagnostic_planned = True
         if diagnostic_planned:
             planned_diagnostics.append(diagnostic)
+
+    for path, path_ops in ops_by_path.items():
+        if len(path_ops) == 1:
+            operations.append(path_ops[0])
+            continue
+        original = normalized_base.get(path)
+        repaired = working.get(path)
+        if original is None or repaired is None or repaired == original:
+            continue
+        operations.extend(
+            _file_replace_operations(
+                path=path,
+                original=original,
+                repaired=repaired,
+                diagnostic_id=next((item.diagnostic_id for item in planned_diagnostics), ""),
+            )
+        )
 
     if not operations:
         return None

@@ -233,6 +233,13 @@ def test_hold_llm_when_crate_rewrite_is_still_plannable_without_mutation() -> No
     )
     assert (
         _workspace_quality_hold_llm_for_plannable_deterministic(
+            {"plannable_source_tools": ["deterministic_rust_trait_import_repair"]},
+            write_tool_evidence=True,
+        )
+        is True
+    )
+    assert (
+        _workspace_quality_hold_llm_for_plannable_deterministic(
             {"plannable_source_tools": ["deterministic_rust_derive_repair"]},
             write_tool_evidence=False,
         )
@@ -250,6 +257,39 @@ def test_hold_llm_when_crate_rewrite_is_still_plannable_without_mutation() -> No
             {"plannable_source_tools": []},
             write_tool_evidence=True,
             residual_errors=["error[E0433]: cannot find `models` in `crate`\n  --> src/main.rs:1:12\n"],
+        )
+        is True
+    )
+
+
+def test_owned_unplannable_test_residual_is_not_interface_triage() -> None:
+    from polaris.cells.factory.pipeline.internal.factory_workspace_quality_evidence import (
+        workspace_quality_summary_requires_task_boundary_triage,
+    )
+
+    assert (
+        workspace_quality_summary_requires_task_boundary_triage(
+            {
+                "stage": "runtime_plan_probe_unplannable",
+                "repair_target_files": ["tests/product.rs"],
+                "plan_probe_preaudit": {
+                    "status": "coverage_matched_but_unplannable",
+                    "plannable_source_tools": [],
+                },
+            }
+        )
+        is False
+    )
+    assert (
+        workspace_quality_summary_requires_task_boundary_triage(
+            {
+                "stage": "runtime_plan_probe_unplannable",
+                "repair_target_files": [],
+                "plan_probe_preaudit": {
+                    "status": "coverage_matched_but_unplannable",
+                    "plannable_source_tools": [],
+                },
+            }
         )
         is True
     )
@@ -322,3 +362,32 @@ def test_compiler_excerpt_keeps_early_rustc_help_instead_of_tail() -> None:
     assert "help: a method `name` also exists" in compact
     assert "port.name()" in compact
     assert "could not compile" not in compact
+
+
+def test_compiler_excerpt_keeps_cargo_test_panic_bodies() -> None:
+    from polaris.cells.factory.pipeline.internal.factory_workspace_quality_evidence import (
+        compact_compiler_error_blocks,
+    )
+
+    output = (
+        "running 39 tests\n"
+        "engine::treasure_runner::tests::normal_scenario_yields_go_verdict --- FAILED\n"
+        "\n"
+        "failures:\n"
+        "\n"
+        "---- engine::treasure_runner::tests::normal_scenario_yields_go_verdict stdout ----\n"
+        "\n"
+        "thread 'engine::treasure_runner::tests::normal_scenario_yields_go_verdict' panicked at src/engine/treasure_runner.rs:251:9:\n"
+        "assertion `left == right` failed\n"
+        "  left: Caution\n"
+        " right: Go\n"
+        "\n"
+        "failures:\n"
+        "    engine::treasure_runner::tests::normal_scenario_yields_go_verdict\n"
+        "\n"
+        "error: test failed, to rerun pass `--lib`\n"
+    )
+    compact = compact_compiler_error_blocks(output, limit=2_000)
+    assert "panicked at src/engine/treasure_runner.rs:251:9" in compact
+    assert "left: Caution" in compact
+    assert "right: Go" in compact

@@ -456,6 +456,156 @@ _DIAGNOSTIC_REFERENCED_SOURCE_RE = re.compile(
     r"(?:-->|:::)\s+(?P<path>(?:[A-Za-z]:)?(?:\.{0,2}[/\\])?[^\s:()'\"]+\.[A-Za-z0-9_+-]+)"
     r":(?P<line>\d+)"
 )
+_CPP_DIAGNOSTIC_DEFINITION_PATH_RE = re.compile(
+    r"(?P<path>(?:[A-Za-z]:)?[^\s:'\"]+\.(?:h|hh|hpp|hxx)):(?P<line>\d+)(?::\d+)?:",
+    re.IGNORECASE,
+)
+_CPP_NAMED_TYPE_RE = re.compile(
+    r"(?:class|struct)\s+(?:[\w:]+::)*(?P<type>[A-Za-z_]\w*)"
+    r"|no matching function for call to\s+[''‘\"](?:[\w:]+::)*(?P<ctor>[A-Za-z_]\w*)::"
+    r"|has no member named\s+[''‘\"](?P<member>[A-Za-z_]\w*)",
+    re.IGNORECASE,
+)
+_CPP_ITEM_DEFINITION_RE = re.compile(r"(?m)^\s*(?:class|struct)\s+(?P<name>[A-Z][A-Za-z0-9_]*)\b")
+_DIAGNOSTIC_NAMED_TYPE_RE = re.compile(
+    r"(?:method not found in|on type|for (?:struct|enum|reference)|found for (?:enum|struct))\s+"
+    r"[`'](?P<type>&?(?:mut\s+)?[A-Za-z_][A-Za-z0-9_:]*)[`']",
+    re.IGNORECASE,
+)
+_RUST_ITEM_DEFINITION_RE = re.compile(
+    r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|impl(?:\s*<[^>]+>)?)\s+(?:[A-Za-z_][A-Za-z0-9_:]*\s+for\s+)?"
+    r"(?P<name>[A-Z][A-Za-z0-9_]*)\b"
+)
+
+
+def _diagnostic_named_rust_types(errors: list[str]) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for error in errors:
+        for match in _DIAGNOSTIC_NAMED_TYPE_RE.finditer(str(error or "")):
+            raw = str(match.group("type") or "").replace("&", "").replace("mut ", "").strip()
+            name = raw.rsplit("::", 1)[-1]
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def _rust_type_definition_refs(
+    *,
+    workspace: Path,
+    type_names: list[str],
+    repair_targets: set[str],
+) -> list[tuple[str, int]]:
+    refs: list[tuple[str, int]] = []
+    if not type_names:
+        return refs
+    wanted = set(type_names)
+    candidates: list[Path] = []
+    src_root = workspace / "src"
+    search_root = src_root if src_root.is_dir() else workspace
+    try:
+        candidates = sorted(search_root.rglob("*.rs"))
+    except OSError:
+        return refs
+    for rust_file in candidates:
+        try:
+            rel = rust_file.relative_to(workspace).as_posix()
+        except ValueError:
+            continue
+        if rel in repair_targets or "target" in Path(rel).parts:
+            continue
+        try:
+            text = rust_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for match in _RUST_ITEM_DEFINITION_RE.finditer(text):
+            name = str(match.group("name") or "")
+            if name not in wanted:
+                continue
+            line_number = text.count("\n", 0, match.start()) + 1
+            ref = (rel, line_number)
+            if ref not in refs:
+                refs.append(ref)
+            wanted.discard(name)
+            if not wanted:
+                return refs
+    return refs
+
+
+def _diagnostic_named_cpp_types(errors: list[str]) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for error in errors:
+        for match in _CPP_NAMED_TYPE_RE.finditer(str(error or "")):
+            raw = str(match.group("type") or match.group("ctor") or match.group("member") or "").strip()
+            name = raw.rsplit("::", 1)[-1]
+            if not name:
+                continue
+            candidates = [name]
+            if match.group("member"):
+                candidates.append(name[:1].upper() + name[1:])
+            for candidate in candidates:
+                if not candidate or candidate in seen:
+                    continue
+                seen.add(candidate)
+                names.append(candidate)
+    return names
+
+
+def _cpp_type_definition_refs(
+    *,
+    workspace: Path,
+    type_names: list[str],
+    repair_targets: set[str],
+) -> list[tuple[str, int]]:
+    """Map g++ class/struct names onto existing headers (read-only).
+
+    Live L2-15: ``class Robot has no member named energy`` cites only
+    ``generator.cpp``. Quality LLM then invented ``can_act`` /
+    ``energy_level`` because ``robot.hpp`` never entered the prompt.
+    """
+
+    refs: list[tuple[str, int]] = []
+    if not type_names:
+        return refs
+    wanted = set(type_names)
+    src_root = workspace / "src"
+    include_root = workspace / "include"
+    search_roots = [path for path in (src_root, include_root) if path.is_dir()]
+    if not search_roots:
+        search_roots = [workspace]
+    candidates: list[Path] = []
+    for root in search_roots:
+        try:
+            for suffix in ("*.h", "*.hh", "*.hpp", "*.hxx"):
+                candidates.extend(root.rglob(suffix))
+        except OSError:
+            continue
+    for header in sorted(candidates, key=lambda item: item.as_posix()):
+        try:
+            rel = header.relative_to(workspace).as_posix()
+        except ValueError:
+            continue
+        if rel in repair_targets or any(part in {"build", "cmake-build"} for part in Path(rel).parts):
+            continue
+        try:
+            text = header.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for match in _CPP_ITEM_DEFINITION_RE.finditer(text):
+            name = str(match.group("name") or "")
+            if name not in wanted:
+                continue
+            line_number = text.count("\n", 0, match.start()) + 1
+            ref = (rel, line_number)
+            if ref not in refs:
+                refs.append(ref)
+            wanted.discard(name)
+            if not wanted:
+                return refs
+    return refs
 
 
 def _diagnostic_referenced_definition_context_block(
@@ -470,6 +620,11 @@ def _diagnostic_referenced_definition_context_block(
     ``ReefHazard::Shoal`` / ``PortKind::Outpost`` instead of using the
     existing model enums. Verifier ``-->`` / ``:::`` paths name those
     definitions; they must not become write targets.
+
+    Method-not-found residuals often cite only the consumer ``-->`` line
+    (``budget.remaining()``) and never ``::: src/models/budget.rs``.
+    Resolve the named type (``&Budget``) to its struct/impl file so the
+    LLM sees ``spendable``/``classify`` instead of inventing accessors.
     """
 
     workspace = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
@@ -481,7 +636,11 @@ def _diagnostic_referenced_definition_context_block(
     }
     refs: list[tuple[str, int]] = []
     for error in artifact_quality_errors:
-        for match in _DIAGNOSTIC_REFERENCED_SOURCE_RE.finditer(str(error or "")):
+        path_matches = [
+            *_DIAGNOSTIC_REFERENCED_SOURCE_RE.finditer(str(error or "")),
+            *_CPP_DIAGNOSTIC_DEFINITION_PATH_RE.finditer(str(error or "")),
+        ]
+        for match in path_matches:
             rel = _normalize_declared_task_path(match.group("path"))
             if not rel or rel in repair_targets:
                 continue
@@ -499,6 +658,20 @@ def _diagnostic_referenced_definition_context_block(
             ref = (rel, line_number)
             if ref not in refs:
                 refs.append(ref)
+    for ref in _rust_type_definition_refs(
+        workspace=workspace,
+        type_names=_diagnostic_named_rust_types(artifact_quality_errors),
+        repair_targets=repair_targets,
+    ):
+        if ref not in refs:
+            refs.append(ref)
+    for ref in _cpp_type_definition_refs(
+        workspace=workspace,
+        type_names=_diagnostic_named_cpp_types(artifact_quality_errors),
+        repair_targets=repair_targets,
+    ):
+        if ref not in refs:
+            refs.append(ref)
 
     blocks: list[str] = []
     total_budget = 16000
@@ -510,8 +683,11 @@ def _diagnostic_referenced_definition_context_block(
             lines = source_path.read_text(encoding="utf-8").splitlines()
         except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
             continue
-        start = max(0, line_number - 16)
-        end = min(len(lines), line_number + 24)
+        # Include the impl method list after a struct/enum, not just the
+        # header. Live Budget ``pub struct`` at L74 hid ``spendable`` at L107
+        # behind a 24-line window.
+        start = max(0, line_number - 8)
+        end = min(len(lines), line_number + 80)
         excerpt = "\n".join(f"{index + 1}: {lines[index]}" for index in range(start, end))
         remaining = max(0, total_budget - used)
         if remaining <= 0:
@@ -521,11 +697,23 @@ def _diagnostic_referenced_definition_context_block(
         blocks.append(f"--- {rel} around line {line_number} (READ-ONLY DEFINITION) ---\n```text\n{excerpt}\n```")
     if not blocks:
         return ""
+    cpp_sibling_note = ""
+    if any(rel.endswith((".h", ".hh", ".hpp", ".hxx")) for rel, _line in refs):
+        cpp_sibling_note = (
+            "If g++ says class T has no member named M and a header below "
+            "defines type M (energy -> Energy), T does not own M. Compose the "
+            "existing type at the use-site. Never invent T::M / T::M_* accessors. "
+            "If '{anonymous}::NS' cannot see NS::models, qualify the use-site as "
+            "::NS::models; do not rewrite header namespace nesting. C++17 "
+            "`namespace A::B` must stay one opener/closer; nested "
+            "`namespace A { namespace B {` needs two closers. An unclosed "
+            "A swallows later includes into A::std.\n"
+        )
     return (
         "REFERENCED TYPE DEFINITIONS (READ-ONLY EVIDENCE; NEVER EDIT THESE FILES):\n"
         "Use only the existing variants, methods, and fields shown below. "
         "Never invent members that are absent from these definitions. "
-        "This evidence does not expand write scope.\n" + "\n".join(blocks) + "\n"
+        "This evidence does not expand write scope.\n" + cpp_sibling_note + "\n".join(blocks) + "\n"
     )
 
 
@@ -1906,6 +2094,7 @@ __all__ = [
     "_coerce_artifact_quality_issue_path",
     "_compact_original_message_for_quality_repair",
     "_concrete_npm_test_glob_repair_target",
+    "_diagnostic_named_rust_types",
     "_diagnostic_referenced_definition_context_block",
     "_director_direct_text_patch_only_enabled",
     "_director_existing_scope_preflight_enabled",

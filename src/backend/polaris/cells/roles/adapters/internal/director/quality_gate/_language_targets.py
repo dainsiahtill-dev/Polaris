@@ -186,10 +186,18 @@ def _embedded_rust_compile_repair_target_files(text: str, workspace_root: Path) 
     if not _looks_like_embedded_rust_compile_failure(text):
         return []
     targets: list[str] = []
-    for match in _RUST_COMPILE_PATH_RE.finditer(str(text or "")):
-        rel = _workspace_relative_rust_repair_target(str(match.group("path") or ""), workspace_root)
-        if rel:
-            targets.append(rel)
+    blob = str(text or "")
+    blocks = re.split(r"(?=error\[[Ee]\d+\])", blob)
+    if len(blocks) <= 1:
+        blocks = [blob]
+    for block in blocks:
+        for match in _RUST_COMPILE_PATH_RE.finditer(block):
+            rel = _workspace_relative_rust_repair_target(str(match.group("path") or ""), workspace_root)
+            if rel:
+                # First ``-->`` in a rustc error is the use site. Later
+                # ``defined here`` notes (src/models/*.rs) are companions.
+                targets.append(rel)
+                break
     lowered = str(text or "").lower()
     if (
         "could not compile" in lowered
@@ -202,9 +210,111 @@ def _embedded_rust_compile_repair_target_files(text: str, workspace_root: Path) 
 
 def _looks_like_embedded_rust_compile_failure(text: str) -> bool:
     lowered = str(text or "").lower()
+    if "error[" in lowered and ".rs:" in lowered:
+        # Isolated residual blocks from workspace-validation omit the cargo
+        # wrapper. Live L2-14: ``error[E0061] --> tests/product.rs`` must still
+        # extract the use-site path.
+        return True
     if not any(hint in lowered for hint in ("cargo check", "cargo build", "cargo test", "rustc", "could not compile")):
         return False
     return "error[" in lowered or ".rs:" in lowered or "could not compile" in lowered
+
+
+def _looks_like_embedded_cpp_compile_failure(text: str) -> bool:
+    lowered = str(text or "").lower()
+    if "error:" in lowered and re.search(r"\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx):\d+", lowered):
+        return True
+    if not any(
+        hint in lowered
+        for hint in (
+            "has no member named",
+            "was not declared",
+            "does not name a type",
+            "no matching function for call",
+            "cannot convert",
+            "invalid initialization",
+            "fatal error:",
+            "g++",
+        )
+    ):
+        return False
+    return bool(re.search(r"\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx)", lowered))
+
+
+def _workspace_relative_cpp_repair_target(raw_path: str, workspace_root: Path) -> str:
+    token = str(raw_path or "").strip().strip("'\"`>").replace("\\", "/")
+    if not token:
+        return ""
+    candidate = Path(token)
+    if candidate.is_absolute():
+        try:
+            rel = candidate.resolve().relative_to(workspace_root.resolve()).as_posix()
+        except (OSError, RuntimeError, ValueError):
+            return ""
+    else:
+        rel = _normalize_declared_task_path(token)
+    if Path(rel).suffix.lower() not in _CPP_SOURCE_SUFFIXES:
+        return ""
+    if not _workspace_path_exists_case_insensitive(workspace_root, rel):
+        return ""
+    return rel
+
+
+def _embedded_cpp_compile_repair_target_files(text: str, workspace_root: Path) -> list[str]:
+    """Return first g++ ``path:line: error:`` site per diagnostic (use site)."""
+
+    if not _looks_like_embedded_cpp_compile_failure(text):
+        return []
+    targets: list[str] = []
+    blob = str(text or "")
+    blocks = re.split(
+        r"(?=(?:[A-Za-z]:)?[^\s:'\"]+\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx):\d+(?::\d+)?:\s+error:)",
+        blob,
+        flags=re.IGNORECASE,
+    )
+    if len(blocks) <= 1:
+        blocks = [blob]
+    for block in blocks:
+        match = _CPP_ERROR_USE_SITE_RE.search(block)
+        if match is None:
+            continue
+        rel = _workspace_relative_cpp_repair_target(str(match.group("path") or ""), workspace_root)
+        if rel:
+            targets.append(rel)
+    return _dedupe_preserve_order(targets)[:_QUALITY_REPAIR_TARGET_BATCH_LIMIT]
+
+
+def _cpp_cmake_lists_repair_target_files(text: str, workspace_root: Path) -> list[str]:
+    """Return existing any-case CMake lists when official basename is missing.
+
+    Live L2-15: quality emitted ``cmakelists.txt:1:1: error: official
+    CMakeLists.txt basename required``. ``.txt`` is not a semantic source
+    suffix, so the docs owner never entered repair_target_files.
+    """
+
+    lowered = str(text or "").lower()
+    if "cmakelists.txt" not in lowered:
+        return []
+    if not any(
+        hint in lowered
+        for hint in (
+            "official cmakelists.txt basename required",
+            "cmakelists.txt is missing",
+            "basename required (found",
+        )
+    ):
+        return []
+    try:
+        found = [path for path in workspace_root.iterdir() if path.is_file() and path.name.lower() == "cmakelists.txt"]
+    except OSError:
+        return []
+    targets: list[str] = ["CMakeLists.txt"]
+    for path in found:
+        try:
+            targets.append(path.resolve().relative_to(workspace_root.resolve()).as_posix())
+        except ValueError:
+            targets.append(path.name)
+    return _dedupe_preserve_order(targets)
 
 
 def _workspace_relative_rust_repair_target(raw_path: str, workspace_root: Path) -> str:
@@ -1256,6 +1366,15 @@ _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS: tuple[str, ...] = (
     "redefinition of",
     "has no member named",
     "fatal error:",
+    # Live L2-15: g++ constructor/overload mismatches never said
+    # "has no member" / "not declared", so main.cpp stayed out of
+    # repair_target_files while only generator.cpp member errors bound.
+    "no matching function for call",
+    "cannot convert",
+    "invalid initialization",
+    "candidate expects",
+    "official cmakelists.txt basename required",
+    "cmakelists.txt is missing",
     # javac diagnostics (L1-07 Java projects).
     "cannot find symbol",
 )
@@ -1267,9 +1386,19 @@ _CPP_UNDECLARED_IDENTIFIER_RE = re.compile(
     re.IGNORECASE,
 )
 _CPP_MISSING_MEMBER_TYPE_RE = re.compile(
-    r"(?:struct|class)\s+(?:[\w:]+::)*(?P<type>[A-Za-z_]\w*)['’\"]?\s+has no member named",
+    r"struct\s+(?:[\w:]+::)*(?P<type>[A-Za-z_]\w*)['’\"]?\s+has no member named",
     re.IGNORECASE,
 )
+_CPP_CLASS_MISSING_MEMBER_RE = re.compile(
+    r"class\s+(?:[\w:]+::)*(?P<type>[A-Za-z_]\w*)['’\"]?\s+has no member named",
+    re.IGNORECASE,
+)
+_CPP_ERROR_USE_SITE_RE = re.compile(
+    r"(?P<path>(?:[A-Za-z]:)?[^\s:'\"]+?\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx)):"
+    r"(?P<line>\d+)(?::\d+)?:\s+error:",
+    re.IGNORECASE,
+)
+_CPP_SOURCE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx")
 _CPP_DECL_FILE_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"})
 _CPP_DECL_HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx"})
 
@@ -1310,6 +1439,11 @@ def _cpp_undeclared_type_declaration_target_files(text: str, workspace_root: Pat
     """
 
     names = [match.group("name") for match in _CPP_UNDECLARED_IDENTIFIER_RE.finditer(str(text or ""))]
+    # Only ``struct T has no member`` rebinds to T.hpp (live L1-06 Moon).
+    # ``class T has no member named energy`` is a use-site API mismatch when
+    # Energy already exists as its own type (live L2-15 Robot). Mapping the
+    # class name sent quality_repair to models and marked the engine
+    # owner ``workspace_quality_repair_no_mutation``.
     names.extend(match.group("type") for match in _CPP_MISSING_MEMBER_TYPE_RE.finditer(str(text or "")))
     if not names:
         return []
@@ -1403,6 +1537,18 @@ def _explicit_artifact_quality_repair_target_files(
             rust_targets = _embedded_rust_compile_repair_target_files(text, workspace_root)
             candidates.extend(rust_targets)
             priority_candidates.extend(rust_targets)
+        if _looks_like_embedded_cpp_compile_failure(text):
+            cpp_use_sites = _embedded_cpp_compile_repair_target_files(text, workspace_root)
+            candidates.extend(cpp_use_sites)
+            priority_candidates.extend(cpp_use_sites)
+        for match in re.finditer(r"(?m)^###\s+(?P<path>\S+)", text):
+            rel = _workspace_relative_cpp_repair_target(str(match.group("path") or ""), workspace_root)
+            if rel:
+                candidates.append(rel)
+                priority_candidates.append(rel)
+        cmake_lists_targets = _cpp_cmake_lists_repair_target_files(text, workspace_root)
+        candidates.extend(cmake_lists_targets)
+        priority_candidates.extend(cmake_lists_targets)
         if _looks_like_javascript_module_system_failure(text) and "package.json" in changed_source_set:
             candidates.append("package.json")
             priority_candidates.append("package.json")
@@ -1810,8 +1956,10 @@ __all__ = [
     "_artifact_quality_failed_test_count",
     "_changed_source_repair_target_files",
     "_compiled_javascript_stack_source_candidates",
+    "_cpp_cmake_lists_repair_target_files",
     "_cpp_type_declaration_file_stems",
     "_cpp_undeclared_type_declaration_target_files",
+    "_embedded_cpp_compile_repair_target_files",
     "_embedded_rust_compile_repair_target_files",
     "_explicit_artifact_quality_repair_target_files",
     "_failed_test_title_target_files",
@@ -1836,6 +1984,7 @@ __all__ = [
     "_javascript_runtime_smoke_repair_target_files",
     "_javascript_test_imported_source_target_files",
     "_looks_like_cli_subcommand_quality_failure",
+    "_looks_like_embedded_cpp_compile_failure",
     "_looks_like_embedded_rust_compile_failure",
     "_looks_like_go_workspace_quality_error",
     "_looks_like_javascript_module_system_failure",
@@ -1859,6 +2008,7 @@ __all__ = [
     "_typescript_source_repair_target_for_javascript_output",
     "_workspace_cli_entrypoint_repair_target_files",
     "_workspace_go_entrypoint_repair_target_files",
+    "_workspace_relative_cpp_repair_target",
     "_workspace_relative_go_repair_target",
     "_workspace_relative_javascript_repair_target",
     "_workspace_relative_rust_repair_target",

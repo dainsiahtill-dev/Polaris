@@ -190,6 +190,21 @@ _RUST_XML_GENERIC_CLOSE_RE = re.compile(r"(?:\n(?:</[A-Za-z_][A-Za-z0-9_]*>)+)+\
 
 _RUST_VEC_BARE_GENERIC_RE = re.compile(r"\bVec(?P<inner>[A-Z][A-Za-z0-9_]*)\b(?P<tail>\s*=\s*Vec::new\(\))")
 
+_RUST_E0255_PREVIOUS_IMPORT_RE = re.compile(
+    r"the name [`'\"](?P<name>[A-Za-z_][A-Za-z0-9_]*)[`'\"] is defined multiple times"
+    r".*?^\s*(?P<use_line>\d+)\s*\|\s*(?P<use>(?:pub\s+)?use\s+[^;\n]+;)"
+    r".*?previous import of the (?:type|name) [`'\"](?P=name)[`'\"]",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
+
+_RUST_E0252_REIMPORTED_RE = re.compile(
+    r"the name [`'\"](?P<name>[A-Za-z_][A-Za-z0-9_]*)[`'\"] is defined multiple times"
+    r".*?previous import of the (?:type|name) [`'\"](?P=name)[`'\"]"
+    r".*?^\s*(?P<use_line>\d+)\s*\|\s*(?P<use>(?:pub\s+)?use\s+[^;\n]+;)"
+    r".*?[`'\"](?P=name)[`'\"] reimported here",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
+
 _RUST_UNKNOWN_ENUM_VARIANT_RE = re.compile(
     r"no variant, associated function, or constant named [`'\"](?P<variant>[A-Za-z_][A-Za-z0-9_]*)[`'\"] "
     r"found for enum [`'\"](?P<enum>[A-Za-z_][A-Za-z0-9_:]*)[`'\"]",

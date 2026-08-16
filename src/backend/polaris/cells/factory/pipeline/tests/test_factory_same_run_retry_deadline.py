@@ -45,10 +45,26 @@ def test_same_run_retry_keeps_still_viable_factory_deadline() -> None:
             "factory_run_deadline_epoch_seconds": now + 900.0,
             "factory_run_timeout_seconds": 1800.0,
         },
-        retry_stage="quality_gate",
+        retry_stage="director_dispatch",
     )
 
     assert result is None
+
+
+def test_same_run_retry_still_extends_after_sixteenth_quality_remint() -> None:
+    now = 2_000_000.0
+    result = extend_factory_run_deadline_for_same_run_retry(
+        now_epoch=now,
+        metadata={
+            "factory_run_deadline_epoch_seconds": now - 10.0,
+            "factory_run_timeout_seconds": 1800.0,
+            "factory_run_deadline_extension_count": 16,
+        },
+        retry_stage="quality_gate",
+    )
+
+    assert result is not None
+    assert result["factory_run_deadline_extension_count"] == 17
 
 
 def test_same_run_retry_caps_deadline_extensions() -> None:
@@ -58,7 +74,7 @@ def test_same_run_retry_caps_deadline_extensions() -> None:
         metadata={
             "factory_run_deadline_epoch_seconds": now - 10.0,
             "factory_run_timeout_seconds": 1800.0,
-            "factory_run_deadline_extension_count": 8,
+            "factory_run_deadline_extension_count": 20,
         },
         retry_stage="director_dispatch",
     )
@@ -144,6 +160,98 @@ def test_same_run_retry_allows_eighth_quality_extension() -> None:
 
     assert result is not None
     assert result["factory_run_deadline_extension_count"] == 8
+
+
+def test_same_run_retry_allows_ninth_quality_extension() -> None:
+    now = 2_000_000.0
+    result = extend_factory_run_deadline_for_same_run_retry(
+        now_epoch=now,
+        metadata={
+            "factory_run_deadline_epoch_seconds": now - 10.0,
+            "factory_run_timeout_seconds": 1800.0,
+            "factory_run_deadline_extension_count": 8,
+        },
+        retry_stage="quality_gate",
+    )
+
+    assert result is not None
+    assert result["factory_run_deadline_extension_count"] == 9
+
+
+def test_same_run_retry_allows_tenth_quality_extension() -> None:
+    now = 2_000_000.0
+    result = extend_factory_run_deadline_for_same_run_retry(
+        now_epoch=now,
+        metadata={
+            "factory_run_deadline_epoch_seconds": now - 10.0,
+            "factory_run_timeout_seconds": 1800.0,
+            "factory_run_deadline_extension_count": 9,
+        },
+        retry_stage="quality_gate",
+    )
+
+    assert result is not None
+    assert result["factory_run_deadline_extension_count"] == 10
+
+
+def test_same_run_retry_allows_twelfth_quality_extension() -> None:
+    now = 2_000_000.0
+    result = extend_factory_run_deadline_for_same_run_retry(
+        now_epoch=now,
+        metadata={
+            "factory_run_deadline_epoch_seconds": now - 10.0,
+            "factory_run_timeout_seconds": 1800.0,
+            "factory_run_deadline_extension_count": 11,
+        },
+        retry_stage="quality_gate",
+    )
+
+    assert result is not None
+    assert result["factory_run_deadline_extension_count"] == 12
+
+
+def test_same_run_quality_retry_remints_shrunken_leftover_timeout() -> None:
+    """A leftover 193s epoch is not a viable quality repair budget.
+
+    Live L2-15 remint-9 died after ~19 min. The next retry saw rem=193
+    (shrunken factory_run_timeout_seconds leftover) and skipped remint
+    because 193 >= 180. Quality never got a full same-run epoch.
+    """
+
+    now = 2_000_000.0
+    result = extend_factory_run_deadline_for_same_run_retry(
+        now_epoch=now,
+        metadata={
+            "factory_run_deadline_epoch_seconds": now + 193.0,
+            "factory_run_timeout_seconds": 223.0,
+            "factory_run_deadline_safety_seconds": 30.0,
+            "factory_run_deadline_extension_count": 8,
+        },
+        retry_stage="quality_gate",
+    )
+
+    assert result is not None
+    remaining = float(result["factory_run_deadline_epoch_seconds"]) - now
+    assert remaining >= 1700.0
+    assert remaining <= 1800.0
+    assert result["factory_run_deadline_extension_count"] == 9
+    assert result["factory_run_timeout_seconds"] >= 1800.0
+
+
+def test_same_run_retry_allows_thirteenth_quality_extension() -> None:
+    now = 2_000_000.0
+    result = extend_factory_run_deadline_for_same_run_retry(
+        now_epoch=now,
+        metadata={
+            "factory_run_deadline_epoch_seconds": now - 10.0,
+            "factory_run_timeout_seconds": 1800.0,
+            "factory_run_deadline_extension_count": 12,
+        },
+        retry_stage="quality_gate",
+    )
+
+    assert result is not None
+    assert result["factory_run_deadline_extension_count"] == 13
 
 
 def test_same_run_retry_extends_missing_deadline_for_owner_repair() -> None:

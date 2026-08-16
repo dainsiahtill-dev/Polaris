@@ -423,7 +423,12 @@ def _normalize_cargo_test_failures(text: str) -> list[RepairDiagnostic]:
     """Project ``cargo test`` assertion islands into causal verifier diagnostics."""
 
     blob = str(text or "")
-    if "test result: FAILED" not in blob and "--- FAILED" not in blob:
+    if (
+        "test result: FAILED" not in blob
+        and "--- FAILED" not in blob
+        and "panicked at" not in blob
+        and "error: test failed" not in blob.lower()
+    ):
         return []
     matches = list(_CARGO_TEST_STDOUT_RE.finditer(blob))
     if not matches:

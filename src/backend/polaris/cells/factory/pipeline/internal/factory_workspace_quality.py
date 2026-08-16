@@ -322,6 +322,16 @@ class WorkspaceQualityRunner:
         # the declared test evidence was therefore never executed.
         return [["cargo", "test", "--quiet"]]
 
+    def _cpp_manifest_candidates(self) -> list[Path]:
+        if not self.workspace.is_dir():
+            return []
+        try:
+            return [
+                path for path in self.workspace.iterdir() if path.is_file() and path.name.lower() == "cmakelists.txt"
+            ]
+        except OSError:
+            return []
+
     def _cpp_workspace_quality_commands(self) -> list[list[str]]:
         cpp_files = [
             path
@@ -329,7 +339,8 @@ class WorkspaceQualityRunner:
             for path in self.workspace.rglob(ext)
             if path.is_file() and "build" not in path.parts and "cmake-build" not in path.parts
         ]
-        if not cpp_files and not (self.workspace / "CMakeLists.txt").is_file():
+        manifests = self._cpp_manifest_candidates()
+        if not cpp_files and not manifests:
             return []
 
         script = """
@@ -356,6 +367,7 @@ if not files:
     print("No C++ translation units found", file=sys.stderr)
     raise SystemExit(1)
 failed = []
+failed_paths = []
 for path in files:
     completed = subprocess.run(
         ["g++", "-std=c++17", "-fsyntax-only", *include_flags, str(path)],
@@ -367,13 +379,64 @@ for path in files:
         timeout=30,
     )
     if completed.returncode != 0:
-        failed.append(f"### {path}\\n{completed.stderr or completed.stdout}")
+        failed_paths.append(str(path))
+        body = (completed.stderr or completed.stdout or "")[:1200]
+        failed.append(f"### {path}\\n{body}")
 if failed:
+    # Live L2-15: first TU's unclosed-namespace dump (75+ stdexcept
+    # errors) filled the validation excerpt and hid later ### TUs.
+    # Index must come first so leftover can rotate after trim.
+    print("### FAILING_TUS " + " ".join(failed_paths), file=sys.stderr)
     print("\\n".join(failed), file=sys.stderr)
     raise SystemExit(1)
 print(f"C++ syntax check passed for {len(files)} translation unit(s)")
 """.strip()
-        return [[sys.executable, "-c", script]]
+        commands: list[list[str]] = [[sys.executable, "-c", script]]
+        # Live L2-15: syntax-only hid the official CMake binary + Python
+        # behavior tests. cargo analog is cmake --build then unittest.
+        # Lowercase ``cmakelists.txt`` is a typed diagnostic, not a write.
+        if manifests:
+            cmake_script = """
+import pathlib
+import subprocess
+import sys
+
+root = pathlib.Path(".")
+canonical = root / "CMakeLists.txt"
+found = sorted(
+    path for path in root.iterdir()
+    if path.is_file() and path.name.lower() == "cmakelists.txt"
+)
+if not canonical.is_file():
+    if found:
+        print(
+            f"{found[0].as_posix()}:1:1: error: official CMakeLists.txt "
+            f"basename required (found {found[0].name})",
+            file=sys.stderr,
+        )
+    else:
+        print("CMakeLists.txt:1:1: error: CMakeLists.txt is missing", file=sys.stderr)
+    raise SystemExit(1)
+for command in (["cmake", "-S", ".", "-B", "build"], ["cmake", "--build", "build"]):
+    completed = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    if completed.returncode != 0:
+        print(completed.stderr or completed.stdout or " ".join(command), file=sys.stderr)
+        raise SystemExit(completed.returncode or 1)
+print("CMake build passed")
+""".strip()
+            commands.append([sys.executable, "-c", cmake_script])
+        test_dir = self.workspace / "tests"
+        if test_dir.is_dir() and any(test_dir.glob("test_*.py")):
+            commands.append([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"])
+        return commands
 
     def _python_workspace_quality_commands(self, context: dict[str, Any]) -> list[list[str]]:
         """Infer real validation commands for Python-only generated projects."""

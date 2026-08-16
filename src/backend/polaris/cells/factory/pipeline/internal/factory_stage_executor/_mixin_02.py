@@ -1589,6 +1589,7 @@ class _Mixin02:
             projection=projection,
             authority=authority,
             factory_run_id=run.id,
+            director_dispatch_settled=self._workspace_quality_director_dispatch_settled(run),
         ):
             return None
         failure_class = authority.failure_class or (
@@ -1608,11 +1609,30 @@ class _Mixin02:
         }
 
     @staticmethod
+    def _workspace_quality_director_dispatch_settled(run: FactoryRun) -> bool:
+        """True after Director first-wave materialization has a durable success mark.
+
+        Same-run qa_gate retries keep ``last_successful_stage=director_dispatch``
+        even when later quality residuals fail or a restart fence blocks one
+        owner. That mark is admission to measure/repair, not delivery success.
+        """
+
+        last_successful = str(
+            (run.metadata or {}).get("last_successful_stage") or getattr(run, "recovery_point", "") or ""
+        ).strip()
+        if last_successful in {"director_dispatch", "quality_gate"}:
+            return True
+        return "director_dispatch" in {
+            str(stage or "").strip() for stage in (getattr(run, "stages_completed", None) or ())
+        }
+
+    @staticmethod
     def _workspace_quality_prepared_local_rework_authorized(
         *,
         projection: Mapping[str, Any],
         authority: helpers.CanonicalFactoryAuthority,
         factory_run_id: str,
+        director_dispatch_settled: bool = False,
     ) -> bool:
         """Allow QA to resume a durably prepared same-task repair transaction."""
 
@@ -1651,6 +1671,13 @@ class _Mixin02:
             # not skip the verifier once Director already sealed the owner.
             # ``claimed_by=director`` on pending/failed is a leftover last
             # claim, not an active in-progress lock.
+            #
+            # Live L2-15: after director_dispatch, quality settled owners as
+            # failed ``workspace_quality_repair_*`` and a restart fence left
+            # the remaining TU ``blocked``. Those residuals are the repair
+            # surface, not incomplete first materialization. Skipping the
+            # verifier here deadlocks ncmd=0. Pending/never-started rows stay
+            # fail-closed unless they carry a prepared same-task receipt.
             if state in {"in_progress", "claimed"}:
                 return False
             if state in {"pending", "ready"}:
@@ -1662,7 +1689,11 @@ class _Mixin02:
                 ) or _Mixin02._task_boundary_completed_verified(projection, task_id):
                     continue
                 return False
-            if state == "failed" and _Mixin02._task_boundary_completed_verified(projection, task_id):
+            if state == "failed" and (
+                director_dispatch_settled or _Mixin02._task_boundary_completed_verified(projection, task_id)
+            ):
+                continue
+            if state == "blocked" and director_dispatch_settled:
                 continue
             return False
         return True

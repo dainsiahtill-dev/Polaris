@@ -1109,6 +1109,92 @@ class TestQualityGateDeadlineHandling:
             "task_boundary_verdict_missing",
         }
 
+    def test_workspace_quality_admits_director_dispatch_residuals_without_completed_boundary(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Same-run qa_gate must measure after Director residuals, not skip commands.
+
+        Live L2-15 remint-8: director_dispatch already succeeded; quality then
+        settled engine/models as ``workspace_quality_repair_*`` and left
+        ``src/main.cpp`` blocked on ``factory_restart_recovery_expired_child_session``.
+        Compact rows omit last_execution_error and TaskBoundary is not
+        completed_verified, so treating those residuals as incomplete
+        materialization deadlocks the verifier (ncmd=0).
+        """
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="run-l215-quality-residual",
+            config=FactoryConfig(name="l215-quality-residual-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-16T00:00:00+00:00",
+        )
+        run.metadata["last_successful_stage"] = "director_dispatch"
+        run.stages_completed = ["pm_planning", "chief_engineer_review", "director_dispatch"]
+        projection = _with_task_runtime_authority(
+            {
+                "source": "run_ledger",
+                "task_boundary": {
+                    "latest_by_task": {
+                        "TASK-5": {
+                            "task_id": "TASK-5",
+                            "status": "completed_verified",
+                            "ok": True,
+                        }
+                    }
+                },
+            },
+            task_ids=("TASK-1", "TASK-2", "TASK-3", "TASK-4", "TASK-5"),
+            incomplete_task_ids=("TASK-1", "TASK-2", "TASK-3", "TASK-4"),
+        )
+        rows = projection["task_runtime_projection"]["rows"]
+        for row, state, error in (
+            (rows[0], "failed", "workspace_quality_repair_equal_count_swap"),
+            (rows[1], "failed", "workspace_quality_repair_equal_count_swap"),
+            (rows[2], "failed", "workspace_quality_repair_forward_unmask"),
+            (rows[3], "blocked", "factory_restart_recovery_expired_child_session"),
+        ):
+            row["status"] = state
+            row["execution_state"] = state
+            row["claimed_by"] = "director"
+            row["last_execution_error"] = error
+        monkeypatch.setattr(executor, "_canonical_factory_projection", lambda _run, _context: projection)
+
+        assert executor._workspace_quality_task_boundary_blocker(run, {}) is None
+
+    def test_workspace_quality_still_blocks_unprepared_pending_after_director_dispatch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """director_dispatch success does not unlock never-started source rows."""
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="run-pending-after-director",
+            config=FactoryConfig(name="pending-after-director-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-16T00:00:00+00:00",
+        )
+        run.metadata["last_successful_stage"] = "director_dispatch"
+        projection = _with_task_runtime_authority(
+            {
+                "source": "run_ledger",
+                "task_boundary": {},
+            },
+            incomplete_task_ids=("TASK-1",),
+        )
+        monkeypatch.setattr(executor, "_canonical_factory_projection", lambda _run, _context: projection)
+
+        blocker = executor._workspace_quality_task_boundary_blocker(run, {})
+        assert blocker is not None
+        assert blocker["reason_code"] in {
+            "task_runtime_not_converged",
+            "task_boundary_verdict_missing",
+        }
+
     @pytest.mark.parametrize(
         ("field", "value"),
         [
@@ -1136,14 +1222,15 @@ class TestQualityGateDeadlineHandling:
                 "source": "run_ledger",
                 "task_boundary": {
                     "latest_by_task": {
-                        "TASK-1": {
-                            "task_id": "TASK-1",
+                        "TASK-2": {
+                            "task_id": "TASK-2",
                             "status": "completed_verified",
                             "ok": True,
                         }
                     }
                 },
             },
+            task_ids=("TASK-1", "TASK-2"),
             incomplete_task_ids=("TASK-1",),
         )
         action = {

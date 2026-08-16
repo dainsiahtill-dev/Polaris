@@ -1568,6 +1568,35 @@ def pre_typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             runtime_plan_available=True,
         ),
         RepairRuleDefinition(
+            rule_id="rust.reexport_import",
+            source_tool=RUST_TRAIT_IMPORT_SOURCE_TOOL,
+            language="rust",
+            phase="export_resolution",
+            archetype=RepairArchetype.WRONG_IMPORT_PATH,
+            priority=2,
+            diagnostic_codes=("rust_e0425", "rust_e0433"),
+            raw_terms=("consider importing", "use ", "-->", ".rs"),
+            risk_level="low",
+            description=("Applies rustc E0425/E0433 public re-export import suggestions as inserted use lines."),
+            runtime_plan_available=True,
+        ),
+        RepairRuleDefinition(
+            rule_id="rust.duplicate_imported_name",
+            source_tool=RUST_LINE_SUGGESTION_SOURCE_TOOL,
+            language="rust",
+            phase="export_resolution",
+            archetype=RepairArchetype.WRONG_IMPORT_PATH,
+            priority=1,
+            diagnostic_codes=("rust_e0255", "rust_e0252"),
+            message_terms=("defined multiple times", "previous import"),
+            risk_level="low",
+            description=(
+                "Removes a colliding use when the same file also defines that type, "
+                "or drops a rustc-marked reimport of the same name."
+            ),
+            runtime_plan_available=True,
+        ),
+        RepairRuleDefinition(
             rule_id="rust.private_field_method_suggestion",
             source_tool=RUST_LINE_SUGGESTION_SOURCE_TOOL,
             language="rust",

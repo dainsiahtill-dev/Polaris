@@ -12,7 +12,7 @@ import json
 import os
 import re
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +50,9 @@ def compact_go_stack_overflow_diagnostic(output: str) -> str:
 _COMPILER_ERROR_START_RE = re.compile(r"(?m)^(?:error(?:\[[^\]]+\])?|warning(?:\[[^\]]+\])?):")
 _COMPILER_SUMMARY_RE = re.compile(r"(?m)^error: could not compile\b")
 _COMPILER_ARROW_RE = re.compile(r"(?m)^\s*-->\s*(?P<path>\S+):(?P<line>\d+)")
+_CARGO_TEST_STDOUT_FAILURE_RE = re.compile(
+    r"(?ms)^---- (?P<name>\S+) stdout ----\n(?P<body>.*?)(?=\n---- |\nfailures:\n|\Z)",
+)
 
 
 def compact_compiler_error_blocks(output: str, *, limit: int = 12_000) -> str:
@@ -105,6 +108,25 @@ def compact_compiler_error_blocks(output: str, *, limit: int = 12_000) -> str:
             break
         packed.append(block)
         used += extra
+    # Live L2-14: after rustc went green, cargo test left
+    # ``error: test failed, to rerun pass --lib`` plus panic bodies.
+    # Keeping only that one-liner made quality no-op twice.
+    if used < max(256, int(limit)):
+        seen_panics: set[str] = set()
+        for match in _CARGO_TEST_STDOUT_FAILURE_RE.finditer(text):
+            name = str(match.group("name") or "").strip()
+            body = str(match.group("body") or "").strip()
+            if not name or "panicked at" not in body:
+                continue
+            if name in seen_panics:
+                continue
+            seen_panics.add(name)
+            block = f"---- {name} stdout ----\n{body}"
+            extra = len(block) + (1 if packed else 0)
+            if packed and used + extra > max(256, int(limit)):
+                break
+            packed.append(block)
+            used += extra
     return "\n".join(packed)
 
 
@@ -245,6 +267,16 @@ def workspace_quality_repair_evidence(repair_results: list[dict[str, Any]]) -> l
 def workspace_quality_summary_requires_task_boundary_triage(summary: dict[str, Any]) -> bool:
     if bool(summary.get("task_boundary_interface_discrepancy_retry_authorized")):
         return False
+    owned_repair_targets = [
+        str(item or "").strip().replace("\\", "/")
+        for item in (summary.get("repair_target_files") or [])
+        if str(item or "").strip()
+    ]
+    if owned_repair_targets:
+        # Live L2-14 TASK-3: E0061 Reef::new arity in tests/product.rs matched
+        # line_suggestion but was unplannable. The current task already owns
+        # that file; this is Director LLM work, not CE interface triage.
+        return False
     stage = str(summary.get("stage") or "").strip()
     if stage == "runtime_plan_probe_unplannable":
         return True
@@ -288,6 +320,182 @@ def workspace_quality_latest_task_boundary_scope_filter(repair: Mapping[str, Any
         if isinstance(scope_filter, Mapping) and scope_filter:
             return dict(scope_filter)
     return {}
+
+
+_CPP_OR_CMAKE_RESIDUAL_PATH_RE = re.compile(
+    r"(?P<path>(?:src|include|tests)/[^\s:'\"]+\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx)|cmakelists\.txt)"
+    r":\d+(?::\d+)?:\s+error:",
+    re.IGNORECASE,
+)
+_CPP_FAILING_TU_RE = re.compile(r"(?m)^###\s+(?P<path>\S+)")
+_CPP_FAILING_TU_INDEX_RE = re.compile(r"(?m)^###\s+FAILING_TUS\s+(?P<paths>.+)$")
+_CPP_STD_NAMESPACE_POLLUTION_RE = re.compile(
+    r"(?:in namespace\s+['\"‘’][^'\"‘’]*::std['\"‘’]|[A-Za-z_]\w*::std::)",
+    re.IGNORECASE,
+)
+_CPP_NAMESPACE_OPEN_RE = re.compile(r"(?m)^\s*namespace\b")
+_CPP_HEADER_SUFFIXES = {".h", ".hh", ".hpp", ".hxx"}
+
+
+def _cpp_header_unclosed_namespace_count(text: str) -> int:
+    """Return extra ``namespace`` openers left unclosed before ``#endif``."""
+
+    opens = len(_CPP_NAMESPACE_OPEN_RE.findall(text))
+    if opens <= 0:
+        return 0
+    head = re.split(r"(?m)^\s*#endif\b", text, maxsplit=1)[0]
+    type_end = head.rfind("};")
+    region = head[type_end + 2 :] if type_end >= 0 else head
+    closes = region.count("}")
+    return max(0, opens - closes)
+
+
+def workspace_quality_unclosed_namespace_headers(workspace: Path) -> list[str]:
+    """Return project headers with more namespace openers than closers.
+
+    Live L2-15: ``namespace patrol_chess { namespace models {`` plus one
+    ``} // namespace patrol_chess::models`` sucked later includes into
+    ``patrol_chess::std``. Use-site TU edits cannot close that header.
+    """
+
+    if not workspace.is_dir():
+        return []
+    found: list[str] = []
+    search_roots = [path for path in (workspace / "src", workspace / "include") if path.is_dir()]
+    if not search_roots:
+        search_roots = [workspace]
+    for root in search_roots:
+        try:
+            headers = [path for suffix in ("*.h", "*.hh", "*.hpp", "*.hxx") for path in root.rglob(suffix)]
+        except OSError:
+            continue
+        for header in sorted(headers, key=lambda item: item.as_posix()):
+            if any(part in {"build", "cmake-build"} for part in header.parts):
+                continue
+            try:
+                rel = header.relative_to(workspace).as_posix()
+                text = header.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError, ValueError):
+                continue
+            if _cpp_header_unclosed_namespace_count(text) > 0:
+                found.append(rel)
+    return found
+
+
+def _cpp_residuals_have_std_namespace_pollution(residual_errors: Sequence[str]) -> bool:
+    blob = "\n".join(str(item or "") for item in residual_errors)
+    return _CPP_STD_NAMESPACE_POLLUTION_RE.search(blob) is not None
+
+
+def workspace_quality_unclaimed_residual_targets(
+    residual_errors: Sequence[str],
+    *,
+    claimed_targets: Sequence[str],
+    workspace: Path,
+) -> list[str]:
+    """Return residual C++/CMake paths the last owner did not lease.
+
+    Live L2-15: four stagnant TASK-2 rounds stayed on generator.cpp/.hpp
+    while ``src/main.cpp`` and ``cmakelists.txt`` still failed. Rotate-by-stem
+    never saw those files after task-scope partition.
+    """
+
+    claimed = {str(path or "").strip().replace("\\", "/") for path in claimed_targets if str(path or "").strip()}
+    leftover: list[str] = []
+    blob = "\n".join(str(item or "") for item in residual_errors)
+    # Official C++ syntax wrapper prints ``### path`` per failing TU.
+    # Live remint-5 leased energy.cpp from member-name rebound while
+    # ``### src/main.cpp`` was the other failing unit.
+    for match in _CPP_FAILING_TU_INDEX_RE.finditer(blob):
+        for rel in str(match.group("paths") or "").split():
+            rel = rel.replace("\\", "/").strip()
+            if not rel or rel in claimed or rel in leftover:
+                continue
+            if (workspace / rel).is_file():
+                leftover.append(rel)
+    for match in _CPP_FAILING_TU_RE.finditer(blob):
+        rel = str(match.group("path") or "").replace("\\", "/")
+        if not rel or rel == "FAILING_TUS" or rel in claimed or rel in leftover:
+            continue
+        if (workspace / rel).is_file():
+            leftover.append(rel)
+    for match in _CPP_OR_CMAKE_RESIDUAL_PATH_RE.finditer(blob):
+        rel = str(match.group("path") or "").replace("\\", "/")
+        if not rel or rel in claimed or rel in leftover:
+            continue
+        candidate = workspace / rel
+        if candidate.is_file():
+            leftover.append(rel)
+            if rel.lower() == "cmakelists.txt" and "CMakeLists.txt" not in claimed and "CMakeLists.txt" not in leftover:
+                leftover.append("CMakeLists.txt")
+            continue
+        if rel.lower() == "cmakelists.txt":
+            # Live L2-15 remint-16: leftover leased the existing
+            # ``cmakelists.txt`` and docs no_op'd. Official Linux cmake
+            # needs the exact ``CMakeLists.txt`` basename as a write target.
+            if "CMakeLists.txt" not in claimed and "CMakeLists.txt" not in leftover:
+                leftover.append("CMakeLists.txt")
+            try:
+                for path in workspace.iterdir():
+                    if path.is_file() and path.name.lower() == "cmakelists.txt":
+                        name = path.name
+                        if name not in claimed and name not in leftover:
+                            leftover.append(name)
+                        break
+            except OSError:
+                continue
+    # Live L2-15 remint-4: leftover leased energy.hpp (note/include site)
+    # while src/main.cpp still failed. Prefer translation units + cmake lists.
+    preferred = [
+        path
+        for path in leftover
+        if Path(path).suffix.lower() in {".c", ".cc", ".cpp", ".cxx"} or path.lower() == "cmakelists.txt"
+    ]
+    if _cpp_residuals_have_std_namespace_pollution(residual_errors):
+        headers = [path for path in workspace_quality_unclosed_namespace_headers(workspace) if path not in claimed]
+        if headers:
+            return list(dict.fromkeys([*headers, *preferred, *leftover]))
+    return preferred or leftover
+
+
+def workspace_quality_unclaimed_failing_tu_targets(
+    residual_errors: Sequence[str],
+    *,
+    claimed_targets: Sequence[str],
+    workspace: Path,
+) -> list[str]:
+    """Return unclaimed ``### path`` translation units only.
+
+    Post-progress owner rotation must ignore header/note sites and artifact-
+    scan noise. Live remint-9 mutated queue.hpp as ``progress`` while
+    ``### src/main.cpp`` stayed red; only the official C++ wrapper's
+    ``###`` list is a safe rotate signal.
+    """
+
+    claimed = {str(path or "").strip().replace("\\", "/") for path in claimed_targets if str(path or "").strip()}
+    leftover: list[str] = []
+    blob = "\n".join(str(item or "") for item in residual_errors)
+    indexed: list[str] = []
+    for match in _CPP_FAILING_TU_INDEX_RE.finditer(blob):
+        indexed.extend(str(match.group("paths") or "").split())
+    for rel in (*indexed, *(str(match.group("path") or "") for match in _CPP_FAILING_TU_RE.finditer(blob))):
+        rel = rel.replace("\\", "/").strip()
+        if not rel or rel == "FAILING_TUS" or rel in claimed or rel in leftover:
+            continue
+        suffix = Path(rel).suffix.lower()
+        if suffix not in {".c", ".cc", ".cpp", ".cxx"}:
+            continue
+        if (workspace / rel).is_file():
+            leftover.append(rel)
+    if _cpp_residuals_have_std_namespace_pollution(residual_errors):
+        headers = [
+            path
+            for path in workspace_quality_unclosed_namespace_headers(workspace)
+            if path not in claimed and path not in leftover
+        ]
+        if headers:
+            leftover = [*headers, *leftover]
+    return leftover
 
 
 def workspace_quality_deferred_owner_targets(summary: dict[str, Any]) -> list[str]:

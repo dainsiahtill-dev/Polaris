@@ -398,6 +398,186 @@ async def test_factory_forced_rebind_targets_do_not_reopen_sibling_models(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_class_missing_member_keeps_engine_use_site_when_sibling_type_exists(
+    tmp_path: Path,
+) -> None:
+    """g++ 'class Robot has no member energy' stays on generator.cpp.
+
+    Live L2-15: quality rebound to robot.hpp because the type name matched a
+    models header. Energy already exists as its own type; the engine owner
+    then failed ``workspace_quality_repair_no_mutation`` and models LLM
+    stagnated inventing Robot.energy().
+    """
+
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "models").mkdir(parents=True)
+    (tmp_path / "src" / "engine" / "generator.cpp").write_text(
+        '#include "models/robot.hpp"\nvoid f(const patrol_chess::models::Robot& r) { (void)r.energy(); }\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "engine" / "generator.hpp").write_text("#pragma once\n", encoding="utf-8")
+    (tmp_path / "src" / "models" / "robot.hpp").write_text(
+        "#pragma once\nnamespace patrol_chess::models { class Robot { public: int id(); }; }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "models" / "energy.hpp").write_text(
+        "#pragma once\nnamespace patrol_chess::models { class Energy {}; }\n",
+        encoding="utf-8",
+    )
+    captured: dict[str, Any] = {}
+    adapter = _recording_adapter(tmp_path, captured)
+    error_text = (
+        "src/engine/generator.cpp:49:42: error: ‘const class patrol_chess::models::Robot’ "
+        "has no member named ‘energy’\n"
+        "src/main.cpp:196:42: error: no matching function for call to "
+        "‘patrol_chess::models::Patrol::Patrol(const std::size_t&)’\n"
+    )
+    (tmp_path / "src" / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+
+    results, summary = await _run_materialization_quality_repair_retry(
+        adapter,
+        task={
+            "task_id": "TASK-1-source-core",
+            "target_files": ["src/engine/generator.cpp", "src/engine/generator.hpp"],
+            "metadata": {"external_task_id": "TASK-1-source-core", "factory_run_id": "factory_l215_class"},
+        },
+        target_task_id="TASK-1-source-core",
+        run_id="factory_l215_class",
+        context={"run_id": "factory_l215_class"},
+        original_message="Adapt the engine to the existing Robot/Energy API.",
+        llm_call_timeout=30.0,
+        artifact_quality_errors=[error_text],
+        changed_files=["src/engine/generator.cpp", "src/models/robot.hpp", "src/models/energy.hpp"],
+        repair_attempt=2,
+    )
+
+    del results
+    assert captured.get("invoked") is True
+    assert summary.get("stage") != "task_boundary_repair_targets_deferred"
+    assert "src/engine/generator.cpp" in summary["repair_target_files"]
+    assert "src/models/robot.hpp" not in summary["repair_target_files"]
+
+
+@pytest.mark.asyncio
+async def test_in_scope_syntax_error_not_deferred_for_later_tu_undeclared_type(
+    tmp_path: Path,
+) -> None:
+    """Owner-local ``expected '}'`` must keep the in-scope TU.
+
+    Live L2-15 remint-14: FAILING_TUS listed generator.cpp then queue.cpp.
+    ``'Queue' has not been declared`` rebound to queue.hpp and
+    ``unbound_homes`` deferred the whole TASK-1-source-core round, so the
+    engine owner never closed generator.cpp. Later-TU declaration homes
+    must not wipe an in-scope syntax residual.
+    """
+
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "models").mkdir(parents=True)
+    (tmp_path / "src" / "engine" / "generator.cpp").write_text(
+        "void run() {\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "engine" / "generator.hpp").write_text("#pragma once\n", encoding="utf-8")
+    (tmp_path / "src" / "models" / "queue.hpp").write_text(
+        "#pragma once\nnamespace patrol_chess { namespace models { class Queue {}; } }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "models" / "queue.cpp").write_text(
+        '#include "models/queue.hpp"\nvoid Queue::push() {}\n',
+        encoding="utf-8",
+    )
+    captured: dict[str, Any] = {}
+    adapter = _recording_adapter(tmp_path, captured)
+    error_text = (
+        "### FAILING_TUS src/engine/generator.cpp src/models/queue.cpp\n"
+        "### src/engine/generator.cpp\n"
+        "src/engine/generator.cpp:217:6: error: expected ‘}’ at end of input\n"
+        "### src/models/queue.cpp\n"
+        "src/models/queue.cpp:35:6: error: ‘Queue’ has not been declared\n"
+    )
+
+    results, summary = await _run_materialization_quality_repair_retry(
+        adapter,
+        task={
+            "task_id": "TASK-1-source-core",
+            "target_files": ["src/engine/generator.cpp", "src/engine/generator.hpp"],
+            "metadata": {"external_task_id": "TASK-1-source-core", "factory_run_id": "factory_l215_syntax"},
+        },
+        target_task_id="TASK-1-source-core",
+        run_id="factory_l215_syntax",
+        context={"run_id": "factory_l215_syntax"},
+        original_message="Close the in-scope translation unit.",
+        llm_call_timeout=30.0,
+        artifact_quality_errors=[error_text],
+        changed_files=["src/engine/generator.cpp", "src/models/queue.hpp"],
+        repair_attempt=1,
+    )
+
+    del results
+    assert captured.get("invoked") is True
+    assert summary.get("stage") != "task_boundary_repair_targets_deferred"
+    assert "src/engine/generator.cpp" in summary["repair_target_files"]
+    assert "src/models/queue.hpp" not in summary["repair_target_files"]
+
+
+@pytest.mark.asyncio
+async def test_in_scope_namespace_error_not_deferred_for_later_tu_undeclared_type(
+    tmp_path: Path,
+) -> None:
+    """Use-site namespace qualification stays on the failing TU.
+
+    Live L2-15: ``models is not a member of {anonymous}::patrol_chess`` in
+    main.cpp is a qualification bug. Deferring to queue.hpp for a later
+    ``'Queue' has not been declared`` left five no_op rounds.
+    """
+
+    (tmp_path / "src").mkdir(parents=True)
+    (tmp_path / "src" / "models").mkdir(parents=True)
+    (tmp_path / "src" / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+    (tmp_path / "src" / "models" / "queue.hpp").write_text(
+        "#pragma once\nnamespace patrol_chess { namespace models { class Queue {}; } }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "models" / "queue.cpp").write_text(
+        '#include "models/queue.hpp"\n',
+        encoding="utf-8",
+    )
+    captured: dict[str, Any] = {}
+    adapter = _recording_adapter(tmp_path, captured)
+    error_text = (
+        "### FAILING_TUS src/main.cpp src/models/queue.cpp\n"
+        "### src/main.cpp\n"
+        "src/main.cpp:148:29: error: ‘models’ is not a member of "
+        "‘{anonymous}::patrol_chess::patrol_chess’\n"
+        "### src/models/queue.cpp\n"
+        "src/models/queue.cpp:35:6: error: ‘Queue’ has not been declared\n"
+    )
+
+    results, summary = await _run_materialization_quality_repair_retry(
+        adapter,
+        task={
+            "task_id": "TASK-1-source-modules",
+            "target_files": ["src/main.cpp"],
+            "metadata": {"external_task_id": "TASK-1-source-modules", "factory_run_id": "factory_l215_ns"},
+        },
+        target_task_id="TASK-1-source-modules",
+        run_id="factory_l215_ns",
+        context={"run_id": "factory_l215_ns"},
+        original_message="Qualify the in-scope entrypoint namespace.",
+        llm_call_timeout=30.0,
+        artifact_quality_errors=[error_text],
+        changed_files=["src/main.cpp", "src/models/queue.hpp"],
+        repair_attempt=1,
+    )
+
+    del results
+    assert captured.get("invoked") is True
+    assert summary.get("stage") != "task_boundary_repair_targets_deferred"
+    assert "src/main.cpp" in summary["repair_target_files"]
+    assert "src/models/queue.hpp" not in summary["repair_target_files"]
+
+
+@pytest.mark.asyncio
 async def test_repeat_attempt_stays_on_use_site_for_redefinition_residual(tmp_path: Path) -> None:
     """A multiple-definition residual is owned by the use-site task.
 
@@ -455,3 +635,79 @@ async def test_repeat_attempt_stays_on_use_site_for_redefinition_residual(tmp_pa
     assert summary.get("stage") != "task_boundary_repair_targets_deferred"
     assert "src/engine/generator.hpp" in summary["repair_target_files"]
     assert "src/models/moon.hpp" not in summary["repair_target_files"]
+
+
+@pytest.mark.asyncio
+async def test_rust_test_residuals_defer_to_test_owner_not_engine_task(tmp_path: Path) -> None:
+    """Use-site in tests/product.rs must rebind off TASK-2 engine files.
+
+    Live L2-14: after engine compiled, cargo residuals were only
+    ``Reef::new`` arity / ``Treasure::new`` type errors in tests/product.rs.
+    rustc also names ``src/models/treasure.rs`` as ``defined here``. TASK-2
+    kept widening onto treasure_runner.rs and never handed off to TASK-3.
+    """
+
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "models").mkdir(parents=True)
+    (tmp_path / "tests").mkdir(parents=True)
+    (tmp_path / "src" / "engine" / "treasure_runner.rs").write_text(
+        "pub fn run_domain_rules() {}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "models" / "treasure.rs").write_text(
+        "pub struct Treasure;\nimpl Treasure { pub fn new(kind: i32, v: f64, c: f64) {} }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "models" / "reef.rs").write_text(
+        "pub struct Reef;\nimpl Reef { pub fn new(name: &str, h: i32, fee: Option<f64>, extra: Option<f64>) {} }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests" / "product.rs").write_text(
+        'fn fixture() { Reef::new(1, "Shallow Bank", 10); }\n',
+        encoding="utf-8",
+    )
+    captured: dict[str, Any] = {}
+    adapter = _recording_adapter(tmp_path, captured)
+    error_text = (
+        "error[E0061]: this function takes 4 arguments but 3 arguments were supplied\n"
+        "   --> tests/product.rs:78:5\n"
+        "    |\n"
+        ' 78 |     Reef::new(ReefHazard::Calm, "Shallow Bank", 10)\n'
+        "    |     ^^^^^^^^^ argument #4 of type `Option<f64>` is missing\n"
+        "    |\n"
+        "note: associated function defined here\n"
+        "   --> tests/../src/models/reef.rs:81:12\n"
+        "    |\n"
+        " 81 |     pub fn new(\n"
+    )
+
+    results, summary = await _run_materialization_quality_repair_retry(
+        adapter,
+        task={
+            "task_id": "TASK-2",
+            "target_files": [
+                "src/engine/mod.rs",
+                "src/engine/treasure_rules.rs",
+                "src/engine/treasure_runner.rs",
+                "src/main.rs",
+            ],
+            "metadata": {"external_task_id": "TASK-2", "factory_run_id": "factory_l214_tests"},
+        },
+        target_task_id="TASK-2",
+        run_id="factory_l214_tests",
+        context={"run_id": "factory_l214_tests"},
+        original_message="Repair remaining cargo residuals.",
+        llm_call_timeout=30.0,
+        artifact_quality_errors=[error_text],
+        changed_files=["src/engine/treasure_runner.rs"],
+        repair_attempt=2,
+    )
+
+    assert results == []
+    assert captured.get("invoked") is None
+    assert summary["stage"] == "task_boundary_repair_targets_deferred"
+    assert summary["llm_fallback_blocked"] is True
+    assert summary["repair_target_files"] == []
+    out_of_scope = (summary.get("task_boundary_scope_filter") or {}).get("out_of_scope_repair_target_files") or []
+    assert "tests/product.rs" in out_of_scope
+    assert "src/engine/treasure_runner.rs" not in out_of_scope

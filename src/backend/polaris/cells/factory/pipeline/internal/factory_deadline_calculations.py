@@ -71,7 +71,7 @@ _SAME_RUN_RETRY_MAX_TIMEOUT_SECONDS = 5400.0
 # Live L2-14: remints were consumed diagnosing bind/observer, crate rewrite
 # plan_probe, and LLM reverting a committed rewrite. Another same-run
 # quality retry is still the frozen PM/CE contract, not a new Factory run.
-_SAME_RUN_RETRY_MAX_EXTENSIONS = 8
+_SAME_RUN_RETRY_MAX_EXTENSIONS = 20
 _SAME_RUN_RETRY_DEADLINE_SOURCE = "same_run_retry_epoch"
 
 
@@ -139,7 +139,7 @@ def extend_factory_run_deadline_for_same_run_retry(
     Complexity: O(1).
     """
 
-    del retry_stage
+    stage = str(retry_stage or "").strip()
     meta = dict(metadata)
     try:
         extension_count = int(meta.get("factory_run_deadline_extension_count") or 0)
@@ -157,12 +157,19 @@ def extend_factory_run_deadline_for_same_run_retry(
         "deadline_epoch_seconds",
     )
     remaining_seconds = 0.0 if current_deadline is None else max(0.0, current_deadline - float(now_epoch))
-    if remaining_seconds >= _SAME_RUN_RETRY_MIN_REMAINING_SECONDS:
+    # Live L2-15: rem=193 after a 19-minute quality wave skipped remint
+    # because 193 >= 180. A leftover sliver is not a quality epoch.
+    min_remaining = (
+        _SAME_RUN_RETRY_DEFAULT_TIMEOUT_SECONDS if stage == "quality_gate" else _SAME_RUN_RETRY_MIN_REMAINING_SECONDS
+    )
+    if remaining_seconds >= min_remaining:
         return None
 
     timeout_seconds = _positive_metadata_float(meta, "factory_run_timeout_seconds", "factory_timeout_seconds")
     if timeout_seconds is None:
         timeout_seconds = _SAME_RUN_RETRY_DEFAULT_TIMEOUT_SECONDS
+    if stage == "quality_gate":
+        timeout_seconds = max(timeout_seconds, _SAME_RUN_RETRY_DEFAULT_TIMEOUT_SECONDS)
     timeout_seconds = max(
         _SAME_RUN_RETRY_MIN_REMAINING_SECONDS,
         min(timeout_seconds, _SAME_RUN_RETRY_MAX_TIMEOUT_SECONDS),

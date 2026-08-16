@@ -169,6 +169,74 @@ def _compiler_diagnostic_anchor_files(artifact_quality_errors: list[str]) -> lis
     return _dedupe_preserve_order(anchors)
 
 
+_CPP_GXX_ERROR_SITE_RE = re.compile(
+    r"(?P<path>(?:[A-Za-z]:)?[^\s:'\"]+\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx))"
+    r":\d+(?::\d+)?:\s+error:\s+(?P<msg>.+)",
+    re.IGNORECASE,
+)
+
+
+def _cpp_in_scope_owner_local_error_files(
+    artifact_quality_errors: list[str],
+    in_scope_files: list[str],
+) -> list[str]:
+    """Return in-scope TUs whose g++ error is not a declaration-home signal.
+
+    Live L2-15 remint-14: ``expected '}'`` on ``generator.cpp`` is owner-local.
+    A later TU's ``'Queue' has not been declared`` rebound to ``queue.hpp`` and
+    deferred the whole engine task, so five rounds never closed the brace.
+    """
+
+    from polaris.cells.roles.adapters.internal.director.quality_gate._language_targets import (
+        _CPP_MISSING_MEMBER_TYPE_RE,
+        _CPP_UNDECLARED_IDENTIFIER_RE,
+    )
+
+    in_scope = {_normalize_declared_task_path(path) for path in in_scope_files if str(path or "").strip()}
+    found: list[str] = []
+    for item in artifact_quality_errors:
+        for match in _CPP_GXX_ERROR_SITE_RE.finditer(str(item or "")):
+            rel = _normalize_declared_task_path(match.group("path"))
+            if not rel or rel not in in_scope or rel in found:
+                continue
+            message = str(match.group("msg") or "")
+            if _CPP_UNDECLARED_IDENTIFIER_RE.search(message) or _CPP_MISSING_MEMBER_TYPE_RE.search(message):
+                continue
+            found.append(rel)
+    return found
+
+
+def _primary_compiler_diagnostic_anchor_files(artifact_quality_errors: list[str]) -> list[str]:
+    """Return the first compiler site per diagnostic, not ``defined here`` notes.
+
+    Live L2-14: rustc E0061 in ``tests/product.rs`` also names
+    ``src/models/treasure.rs`` as the constructor definition. The write
+    owner is the use site (TASK-3 tests), not the already-correct model.
+    """
+
+    anchors: list[str] = []
+    cpp_site_split = re.compile(
+        r"(?=(?:[A-Za-z]:)?[^\s:'\"]+\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx):\d+(?::\d+)?:\s+error:)",
+        re.IGNORECASE,
+    )
+    for item in artifact_quality_errors:
+        text = str(item or "")
+        blocks = re.split(r"(?=error\[[Ee]\d+\])", text)
+        if len(blocks) <= 1:
+            cpp_blocks = cpp_site_split.split(text)
+            blocks = cpp_blocks if len(cpp_blocks) > 1 else [text]
+        for block in blocks:
+            for match in _SEMANTIC_QUALITY_EXPLICIT_PATH_RE.finditer(block):
+                trailing = block[match.end() : match.end() + 8]
+                if not trailing.startswith(":") or not trailing[1:2].isdigit():
+                    continue
+                rel = _normalize_declared_task_path(match.group("path"))
+                if rel:
+                    anchors.append(rel)
+                    break
+    return _dedupe_preserve_order(anchors)
+
+
 async def _run_materialization_quality_repair_retry(
     adapter: Any,
     *,
@@ -360,7 +428,7 @@ async def _run_materialization_quality_repair_retry(
     )
     rotate_repair_targets = bool(
         len(repair_target_candidates) > 1
-        and semantic_quality_target_files
+        and (semantic_quality_target_files or explicit_quality_target_files)
         and _should_rotate_materialization_quality_repair_targets(repair_quality_errors)
     )
     repair_target_files = _select_materialization_quality_repair_target_batch(
@@ -405,6 +473,11 @@ async def _run_materialization_quality_repair_retry(
                 *in_scope_repair_target_files,
                 *factory_forced_targets,
             ]
+            joined_forced_errors = "\n".join(str(item or "") for item in repair_quality_errors).lower()
+            if "panicked at" in joined_forced_errors and "src/engine/" in joined_forced_errors:
+                # Live L2-14: factory-forced stayed on treasure_runner.rs
+                # while verdict panics needed treasure_rules.rs.
+                widened_candidates.extend(_materialized_task_declared_target_files(task, workspace_full))
         else:
             widened_candidates = [
                 *in_scope_repair_target_files,
@@ -494,9 +567,48 @@ async def _run_materialization_quality_repair_retry(
     cpp_declaration_homes = _dedupe_preserve_order(cpp_declaration_homes)
     in_scope_set = set(in_scope_repair_target_files)
     anchor_files = set(_compiler_diagnostic_anchor_files(repair_quality_errors))
+    primary_anchor_files = _primary_compiler_diagnostic_anchor_files(repair_quality_errors)
     owns_diagnostic_anchor = any(path in anchor_files for path in in_scope_repair_target_files)
+    owns_primary_anchor = any(path in set(primary_anchor_files) for path in in_scope_repair_target_files)
+    test_primary_anchors = [
+        path
+        for path in primary_anchor_files
+        if path.startswith("tests/") or "/tests/" in path or Path(path).name.endswith("_test.rs")
+    ]
+    if test_primary_anchors and not owns_primary_anchor and not factory_forced_targets:
+        # Live L2-14: TASK-2 still owned treasure_runner.rs after cargo
+        # residuals moved entirely to tests/product.rs (TASK-3). Same-task
+        # widening kept authorizing the engine file and never rebound.
+        task_scope_filter_evidence = _task_boundary_scope_filter_evidence(
+            task,
+            target_files=test_primary_anchors,
+            reason="quality_repair_targets_outside_current_task_target_files",
+            workspace=workspace_full,
+            cache_root=cache_root_full,
+        )
+        return [], {
+            "stage": "task_boundary_repair_targets_deferred",
+            "attempted": True,
+            "attempt": repair_attempt,
+            "success": False,
+            "success_reason": "repair_targets_outside_current_task_target_files",
+            "tool_results": 0,
+            "write_tool_evidence": False,
+            "missing_target_files": missing_target_files[:12],
+            "runtime_smoke_target_files": runtime_smoke_target_files[:12],
+            "semantic_quality_target_files": semantic_quality_target_files[:12],
+            "explicit_quality_target_files": explicit_quality_target_files[:12],
+            "repair_target_files": [],
+            "rotated_repair_targets": False,
+            "task_boundary_scope_filter": task_scope_filter_evidence,
+            "llm_fallback_blocked": True,
+        }
     unbound_homes = [path for path in cpp_declaration_homes if path not in in_scope_set and path not in anchor_files]
-    if unbound_homes and (owns_diagnostic_anchor or not in_scope_repair_target_files):
+    owner_local_cpp_files = _cpp_in_scope_owner_local_error_files(
+        repair_quality_errors,
+        in_scope_repair_target_files,
+    )
+    if unbound_homes and (owns_diagnostic_anchor or not in_scope_repair_target_files) and not owner_local_cpp_files:
         header_suffixes = {".h", ".hh", ".hpp", ".hxx"}
         header_homes = [path for path in unbound_homes if Path(path).suffix.lower() in header_suffixes]
         primary_pool = header_homes or unbound_homes
@@ -1494,8 +1606,14 @@ def _select_materialization_quality_repair_target_batch(
         return list(missing_target_files[:_QUALITY_REPAIR_TARGET_BATCH_LIMIT])
     if repair_attempt > 1 and missing_target_files:
         if rotate_after_first_attempt:
-            target_index = (repair_attempt - 1) % len(missing_target_files)
-            return [missing_target_files[target_index]]
+            first_stem = Path(missing_target_files[0]).stem.lower()
+            # Live L2-15: attempt 2 kept generator.cpp/.hpp (same stem) and
+            # never leased main.cpp / cmakelists.txt. Skip the first stem.
+            rotated = [path for path in missing_target_files if Path(path).stem.lower() != first_stem] or list(
+                missing_target_files
+            )
+            target_index = (repair_attempt - 2) % len(rotated)
+            return [rotated[target_index]]
         return [missing_target_files[0]]
     return list(missing_target_files[:_QUALITY_REPAIR_TARGET_BATCH_LIMIT])
 
@@ -1576,6 +1694,9 @@ def _should_rotate_materialization_quality_repair_targets(artifact_quality_error
             "typescript project typecheck failed",
             "tsc --noemit failed",
             "error ts",
+            "has no member named",
+            "no matching function for call",
+            "official cmakelists.txt basename required",
         )
     )
 
@@ -1589,7 +1710,13 @@ def _should_preserve_materialization_quality_repair_batch(
     if _looks_like_go_workspace_quality_error(joined_errors) and _GO_COMPILE_PATH_RE.search(joined_errors):
         return True
     if _artifact_quality_failed_test_count(artifact_quality_errors) >= 2:
-        return True
+        # Live L2-14: cargo unit-test panics sat in treasure_runner.rs while
+        # the verdict logic lives in treasure_rules.rs. Preserving the first
+        # panic-file batch blocked same-task widening.
+        if "panicked at" in joined_errors and "src/engine/" in joined_errors:
+            pass
+        else:
+            return True
     if "python runtime smoke" in joined_errors and (
         "assertregex" in joined_errors or "regex didn't match" in joined_errors
     ):

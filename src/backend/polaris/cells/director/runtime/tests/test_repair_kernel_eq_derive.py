@@ -392,3 +392,202 @@ def test_unknown_enum_variant_rewrites_similar_and_wildcard_consumer_arms() -> N
     assert "TreasureKind::Gold =>" in repaired or "TreasureKind::Gold |" in repaired
     assert "ReefHazard::Shoal" not in repaired
     assert "ReefHazard::Shallow" in repaired
+
+
+def test_e0425_reexport_import_inserts_use_crate_line() -> None:
+    from polaris.cells.director.runtime.internal.repair_kernel.rust_runtime._plan import (
+        plan_rust_trait_import_repair,
+    )
+
+    content = (
+        "//! runner\n"
+        "\n"
+        "use crate::models::{budget::Budget, treasure::{Treasure, TreasureKind}};\n"
+        "\n"
+        "pub struct Scenario {\n"
+        "    pub trace: Vec<RuleOutcome>,\n"
+        "}\n"
+    )
+    raw = (
+        "error[E0425]: cannot find type `RuleOutcome` in this scope\n"
+        "  --> src/engine/treasure_runner.rs:6:20\n"
+        "   |\n"
+        "6  |     pub trace: Vec<RuleOutcome>,\n"
+        "   |                    ^^^^^^^^^^^ not found in this scope\n"
+        "   |\n"
+        "help: consider importing this enum through its public re-export\n"
+        "   |\n"
+        "3  + use crate::engine::RuleOutcome;\n"
+        "   |\n"
+    )
+    planning = plan_rust_trait_import_repair(
+        base_files={"src/engine/treasure_runner.rs": content},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+    assert planning.plan is not None
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+    operation = planning.plan.operations[0]
+    updated = (
+        content[: int(operation.span_start or 0)] + str(operation.replacement) + content[int(operation.span_end or 0) :]
+    )
+    assert "use crate::engine::RuleOutcome;" in updated
+    assert "use crate::models::{budget::Budget, treasure::{Treasure, TreasureKind}};" in updated
+
+
+def test_e0433_reexport_import_inserts_use_crate_struct_line() -> None:
+    from polaris.cells.director.runtime.internal.repair_kernel.rust_runtime._plan import (
+        plan_rust_line_suggestion_repair,
+        plan_rust_trait_import_repair,
+    )
+
+    content = (
+        "//! runner\n"
+        "\n"
+        "#![deny(missing_docs)]\n"
+        "\n"
+        "pub fn normal_scenario() -> Scenario {\n"
+        "    Scenario {\n"
+        '        treasure: Treasure::new(TreasureKind::Gold, 120.0, 0.9).expect("valid"),\n'
+        '        budget: Budget::new(200.0, 0.25).expect("valid"),\n'
+        "    }\n"
+        "}\n"
+    )
+    raw = (
+        "error[E0433]: cannot find type `Treasure` in this scope\n"
+        "   --> src/engine/treasure_runner.rs:7:19\n"
+        "    |\n"
+        '7   |         treasure: Treasure::new(TreasureKind::Gold, 120.0, 0.9).expect("valid"),\n'
+        "    |                   ^^^^^^^^ use of undeclared type `Treasure`\n"
+        "    |\n"
+        "help: consider importing this struct through its public re-export\n"
+        "    |\n"
+        "3   + use crate::Treasure;\n"
+        "    |\n"
+        "error[E0433]: cannot find type `Budget` in this scope\n"
+        "   --> src/engine/treasure_runner.rs:8:17\n"
+        "    |\n"
+        '8   |         budget: Budget::new(200.0, 0.25).expect("valid"),\n'
+        "    |                 ^^^^^^ use of undeclared type `Budget`\n"
+        "    |\n"
+        "help: consider importing this struct through its public re-export\n"
+        "    |\n"
+        "3   + use crate::Budget;\n"
+        "    |\n"
+    )
+    planning = plan_rust_trait_import_repair(
+        base_files={"src/engine/treasure_runner.rs": content},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+    assert planning.plan is not None
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+    updated = content
+    for operation in planning.plan.operations:
+        if operation.kind == "file_replace":
+            updated = str(operation.replacement)
+            break
+        updated = (
+            updated[: int(operation.span_start or 0)]
+            + str(operation.replacement)
+            + updated[int(operation.span_end or 0) :]
+        )
+    assert "use crate::Treasure;" in updated
+    assert "use crate::Budget;" in updated
+    assert "Treasure::new" in updated
+
+    line_planning = plan_rust_line_suggestion_repair(
+        base_files={"src/engine/treasure_runner.rs": content},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+    assert line_planning.plan is None or not line_planning.plan.operations
+
+
+def test_e0255_removes_use_that_collides_with_same_file_struct() -> None:
+    from polaris.cells.director.runtime.internal.repair_kernel.rust_syntax._helpers import (
+        rust_local_structure_operations,
+    )
+
+    content = (
+        "use crate::engine::RuleOutcome;\n"
+        "use crate::BudgetOutcome;\n"
+        "\n"
+        "pub struct RuleOutcome {\n"
+        "    pub rule: &'static str,\n"
+        "}\n"
+    )
+    raw = (
+        "error[E0255]: the name `RuleOutcome` is defined multiple times\n"
+        "  --> src/engine/treasure_runner.rs:4:1\n"
+        "   |\n"
+        "1  | use crate::engine::RuleOutcome;\n"
+        "   |     -------------------------- previous import of the type `RuleOutcome` here\n"
+        "...\n"
+        "4  | pub struct RuleOutcome {\n"
+        "   | ^^^^^^^^^^^^^^^^^^^^^^ `RuleOutcome` redefined here\n"
+    )
+    ops = rust_local_structure_operations(
+        base_files={"src/engine/treasure_runner.rs": content},
+        diagnostics=normalize_artifact_quality_errors([raw]),
+    )
+    assert ops
+    repaired = str(ops[0].replacement)
+    assert "use crate::engine::RuleOutcome;" not in repaired
+    assert "pub struct RuleOutcome" in repaired
+    assert "use crate::BudgetOutcome;" in repaired
+
+
+def test_e0252_drops_reimported_alias_use() -> None:
+    from polaris.cells.director.runtime.internal.repair_kernel.rust_syntax._helpers import (
+        rust_local_structure_operations,
+    )
+
+    content = (
+        "use crate::engine::treasure_rules::RuleOutcome as RuleOutcomeLike;\n"
+        "\n"
+        "pub struct RuleOutcome {\n"
+        "    pub rule: &'static str,\n"
+        "}\n"
+        "\n"
+        "pub use crate::engine::treasure_rules::RuleOutcome as RuleOutcomeLike;\n"
+    )
+    raw = (
+        "error[E0252]: the name `RuleOutcomeLike` is defined multiple times\n"
+        "  --> src/engine/treasure_runner.rs:7:9\n"
+        "   |\n"
+        "1  | use crate::engine::treasure_rules::RuleOutcome as RuleOutcomeLike;\n"
+        "   |     ------------------------------------------------------------- previous import of the type `RuleOutcomeLike` here\n"
+        "...\n"
+        "7  | pub use crate::engine::treasure_rules::RuleOutcome as RuleOutcomeLike;\n"
+        "   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `RuleOutcomeLike` reimported here\n"
+    )
+    ops = rust_local_structure_operations(
+        base_files={"src/engine/treasure_runner.rs": content},
+        diagnostics=normalize_artifact_quality_errors([raw]),
+    )
+    assert ops
+    repaired = str(ops[0].replacement)
+    assert repaired.count("RuleOutcomeLike") == 1
+    assert repaired.startswith("use crate::engine::treasure_rules::RuleOutcome as RuleOutcomeLike;")
+    assert "pub use crate::engine::treasure_rules::RuleOutcome as RuleOutcomeLike;" not in repaired
+    assert "pub struct RuleOutcome" in repaired
+
+
+def test_cargo_test_panic_excerpt_normalizes_to_source_path() -> None:
+    raw = (
+        "error: test failed, to rerun pass `--lib`\n"
+        "---- engine::treasure_runner::tests::normal_scenario_yields_go_verdict stdout ----\n"
+        "thread 'engine::treasure_runner::tests::normal_scenario_yields_go_verdict' "
+        "panicked at src/engine/treasure_runner.rs:251:9:\n"
+        "assertion `left == right` failed\n"
+        "  left: Caution\n"
+        " right: Go\n"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+    assert any(
+        item.code == "verifier_test_failure" and item.path == "src/engine/treasure_runner.rs" and item.line == 251
+        for item in diagnostics
+    )

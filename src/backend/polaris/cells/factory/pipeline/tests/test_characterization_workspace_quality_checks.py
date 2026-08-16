@@ -781,6 +781,59 @@ class TestRunWorkspaceQualityChecks:
         assert restored["metadata"]["external_task_id"] == "TASK-1"
         assert restored["metadata"]["factory_stage"] == "quality_gate"
 
+    def test_workspace_quality_reopens_blocked_restart_fence_owner(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Isolated backend restart fences must not permanently lock the owner."""
+
+        from polaris.cells.runtime.task_runtime.internal.task_board import TaskStatus
+        from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-blocked-quality-owner",
+            config=FactoryConfig(name="blocked-quality-owner", stages=["director_dispatch", "quality_gate"]),
+            status=FactoryRunStatus.RECOVERING,
+            created_at="2026-08-16T00:00:00+00:00",
+        )
+        runtime = TaskRuntimeService(str(tmp_path))
+        created = runtime.ensure_task_row(
+            external_task_id="TASK-1-source-modules",
+            subject="Own the CLI entrypoint",
+            description="src/main.cpp owner after restart fence",
+            metadata={
+                "external_task_id": "TASK-1-source-modules",
+                "factory_run_id": run.id,
+                "target_files": ["src/main.cpp"],
+                "role": "director",
+            },
+        )
+        task_id = runtime.normalize_task_id(created.get("id") if isinstance(created, dict) else created)
+        assert task_id is not None
+        runtime._board.update(
+            task_id,
+            status=TaskStatus.BLOCKED,
+            metadata={
+                "last_execution_error": "factory_restart_recovery_expired_child_session",
+            },
+            allow_dependency_status=True,
+        )
+
+        external_id, task_row_id, attempt, repair_task = executor._claim_workspace_quality_repair_attempt(
+            run=run,
+            repair_attempt=1,
+            target_files=["src/main.cpp"],
+        )
+
+        assert external_id == "TASK-1-source-modules"
+        assert attempt.run_id == run.id
+        assert repair_task["target_files"] == ["src/main.cpp"]
+        claimed = TaskRuntimeService(str(tmp_path)).get_task(task_row_id)
+        assert claimed is not None
+        assert str(claimed.get("status") or "").lower() in {"pending", "ready", "claimed", "in_progress"}
+        assert claimed["metadata"]["workspace_quality_repair"] is True
+
     def test_workspace_quality_repair_effect_requires_post_repair_verifier_progress(self) -> None:
         classify = OrchestrationStageExecutor._workspace_quality_repair_effect
 
@@ -959,9 +1012,8 @@ class TestRunWorkspaceQualityChecks:
                 ),
                 after_signature=(
                     "--- FAIL: TestRun_StatsAndSnapshot (0.00s)\n"
-                    "    main_test.go:515: snapshot: want capsule[ entries, got \"\"",
-                    "--- FAIL: TestRun_ListExhibition (0.00s)\n"
-                    "    main_test.go:523: list: want exitOK, got 1",
+                    '    main_test.go:515: snapshot: want capsule[ entries, got ""',
+                    "--- FAIL: TestRun_ListExhibition (0.00s)\n    main_test.go:523: list: want exitOK, got 1",
                     "delivery_depth_contract_failed: production_source_files=5 < 6",
                 ),
                 verifier_passed=False,

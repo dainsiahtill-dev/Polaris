@@ -32,6 +32,8 @@ from .factory_workspace_quality_evidence import (
     compact_go_stack_overflow_diagnostic,
     workspace_quality_latest_task_boundary_scope_filter,
     workspace_quality_repair_result_has_mutation,
+    workspace_quality_unclaimed_failing_tu_targets,
+    workspace_quality_unclaimed_residual_targets,
 )
 
 # Module-local constants (mirrors of the ones in ``factory_stage_executor`` so
@@ -281,6 +283,7 @@ def _workspace_quality_hold_llm_for_plannable_deterministic(
         "deterministic_rust_lib_root_facade_repair",
         "deterministic_rust_line_suggestion_repair",
         "deterministic_rust_field_rename_suggestion_repair",
+        "deterministic_rust_trait_import_repair",
     }
     if tools & hold_tools:
         return True
@@ -526,7 +529,7 @@ def _claim_workspace_quality_repair_attempt(
         if task_row_id is None:
             raise RuntimeError("workspace_quality_repair_owner_task_id_invalid")
         owner_status = str(owner_row.get("status") or owner_row.get("raw_status") or "").strip().lower()
-        if owner_status in {"completed", "failed", "cancelled"}:
+        if owner_status in {"completed", "failed", "cancelled", "blocked"}:
             reopened = task_runtime.reopen_task_row(
                 task_row_id,
                 reason="workspace_quality_gate_failed",
@@ -1438,12 +1441,26 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 )
             return partial_summary
 
+        forced_next_owner_targets: list[str] = []
         for round_index in range(max_rounds):
+            owner_override = list(forced_next_owner_targets) or None
+            forced_next_owner_targets = []
             if latest_check_results and all(bool(item.get("passed")) for item in latest_check_results):
                 break
             repair_errors = executor._workspace_quality_repair_errors(latest_check_results or results)
             if not repair_errors:
                 break
+            if owner_override is None:
+                # Live L2-15 remint-11/12: leftover only ran AFTER a TU
+                # stagnated, so the first four rounds never leased the
+                # unclosed queue.hpp that produced ProjectNS::std.
+                seeded = workspace_quality_unclaimed_failing_tu_targets(
+                    repair_errors,
+                    claimed_targets=[],
+                    workspace=Path(executor.workspace),
+                )
+                if seeded:
+                    owner_override = seeded
             before_signature = executor._workspace_quality_diagnostic_signature(repair_errors)
             # Oscillation uses AFTER codes from completed rounds only.
             # Seeding `seen` with this round's before-set made C++
@@ -1506,7 +1523,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                         artifact_quality_errors=repair_errors,
                         repair_attempt=round_index + 1,
                         interface_discrepancy_evidence=interface_discrepancy_evidence,
-                        owner_target_files=claimed_owner_targets or None,
+                        owner_target_files=owner_override or claimed_owner_targets or None,
                     )
                     llm_repair_attempted_in_round = True
                     if not round_repair_results:
@@ -1519,10 +1536,15 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     round_write_tool_evidence = any(
                         executor._workspace_quality_repair_result_has_mutation(item) for item in round_repair_results
                     )
+            owned_round_targets = [
+                str(item or "").strip()
+                for item in (round_summary.get("repair_target_files") or [])
+                if str(item or "").strip()
+            ]
             if (
                 not hold_llm_for_plannable_deterministic
                 and not round_requires_task_boundary_triage
-                and round_repair_results
+                and (round_repair_results or owned_round_targets)
                 and not round_write_tool_evidence
                 and not llm_repair_attempted_in_round
             ):
@@ -1549,6 +1571,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     context=context,
                     artifact_quality_errors=repair_errors,
                     repair_attempt=round_index + 1,
+                    owner_target_files=owner_override,
                 )
                 if not round_repair_results:
                     round_summary = dict(round_summary)
@@ -1577,6 +1600,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     context=context,
                     artifact_quality_errors=repair_errors,
                     repair_attempt=round_index + 1,
+                    owner_target_files=owner_override,
                 )
                 round_requires_task_boundary_triage = executor._workspace_quality_summary_requires_task_boundary_triage(
                     dict(round_summary)
@@ -1611,6 +1635,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     context=context,
                     artifact_quality_errors=repair_errors,
                     repair_attempt=round_index + 1,
+                    owner_target_files=owner_override,
                 )
                 llm_repair_attempted_in_round = True
                 round_requires_task_boundary_triage = executor._workspace_quality_summary_requires_task_boundary_triage(
@@ -1645,7 +1670,10 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     context=context,
                     artifact_quality_errors=repair_errors,
                     repair_attempt=round_index + 1,
-                    owner_target_files=deferred_owner_targets,
+                    # Live L2-15 remint-14: leftover FAILING_TUS seed filled
+                    # owner_override first, so ``owner_override or deferred``
+                    # never leased the handoff header (queue.hpp / models).
+                    owner_target_files=deferred_owner_targets or owner_override,
                 )
                 round_summary = dict(round_summary)
                 round_summary["deferred_owner_rebind"] = {
@@ -1779,6 +1807,26 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     # structured verifier feedback on the next bounded round.
                     consecutive_stagnant_rounds = 1
                     last_nonprogress_effect = "no_op"
+                leftover_after_noop = workspace_quality_unclaimed_residual_targets(
+                    repair_errors,
+                    claimed_targets=owned_round_targets
+                    or [
+                        str(item or "").strip()
+                        for item in (round_summary.get("repair_target_files") or [])
+                        if str(item or "").strip()
+                    ]
+                    or list(owner_override[:1] if owner_override else []),
+                    workspace=Path(executor.workspace),
+                )
+                if leftover_after_noop:
+                    # Live L2-15: generator.cpp went syntax-green so the
+                    # engine owner no-op'd while ### src/main.cpp still
+                    # failed. Do not retry the same Director task.
+                    forced_next_owner_targets = leftover_after_noop
+                    consecutive_stagnant_rounds = 0
+                    last_nonprogress_effect = ""
+                    last_nonprogress_task_id = ""
+                    continue
                 if consecutive_stagnant_rounds >= 2:
                     convergence_stop_reason = "two_consecutive_no_mutation_repairs"
                     break
@@ -1916,7 +1964,45 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             if round_prepare_failed:
                 convergence_stop_reason = "prepare_after_repair_failed"
                 break
+            leftover_tus = workspace_quality_unclaimed_failing_tu_targets(
+                after_errors,
+                claimed_targets=owned_round_targets
+                or [
+                    str(item or "").strip()
+                    for item in (round_summary.get("repair_target_files") or [])
+                    if str(item or "").strip()
+                ]
+                or list(owner_override[:1] if owner_override else []),
+                workspace=Path(executor.workspace),
+            )
+            if leftover_tus:
+                # Live L2-15 remint-9: models kept mutating queue.hpp/.cpp
+                # (classified progress / forward_unmask) while ### src/main.cpp
+                # stayed red. Waiting for two same-owner stagnations never
+                # leased the failing TU. Any unsuccessful round with unclaimed
+                # ### TUs must rotate immediately.
+                forced_next_owner_targets = leftover_tus
+                consecutive_stagnant_rounds = 0
+                last_nonprogress_effect = ""
+                last_nonprogress_task_id = ""
+                continue
             if consecutive_stagnant_rounds >= 2:
+                leftover_owners = workspace_quality_unclaimed_residual_targets(
+                    after_errors,
+                    claimed_targets=owned_round_targets
+                    or [
+                        str(item or "").strip()
+                        for item in (round_summary.get("repair_target_files") or [])
+                        if str(item or "").strip()
+                    ],
+                    workspace=Path(executor.workspace),
+                )
+                if leftover_owners:
+                    forced_next_owner_targets = leftover_owners
+                    consecutive_stagnant_rounds = 0
+                    last_nonprogress_effect = ""
+                    last_nonprogress_task_id = ""
+                    continue
                 convergence_stop_reason = "two_consecutive_stagnant_repairs"
                 break
         residual_failures = [item for item in latest_check_results if not bool(item.get("passed"))]

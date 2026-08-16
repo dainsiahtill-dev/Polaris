@@ -18,6 +18,8 @@ from ._constants import (
     _RUST_DERIVE_LINE_RE,
     _RUST_DERIVE_PREREQUISITES,
     _RUST_DUPLICATE_MODULE_FILE_RE,
+    _RUST_E0252_REIMPORTED_RE,
+    _RUST_E0255_PREVIOUS_IMPORT_RE,
     _RUST_E0583_HELP_LINE_RE,
     _RUST_ENUM_ITEM_RE,
     _RUST_ENUM_VARIANT_MISSING_FIELD_RE,
@@ -605,6 +607,17 @@ def _parse_rust_line_suggestions(diagnostics: Sequence[RepairDiagnostic]) -> lis
                 continue
             if not code.strip():
                 continue
+            help_text = str(match.groupdict().get("help") or "")
+            if "similar name" in help_text.lower():
+                # rustc "similar name exists" often rewrites evaluate_budget
+                # to evaluate_port (live L2-14). That is not a safe one-token
+                # import/field fix; skip it.
+                continue
+            if _is_strict_rust_use_import_line(code):
+                # rustc "consider importing" plus-lines belong to trait/reexport
+                # import. Replacing the error line with `use crate::Foo;` is
+                # not a line-suggestion.
+                continue
             code = _rewrite_vec_bare_generic_suggestion(code)
             key = (path, int(line_number), code)
             if key in seen:
@@ -699,11 +712,15 @@ def _parse_rust_trait_import_suggestions(diagnostics: Sequence[RepairDiagnostic]
             continue
 
         lower = line.lower()
-        if "help:" not in lower or "trait" not in lower:
+        if "help:" not in lower:
             continue
-        if "is implemented but not in scope" not in lower and "perhaps you want to import it" not in lower:
+        trait_help = "trait" in lower and (
+            "is implemented but not in scope" in lower or "perhaps you want to import it" in lower
+        )
+        reexport_help = "consider importing" in lower
+        if not trait_help and not reexport_help:
             continue
-        if "perhaps add a use for it" not in lower and "perhaps you want to import it" not in lower:
+        if trait_help and "perhaps add a use for it" not in lower and "perhaps you want to import it" not in lower:
             continue
 
         import_line = _rust_import_line_from_suggestion_lines(lines[index : index + 8])
@@ -1187,6 +1204,11 @@ def _rust_trait_import_operation(
     diagnostic: RepairDiagnostic,
 ) -> RepairOperation | None:
     if not path.endswith(".rs") or not _is_strict_rust_use_import_line(import_line):
+        return None
+    imported = import_line.rstrip(";").rsplit("::", 1)[-1].strip()
+    if imported and re.search(rf"(?m)^\s*(?:pub\s+)?(?:struct|enum)\s+{re.escape(imported)}\b", content):
+        # Live L2-14: rustc E0425 asked for `use crate::engine::RuleOutcome`
+        # then the LLM defined `pub struct RuleOutcome` in the same file.
         return None
     lines = content.splitlines(keepends=True)
     if any(line.strip() == import_line for line in lines):
@@ -2021,6 +2043,40 @@ def _rewrite_unknown_rust_enum_variants(
     return repaired
 
 
+def _rewrite_duplicate_imported_rust_names(
+    *,
+    content: str,
+    diagnostics: Sequence[RepairDiagnostic],
+) -> str:
+    """Drop a rustc-inserted use that now collides with a same-file type.
+
+    Live L2-14: E0425 import ``use crate::engine::RuleOutcome`` landed, then
+    Director LLM defined ``pub struct RuleOutcome`` in the same runner file
+    (E0255). The local item is the later binding; remove the colliding use.
+    """
+
+    haystack = "\n".join(str(item.raw or item.message or "") for item in diagnostics or ())
+    repaired = content
+    seen: set[str] = set()
+
+    def _drop_use(use_line: str) -> None:
+        nonlocal repaired
+        if not use_line or use_line in seen:
+            return
+        seen.add(use_line)
+        repaired = re.sub(rf"(?m)^[ \t]*{re.escape(use_line)}[ \t]*\n", "", repaired)
+
+    for match in _RUST_E0255_PREVIOUS_IMPORT_RE.finditer(haystack):
+        use_line = str(match.group("use") or "").strip()
+        name = str(match.group("name") or "")
+        if name and not re.search(rf"(?m)^\s*(?:pub\s+)?(?:struct|enum)\s+{re.escape(name)}\b", repaired):
+            continue
+        _drop_use(use_line)
+    for match in _RUST_E0252_REIMPORTED_RE.finditer(haystack):
+        _drop_use(str(match.group("use") or "").strip())
+    return repaired
+
+
 def rust_local_structure_operations(
     *,
     base_files: Mapping[str, str],
@@ -2046,6 +2102,8 @@ def rust_local_structure_operations(
                 diagnostics=diagnostics,
                 base_files=base_files,
             )
+        if "defined multiple times" in haystack.lower() and "previous import" in haystack.lower():
+            repaired = _rewrite_duplicate_imported_rust_names(content=repaired, diagnostics=diagnostics)
         if "expected a tuple with 3 elements" in haystack or "found one with 2 elements" in haystack:
             repaired = _RUST_TWO_TUPLE_LET_RE.sub(
                 r"\g<prefix>(\g<a>, _reagents, \g<b>)\g<rest>",
