@@ -452,6 +452,83 @@ def _verifier_source_context_block(
     )
 
 
+_DIAGNOSTIC_REFERENCED_SOURCE_RE = re.compile(
+    r"(?:-->|:::)\s+(?P<path>(?:[A-Za-z]:)?(?:\.{0,2}[/\\])?[^\s:()'\"]+\.[A-Za-z0-9_+-]+)"
+    r":(?P<line>\d+)"
+)
+
+
+def _diagnostic_referenced_definition_context_block(
+    *,
+    workspace_full: str,
+    artifact_quality_errors: list[str],
+    repair_target_files: list[str],
+) -> str:
+    """Project rustc/compiler-cited definition files as read-only API evidence.
+
+    Live L2-14: quality LLM only saw TASK-2 engine files, then invented
+    ``ReefHazard::Shoal`` / ``PortKind::Outpost`` instead of using the
+    existing model enums. Verifier ``-->`` / ``:::`` paths name those
+    definitions; they must not become write targets.
+    """
+
+    workspace = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
+    if workspace is None or not workspace.is_dir() or not artifact_quality_errors:
+        return ""
+
+    repair_targets = {
+        _normalize_declared_task_path(item) for item in repair_target_files if _normalize_declared_task_path(item)
+    }
+    refs: list[tuple[str, int]] = []
+    for error in artifact_quality_errors:
+        for match in _DIAGNOSTIC_REFERENCED_SOURCE_RE.finditer(str(error or "")):
+            rel = _normalize_declared_task_path(match.group("path"))
+            if not rel or rel in repair_targets:
+                continue
+            try:
+                line_number = max(1, int(match.group("line")))
+            except (TypeError, ValueError):
+                continue
+            try:
+                absolute = (workspace / rel).resolve()
+                absolute.relative_to(workspace)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if not absolute.is_file():
+                continue
+            ref = (rel, line_number)
+            if ref not in refs:
+                refs.append(ref)
+
+    blocks: list[str] = []
+    total_budget = 16000
+    used = 0
+    for rel, line_number in refs[:8]:
+        try:
+            source_path = (workspace / rel).resolve()
+            source_path.relative_to(workspace)
+            lines = source_path.read_text(encoding="utf-8").splitlines()
+        except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+            continue
+        start = max(0, line_number - 16)
+        end = min(len(lines), line_number + 24)
+        excerpt = "\n".join(f"{index + 1}: {lines[index]}" for index in range(start, end))
+        remaining = max(0, total_budget - used)
+        if remaining <= 0:
+            break
+        excerpt = excerpt[:remaining]
+        used += len(excerpt)
+        blocks.append(f"--- {rel} around line {line_number} (READ-ONLY DEFINITION) ---\n```text\n{excerpt}\n```")
+    if not blocks:
+        return ""
+    return (
+        "REFERENCED TYPE DEFINITIONS (READ-ONLY EVIDENCE; NEVER EDIT THESE FILES):\n"
+        "Use only the existing variants, methods, and fields shown below. "
+        "Never invent members that are absent from these definitions. "
+        "This evidence does not expand write scope.\n" + "\n".join(blocks) + "\n"
+    )
+
+
 def _is_typescript_command_config_path(rel_path: str) -> bool:
     return Path(str(rel_path or "")).name.lower() in {"tsconfig.json", "jsconfig.json"}
 
@@ -1348,6 +1425,11 @@ def _build_materialization_quality_repair_message(
         artifact_quality_errors=artifact_quality_errors,
         repair_target_files=prompt_repair_target_files,
     )
+    referenced_definition_context_block = _diagnostic_referenced_definition_context_block(
+        workspace_full=workspace_full,
+        artifact_quality_errors=artifact_quality_errors,
+        repair_target_files=prompt_repair_target_files,
+    )
     # C7-text W3 (2026-06-16 deliberation): cross-file coherence repair. An
     # unresolved relative import means the importer references a module that
     # does not exist yet; QA detects it, but the bare "MISSING TARGET FILES"
@@ -1563,6 +1645,7 @@ def _build_materialization_quality_repair_message(
         f"{authorized_tool_path_block}"
         f"{repair_context_block}"
         f"{verifier_source_context_block}"
+        f"{referenced_definition_context_block}"
         f"{coherence_block}"
         f"{symbol_repair_block}"
         f"{javascript_named_export_block}"
@@ -1576,8 +1659,9 @@ def _build_materialization_quality_repair_message(
         f"{interface_discrepancy_block}"
         "EDIT CONSISTENCY PREFLIGHT (mandatory before every tool call):\n"
         "- For every identifier, enum/member, import, callable, or mapping key introduced by an edit, verify that "
-        "its definition already exists in the CURRENT UTF-8 CONTENT or create/update that definition in the same "
-        "authorized edit batch. Never change a reference without its owner definition and dependent lookup tables.\n"
+        "its definition already exists in the CURRENT UTF-8 CONTENT or READ-ONLY referenced definition files. "
+        "Use existing variants/methods/fields only. Never invent members. Never edit READ-ONLY files. "
+        "Only edit authorized write targets.\n"
         "- Cover every listed verifier diagnostic, preserve already-passing behavior, and do not trade one failure "
         "for a new unresolved symbol or runtime exception.\n"
         "Do not repeat the same package/script/test scaffold. Replace the bad artifact with concrete runnable code, "
@@ -1768,7 +1852,9 @@ def _build_existing_workspace_task_evidence(
         normalized = _normalize_declared_task_path(candidate, workspace_name=workspace_name)
         if not normalized:
             continue
-        if _path_candidate_exists_in_file_set(normalized, current) or _declared_path_exists_on_workspace_disk(workspace_full, normalized):
+        if _path_candidate_exists_in_file_set(normalized, current) or _declared_path_exists_on_workspace_disk(
+            workspace_full, normalized
+        ):
             existing.append(normalized)
         else:
             missing.append(normalized)
@@ -1820,6 +1906,7 @@ __all__ = [
     "_coerce_artifact_quality_issue_path",
     "_compact_original_message_for_quality_repair",
     "_concrete_npm_test_glob_repair_target",
+    "_diagnostic_referenced_definition_context_block",
     "_director_direct_text_patch_only_enabled",
     "_director_existing_scope_preflight_enabled",
     "_find_python_module_alias_source",

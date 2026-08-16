@@ -104,6 +104,63 @@ def _resolve_context_timeout_ceiling(context_override: Any) -> int | None:
     return None
 
 
+_FACTORY_EXECUTION_DEADLINE_KEYS = (
+    "factory_run_deadline_epoch_seconds",
+    "factory_director_execution_deadline_epoch_seconds",
+)
+
+
+def _factory_execution_deadline_epochs(context_override: Any) -> list[tuple[str, float]]:
+    """Collect positive Factory run/wave deadline epochs from context or metadata."""
+
+    if not isinstance(context_override, dict):
+        return []
+    metadata = context_override.get("metadata")
+    metadata_map = metadata if isinstance(metadata, dict) else {}
+    found: list[tuple[str, float]] = []
+    for key in _FACTORY_EXECUTION_DEADLINE_KEYS:
+        raw: Any = context_override.get(key)
+        if raw is None:
+            raw = metadata_map.get(key)
+        if raw is None:
+            continue
+        if isinstance(raw, bool):
+            raise RuntimeError("factory_director_execution_deadline_invalid")
+        try:
+            deadline_epoch = float(raw)
+        except (TypeError, ValueError):
+            raise RuntimeError("factory_director_execution_deadline_invalid") from None
+        if not math.isfinite(deadline_epoch) or deadline_epoch <= 0:
+            raise RuntimeError("factory_director_execution_deadline_invalid")
+        found.append((key, deadline_epoch))
+    return found
+
+
+def _select_viable_factory_deadline_epoch(
+    context_override: Any,
+    *,
+    now: float,
+    minimum_remaining_seconds: float,
+) -> tuple[str, float] | None:
+    """Prefer the tightest still-viable Factory deadline.
+
+    Live L2-13 quality retry reminted ``factory_run_deadline`` after the
+    Director-wave clock had already expired. Honoring only the wave clock
+    then raised ``factory_director_execution_deadline_exhausted`` and
+    skipped the owner LLM edit.
+    """
+
+    candidates = _factory_execution_deadline_epochs(context_override)
+    viable = [
+        (source, epoch)
+        for source, epoch in candidates
+        if (epoch - now) >= minimum_remaining_seconds
+    ]
+    if not viable:
+        return None
+    return min(viable, key=lambda item: item[1])
+
+
 def _clamp_factory_director_timeout_to_deadline(
     timeout_seconds: int,
     context_override: Any,
@@ -112,26 +169,22 @@ def _clamp_factory_director_timeout_to_deadline(
 
     if not isinstance(context_override, dict):
         return timeout_seconds
-    deadline_raw: Any = context_override.get("factory_director_execution_deadline_epoch_seconds")
-    metadata = context_override.get("metadata")
-    if deadline_raw is None and isinstance(metadata, dict):
-        deadline_raw = metadata.get("factory_director_execution_deadline_epoch_seconds")
-    if deadline_raw is None:
+    candidates = _factory_execution_deadline_epochs(context_override)
+    if not candidates:
         return timeout_seconds
-    if isinstance(deadline_raw, bool):
-        raise RuntimeError("factory_director_execution_deadline_invalid")
-    try:
-        deadline_epoch = float(deadline_raw)
-    except (TypeError, ValueError):
-        deadline_epoch = 0.0
-    if not math.isfinite(deadline_epoch) or deadline_epoch <= 0:
-        raise RuntimeError("factory_director_execution_deadline_invalid")
-    remaining_seconds = deadline_epoch - time.time()
+    now = time.time()
+    selected = _select_viable_factory_deadline_epoch(
+        context_override,
+        now=now,
+        minimum_remaining_seconds=1.0,
+    )
+    if selected is None:
+        raise RuntimeError("factory_director_execution_deadline_exhausted")
+    _source, deadline_epoch = selected
+    remaining_seconds = deadline_epoch - now
     # Provider timeout is integer seconds. A sub-second remainder cannot be
     # represented without expanding the authority lease, so reject before any
     # physical request instead of rounding beyond the Factory deadline.
-    if remaining_seconds < 1.0:
-        raise RuntimeError("factory_director_execution_deadline_exhausted")
     return min(timeout_seconds, max(1, math.floor(remaining_seconds)))
 
 

@@ -253,6 +253,9 @@ _GO_TEST_FAILURE_TITLE_RE = re.compile(
     r"(?:^|[\n:])\s*---\s+FAIL:\s+(?P<title>[A-Za-z_][A-Za-z0-9_]*)",
     re.IGNORECASE | re.MULTILINE,
 )
+_GO_STACK_OVERFLOW_FRAME_RE = re.compile(
+    r"(?P<pkg>[A-Za-z0-9_./]+)\.\(\*?(?P<type>[A-Za-z0-9_]+)\)\.(?P<method>[A-Za-z0-9_]+)"
+)
 
 
 def _go_runtime_smoke_repair_target_files(
@@ -273,6 +276,7 @@ def _go_runtime_smoke_repair_target_files(
         if not _looks_like_go_workspace_quality_error(text):
             continue
         if workspace_root is not None and workspace_root.is_dir():
+            targets.extend(_go_stack_overflow_frame_target_files(text, workspace_root))
             targets.extend(_go_compile_error_target_files(text, workspace_root))
             targets.extend(_go_runtime_smoke_command_target_files(text, workspace_root))
             targets.extend(
@@ -301,6 +305,61 @@ def _looks_like_go_workspace_quality_error(text: str) -> bool:
     if "workspace validation command failed" in lowered and ("go run" in lowered or "go test" in lowered):
         return True
     return ("go test" in lowered or "go compile" in lowered) and ".go:" in lowered
+
+
+def _go_stack_overflow_frame_target_files(text: str, workspace_root: Path) -> list[str]:
+    """Map compact/raw Go overflow frames to authored package files.
+
+    Live L2-13: ``go test ./...`` / ``go run .`` overflowed in
+    ``engine.(*Service).exhibitionIDs``. Command-target ranking put
+    ``main.go`` first, so quality-repair LLM edited the entrypoint and
+    left the recursive owner file untouched.
+    """
+
+    lowered = str(text or "").lower()
+    if "stack overflow" not in lowered and "repeating_frames=" not in lowered and "frames=" not in text:
+        return []
+    targets: list[str] = []
+    for match in _GO_STACK_OVERFLOW_FRAME_RE.finditer(str(text or "")):
+        package_path = str(match.group("pkg") or "").strip()
+        type_name = str(match.group("type") or "").strip()
+        if not package_path or not type_name:
+            continue
+        package_dir = package_path.rsplit("/", 1)[-1]
+        if package_dir == package_path:
+            search_dir = workspace_root
+            relative_prefix = ""
+        else:
+            search_dir = workspace_root / package_dir
+            relative_prefix = f"{package_dir}/"
+        if not search_dir.is_dir():
+            continue
+        typed_rel = f"{relative_prefix}{type_name.lower()}.go"
+        typed_path = workspace_root / typed_rel
+        if typed_path.is_file():
+            targets.append(typed_rel)
+            continue
+        method_name = str(match.group("method") or "").strip()
+        scanned = 0
+        for candidate in sorted(search_dir.glob("*.go")):
+            if scanned >= 20:
+                break
+            scanned += 1
+            if candidate.name.endswith("_test.go"):
+                continue
+            try:
+                body = candidate.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            receiver_hit = f"* {type_name}" in body.replace("*", "* ") or f"*{type_name}" in body
+            if not receiver_hit:
+                continue
+            if method_name and method_name not in body:
+                continue
+            rel = _normalize_declared_task_path(str(candidate.relative_to(workspace_root)))
+            if rel:
+                targets.append(rel)
+    return _dedupe_preserve_order(targets)
 
 
 def _go_runtime_smoke_command_target_files(text: str, workspace_root: Path) -> list[str]:

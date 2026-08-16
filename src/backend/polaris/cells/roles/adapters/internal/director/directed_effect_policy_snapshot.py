@@ -57,7 +57,10 @@ from polaris.kernelone.llm.toolkit.executor.command_capability import (
 )
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
-from .execution_tools import DirectorToolExecutor as _DirectorToolExecutor
+from .execution_tools import (
+    DirectorToolExecutor as _DirectorToolExecutor,
+    recover_write_body_string as _recover_write_body_string,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1372,12 +1375,19 @@ class _DirectorEffectPolicySnapshotPort:
                 raise ValueError("write tool content must be a string")
         elif request.normalized_tool_name == "edit_file":
             if content_provided and not isinstance(proposed, str):
-                # Nested dict/list content is tool-arg corruption; never coerce.
-                raise ValueError("write tool content must be a string")
+                recovered = _recover_write_body_string(proposed)
+                if recovered is None:
+                    # Nested dict/list content is tool-arg corruption; never coerce.
+                    raise ValueError("write tool content must be a string")
+                proposed = recovered
+                values["content"] = recovered
             for field_name in ("old_string", "new_string", "old_content", "new_content"):
                 field_value = values.get(field_name)
                 if field_value is not None and not isinstance(field_value, str):
-                    raise ValueError(f"edit_file {field_name} must be a string")
+                    recovered_field = _recover_write_body_string(field_value)
+                    if recovered_field is None:
+                        raise ValueError(f"edit_file {field_name} must be a string")
+                    values[field_name] = recovered_field
         tool_name = request.normalized_tool_name
         if tool_name == "delete_file":
             new_content = ""

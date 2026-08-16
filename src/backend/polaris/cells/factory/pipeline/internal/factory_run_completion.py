@@ -629,7 +629,13 @@ class RunCompletionWaiter:
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning("Failed to propagate factory cancellation to run %s: %s", normalized_run_id, exc)
         except Exception as exc:
-            if exc.__class__.__name__ != "NotFoundError":
+            # Live L2-12 task 259: Director lease expired after settlement
+            # head_recheck starved heartbeats.  Orchestration had already
+            # dropped `_run_locks[director-aa724e5f4540]`.  cancel_run then
+            # raised InvalidStateError and fail-closed the whole
+            # director_dispatch stage.  "not active" is the same already-gone
+            # case as NotFoundError.
+            if exc.__class__.__name__ not in {"NotFoundError", "InvalidStateError"}:
                 raise
             logger.warning(
                 "Factory cancellation target run %s was already absent from orchestration service: %s",

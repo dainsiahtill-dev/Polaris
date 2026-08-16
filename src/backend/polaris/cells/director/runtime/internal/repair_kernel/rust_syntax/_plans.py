@@ -561,7 +561,24 @@ def build_rust_line_suggestion_plan(
     for path, line_ops in line_ops_by_path.items():
         if path in local_paths:
             continue
-        operations.extend(line_ops)
+        # One op keeps a precise line replace. Two-plus ops on the same
+        # file share one original before_hash and fail PatchComposer
+        # (live L2-14: treasure.kind() + port.kind() + arity helps).
+        if len(line_ops) == 1:
+            operations.append(line_ops[0])
+            continue
+        original = normalized_base.get(path)
+        repaired = working.get(path)
+        if original is None or repaired is None or repaired == original:
+            continue
+        operations.extend(
+            _file_replace_operations(
+                path=path,
+                original=original,
+                repaired=repaired,
+                diagnostic_id=next((item.diagnostic_id for item in planned_diagnostics), ""),
+            )
+        )
     for operation in local_ops:
         original = normalized_base.get(operation.path)
         repaired = working.get(operation.path)

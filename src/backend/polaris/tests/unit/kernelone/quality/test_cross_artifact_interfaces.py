@@ -51,6 +51,39 @@ class TestPythonNamespaceExports:
         assert any("unresolved import symbol 'WeatherReport'" in message for message in messages)
         assert any("src/models/__init__.py" in message for message in messages)
 
+    def test_python_import_alias_resolves_source_name_not_local_alias(self, tmp_path: Path) -> None:
+        """Live L2-12 TASK-3-source-modules: ``compose_forecast as _compose_forecast``.
+
+        The exporter owns ``compose_forecast``. The local alias is not a
+        missing sibling export and must not fail the importer.
+        """
+
+        _write(
+            tmp_path / "src/engine/forecast.py",
+            "def compose_forecast(mood):\n    return mood\n\ndef known_rules():\n    return ()\n",
+        )
+        _write(
+            tmp_path / "src/__init__.py",
+            "from src.engine.forecast import compose_forecast as _compose_forecast, known_rules as _known_rules\n",
+        )
+
+        issues = scan_cross_artifact_consistency(tmp_path)
+
+        assert issues == []
+
+    def test_python_import_alias_still_reports_missing_source_name(self, tmp_path: Path) -> None:
+        _write(tmp_path / "src/engine/forecast.py", "def compose_forecast(mood):\n    return mood\n")
+        _write(
+            tmp_path / "src/__init__.py",
+            "from src.engine.forecast import missing_forecast as _compose_forecast\n",
+        )
+
+        issues = scan_cross_artifact_consistency(tmp_path)
+
+        messages = [issue.message for issue in issues]
+        assert any("unresolved import symbol 'missing_forecast'" in message for message in messages)
+        assert not any("_compose_forecast" in message for message in messages)
+
 
 class TestTypescriptNamespaceExports:
     def test_typescript_export_star_resolves_namespace_import(self, tmp_path: Path) -> None:

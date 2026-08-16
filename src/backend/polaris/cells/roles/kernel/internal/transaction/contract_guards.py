@@ -1054,6 +1054,7 @@ _REPLANNABLE_WRITE_ERROR_TYPES = frozenset(
         "destructive_shrink",
         "director_write_no_effect",
         "director_write_policy_denied",
+        "deo_member_soft_denied",
         "source_syntax_regression",
         "invalid_arg",
         "invalid_args",
@@ -1101,14 +1102,24 @@ def _structured_write_failure_error_type(item: Mapping[str, Any]) -> str:
 
     payload = item.get("result")
     sources = (item, payload) if isinstance(payload, Mapping) else (item,)
+    wrapper_error_type = ""
     for source in sources:
         error_type = (
             str(source.get("error_type") or source.get("handler_error_type") or source.get("physical_error_type") or "")
             .strip()
             .lower()
         )
-        if error_type:
-            return error_type
+        if not error_type:
+            continue
+        # Live L2-12 TASK-3-source-core: edit_file reached py_compile and
+        # changed forecast.py, then DEO wrapped the physical miss as
+        # deo_physical_execution_failed. Returning the wrapper first made
+        # batch_write_failures_require_llm_replan False and aborted as
+        # tool_dispatch_failed / director_missing_write_receipt.
+        if error_type == "deo_physical_execution_failed":
+            wrapper_error_type = error_type
+            continue
+        return error_type
 
     physical_fragments: list[str] = []
     for source in sources:
@@ -1124,9 +1135,11 @@ def _structured_write_failure_error_type(item: Mapping[str, Any]) -> str:
 
     for source in sources:
         error_code = str(source.get("error_code") or "").strip().lower()
-        if error_code:
+        if error_code and error_code != "deo_physical_execution_failed":
             return error_code
-    return ""
+        if error_code == "deo_physical_execution_failed":
+            wrapper_error_type = wrapper_error_type or error_code
+    return wrapper_error_type
 
 
 def batch_write_failure_error_types(batch_receipt: Mapping[str, Any]) -> tuple[str, ...]:

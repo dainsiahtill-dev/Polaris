@@ -127,6 +127,22 @@ class TestResolveLlmCallTimeoutSeconds:
         else:
             raise AssertionError("expired Factory deadline must block Provider admission")
 
+    def test_viable_factory_run_deadline_overrides_expired_director_wave(self, monkeypatch: Any) -> None:
+        """Live L2-13: quality retry reminted factory_run while Director-wave clock was dead."""
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.internal.director.execution.time.time",
+            lambda: 1000.0,
+        )
+        result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds(
+            {
+                "llm_call_timeout_seconds": 180.0,
+                "factory_run_deadline_epoch_seconds": 1600.0,
+                "factory_director_execution_deadline_epoch_seconds": 990.0,
+            }
+        )
+        assert result >= 30.0
+        assert result <= 600.0
+
 
 class TestResolveDirectFallbackTimeoutSeconds:
     """direct text fallback must stay within the primary Director budget."""

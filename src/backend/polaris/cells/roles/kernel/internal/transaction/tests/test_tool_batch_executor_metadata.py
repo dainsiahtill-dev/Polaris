@@ -202,6 +202,95 @@ def test_no_effect_write_receipt_is_not_authoritative_success_and_requires_repla
     assert batch_write_failures_require_llm_replan(receipt) is True
 
 
+def test_deo_physical_wrapper_unwraps_no_effect_for_replan() -> None:
+    """L2-12 TASK-3-source-core: unwrap DEO wrapper before fail-closed.
+
+    Live director-ecf79b92c487 applied edit_file (py_compile ok, forecast.py
+    mtime changed) then surfaced error_type=deo_physical_execution_failed.
+    The wrapper must not hide nested no-effect / stale-edit so mutation
+    retry can replan instead of tool_dispatch_failed + missing write receipt.
+    """
+
+    receipt = {
+        "results": [
+            {
+                "tool_name": "edit_file",
+                "status": "error",
+                "result": {
+                    "ok": False,
+                    "error_type": "deo_physical_execution_failed",
+                    "physical_error": "physical mutation produced no effect",
+                    "error": "deo_physical_execution_failed:physical mutation produced no effect",
+                },
+            }
+        ]
+    }
+
+    assert batch_write_failure_error_types(receipt) == ("director_write_no_effect",)
+    assert batch_write_failures_require_llm_replan(receipt) is True
+
+
+def test_deo_physical_wrapper_without_nested_hint_stays_fail_closed() -> None:
+    receipt = {
+        "results": [
+            {
+                "tool_name": "edit_file",
+                "status": "error",
+                "result": {
+                    "ok": False,
+                    "error_type": "deo_physical_execution_failed",
+                    "error": "deo_physical_execution_failed",
+                },
+            }
+        ]
+    }
+
+    assert batch_write_failure_error_types(receipt) == ("deo_physical_execution_failed",)
+    assert batch_write_failures_require_llm_replan(receipt) is False
+
+
+def test_soft_denied_and_no_effect_write_batch_requires_llm_replan() -> None:
+    """L2-12 TASK-3-source-models: mixed no-effect + soft-deny is replannable.
+
+    Live director-67dd525951f9 decoded five edit_file calls. Some were
+    proven no-ops, others were DEO dropped_members projected as
+    deo_member_soft_denied. Because soft-deny was not replannable, the
+    batch skipped single_batch_contract_violation and raised
+    tool_dispatch_failed, aborting the turn without teaching receipts.
+    Soft-deny is already a per-call receipt (R140); it must not poison
+    an otherwise replannable zero-effect write batch.
+    """
+
+    receipt = {
+        "results": [
+            {
+                "tool_name": "edit_file",
+                "status": "error",
+                "result": {
+                    "ok": False,
+                    "error_type": "director_write_no_effect",
+                    "error": "physical mutation produced no effect",
+                },
+            },
+            {
+                "tool_name": "edit_file",
+                "status": "error",
+                "result": {
+                    "ok": False,
+                    "error": "directed_effect_policy_denied",
+                    "error_type": "deo_member_soft_denied",
+                },
+            },
+        ]
+    }
+
+    assert batch_write_failure_error_types(receipt) == (
+        "director_write_no_effect",
+        "deo_member_soft_denied",
+    )
+    assert batch_write_failures_require_llm_replan(receipt) is True
+
+
 def test_scope_denied_write_requires_new_llm_invocation_without_widening_scope() -> None:
     receipt = {
         "results": [

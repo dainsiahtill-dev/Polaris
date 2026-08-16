@@ -273,9 +273,44 @@ def _workspace_member_manifest_paths(workspace: Path, manifest: dict[str, object
     return tuple(sorted(discovered))
 
 
+def _resolve_cargo_manifest_path(workspace: Path) -> Path | None:
+    """Return the cargo manifest, accepting Linux-case ``cargo.toml``.
+
+    Live L2-14: Director wrote ``cargo.toml``. Cargo's default lookup and the
+    previous contract both required the exact basename ``Cargo.toml``, so
+    official quality skipped rust and bench rustc-compiled ``main.rs`` alone.
+    """
+
+    canonical = workspace / "Cargo.toml"
+    if canonical.is_file():
+        return canonical
+    try:
+        for child in workspace.iterdir():
+            if child.is_file() and child.name.lower() == "cargo.toml":
+                return child
+    except OSError:
+        return None
+    return None
+
+
+def _ensure_sandbox_canonical_cargo_manifest(workspace: Path) -> None:
+    """Give the sandbox copy the basename cargo itself looks up."""
+
+    canonical = workspace / "Cargo.toml"
+    if canonical.is_file():
+        return
+    source = _resolve_cargo_manifest_path(workspace)
+    if source is None:
+        return
+    try:
+        shutil.copyfile(source, canonical)
+    except OSError as exc:
+        raise NativeValidationSandboxError(f"sandbox could not canonicalize cargo manifest: {exc}") from exc
+
+
 def _validate_cargo_project_contract(workspace: Path) -> None:
-    manifest_path = workspace / "Cargo.toml"
-    if not manifest_path.is_file():
+    manifest_path = _resolve_cargo_manifest_path(workspace)
+    if manifest_path is None:
         raise NativeValidationContractError("Cargo.toml is required for cargo test")
     manifest = _load_project_toml(manifest_path, label="Cargo.toml")
     _validate_cargo_manifest_targets(manifest, label="Cargo.toml")
@@ -511,6 +546,7 @@ def sandboxed_cargo_test_command(
         (sandbox_cargo_home / "git").mkdir()
         sandbox_home.mkdir()
         _copy_workspace(source, sandbox_workspace)
+        _ensure_sandbox_canonical_cargo_manifest(sandbox_workspace)
         yield SandboxedNativeCommand(
             command=_bubblewrap_command(
                 bubblewrap=bubblewrap,

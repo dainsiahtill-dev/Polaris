@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 import tomllib
 
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
+from ..path_files import _canonicalize_well_known_basename
 from ._constants import (
     _ANSI_ESCAPE_RE,
     _KNOWN_RUST_DEPENDENCIES,
@@ -18,7 +19,9 @@ from ._constants import (
     _RUST_DERIVE_PREREQUISITES,
     _RUST_DUPLICATE_MODULE_FILE_RE,
     _RUST_E0583_HELP_LINE_RE,
+    _RUST_ENUM_ITEM_RE,
     _RUST_ENUM_VARIANT_MISSING_FIELD_RE,
+    _RUST_ENUM_VARIANT_NAME_RE,
     _RUST_FIELD_ACCESS_RE,
     _RUST_FIELD_METHOD_LINE_SUGGESTION_RE,
     _RUST_FIELD_RENAME_ERROR_RE,
@@ -26,6 +29,7 @@ from ._constants import (
     _RUST_FLOORED_EFFECTIVE_MASS_GATE_RE,
     _RUST_FULL_LINE_SUGGESTION_RE,
     _RUST_INCOMPATIBLE_COPY_LOCATION_RE,
+    _RUST_INCOMPATIBLE_EQ_LOCATION_RE,
     _RUST_INTEGER_IS_FINITE_RE,
     _RUST_LOCATION_RE,
     _RUST_METHOD_SELF_LOCATION_RE,
@@ -34,11 +38,13 @@ from ._constants import (
     _RUST_MISSING_TRAIT_BOUND_RE,
     _RUST_NO_SYMBOL_RE,
     _RUST_PLUS_LINE_SUGGESTION_RE,
+    _RUST_PRIVATE_FIELD_METHOD_SUGGESTION_RE,
     _RUST_PUB_USE_STATEMENT_RE,
     _RUST_QUOTED_RS_PATH_RE,
     _RUST_REAL_ITEM_RE,
     _RUST_SERDE_DERIVE_SUGGESTION_RE,
     _RUST_TWO_TUPLE_LET_RE,
+    _RUST_UNKNOWN_ENUM_VARIANT_RE,
     _RUST_UNRESOLVED_CRATE_RE,
     _RUST_UNRESOLVED_IMPORT_RE,
     _RUST_UNUSED_IMPORT_RE,
@@ -72,9 +78,6 @@ def _build_rust_crate_import_plan(
         return None
 
     missing_crates = _parse_unresolved_rust_crates(diagnostics)
-    if not missing_crates:
-        return None
-
     declared_dependencies = _declared_rust_dependencies(cargo)
     has_local_lib = _cargo_declares_local_rust_lib(normalized_base, cargo)
     operations: list[RepairOperation] = []
@@ -84,15 +87,22 @@ def _build_rust_crate_import_plan(
         if missing_crate == canonical_crate or missing_crate in declared_dependencies:
             continue
         if not _rust_crate_names_look_related(missing_crate, canonical_crate) and not (
-            has_local_lib and _rust_crate_prefix_used_in_binary_entrypoint(normalized_base, missing_crate)
+            has_local_lib and _rust_unresolved_crate_used_locally(normalized_base, missing_crate)
         ):
             continue
         diagnostic_planned = False
+        restrict_paths = {
+            _normalize_repair_path(str(item.path or ""))
+            for item in diagnostics
+            if missing_crate in _ANSI_ESCAPE_RE.sub("", str(item.raw or item.message or ""))
+        }
+        restrict_paths.discard("")
         for operation in _rust_crate_import_rewrite_operations(
             base_files=normalized_base,
             missing_crate=missing_crate,
             canonical_crate=canonical_crate,
             diagnostic=diagnostic,
+            restrict_paths=restrict_paths,
         ):
             span_key = (operation.path, int(operation.span_start or 0), int(operation.span_end or 0))
             if span_key in seen_spans:
@@ -102,6 +112,22 @@ def _build_rust_crate_import_plan(
             diagnostic_planned = True
         if diagnostic_planned:
             planned_diagnostics.append(diagnostic)
+
+    if has_local_lib:
+        crate_root_diagnostic = _first_bin_crate_root_diagnostic(diagnostics)
+        if crate_root_diagnostic is not None:
+            for operation in _rust_bin_crate_root_to_lib_operations(
+                base_files=normalized_base,
+                canonical_crate=canonical_crate,
+                diagnostic=crate_root_diagnostic,
+            ):
+                span_key = (operation.path, int(operation.span_start or 0), int(operation.span_end or 0))
+                if span_key in seen_spans:
+                    continue
+                seen_spans.add(span_key)
+                operations.append(operation)
+                if crate_root_diagnostic not in planned_diagnostics:
+                    planned_diagnostics.append(crate_root_diagnostic)
 
     if not operations:
         return None
@@ -294,6 +320,12 @@ def _parse_rust_missing_trait_derive_targets(
             if trait_name in {"Serialize", "Deserialize"} or trait.startswith("serde::"):
                 continue
             if trait_name not in _RUST_DERIVABLE_TRAIT_NAMES:
+                continue
+            # Consumer ``#[derive(..., Eq)]`` on a struct whose field type
+            # lacks Eq is an incompatible-derive removal, not "add Eq to the
+            # field type". Live L2-14 planned Eq onto models/ and never
+            # stripped the engine derive.
+            if trait_name in {"Eq", "Ord", "Hash"} and "in this derive macro expansion" in text.lower():
                 continue
             traits, first_diagnostic = targets.setdefault(symbol, (set(), diagnostic))
             traits.add(trait_name)
@@ -560,6 +592,7 @@ def _parse_rust_line_suggestions(diagnostics: Sequence[RepairDiagnostic]) -> lis
         "\n".join(str(diagnostic.raw or diagnostic.message or "") for diagnostic in diagnostics or ()),
     )
     for pattern in (
+        _RUST_PRIVATE_FIELD_METHOD_SUGGESTION_RE,
         _RUST_FIELD_METHOD_LINE_SUGGESTION_RE,
         _RUST_FULL_LINE_SUGGESTION_RE,
         _RUST_PLUS_LINE_SUGGESTION_RE,
@@ -744,6 +777,10 @@ def _parse_rust_unused_import_warnings(diagnostics: Sequence[RepairDiagnostic]) 
     return warnings
 
 
+_RUST_DERIVE_EXPANSION_SNIPPET_RE = re.compile(r"(?m)^\s*(?P<line>\d+)\s*\|\s*#\[derive\(")
+_RUST_FIRST_ARROW_PATH_RE = re.compile(r"(?m)^\s*-->\s*(?P<path>[^:\n]+\.rs):(?P<line>\d+):")
+
+
 def _parse_rust_incompatible_copy_derive_locations(
     diagnostics: Sequence[RepairDiagnostic],
 ) -> list[tuple[str, int]]:
@@ -753,12 +790,40 @@ def _parse_rust_incompatible_copy_derive_locations(
         "",
         "\n".join(str(diagnostic.raw or diagnostic.message or "") for diagnostic in diagnostics or ()),
     )
-    if "the trait `Copy` cannot be implemented" not in text:
+    if (
+        "the trait `Copy` cannot be implemented" not in text
+        and "is not satisfied" not in text.lower()
+        and "is not implemented" not in text.lower()
+    ):
         return locations
-    for match in _RUST_INCOMPATIBLE_COPY_LOCATION_RE.finditer(text):
+    consumer_path = ""
+    first_arrow = _RUST_FIRST_ARROW_PATH_RE.search(text)
+    if first_arrow is not None:
+        consumer_path = _normalize_repair_path(str(first_arrow.group("path") or ""))
+    # Live L2-14: rustc points the field line AND a help location on the
+    # foreign type. The authoritative edit is the consumer derive cited as
+    # "in this derive macro expansion", not adding Eq to models.
+    if consumer_path and "in this derive macro expansion" in text.lower():
+        for match in _RUST_DERIVE_EXPANSION_SNIPPET_RE.finditer(text):
+            line_number = _to_int(match.group("line"))
+            if line_number is None or int(line_number) <= 0:
+                continue
+            key = (consumer_path, int(line_number))
+            if key in seen:
+                continue
+            seen.add(key)
+            locations.append(key)
+        if locations:
+            return locations
+    for match in (
+        *_RUST_INCOMPATIBLE_COPY_LOCATION_RE.finditer(text),
+        *_RUST_INCOMPATIBLE_EQ_LOCATION_RE.finditer(text),
+    ):
         path = _normalize_repair_path(str(match.group("path") or ""))
         line_number = _to_int(match.group("line"))
         if not path or not path.endswith(".rs") or line_number is None or int(line_number) <= 0:
+            continue
+        if consumer_path and path != consumer_path:
             continue
         key = (path, int(line_number))
         if key in seen:
@@ -791,24 +856,27 @@ def _rust_incompatible_copy_derive_operation(
     if line_index < 0 or line_index >= len(lines):
         return None
 
-    for offset in range(0, 5):
+    for offset in range(0, 8):
         derive_index = line_index - offset
         if derive_index < 0 or derive_index >= len(lines):
             continue
         expected = lines[derive_index]
-        replacement = _repair_rust_copy_derive_line(expected)
+        replacement = _repair_rust_incompatible_derive_line(expected, text=_diagnostic_text(diagnostic))
         if replacement is None or replacement == expected:
             continue
-        if content.count(expected) != 1:
-            return None
         line_start = sum(len(item) for item in lines[:derive_index])
+        span_end = line_start + len(expected)
+        context = _unique_span_context(content, line_start, span_end)
+        if context is None:
+            continue
+        context_before, context_after = context
         return RepairOperation(
             kind="text_replace",
             path=path,
-            span_start=line_start,
-            span_end=line_start + len(expected),
-            expected=expected,
-            replacement=replacement,
+            span_start=line_start - len(context_before),
+            span_end=span_end + len(context_after),
+            expected=f"{context_before}{expected}{context_after}",
+            replacement=f"{context_before}{replacement}{context_after}",
             before_hash=sha256_text(content),
             metadata={
                 "repair_kind": "rust_incompatible_copy_derive",
@@ -817,22 +885,44 @@ def _rust_incompatible_copy_derive_operation(
                 "line_number": line_number,
                 "derive_line_number": derive_index + 1,
                 "unique_context": True,
+                "expected_context_before": "",
+                "expected_context_after": "",
                 "diagnostic_id": diagnostic.diagnostic_id,
             },
         )
     return None
 
 
+def _diagnostic_text(diagnostic: RepairDiagnostic) -> str:
+    return _ANSI_ESCAPE_RE.sub("", f"{diagnostic.raw or ''}\n{diagnostic.message or ''}")
+
+
 def _repair_rust_copy_derive_line(line: str) -> str | None:
+    return _repair_rust_incompatible_derive_line(line, text="the trait `Copy` cannot be implemented")
+
+
+def _repair_rust_incompatible_derive_line(line: str, *, text: str) -> str | None:
     match = _RUST_DERIVE_LINE_RE.match(line)
     if match is None:
         return None
     items = str(match.group("items") or "")
-    if _RUST_COPY_DERIVE_TOKEN_RE.search(items) is None:
+    traits: list[str] = []
+    lowered = text.lower()
+    if _RUST_COPY_DERIVE_TOKEN_RE.search(items) is not None and "copy" in lowered:
+        traits.append("Copy")
+    for trait in ("Eq", "Ord", "Hash"):
+        if re.search(rf"(?<![A-Za-z0-9_]){trait}(?![A-Za-z0-9_])", items) is None:
+            continue
+        if re.search(rf"\b{trait.lower()}\b", lowered) is None:
+            continue
+        traits.append(trait)
+    if not traits:
         return None
-    repaired = re.sub(r",\s*Copy\b", "", line)
-    repaired = re.sub(r"\bCopy\s*,\s*", "", repaired)
-    repaired = re.sub(r"\bCopy\b", "", repaired)
+    repaired = line
+    for trait in traits:
+        repaired = re.sub(rf",\s*{trait}\b", "", repaired)
+        repaired = re.sub(rf"\b{trait}\s*,\s*", "", repaired)
+        repaired = re.sub(rf"\b{trait}\b", "", repaired)
     if repaired == line or _RUST_DERIVE_LINE_RE.match(repaired) is None:
         return None
     return repaired
@@ -1183,8 +1273,17 @@ def _rust_file_newline(lines: Sequence[str]) -> str:
 
 
 def _read_cargo_manifest_from_base(base_files: Mapping[str, str]) -> dict[str, object]:
+    cargo_text = str(base_files.get("Cargo.toml") or "")
+    if not cargo_text:
+        for path, content in dict(base_files or {}).items():
+            basename = str(path or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
+            if basename == "cargo.toml":
+                cargo_text = str(content or "")
+                break
+    if not cargo_text.strip():
+        return {}
     try:
-        payload = tomllib.loads(str(base_files.get("Cargo.toml") or ""))
+        payload = tomllib.loads(cargo_text)
     except (RuntimeError, tomllib.TOMLDecodeError, TypeError, ValueError):
         return {}
     return payload if isinstance(payload, dict) else {}
@@ -1478,6 +1577,26 @@ def _rust_file_has_polaris_marker_comment(content: str) -> bool:
     return False
 
 
+def _rust_index_is_in_line_comment_or_doc(content: str, index: int) -> bool:
+    """True when the crate token lives only in a line/doc/block-comment.
+
+    Live L2-14 crate rewrite scanned every ``pirate_treasure_budgeter::``
+    occurrence, including ``src/lib.rs`` / ``tests/product.rs`` comments.
+    Those extra forward targets made DEO refuse the whole owner-scoped
+    ``src/main.rs`` rewrite (allowed_paths must cover every forward path).
+    """
+
+    text = str(content or "")
+    if index < 0 or index >= len(text):
+        return True
+    line_start = text.rfind("\n", 0, index) + 1
+    line_end = text.find("\n", index)
+    if line_end < 0:
+        line_end = len(text)
+    stripped = text[line_start:line_end].lstrip()
+    return stripped.startswith(("//", "///", "//!", "/*", "*"))
+
+
 def _rust_non_comment_lines(content: str) -> tuple[str, ...]:
     lines: list[str] = []
     in_block_comment = False
@@ -1511,6 +1630,75 @@ def _rust_non_comment_lines(content: str) -> tuple[str, ...]:
     return tuple(lines)
 
 
+_BIN_CRATE_ROOT_MISSING_RE = re.compile(
+    r"cannot find [`'](?P<module>[A-Za-z_][A-Za-z0-9_]*)[`'] in [`']crate[`']"
+    r"|unresolved import [`']crate::(?P<import>[A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE,
+)
+_LIB_PUB_MOD_RE = re.compile(r"(?m)^\s*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;")
+
+
+def _first_bin_crate_root_diagnostic(diagnostics: Sequence[RepairDiagnostic]) -> RepairDiagnostic | None:
+    for diagnostic in diagnostics:
+        text = _ANSI_ESCAPE_RE.sub("", str(diagnostic.raw or diagnostic.message or ""))
+        if _BIN_CRATE_ROOT_MISSING_RE.search(text):
+            return diagnostic
+    return None
+
+
+def _rust_lib_module_names(base_files: Mapping[str, str]) -> set[str]:
+    lib_text = str(base_files.get("src/lib.rs") or "")
+    return {str(match.group(1)) for match in _LIB_PUB_MOD_RE.finditer(lib_text)}
+
+
+def _is_rust_binary_entrypoint_path(path: str) -> bool:
+    normalized = str(path or "").replace("\\", "/")
+    return normalized == "src/main.rs" or (normalized.startswith("src/bin/") and normalized.endswith(".rs"))
+
+
+def _rust_bin_crate_root_to_lib_operations(
+    *,
+    base_files: Mapping[str, str],
+    canonical_crate: str,
+    diagnostic: RepairDiagnostic,
+) -> tuple[RepairOperation, ...]:
+    """Rewrite ``crate::lib_mod`` in bin files to the local package crate.
+
+    Live L2-14: after crate rewrite landed, quality LLM used stale E0433 text
+    and replaced ``treasure_budget::models`` with ``crate::models``. In a
+    bin+lib package ``crate::`` is the binary crate, so rustc reports
+    ``cannot find `models` in `crate```. The lib still owns those modules.
+    """
+
+    modules = _rust_lib_module_names(base_files)
+    if not modules or not canonical_crate:
+        return ()
+    operations: list[RepairOperation] = []
+    for path, content in sorted(base_files.items()):
+        if not _is_rust_binary_entrypoint_path(path):
+            continue
+        for module_name in sorted(modules):
+            pattern = re.compile(rf"\bcrate::{re.escape(module_name)}\b")
+            for match in pattern.finditer(content):
+                if _rust_index_is_in_line_comment_or_doc(content, match.start()):
+                    continue
+                operation = _rust_crate_import_rewrite_operation(
+                    path=path,
+                    content=content,
+                    span_start=match.start(),
+                    span_end=match.end(),
+                    expected=match.group(0),
+                    replacement=f"{canonical_crate}::{module_name}",
+                    missing_crate="crate",
+                    canonical_crate=canonical_crate,
+                    match_kind="bin_crate_root",
+                    diagnostic=diagnostic,
+                )
+                if operation is not None:
+                    operations.append(operation)
+    return tuple(operations)
+
+
 def _parse_unresolved_rust_crates(
     diagnostics: Sequence[RepairDiagnostic],
 ) -> list[tuple[str, RepairDiagnostic]]:
@@ -1536,11 +1724,25 @@ def _cargo_declares_local_rust_lib(base_files: Mapping[str, str], cargo: Mapping
 
 
 def _rust_crate_prefix_used_in_binary_entrypoint(base_files: Mapping[str, str], missing_crate: str) -> bool:
-    pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(missing_crate)}(?=::)")
+    return _rust_unresolved_crate_used_locally(
+        {
+            path: content
+            for path, content in base_files.items()
+            if path == "src/main.rs" or (path.startswith("src/bin/") and path.endswith(".rs"))
+        },
+        missing_crate,
+    )
+
+
+def _rust_unresolved_crate_used_locally(base_files: Mapping[str, str], missing_crate: str) -> bool:
+    """True when the unresolved crate name is already used as a local prefix or extern crate."""
+
+    prefix = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(missing_crate)}(?=::)")
+    extern = re.compile(rf"\bextern\s+crate\s+{re.escape(missing_crate)}\b")
     for path, content in base_files.items():
-        if (path == "src/main.rs" or (path.startswith("src/bin/") and path.endswith(".rs"))) and pattern.search(
-            content
-        ):
+        if not str(path).endswith(".rs"):
+            continue
+        if prefix.search(content) or extern.search(content):
             return True
     return False
 
@@ -1564,14 +1766,22 @@ def _rust_crate_import_rewrite_operations(
     missing_crate: str,
     canonical_crate: str,
     diagnostic: RepairDiagnostic,
+    restrict_paths: set[str] | None = None,
 ) -> tuple[RepairOperation, ...]:
     prefix_pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(missing_crate)}(?=::)")
     extern_pattern = re.compile(rf"\bextern\s+crate\s+{re.escape(missing_crate)}\b")
+    allowed_paths = {
+        str(path or "").replace("\\", "/").lstrip("./") for path in (restrict_paths or set()) if str(path or "").strip()
+    }
     operations: list[RepairOperation] = []
     for path, content in sorted(base_files.items()):
         if not path.endswith(".rs") or "target" in path.split("/"):
             continue
+        if allowed_paths and path not in allowed_paths:
+            continue
         for match in prefix_pattern.finditer(content):
+            if _rust_index_is_in_line_comment_or_doc(content, match.start()):
+                continue
             operation = _rust_crate_import_rewrite_operation(
                 path=path,
                 content=content,
@@ -1587,6 +1797,8 @@ def _rust_crate_import_rewrite_operations(
             if operation is not None:
                 operations.append(operation)
         for match in extern_pattern.finditer(content):
+            if _rust_index_is_in_line_comment_or_doc(content, match.start()):
+                continue
             operation = _rust_crate_import_rewrite_operation(
                 path=path,
                 content=content,
@@ -1621,13 +1833,21 @@ def _rust_crate_import_rewrite_operation(
     if context is None:
         return None
     context_before, context_after = context
+    # DEO/edit_file unique replace searches ``expected`` as a literal. The
+    # crate identifier alone occurs many times in one file (live L2-14
+    # ``src/main.rs`` had three ``pirate_treasure_budgeter::`` uses and only
+    # the last one changed). Expand to the unique surrounding context.
+    unique_expected = f"{context_before}{expected}{context_after}"
+    unique_replacement = f"{context_before}{replacement}{context_after}"
+    unique_start = span_start - len(context_before)
+    unique_end = span_end + len(context_after)
     return RepairOperation(
         kind="text_replace",
         path=path,
-        span_start=span_start,
-        span_end=span_end,
-        expected=expected,
-        replacement=replacement,
+        span_start=unique_start,
+        span_end=unique_end,
+        expected=unique_expected,
+        replacement=unique_replacement,
         before_hash=sha256_text(content),
         metadata={
             "repair_kind": "rust_crate_import_rewrite",
@@ -1636,8 +1856,8 @@ def _rust_crate_import_rewrite_operation(
             "missing_crate": missing_crate,
             "canonical_crate": canonical_crate,
             "match_kind": match_kind,
-            "expected_context_before": context_before,
-            "expected_context_after": context_after,
+            "expected_context_before": "",
+            "expected_context_after": "",
             "diagnostic_id": diagnostic.diagnostic_id,
         },
     )
@@ -1690,6 +1910,117 @@ def _prefer_vec_generic(expected: str, replacement: str) -> str:
     return replacement
 
 
+def _edit_distance(left: str, right: str) -> int:
+    if left == right:
+        return 0
+    if abs(len(left) - len(right)) > 2:
+        return 99
+    previous = list(range(len(right) + 1))
+    for i, left_ch in enumerate(left, start=1):
+        current = [i]
+        for j, right_ch in enumerate(right, start=1):
+            current.append(
+                min(
+                    previous[j] + 1,
+                    current[j - 1] + 1,
+                    previous[j - 1] + (0 if left_ch == right_ch else 1),
+                )
+            )
+        previous = current
+    return previous[-1]
+
+
+def _rust_enum_variants_by_name(base_files: Mapping[str, str]) -> dict[str, tuple[str, ...]]:
+    variants: dict[str, tuple[str, ...]] = {}
+    for content in dict(base_files or {}).values():
+        for match in _RUST_ENUM_ITEM_RE.finditer(str(content or "")):
+            name = str(match.group("name") or "")
+            body = str(match.group("body") or "")
+            if not name:
+                continue
+            found = tuple(
+                dict.fromkeys(item for item in _RUST_ENUM_VARIANT_NAME_RE.findall(body) if item and item != name)
+            )
+            if found:
+                variants[name] = found
+    return variants
+
+
+def _common_prefix_len(left: str, right: str) -> int:
+    count = 0
+    for left_ch, right_ch in zip(left.lower(), right.lower(), strict=False):
+        if left_ch != right_ch:
+            break
+        count += 1
+    return count
+
+
+def _unique_similar_rust_variant(
+    unknown: str,
+    existing: Sequence[str],
+    *,
+    max_distance: int = 2,
+) -> str | None:
+    ranked = sorted(((_edit_distance(unknown, item), item) for item in existing), key=lambda pair: pair[0])
+    if not ranked or ranked[0][0] > max_distance:
+        return None
+    ties = [item for distance, item in ranked if distance == ranked[0][0]]
+    if len(ties) == 1:
+        return ties[0]
+    prefix_ranked = sorted(((_common_prefix_len(unknown, item), item) for item in ties), reverse=True)
+    if prefix_ranked[0][0] < 2:
+        return None
+    if len(prefix_ranked) > 1 and prefix_ranked[1][0] == prefix_ranked[0][0]:
+        return None
+    return prefix_ranked[0][1]
+
+
+def _rewrite_unknown_rust_enum_variants(
+    *,
+    content: str,
+    diagnostics: Sequence[RepairDiagnostic],
+    base_files: Mapping[str, str],
+) -> str:
+    """Rewrite rustc E0599 unknown variants onto the consumer file only.
+
+    Live L2-14: after private-field ``kind()`` applied, residuals were invented
+    ``TreasureKind::{Silver,Relic}`` and ``ReefHazard::Shoal``. Models already
+    defined Gold/Jewels/Artifact and Calm/Shallow/Treacherous. Consumer match
+    arms must use existing variants or ``_``; never invent model members.
+    """
+
+    haystack = "\n".join(str(item.raw or item.message or "") for item in diagnostics or ())
+    existing = _rust_enum_variants_by_name(base_files)
+    if not existing:
+        return content
+    repaired = content
+    seen: set[tuple[str, str]] = set()
+    for match in _RUST_UNKNOWN_ENUM_VARIANT_RE.finditer(haystack):
+        enum_name = str(match.group("enum") or "").rsplit("::", 1)[-1]
+        unknown = str(match.group("variant") or "")
+        key = (enum_name, unknown)
+        if key in seen or not enum_name or not unknown:
+            continue
+        seen.add(key)
+        variants = existing.get(enum_name) or ()
+        if not variants or unknown in variants:
+            continue
+        token = f"{enum_name}::{unknown}"
+        similar = _unique_similar_rust_variant(unknown, variants)
+        if similar is None:
+            loose = _unique_similar_rust_variant(unknown, variants, max_distance=4)
+            if loose is not None and f"{enum_name}::{loose}" in repaired:
+                similar = loose
+        if similar is not None:
+            repaired = re.sub(rf"\b{re.escape(token)}\b", f"{enum_name}::{similar}", repaired)
+            continue
+        # Drop unknown or-pattern members only. Standalone ``Enum::X =>``
+        # arms stay for the owner LLM so we never eat the next match block.
+        repaired = re.sub(rf"\s*\|\s*{re.escape(token)}\b", "", repaired)
+        repaired = re.sub(rf"\b{re.escape(token)}\s*\|\s*", "", repaired)
+    return repaired
+
+
 def rust_local_structure_operations(
     *,
     base_files: Mapping[str, str],
@@ -1709,6 +2040,12 @@ def rust_local_structure_operations(
             repaired = _RUST_VEC_BARE_GENERIC_RE.sub(r"Vec<\g<inner>>\g<tail>", repaired)
         if "is_finite" in haystack:
             repaired = _RUST_INTEGER_IS_FINITE_RE.sub("\n", repaired)
+        if "no variant" in haystack.lower() and "found for enum" in haystack.lower():
+            repaired = _rewrite_unknown_rust_enum_variants(
+                content=repaired,
+                diagnostics=diagnostics,
+                base_files=base_files,
+            )
         if "expected a tuple with 3 elements" in haystack or "found one with 2 elements" in haystack:
             repaired = _RUST_TWO_TUPLE_LET_RE.sub(
                 r"\g<prefix>(\g<a>, _reagents, \g<b>)\g<rest>",
@@ -1818,4 +2155,4 @@ def _normalize_repair_path(path: str) -> str:
         return ""
     if any(part == ".." for part in normalized.split("/")):
         return ""
-    return normalized
+    return _canonicalize_well_known_basename(normalized)

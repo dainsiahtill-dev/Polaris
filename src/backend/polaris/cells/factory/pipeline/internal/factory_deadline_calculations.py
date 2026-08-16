@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import math
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -64,6 +65,14 @@ _CHIEF_ENGINEER_LLM_TIMEOUT_ENV_KEYS = (
     "KERNELONE_FACTORY_CE_LLM_TIMEOUT_SECONDS",
     "KERNELONE_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS",
 )
+_SAME_RUN_RETRY_MIN_REMAINING_SECONDS = 180.0
+_SAME_RUN_RETRY_DEFAULT_TIMEOUT_SECONDS = 1800.0
+_SAME_RUN_RETRY_MAX_TIMEOUT_SECONDS = 5400.0
+# Live L2-14: remints were consumed diagnosing bind/observer, crate rewrite
+# plan_probe, and LLM reverting a committed rewrite. Another same-run
+# quality retry is still the frozen PM/CE contract, not a new Factory run.
+_SAME_RUN_RETRY_MAX_EXTENSIONS = 8
+_SAME_RUN_RETRY_DEADLINE_SOURCE = "same_run_retry_epoch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +105,91 @@ def factory_deadline_remaining_seconds(context: dict[str, Any]) -> float | None:
     if deadline_epoch <= 0:
         return None
     return max(0.0, deadline_epoch - datetime.now(timezone.utc).timestamp())
+
+
+def _positive_metadata_float(metadata: Mapping[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        raw = metadata.get(key)
+        if raw is None:
+            continue
+        try:
+            value = float(str(raw).strip())
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
+
+def extend_factory_run_deadline_for_same_run_retry(
+    *,
+    now_epoch: float,
+    metadata: Mapping[str, Any],
+    retry_stage: str,
+    max_extensions: int = _SAME_RUN_RETRY_MAX_EXTENSIONS,
+) -> dict[str, Any] | None:
+    """Remint ``factory_run_deadline`` for a same-run Director/QA retry.
+
+    Isolated backends can outlive the original bench wall-clock.  Quality
+    repair and Director admission both fail-closed when that caller-supplied
+    deadline is already expired, so owner-task LLM repair never starts.
+    A same-run retry is not a new Factory run: PM/CE stay frozen and only
+    the retry epoch receives a fresh conserved budget.
+
+    Complexity: O(1).
+    """
+
+    del retry_stage
+    meta = dict(metadata)
+    try:
+        extension_count = int(meta.get("factory_run_deadline_extension_count") or 0)
+    except (TypeError, ValueError):
+        extension_count = 0
+    if extension_count < 0:
+        extension_count = 0
+    if extension_count >= max(0, int(max_extensions)):
+        return None
+
+    current_deadline = _positive_metadata_float(
+        meta,
+        "factory_run_deadline_epoch_seconds",
+        "factory_deadline_epoch_seconds",
+        "deadline_epoch_seconds",
+    )
+    remaining_seconds = 0.0 if current_deadline is None else max(0.0, current_deadline - float(now_epoch))
+    if remaining_seconds >= _SAME_RUN_RETRY_MIN_REMAINING_SECONDS:
+        return None
+
+    timeout_seconds = _positive_metadata_float(meta, "factory_run_timeout_seconds", "factory_timeout_seconds")
+    if timeout_seconds is None:
+        timeout_seconds = _SAME_RUN_RETRY_DEFAULT_TIMEOUT_SECONDS
+    timeout_seconds = max(
+        _SAME_RUN_RETRY_MIN_REMAINING_SECONDS,
+        min(timeout_seconds, _SAME_RUN_RETRY_MAX_TIMEOUT_SECONDS),
+    )
+    safety_seconds = _positive_metadata_float(meta, "factory_run_deadline_safety_seconds")
+    if safety_seconds is None:
+        safety_seconds = min(max(timeout_seconds * 0.05, 15.0), 30.0)
+    safety_seconds = min(max(safety_seconds, 15.0), 30.0)
+    original_deadline = _positive_metadata_float(meta, "factory_run_original_deadline_epoch_seconds")
+    if original_deadline is None:
+        original_deadline = current_deadline
+
+    new_deadline = float(now_epoch) + timeout_seconds - safety_seconds
+    payload: dict[str, Any] = {
+        "factory_run_deadline_epoch_seconds": new_deadline,
+        "factory_director_execution_deadline_epoch_seconds": new_deadline,
+        "factory_run_started_epoch_seconds": float(now_epoch),
+        "factory_run_timeout_seconds": timeout_seconds,
+        "factory_run_deadline_safety_seconds": safety_seconds,
+        "factory_run_deadline_source": _SAME_RUN_RETRY_DEADLINE_SOURCE,
+        "factory_run_deadline_extension_count": extension_count + 1,
+        "factory_run_deadline_extended_at": datetime.fromtimestamp(float(now_epoch), timezone.utc).isoformat(),
+        "factory_run_deadline_extension_reason": "same_run_owner_repair_after_expired_deadline",
+    }
+    if original_deadline is not None:
+        payload["factory_run_original_deadline_epoch_seconds"] = original_deadline
+    return payload
 
 
 # ── Director dispatch timeout / budget ───────────────────────────────────

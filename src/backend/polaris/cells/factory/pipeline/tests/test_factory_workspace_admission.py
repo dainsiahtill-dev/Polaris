@@ -2486,6 +2486,55 @@ async def test_recover_run_resumes_orphaned_restart_replay_claim(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+async def test_failed_retry_resumes_orphaned_settle_claim_then_replays(tmp_path: Path) -> None:
+    """Launcher-restart mid-settle must not pin retry_phase for the workspace TTL.
+
+    Live L2-12 factory_a1b49b0460f2: director_dispatch FAILED, settle_terminal_run
+    claimed nonce lifecycle_f188831da0dc4b6197d4667949603644, process restarted,
+    retry_phase generated a new recover_run nonce and raised
+    FactoryWorkspaceRunLeaseConflictError.
+    """
+
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "runtime"
+    workspace.mkdir()
+    owner = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    created = await owner.create_run(FactoryConfig(name="orphaned-settle-retry", stages=["director_dispatch"]))
+    running = await owner.start_run(created.id)
+    running.status = FactoryRunStatus.FAILED
+    await owner.store.save_run(running)
+    orphan_nonce = "lifecycle_orphaned_settle_terminal"
+    orphan_lease = owner._claim_lifecycle_operation(
+        running,
+        operation="settle_terminal_run",
+        nonce=orphan_nonce,
+        acquire_if_available=False,
+    )
+    assert orphan_lease.lifecycle_operation_claim is not None
+    assert orphan_lease.lifecycle_operation_claim.nonce == orphan_nonce
+    draining = await owner._begin_terminal_drain(
+        running,
+        reason="factory_run_failed",
+        operation_nonce=orphan_nonce,
+    )
+    assert draining is not None
+    assert draining.state.value == "draining"
+    assert draining.drain_reason == "factory_run_failed"
+
+    restarted = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    retried = await restarted.retry_run_from_stage(
+        created.id,
+        target_stage="director_dispatch",
+        reason="same-run retry after orphaned settle claim",
+    )
+
+    assert retried.status is FactoryRunStatus.RECOVERING
+    current = restarted._admission.current()
+    assert current is not None
+    assert current.lifecycle_operation_claim is None
+
+
+@pytest.mark.asyncio
 async def test_explicit_stale_owner_recovery_fences_old_session_before_takeover(
     tmp_path: Path,
 ) -> None:
@@ -2779,6 +2828,45 @@ async def test_terminal_failed_quality_retry_preserves_frozen_task_runtime_epoch
 
     assert retried.metadata["factory_terminal_task_runtime_projection"] == frozen
     assert "factory_terminal_task_runtime_projection_invalidation" not in retried.metadata
+
+
+@pytest.mark.asyncio
+async def test_same_run_quality_retry_remints_expired_factory_deadline(tmp_path: Path) -> None:
+    """Live L2-13: qa_gate retry after started_at+5400 must remint owner LLM budget."""
+
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "runtime"
+    workspace.mkdir()
+    service = FactoryRunService(
+        workspace,
+        cache_root=cache_root,
+        executor=_SuccessfulStageExecutor(),
+    )
+    run = await service.create_run(
+        FactoryConfig(
+            name="quality-retry-remint-deadline",
+            stages=["director_dispatch", "quality_gate"],
+        )
+    )
+    await service.start_run(run.id)
+    failed = await service.complete_run(run.id, success=False)
+    failed.metadata["factory_run_deadline_epoch_seconds"] = datetime.now(timezone.utc).timestamp() - 90.0
+    failed.metadata["factory_run_timeout_seconds"] = 1800.0
+    failed.metadata["factory_run_deadline_safety_seconds"] = 27.0
+    await service.store.save_run(failed)
+
+    retried = await service.retry_run_from_stage(
+        run.id,
+        target_stage="quality_gate",
+        reason="same-run quality_gate after expired factory-run deadline",
+    )
+
+    remaining = float(retried.metadata["factory_run_deadline_epoch_seconds"]) - datetime.now(
+        timezone.utc
+    ).timestamp()
+    assert remaining >= 180.0
+    assert retried.metadata["factory_run_deadline_source"] == "same_run_retry_epoch"
+    assert retried.metadata["factory_run_deadline_extension_count"] == 1
 
 
 @pytest.mark.asyncio

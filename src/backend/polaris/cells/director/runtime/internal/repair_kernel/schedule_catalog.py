@@ -288,6 +288,7 @@ _MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS = (
     "deterministic_rust_duplicate_module_file_repair",
     "deterministic_rust_lib_root_facade_repair",
     "deterministic_rust_serde_derive_repair",
+    "deterministic_rust_incompatible_copy_derive_repair",
     "deterministic_rust_line_suggestion_repair",
     "deterministic_rust_unresolved_pub_use_repair",
     "deterministic_rust_trait_import_repair",

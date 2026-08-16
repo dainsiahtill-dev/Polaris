@@ -97,6 +97,8 @@ from ._helpers import (
     _ChiefEngineerPortfolioAuthorityError,
     _ChiefEngineerPortfolioAuthorityV1,
     _is_workspace_quality_repair_path,
+    resolve_workspace_quality_existing_file,
+    workspace_quality_rust_plan_probe_companion_paths,
 )
 from ._pkg_proxy import pkg
 
@@ -1793,6 +1795,29 @@ class _Mixin02:
             codes.update(f"cpp_member_{match.group('name').lower()}" for match in _CPP_MISSING_MEMBER_RE.finditer(text))
         return codes
 
+    @staticmethod
+    def _go_crash_unmasked_runnable_tests(
+        before_signature: Iterable[str],
+        after_signature: Iterable[str],
+    ) -> bool:
+        """True when a Go runtime crash became runnable test assertions.
+
+        Live L2-13: editing engine/service.go cleared ``fatal error: stack
+        overflow``. The next verifier surface was ``--- FAIL:`` test
+        assertions (plus the same delivery-depth residual). That count
+        increase is unmasking, not regression.
+        """
+
+        before_text = "\n".join(str(item or "") for item in before_signature).casefold()
+        after_text = "\n".join(str(item or "") for item in after_signature)
+        after_folded = after_text.casefold()
+        crash_markers = ("fatal error: stack overflow", "goroutine stack exceeds", "fatal error:")
+        if not any(marker in before_text for marker in crash_markers):
+            return False
+        if any(marker in after_folded for marker in crash_markers):
+            return False
+        return "--- fail:" in after_folded
+
     @classmethod
     def _workspace_quality_repair_effect(
         cls,
@@ -1812,6 +1837,8 @@ class _Mixin02:
         after = set(after_signature)
         if after == before:
             return "stagnant"
+        if cls._go_crash_unmasked_runnable_tests(before_signature, after_signature):
+            return "forward_unmask"
         # A smaller authoritative diagnostic set is measurable progress even
         # when the remaining diagnostic text is not a strict subset.  Real
         # verifier output often changes framing after an earlier barrier is
@@ -1952,18 +1979,27 @@ class _Mixin02:
         candidates: list[str] = []
         candidates.extend(self._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors))
         candidates.extend(self._workspace_quality_repair_target_files())
+        candidates.extend(
+            workspace_quality_rust_plan_probe_companion_paths(
+                workspace_root,
+                artifact_quality_errors=artifact_quality_errors,
+            )
+        )
         base_files: dict[str, str] = {}
         for raw_candidate in candidates:
             normalized = os.path.normpath(str(raw_candidate or "").strip().replace("\\", "/")).replace("\\", "/")
             if not normalized or normalized in base_files or not _is_workspace_quality_repair_path(normalized):
                 continue
-            path = (workspace_root / normalized).resolve()
+            path = resolve_workspace_quality_existing_file(workspace_root, normalized)
             try:
-                if not path.is_relative_to(workspace_root) or not path.is_file():
+                if path is None or not path.is_relative_to(workspace_root) or not path.is_file():
                     continue
                 if path.stat().st_size > 256_000:
                     continue
-                base_files[normalized] = path.read_text(encoding="utf-8")
+                stored = "Cargo.toml" if path.name.lower() == "cargo.toml" else normalized
+                if stored in base_files:
+                    continue
+                base_files[stored] = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError, ValueError):
                 continue
             if len(base_files) >= 64:

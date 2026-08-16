@@ -29,6 +29,7 @@ from ..helpers import (
 )
 from ..post_execution_repair_bridge import run_post_execution_language_repairs
 from ._claim import (
+    _append_declared_scope_preflight_task_boundary,
     _append_receipt_bound_preflight_task_boundary,
     _attach_dependency_artifact_receipt_evidence,
     _commit_deferred_materialization_quality_results,
@@ -545,8 +546,15 @@ def _phase_existing_scope_preflight(
                     decision_signals=decision_signals,
                     materialization_mode="preflight_verified_existing_workspace_scope",
                 )
-            if requires_fresh_materialization and project_artifact_receipt_evidence:
-                try:
+            # Live L2-12 TASK-3-foundation: rematerialize preflight completed
+            # TaskRuntime with existing receipt-bound artifacts, but the
+            # append was gated on requires_fresh_materialization. Chinese
+            # implementation splits often compute requires_fresh=False, so
+            # Factory then fail-closed on task_boundary_verdict_missing
+            # after every owner row already completed. Provider-less
+            # preflight must still seal the receipt-bound TaskBoundary.
+            try:
+                if project_artifact_receipt_evidence:
                     task_boundary_verdict = _append_receipt_bound_preflight_task_boundary(
                         adapter,
                         context=context,
@@ -558,19 +566,28 @@ def _phase_existing_scope_preflight(
                             {},
                         ),
                     )
-                except (OSError, RuntimeError, TypeError, ValueError) as exc:
-                    return {
-                        "success": False,
-                        "task_id": target_task_id,
-                        "error": "director_task_boundary_receipt_projection_failed",
-                        "error_code": "director.task_boundary_receipt_projection_failed",
-                        "failure_class": "TASK_BOUNDARY_FAILED",
-                        "root_cause_hint": str(exc),
-                        "retry_scope": "same_director_task_only",
-                        "pm_ce_restart_allowed": False,
-                        "decision_signals": decision_signals,
-                    }
-                completion_metadata["adapter_result"]["task_boundary_verdict"] = task_boundary_verdict
+                else:
+                    task_boundary_verdict = _append_declared_scope_preflight_task_boundary(
+                        adapter,
+                        context=context,
+                        target_task_id=target_task_id,
+                        run_id=run_id,
+                        finalize_result=finalize_result,
+                        existing_paths=list(preflight_existing_contract_evidence.get("existing_paths") or []),
+                    )
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                return {
+                    "success": False,
+                    "task_id": target_task_id,
+                    "error": "director_task_boundary_receipt_projection_failed",
+                    "error_code": "director.task_boundary_receipt_projection_failed",
+                    "failure_class": "TASK_BOUNDARY_FAILED",
+                    "root_cause_hint": str(exc),
+                    "retry_scope": "same_director_task_only",
+                    "pm_ce_restart_allowed": False,
+                    "decision_signals": decision_signals,
+                }
+            completion_metadata["adapter_result"]["task_boundary_verdict"] = task_boundary_verdict
         adapter._update_task_progress(target_task_id, "completed")
         decision_signals.append(
             {

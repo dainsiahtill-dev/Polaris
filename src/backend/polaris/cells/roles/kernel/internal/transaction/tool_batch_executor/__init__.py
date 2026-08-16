@@ -158,6 +158,7 @@ from ._helpers import (
     _is_mutation_for_speculative_routing,
     _is_no_write_structured_turn,
     _is_path_within_workspace,
+    _is_recoverable_deo_normalization_abort,
     _is_transient_deo_prepare_lock_failure,
     _is_valid_execution_mode,
     _job_token_from_capability_token,

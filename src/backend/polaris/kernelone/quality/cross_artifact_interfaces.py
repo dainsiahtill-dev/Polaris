@@ -665,7 +665,7 @@ def _scan_python_file(
             if any(alias.name == "*" for alias in node.names):
                 unknown_exports = True
                 continue
-            symbols = tuple((alias.asname or alias.name).strip() for alias in node.names if alias.name.strip())
+            symbols = tuple(alias.name.strip() for alias in node.names if alias.name.strip() and alias.name != "*")
             target_module = _resolve_python_import_module_id(relative_path, node.module or "", node.level or 0)
             owner_path = _python_module_path(root, target_module)
             imports.append(

@@ -60,6 +60,8 @@ from ._helpers import (
     _WORKSPACE_QUALITY_REPAIR_SOURCE_SUFFIXES,
     _dedupe_workspace_repair_paths,
     _is_workspace_quality_repair_path,
+    resolve_workspace_quality_existing_file,
+    workspace_quality_rust_plan_probe_companion_paths,
 )
 from ._pkg_proxy import pkg
 
@@ -244,8 +246,17 @@ class _Mixin03:
                 candidates.append(path)
         joined_errors = "\n".join(str(item or "") for item in artifact_quality_errors).lower()
         for filename in _LANGUAGE_NEUTRAL_REPAIR_FILENAMES:
-            if filename.lower() in joined_errors and (workspace_root / filename).is_file():
+            if filename.lower() not in joined_errors:
+                continue
+            resolved = resolve_workspace_quality_existing_file(workspace_root, filename)
+            if resolved is not None:
                 candidates.append(filename)
+        candidates.extend(
+            workspace_quality_rust_plan_probe_companion_paths(
+                workspace_root,
+                artifact_quality_errors=artifact_quality_errors,
+            )
+        )
         if ("include 'dom'" in joined_errors or "compiler option" in joined_errors or "tsconfig" in joined_errors) and (
             workspace_root / "tsconfig.json"
         ).is_file():

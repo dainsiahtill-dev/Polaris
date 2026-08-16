@@ -301,6 +301,34 @@ def test_build_task_runtime_execution_event_payload_projects_runtime_state() -> 
     assert event_payload["task_row_snapshot"]["metadata"] is not task_row["metadata"]
 
 
+def test_heartbeat_execution_event_omits_adapter_result_snapshot() -> None:
+    task_row = {
+        "id": 7,
+        "status": "in_progress",
+        "session_id": "tx-1",
+        "metadata": {
+            "factory_run_id": "factory-1",
+            "adapter_result": {"primary_llm": {"output": "x" * 10000}},
+        },
+    }
+    payload = _valid_session_payload()
+    session = TaskExecutionSession.from_dict(payload)
+    event_payload = build_task_runtime_execution_event_payload(
+        event_type="heartbeat_renewed",
+        workspace="/tmp/workspace",
+        task_row=task_row,
+        session=session,
+    )
+
+    snapshot = event_payload["task_row_snapshot"]
+    assert snapshot["id"] == 7
+    assert snapshot["status"] == "in_progress"
+    assert snapshot["metadata"]["factory_run_id"] == "factory-1"
+    assert "adapter_result" not in snapshot["metadata"]
+    encoded = json.dumps(event_payload, ensure_ascii=False).encode("utf-8")
+    assert len(encoded) < 8 * 1024
+
+
 def test_realtime_execution_projection_bounds_large_details_without_mutating_fact() -> None:
     huge = "界" * (5 * 1024 * 1024)
     payload = {

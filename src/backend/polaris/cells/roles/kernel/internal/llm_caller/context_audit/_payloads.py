@@ -300,12 +300,27 @@ def _looks_like_actual_sibling_exports(
     if not dependency_ids or dependency_ids != covered_parent_ids or len(set(dependency_ids)) != len(dependency_ids):
         return False
     modules = value.get("modules")
-    if not isinstance(modules, list) or not modules:
+    if not isinstance(modules, list):
         return False
     if type(value.get("module_count")) is not int or value.get("module_count") != len(modules):
         return False
-    total_bytes = 0
-    module_parent_ids: set[str] = set()
+    # Live L2-13 quality repair: TASK-1 sealed as a zero-artifact parent
+    # (modules=[]). The later parent-coverage check already allows that
+    # shape; rejecting empty modules here made required sibling evidence
+    # look absent and blocked the owner LLM edit.
+    if not modules:
+        if type(value.get("total_byte_count")) is not int or value.get("total_byte_count") != 0:
+            return False
+        if value.get("receipt_coverage_complete") is not True:
+            return False
+        zero_artifact_parent_ids = _string_list(value.get("zero_artifact_parent_task_ids"))
+        if set(zero_artifact_parent_ids) != set(dependency_ids):
+            return False
+        total_bytes = 0
+        module_parent_ids: set[str] = set()
+    else:
+        total_bytes = 0
+        module_parent_ids = set()
     required_hash_fields = (
         "source_fact_hash",
         "effect_receipt_hash",

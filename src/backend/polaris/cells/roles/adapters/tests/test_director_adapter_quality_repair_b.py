@@ -995,6 +995,34 @@ class TestQualityRepairMissingTargetContractB:
 
         assert targets == ["main.go"]
 
+    def test_go_stack_overflow_frames_rank_owner_file_before_entrypoint(self, tmp_path) -> None:
+        """Live L2-13: go test/run overflowed in engine.Service, LLM edited main.go first."""
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _go_runtime_smoke_repair_target_files,
+        )
+
+        (tmp_path / "go.mod").write_text("module timecapsulemuseum\n", encoding="utf-8")
+        (tmp_path / "main.go").write_text("package main\nfunc main() {}\n", encoding="utf-8")
+        (tmp_path / "engine").mkdir()
+        (tmp_path / "engine" / "service.go").write_text(
+            "package engine\n\nfunc (s *Service) exhibitionIDs() {}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "engine" / "rules.go").write_text("package engine\n", encoding="utf-8")
+
+        targets = _go_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (go test ./...): "
+                "fatal error: stack overflow\n"
+                "frames=timecapsulemuseum/engine.(*Service).exhibitionIDs,"
+                "timecapsulemuseum/engine.(*Service).allCapsules"
+            ],
+            changed_files=["main.go", "engine/service.go", "engine/rules.go"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets[0] == "engine/service.go"
+
     def test_go_compile_failure_targets_reported_source_file(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
             _go_runtime_smoke_repair_target_files,

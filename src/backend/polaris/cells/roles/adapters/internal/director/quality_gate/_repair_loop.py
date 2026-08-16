@@ -111,6 +111,7 @@ _semantic_quality_exporting_module_targets: Any
 _semantic_quality_repair_target_files: Any
 _summarize_llm_stage_result: Any
 _task_boundary_scope_filter_evidence: Any
+_task_write_scope_candidates: Any
 _tool_receipt_safe_quality_errors: Any
 
 
@@ -439,6 +440,10 @@ async def _run_materialization_quality_repair_retry(
             path for path in out_of_scope_repair_target_files if path in semantic_exporter_owner_target_set
         ]
         if out_of_scope_exporter_owner_targets:
+            in_scope_exporters, _ = _partition_paths_by_task_write_scope(
+                _unresolved_import_exporter_paths(repair_quality_errors),
+                task=task,
+            )
             task_boundary_discrepancy_evidence = _semantic_exporter_scope_discrepancy_evidence(
                 task=task,
                 semantic_exporter_targets=out_of_scope_exporter_owner_targets,
@@ -446,24 +451,31 @@ async def _run_materialization_quality_repair_retry(
                 artifact_quality_errors=repair_quality_errors,
                 task_scope_filter_evidence=task_scope_filter_evidence,
             )
-            return [], {
-                "stage": "task_boundary_semantic_exporter_scope_conflict",
-                "attempted": True,
-                "attempt": repair_attempt,
-                "success": False,
-                "success_reason": "task_boundary_interface_discrepancy_required",
-                "tool_results": 0,
-                "write_tool_evidence": False,
-                "missing_target_files": missing_target_files[:12],
-                "runtime_smoke_target_files": runtime_smoke_target_files[:12],
-                "semantic_quality_target_files": semantic_quality_target_files[:12],
-                "explicit_quality_target_files": explicit_quality_target_files[:12],
-                "repair_target_files": repair_target_files[:12],
-                "rotated_repair_targets": rotate_repair_targets,
-                "task_boundary_scope_filter": task_scope_filter_evidence,
-                "interface_discrepancy_evidence": task_boundary_discrepancy_evidence,
-                "llm_fallback_blocked": True,
-            }
+            if not in_scope_exporters:
+                return [], {
+                    "stage": "task_boundary_semantic_exporter_scope_conflict",
+                    "attempted": True,
+                    "attempt": repair_attempt,
+                    "success": False,
+                    "success_reason": "task_boundary_interface_discrepancy_required",
+                    "tool_results": 0,
+                    "write_tool_evidence": False,
+                    "missing_target_files": missing_target_files[:12],
+                    "runtime_smoke_target_files": runtime_smoke_target_files[:12],
+                    "semantic_quality_target_files": semantic_quality_target_files[:12],
+                    "explicit_quality_target_files": explicit_quality_target_files[:12],
+                    "repair_target_files": repair_target_files[:12],
+                    "rotated_repair_targets": rotate_repair_targets,
+                    "task_boundary_scope_filter": task_scope_filter_evidence,
+                    "interface_discrepancy_evidence": task_boundary_discrepancy_evidence,
+                    "llm_fallback_blocked": True,
+                }
+            # Live L2-12 TASK-3-source-core: keep in-scope forecast.py repair
+            # while deferring TASK-1 Mood/Weather importer residuals.
+            repair_quality_errors = _filter_unresolved_import_errors_to_task_write_scope(
+                repair_quality_errors,
+                task=task,
+            )
         repair_target_files = in_scope_repair_target_files
     from polaris.cells.roles.adapters.internal.director.quality_gate._language_targets import (
         _cpp_undeclared_type_declaration_target_files,
@@ -1053,30 +1065,45 @@ def _quality_repair_deadline_decision(context: dict[str, Any], requested_timeout
             "timeout_seconds": requested_timeout_seconds,
             "reason": "no_factory_deadline",
         }
-    deadline_source, deadline_epoch = min(deadline_candidates, key=lambda item: item[1])
     safety_seconds = (
         _context_float_value(context, "factory_run_deadline_safety_seconds")
         or _QUALITY_REPAIR_DEADLINE_DEFAULT_SAFETY_SECONDS
     )
     safety_seconds = max(_QUALITY_REPAIR_DEADLINE_DEFAULT_SAFETY_SECONDS, float(safety_seconds))
-    remaining_seconds = max(0.0, deadline_epoch - time.time())
-    available_seconds = remaining_seconds - safety_seconds
-    if available_seconds < _QUALITY_REPAIR_DEADLINE_MIN_LLM_SECONDS:
+    now = time.time()
+    # Live L2-13 quality_gate: Director-wave deadline was already expired, but
+    # factory_run_deadline still had ~60 minutes. Taking min(all) made repair
+    # report remaining_seconds=0 and skip the owner LLM turn. Honor the
+    # tightest *still-viable* deadline. An expired Director-wave clock stays
+    # fail-closed only when no factory-run budget remains.
+    viable: list[tuple[float, str, float, float]] = []
+    expired: list[tuple[float, str, float, float]] = []
+    for deadline_source, deadline_epoch in deadline_candidates:
+        remaining_seconds = max(0.0, float(deadline_epoch) - now)
+        available_seconds = remaining_seconds - safety_seconds
+        bucket = viable if available_seconds >= _QUALITY_REPAIR_DEADLINE_MIN_LLM_SECONDS else expired
+        bucket.append((float(deadline_epoch), deadline_source, remaining_seconds, available_seconds))
+    if viable:
+        deadline_epoch, deadline_source, remaining_seconds, available_seconds = min(viable, key=lambda item: item[0])
         return {
-            "can_start": False,
-            "timeout_seconds": 0.0,
-            "reason": "factory_deadline_insufficient",
+            "can_start": True,
+            "timeout_seconds": max(0.1, min(float(requested_timeout_seconds), available_seconds)),
+            "reason": "factory_deadline_budgeted",
             "remaining_seconds": round(remaining_seconds, 3),
             "safety_seconds": round(safety_seconds, 3),
-            "minimum_llm_seconds": _QUALITY_REPAIR_DEADLINE_MIN_LLM_SECONDS,
             "deadline_source": deadline_source,
         }
+    deadline_epoch, deadline_source, remaining_seconds, _available_seconds = min(
+        expired,
+        key=lambda item: item[0],
+    )
     return {
-        "can_start": True,
-        "timeout_seconds": max(0.1, min(float(requested_timeout_seconds), available_seconds)),
-        "reason": "factory_deadline_budgeted",
+        "can_start": False,
+        "timeout_seconds": 0.0,
+        "reason": "factory_deadline_insufficient",
         "remaining_seconds": round(remaining_seconds, 3),
         "safety_seconds": round(safety_seconds, 3),
+        "minimum_llm_seconds": _QUALITY_REPAIR_DEADLINE_MIN_LLM_SECONDS,
         "deadline_source": deadline_source,
     }
 
@@ -1150,6 +1177,61 @@ def _python_module_specifier_to_paths(module: str) -> list[str]:
     if not token:
         return []
     return [f"{token}.py", f"{token}.pyi", f"{token}/__init__.py"]
+
+
+def _unresolved_import_exporter_paths(
+    artifact_quality_errors: list[str],
+) -> list[str]:
+    """Return only ``from``-module paths for unresolved-import diagnostics."""
+
+    paths: list[str] = []
+    for error in artifact_quality_errors:
+        match = _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE.search(str(error or ""))
+        if not match:
+            continue
+        for raw in _python_module_specifier_to_paths(match.group("module")):
+            normalized = _normalize_declared_task_path(raw)
+            if normalized:
+                paths.append(normalized)
+    return _dedupe_preserve_order(paths)
+
+
+def _filter_unresolved_import_errors_to_task_write_scope(
+    errors: list[str],
+    *,
+    task: dict[str, Any],
+    workspace_name: str = "",
+) -> list[str]:
+    """Keep unresolved-import errors that touch the current write-scope.
+
+    Live L2-12 TASK-3-source-core: ``Mood``/``Weather`` on ``src/__init__.py``
+    belong to TASK-1.  Counting them as source-core residuals fail-closed the
+    in-scope ``known_weather_to_genre`` exporter repair.
+    """
+
+    if not errors:
+        return errors
+    if not _task_write_scope_candidates(task, workspace_name=workspace_name):
+        return errors
+    retained: list[str] = []
+    for error in errors:
+        text = str(error or "")
+        match = _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE.search(text)
+        if not match:
+            retained.append(text)
+            continue
+        related_paths = [
+            _normalize_declared_task_path(match.group("path")),
+            *_python_module_specifier_to_paths(match.group("module")),
+        ]
+        in_scope, _out = _partition_paths_by_task_write_scope(
+            [path for path in related_paths if path],
+            task=task,
+            workspace_name=workspace_name,
+        )
+        if in_scope:
+            retained.append(text)
+    return retained
 
 
 def _unresolved_import_importer_paths(

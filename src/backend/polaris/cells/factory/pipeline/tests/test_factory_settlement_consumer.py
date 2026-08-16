@@ -498,8 +498,43 @@ async def test_wake_skips_open_barrier_replay_during_cooldown(tmp_path: Path) ->
     queries_after_start = len(barrier.queries)
 
     rechecked = await consumer.wake()
+    stormed = await consumer.wake()
 
     assert [decision.reason_code for decision in rechecked.decisions] == ["run_ledger_barrier_open"]
+    assert [decision.reason_code for decision in stormed.decisions] == ["run_ledger_barrier_open"]
+    # Cooldown must reuse the pending decision.  A per-wake barrier query is
+    # O(T+C) and live L2-12 factory_stage_heartbeat called un-hinted wake()
+    # many times per second while checkpoint 3973 stayed open.
+    assert len(barrier.queries) == queries_after_start
+
+
+@pytest.mark.asyncio
+async def test_wake_rechecks_open_barrier_once_after_cooldown(tmp_path: Path) -> None:
+    """After cooldown, exactly one barrier query may observe a close."""
+
+    workspace = _workspace(tmp_path)
+    fact_stream = FactStreamAdapter()
+    _append_source_fact(fact_stream, workspace)
+    barrier = MutableBarrier(workspace=workspace, fencing_token=7)
+    barrier.closed = False
+    factory_runs = RecordingFactoryRuns()
+    consumer, _journal = _build_consumer(
+        workspace=workspace,
+        fact_stream=fact_stream,
+        barrier=barrier,
+        factory_runs=factory_runs,
+    )
+
+    started = await consumer.start()
+    assert started.decisions[0].reason_code == "run_ledger_barrier_open"
+    queries_after_start = len(barrier.queries)
+    await consumer.wake()
+    assert len(barrier.queries) == queries_after_start
+
+    consumer._last_open_barrier_replay_at = 0.0
+    after = await consumer.wake()
+
+    assert [decision.reason_code for decision in after.decisions] == ["run_ledger_barrier_open"]
     assert len(barrier.queries) == queries_after_start + 1
 
 
@@ -623,6 +658,108 @@ async def test_head_aware_consumer_skips_source_page_when_checkpoint_is_current(
 
 
 @pytest.mark.asyncio
+async def test_empty_head_catch_up_does_not_rebuild_journal_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live L2-12 epoch 23: empty control-plane wakes rebuilt the in-memory
+    journal snapshot (2702 records + 2261 source events) on the asyncio loop
+    while checkpoint stayed at 2261.  MiniMax never connected; lease died.
+    """
+
+    from polaris.cells.factory.pipeline.internal import factory_settlement_consumer as consumer_mod
+
+    create_calls = {"n": 0}
+    original = consumer_mod.SettlementJournalReplaySnapshot.create
+
+    @classmethod  # type: ignore[misc]
+    def _counting_create(cls: Any, **kwargs: Any) -> Any:
+        create_calls["n"] += 1
+        return original(**kwargs)
+
+    monkeypatch.setattr(
+        consumer_mod.SettlementJournalReplaySnapshot,
+        "create",
+        _counting_create,
+    )
+
+    workspace = _workspace(tmp_path)
+    fact_stream = HeadAwareCountingFactStreamAdapter()
+    for index in range(3):
+        _append_source_fact(
+            fact_stream,
+            workspace,
+            factory_run_id=None,
+            suffix=f"empty-head-{index}",
+        )
+    consumer, _ = _build_consumer(
+        workspace=workspace,
+        fact_stream=fact_stream,
+        barrier=MutableBarrier(workspace=workspace, fencing_token=7),
+        factory_runs=RecordingFactoryRuns(),
+    )
+
+    started = await consumer.start()
+    assert len(started.decisions) == 3
+    creates_after_start = create_calls["n"]
+    assert creates_after_start >= 1
+
+    caught_up = await consumer.wake()
+
+    assert caught_up.decisions == ()
+    assert caught_up.ack_safe is True
+    assert create_calls["n"] == creates_after_start
+
+
+@pytest.mark.asyncio
+async def test_hinted_wake_for_checkpointed_fact_does_not_rescan_source(
+    tmp_path: Path,
+) -> None:
+    """Live L2-12: JetStream redelivered historical heartbeat wakes.
+
+    ``_find_source_fact`` paged ``task_runtime.execution`` from offset 0 and
+    ``latest_checkpoint_offset`` re-read the 27MiB settlement journal on the
+    event loop.  One 17s full_scan starved Director heartbeat and MiniMax.
+    """
+
+    workspace = _workspace(tmp_path)
+    fact_stream = HeadAwareCountingFactStreamAdapter()
+    first = _append_source_fact(
+        fact_stream,
+        workspace,
+        factory_run_id=None,
+        suffix="checkpointed-hb-1",
+    )
+    _append_source_fact(
+        fact_stream,
+        workspace,
+        factory_run_id=None,
+        suffix="checkpointed-hb-2",
+    )
+    _append_source_fact(fact_stream, workspace, suffix="checkpointed-done")
+    consumer, _ = _build_consumer(
+        workspace=workspace,
+        fact_stream=fact_stream,
+        barrier=MutableBarrier(workspace=workspace, fencing_token=7),
+        factory_runs=RecordingFactoryRuns(),
+    )
+
+    started = await consumer.start()
+    assert started.ack_safe is True
+    fact_stream.reset_query_counts()
+    fact_stream.queries.clear()
+
+    replayed = await consumer.wake(first.event_id)
+
+    assert replayed.ack_safe is True
+    assert replayed.decisions[0].outcome is SettlementOutcome.DUPLICATE
+    assert replayed.decisions[0].reason_code == "source_fact_already_checkpointed"
+    assert fact_stream.query_counts == {}
+    assert fact_stream.queries == []
+    assert fact_stream.head_queries == []
+
+
+@pytest.mark.asyncio
 async def test_non_factory_terminal_fact_is_ignored_checkpointed_and_does_not_block_factory_fact(
     tmp_path: Path,
 ) -> None:
@@ -741,6 +878,7 @@ async def test_rematerialize_no_write_complete_is_ignored_and_does_not_block_wri
     barrier.source_fact_visible = True
     barrier.closed = True
     barrier.release_allowed = True
+    consumer._last_open_barrier_replay_at = 0.0
     applied = await consumer.wake()
 
     assert applied.ack_safe is True
@@ -803,6 +941,7 @@ async def test_ledger_wake_rechecks_pending_source_without_polling(tmp_path: Pat
 
     barrier.source_fact_visible = True
     barrier.closed = True
+    consumer._last_open_barrier_replay_at = 0.0
     applied = await consumer.wake()
 
     assert applied.ack_safe is True
@@ -818,10 +957,10 @@ async def test_ledger_wake_rechecks_pending_source_without_polling(tmp_path: Pat
 async def test_repeated_open_barrier_wake_reuses_pending_journal_event(tmp_path: Path) -> None:
     """A changing barrier snapshot must not mutate one idempotency key.
 
-    Every wake re-queries the live Run Ledger barrier, but while it remains
-    open the already-durable waiting record is the stable pending fact.  A new
-    barrier hash/evidence projection may not be appended under the same
-    idempotency key because that creates a conflict loop instead of progress.
+    Open-barrier wakes during cooldown reuse the durable waiting record.
+    A new barrier hash/evidence projection may not be appended under the
+    same idempotency key because that creates a conflict loop instead of
+    progress.  After cooldown the next wake may re-query once.
     """
     workspace = _workspace(tmp_path)
     fact_stream = FactStreamAdapter()
@@ -849,7 +988,7 @@ async def test_repeated_open_barrier_wake_reuses_pending_journal_event(tmp_path:
         SettlementOutcome.PENDING,
         SettlementOutcome.PENDING,
     ]
-    assert len(barrier.queries) == 3
+    assert len(barrier.queries) == 1
     assert second.decisions[0].journal_event_id == first.decisions[0].journal_event_id
     assert third.decisions[0].journal_event_id == first.decisions[0].journal_event_id
     pending_records = [record for record in journal.records() if record.status is SettlementJournalStatus.PENDING]
@@ -859,6 +998,7 @@ async def test_repeated_open_barrier_wake_reuses_pending_journal_event(tmp_path:
 
     barrier.source_fact_visible = True
     barrier.closed = True
+    consumer._last_open_barrier_replay_at = 0.0
     applied = await consumer.wake()
 
     assert applied.ack_safe is True

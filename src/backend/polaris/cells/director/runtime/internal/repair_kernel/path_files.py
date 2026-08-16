@@ -20,6 +20,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+_CANONICAL_MANIFEST_BASENAMES: dict[str, str] = {
+    "cargo.toml": "Cargo.toml",
+    "cargo.lock": "Cargo.lock",
+}
+
+
+def _canonicalize_well_known_basename(path: str) -> str:
+    parts = path.split("/")
+    if not parts:
+        return path
+    canonical = _CANONICAL_MANIFEST_BASENAMES.get(parts[-1].lower())
+    if canonical is not None:
+        parts[-1] = canonical
+    return "/".join(parts)
+
 
 def normalize_repair_path_strict(path: str) -> str:
     """Normalize a workspace-relative repair path with traversal rejection.
@@ -31,14 +46,9 @@ def normalize_repair_path_strict(path: str) -> str:
     normalized = str(path or "").strip().replace("\\", "/")
     while normalized.startswith("./"):
         normalized = normalized[2:]
-    if (
-        not normalized
-        or normalized.startswith("/")
-        or normalized.startswith("../")
-        or "/../" in normalized
-    ):
+    if not normalized or normalized.startswith("/") or normalized.startswith("../") or "/../" in normalized:
         return ""
-    return normalized
+    return _canonicalize_well_known_basename(normalized)
 
 
 def normalize_repair_path_permissive(path: str) -> str:
@@ -52,7 +62,7 @@ def normalize_repair_path_permissive(path: str) -> str:
     normalized = str(path or "").strip().replace("\\", "/")
     while normalized.startswith("./"):
         normalized = normalized[2:]
-    return normalized
+    return _canonicalize_well_known_basename(normalized) if normalized else normalized
 
 
 def normalize_base_files_strict(base_files: Mapping[str, str]) -> dict[str, str]:

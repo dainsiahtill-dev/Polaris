@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch as fnmatch
+import hashlib as hashlib
 import json as json
 import logging
 import os as os
@@ -10,6 +11,7 @@ import re as re
 import subprocess as subprocess
 import sys as sys
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import (
@@ -132,6 +134,117 @@ def _append_receipt_bound_preflight_task_boundary(
             ok=True,
         )
     )
+    payload = verdict.to_dict()
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(getattr(adapter, "workspace", "") or ""),
+            run_id=run_id,
+            event={
+                "event_type": "task_boundary_verdict",
+                "stage": "task_boundary",
+                "task_id": external_task_id,
+                "run_id": run_id,
+                "task_boundary_verdict": payload,
+                "job_token": {
+                    "run_id": run_id,
+                    "task_id": external_task_id,
+                    "project_id": project_id,
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+            },
+        )
+    )
+    return payload
+
+
+def _declared_scope_existing_file_evidence_refs(
+    *,
+    workspace: str,
+    existing_paths: Sequence[str],
+) -> list[str]:
+    """Bind declared existing files to content-addressed TaskBoundary refs.
+
+    CE ``owned_artifacts`` can be empty for split foundation rows. Receipt-bound
+    preflight then has nothing to record, but the files still exist. Hash the
+    current UTF-8/binary bytes so ``completed_verified`` cannot be sealed with
+    empty ``evidence_refs``.
+    """
+
+    root = Path(workspace).expanduser().resolve()
+    refs: list[str] = []
+    for raw in existing_paths:
+        relative = str(raw or "").strip().replace("\\", "/")
+        if not relative:
+            continue
+        path = (root / relative).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError:
+            continue
+        if not path.is_file():
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        refs.append(f"workspace-file-sha256:{digest}:{relative}")
+    return refs
+
+
+def _append_declared_scope_preflight_task_boundary(
+    adapter: Any,
+    *,
+    context: Mapping[str, Any],
+    target_task_id: str,
+    run_id: str,
+    finalize_result: Mapping[str, Any],
+    existing_paths: Sequence[str],
+) -> dict[str, Any]:
+    """Seal TaskBoundary from declared existing paths when CE owned_artifacts is empty.
+
+    Live L2-12 TASK-3-foundation: PM split owns ``requirements.txt`` while the
+    CE completion projection assigned that file to TASK-1 and left the
+    foundation owner with zero ``owned_artifacts``. Receipt-bound preflight
+    then skipped the ledger append (``required_artifact_count=0``) and
+    Factory fail-closed ``task_boundary_verdict_missing`` after TaskRuntime
+    already completed. Declared on-disk scope is the owner write-set.
+    """
+
+    identity = finalize_result.get("identity")
+    if not isinstance(identity, Mapping):
+        raise ValueError("declared-scope preflight lacks settled TaskRuntime identity")
+    external_task_id = str(identity.get("external_task_id") or "").strip()
+    if not external_task_id:
+        raise ValueError("declared-scope preflight lacks external task identity")
+    projection = _task_completion_projection_from_context(
+        context,
+        target_task_id=target_task_id,
+    )
+    if not isinstance(projection, Mapping):
+        raise ValueError("declared-scope preflight lacks task completion projection")
+    if _canonical_task_owner_identity(projection.get("task_id")) != _canonical_task_owner_identity(external_task_id):
+        raise ValueError("declared-scope preflight projection owner does not match settled task")
+    target_files = [str(path or "").strip() for path in existing_paths if str(path or "").strip()]
+    if not target_files:
+        raise ValueError("declared-scope preflight lacks existing declared paths")
+    workspace = str(getattr(adapter, "workspace", "") or "")
+    evidence_refs = _declared_scope_existing_file_evidence_refs(
+        workspace=workspace,
+        existing_paths=target_files,
+    )
+    if len(evidence_refs) != len(target_files):
+        raise ValueError("declared-scope preflight could not bind evidence refs for every existing path")
+    verdict = evaluate_task_boundary_verdict(
+        workspace=workspace,
+        task_id=external_task_id,
+        run_id=run_id,
+        target_files=target_files,
+        completed_artifacts=target_files,
+        evidence_refs=evidence_refs,
+    )
+    if verdict.ok is not True or verdict.status != "completed_verified":
+        raise RuntimeError(f"declared-scope task boundary remained incomplete: {verdict.status}")
+    project_id = str(projection.get("project_id") or "").strip()
+    if not project_id:
+        raise ValueError("declared-scope preflight lacks project identity")
     payload = verdict.to_dict()
     append_run_ledger_event(
         AppendRunLedgerEventCommandV1(

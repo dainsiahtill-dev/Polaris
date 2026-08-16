@@ -48,8 +48,9 @@ _RUST_UNRESOLVED_IMPORT_RE = re.compile(
 )
 
 _RUST_UNRESOLVED_CRATE_RE = re.compile(
-    r"(?:cannot find (?:module or )?crate|use of unresolved module or unlinked crate) "
-    r"[`'\"](?P<crate>[A-Za-z_][A-Za-z0-9_]*)[`'\"]",
+    r"(?:cannot find (?:module or )?crate|can'?t find crate(?: for)?|"
+    r"use of unresolved module or unlinked crate)"
+    r"\s+(?:for\s+)?[`'\"](?P<crate>[A-Za-z_][A-Za-z0-9_]*)[`'\"]",
     re.IGNORECASE,
 )
 
@@ -127,6 +128,14 @@ _RUST_INCOMPATIBLE_COPY_LOCATION_RE = re.compile(
     re.IGNORECASE | re.MULTILINE | re.DOTALL,
 )
 
+_RUST_INCOMPATIBLE_EQ_LOCATION_RE = re.compile(
+    r"(?:the trait bound [`'\"][^`'\"\n]+:\s*(?P<trait>Eq|Ord|Hash)[`'\"] is not satisfied|"
+    r"the trait [`'\"](?P<trait_alt>Eq|Ord|Hash)[`'\"] is not implemented for [`'\"][^`'\"\n]+[`'\"])"
+    r".*?"
+    r"^\s*-->\s*(?P<path>[^:\n]+\.rs):(?P<line>\d+):(?P<column>\d+)",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
+
 _RUST_DERIVE_LINE_RE = re.compile(
     r"^(?P<indent>[ \t]*)#\[derive\((?P<items>[^)\r\n]*)\)\](?P<trailing>[^\r\n]*)(?P<newline>\r\n|\n|\r)?$"
 )
@@ -146,6 +155,13 @@ _RUST_PUB_USE_STATEMENT_RE = re.compile(
 _RUST_METHOD_SELF_SIGNATURE_PATTERNS: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (re.compile(r"\(\s*&mut\s*\)"), "(&mut self)", "mut_self"),
     (re.compile(r"\(\s*&\s*\)"), "(&self)", "self"),
+)
+
+_RUST_PRIVATE_FIELD_METHOD_SUGGESTION_RE = re.compile(
+    r"^\s*-->\s*(?P<path>[^:\n]+\.rs):(?P<line>\d+):\d+.*?"
+    r"help:\s+a method [`'\"](?P<method>[A-Za-z_][A-Za-z0-9_]*)[`'\"] also exists.*?"
+    r"^\s*(?P=line)\s+\|\s(?P<code>[^\n]+)",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
 )
 
 _RUST_FIELD_METHOD_LINE_SUGGESTION_RE = re.compile(
@@ -173,6 +189,18 @@ _RUST_PLUS_LINE_SUGGESTION_RE = re.compile(
 _RUST_XML_GENERIC_CLOSE_RE = re.compile(r"(?:\n(?:</[A-Za-z_][A-Za-z0-9_]*>)+)+\s*$")
 
 _RUST_VEC_BARE_GENERIC_RE = re.compile(r"\bVec(?P<inner>[A-Z][A-Za-z0-9_]*)\b(?P<tail>\s*=\s*Vec::new\(\))")
+
+_RUST_UNKNOWN_ENUM_VARIANT_RE = re.compile(
+    r"no variant, associated function, or constant named [`'\"](?P<variant>[A-Za-z_][A-Za-z0-9_]*)[`'\"] "
+    r"found for enum [`'\"](?P<enum>[A-Za-z_][A-Za-z0-9_:]*)[`'\"]",
+    re.IGNORECASE,
+)
+
+_RUST_ENUM_ITEM_RE = re.compile(
+    r"(?ms)^\s*(?:pub(?:\([^)]*\))?\s+)?enum\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\{(?P<body>.*?)\}"
+)
+
+_RUST_ENUM_VARIANT_NAME_RE = re.compile(r"(?m)^\s*(?:#\[[^\]]+\]\s*)*(?:pub\s+)?([A-Z][A-Za-z0-9_]*)\b")
 
 _RUST_INTEGER_IS_FINITE_RE = re.compile(
     r"\n(?P<indent>[ \t]*)if\s*!(?P<name>[A-Za-z_][A-Za-z0-9_]*)\.is_finite\(\)\s*\{"

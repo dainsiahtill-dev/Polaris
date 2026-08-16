@@ -34,6 +34,10 @@ from polaris.kernelone.benchmark.factory_audit import check_workspace_delivery_d
 
 from . import factory_stage_helpers as helpers
 from .factory_run_models import _WORKSPACE_VALIDATION_TIMEOUT_SECONDS
+from .factory_workspace_quality_evidence import (
+    compact_compiler_error_blocks,
+    compact_go_stack_overflow_diagnostic,
+)
 from .native_validation_sandbox import (
     NativeValidationContractError,
     NativeValidationSandboxError,
@@ -73,6 +77,22 @@ _LONG_RUNNING_WEB_START_MARKERS = (
     "next start",
 )
 _NESTED_JAVAC_DIAGNOSTIC_TIMEOUT_SECONDS = 30.0
+
+
+def workspace_quality_subprocess_env(*, workspace: Path) -> dict[str, str]:
+    """Build factory-owned verifier env for workspace quality commands.
+
+    Python CLI entrypoints such as ``python src/main.py`` put the script
+    directory (``src/``) on ``sys.path[0]``. Package imports like
+    ``from src.engine import ...`` then fail with
+    ``ModuleNotFoundError: No module named 'src'`` unless the workspace root
+    is on ``PYTHONPATH``. Bench gates already inject this; the official
+    quality runner must match. Host ``PYTHONPATH`` is replaced so a parent
+    ``src`` package cannot shadow the target workspace.
+    """
+    env = {**os.environ, "CI": os.environ.get("CI", "1")}
+    env["PYTHONPATH"] = str(Path(workspace).resolve())
+    return env
 
 
 def _npm_start_runs_long_lived_web_server(script: str) -> bool:
@@ -240,10 +260,11 @@ class WorkspaceQualityRunner:
             commands.append(["npm", "run", "start"])
         go_commands = self._go_workspace_quality_commands(context)
         commands.extend(go_commands)
-        commands.extend(self._rust_workspace_quality_commands())
+        rust_commands = self._rust_workspace_quality_commands()
+        commands.extend(rust_commands)
         cpp_commands = self._cpp_workspace_quality_commands()
         commands.extend(cpp_commands)
-        if not go_commands and not cpp_commands and not (self.workspace / "Cargo.toml").is_file():
+        if not go_commands and not rust_commands and not cpp_commands:
             commands.extend(self._python_workspace_quality_commands(context))
         return commands
 
@@ -270,9 +291,31 @@ class WorkspaceQualityRunner:
             commands.append(["go", "run", "."])
         return commands
 
-    def _rust_workspace_quality_commands(self) -> list[list[str]]:
-        if not (self.workspace / "Cargo.toml").is_file():
+    def _rust_source_files(self) -> list[Path]:
+        ignored = {"target", "runtime", ".polaris", "vendor"}
+        return [
+            path
+            for path in self.workspace.rglob("*.rs")
+            if path.is_file() and not any(part in ignored for part in path.parts)
+        ]
+
+    def _rust_manifest_candidates(self) -> list[Path]:
+        if not self.workspace.is_dir():
             return []
+        try:
+            return [path for path in self.workspace.iterdir() if path.is_file() and path.name.lower() == "cargo.toml"]
+        except OSError:
+            return []
+
+    def _rust_workspace_quality_commands(self) -> list[list[str]]:
+        rust_files = self._rust_source_files()
+        manifests = self._rust_manifest_candidates()
+        if not rust_files and not manifests:
+            return []
+        # Cargo and the native sandbox both require the exact basename
+        # ``Cargo.toml``. Live L2-14 wrote ``cargo.toml``; skipping rust when
+        # that file (or any ``*.rs``) exists made quality_gate pass with only
+        # delivery_depth and no compile/test receipt.
         # ``cargo test`` compiles every target and executes native unit and
         # integration tests. A prior Bench-shaped PM contract generated a
         # Python wrapper for Rust while this gate ran only ``cargo check``;
@@ -472,7 +515,7 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
                 encoding="utf-8",
                 errors="replace",
                 timeout=max(1.0, float(timeout_seconds or _WORKSPACE_VALIDATION_TIMEOUT_SECONDS)),
-                env={**os.environ, "CI": os.environ.get("CI", "1")},
+                env=workspace_quality_subprocess_env(workspace=self.workspace),
                 check=False,
             )
             stdout = helpers.trim_command_output(completed.stdout)
@@ -505,9 +548,12 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
                 "stderr_tail": stderr,
             }
             if not bool(result["passed"]):
-                diagnostic_excerpt = helpers.trim_command_output(
+                raw_diagnostic = compact_go_stack_overflow_diagnostic(
                     "\n".join(part for part in (completed.stdout, completed.stderr) if part)
                 )
+                diagnostic_excerpt = compact_compiler_error_blocks(raw_diagnostic)
+                if not diagnostic_excerpt.strip():
+                    diagnostic_excerpt = helpers.trim_command_output(raw_diagnostic)
                 if diagnostic_excerpt:
                     result["diagnostic_excerpt"] = diagnostic_excerpt
             if cargo_test:
@@ -536,9 +582,13 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
                 "stdout_tail": helpers.trim_command_output(str(exc.stdout or "")),
                 "stderr_tail": helpers.trim_command_output(str(exc.stderr or "")),
             }
-            diagnostic_excerpt = helpers.trim_command_output(
+            diagnostic_excerpt = compact_compiler_error_blocks(
                 "\n".join(str(part or "") for part in (exc.stdout, exc.stderr) if part)
             )
+            if not diagnostic_excerpt.strip():
+                diagnostic_excerpt = helpers.trim_command_output(
+                    "\n".join(str(part or "") for part in (exc.stdout, exc.stderr) if part)
+                )
             if diagnostic_excerpt:
                 result["diagnostic_excerpt"] = diagnostic_excerpt
             if cargo_test:
@@ -602,7 +652,7 @@ def _nested_javac_diagnostics_from_output(
             encoding="utf-8",
             errors="replace",
             timeout=max(1.0, timeout_seconds),
-            env={**os.environ, "CI": os.environ.get("CI", "1")},
+            env=workspace_quality_subprocess_env(workspace=workspace),
             check=False,
         )
     except (OSError, RuntimeError, subprocess.TimeoutExpired, TypeError, ValueError) as exc:

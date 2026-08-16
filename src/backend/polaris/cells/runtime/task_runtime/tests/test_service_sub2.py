@@ -868,6 +868,47 @@ def test_ensure_task_row_recreates_board_file_when_fact_row_is_a_ghost(
     assert claim.get("success") is True
 
 
+def test_ensure_task_row_reuses_completed_owner_when_board_file_exists(
+    tmp_path: Path,
+) -> None:
+    """Live L2-12: do not mint TASK-1 siblings after a successful preflight.
+
+    Factory retry kept calling ensure_task_row(TASK-1) after 225-230
+    completed. Terminal + board-present used to create 231, starving
+    TASK-3-source-core.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    created = service.ensure_task_row(
+        external_task_id="TASK-1",
+        subject="owner models",
+        metadata={"external_task_id": "TASK-1"},
+    )
+    created_id = int(created["id"])
+    claimed = service.claim_execution(
+        created_id,
+        worker_id="director",
+        role_id="director",
+        run_id="factory-1",
+        selection_source="test",
+        external_task_id="TASK-1",
+    )
+    assert claimed.get("success") is True
+    settled = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="")
+    assert settled.get("success") is True
+    assert _task_file_path(workspace, created_id).is_file()
+
+    ensured = service.ensure_task_row(
+        external_task_id="TASK-1",
+        subject="retry should reuse completed owner",
+        metadata={"external_task_id": "TASK-1"},
+    )
+    assert int(ensured["id"]) == created_id
+    assert str(ensured.get("status") or ensured.get("execution_state") or "").lower() == "completed"
+
+
 def test_ensure_task_row_inherits_completed_adapter_result_after_drain(
     tmp_path: Path,
 ) -> None:

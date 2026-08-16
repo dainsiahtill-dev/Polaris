@@ -114,6 +114,21 @@ def _primary_llm_provider_failure_payload(primary_llm_summary: dict[str, Any] | 
     if not error_text:
         return None
 
+    if "final_physical_context_snapshot_persist_failed" in lowered:
+        return {
+            "error": "director_final_request_context_persist_failed",
+            "error_code": "final_physical_context_snapshot_persist_failed",
+            "failure_class": FailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
+            "responsible_layer": "execution_control_plane",
+            "materialization_mode": "final_request_context_persist_failed",
+            "failure_stage": "director_llm_call",
+            "root_cause_hint": "final_physical_context_snapshot_persist_failed",
+            "detail": (
+                "Director primary LLM call never reached the provider because "
+                "the final physical ContextOS snapshot could not be persisted."
+            ),
+        }
+
     timeout_markers = (
         "connecttimeouterror",
         "readtimeouterror",
@@ -142,10 +157,15 @@ def _primary_llm_provider_failure_payload(primary_llm_summary: dict[str, Any] | 
         "connection reset",
         "max retries exceeded",
         "httpconnectionpool",
+        "httpsconnectionpool",
+        "circuit_open",
+        "ssleoferror",
+        "sslerror",
     )
     if error_category in {"rate_limit", "provider", "provider_error", "unavailable"} or any(
         marker in lowered for marker in provider_markers
     ):
+        circuit_open = "circuit_open" in lowered
         return {
             "error": "model_provider_failure",
             "error_code": "model_provider_failure",
@@ -153,8 +173,12 @@ def _primary_llm_provider_failure_payload(primary_llm_summary: dict[str, Any] | 
             "responsible_layer": "model_provider",
             "materialization_mode": "llm_call_failed",
             "failure_stage": "director_llm_call",
-            "root_cause_hint": "provider_failure",
-            "detail": "Director primary LLM provider call failed before tool dispatch or materialization.",
+            "root_cause_hint": "provider_circuit_open" if circuit_open else "provider_failure",
+            "detail": (
+                "Director primary LLM provider circuit was open during mutation retry."
+                if circuit_open
+                else "Director primary LLM provider call failed before tool dispatch or materialization."
+            ),
         }
 
     return None
@@ -184,6 +208,20 @@ def _no_write_retry_platform_failure_payload(
             str(metadata_map.get("error") or ""),
         )
     ).lower()
+    if "circuit_open" in tokens or "ssleoferror" in tokens or "sslerror" in tokens:
+        return {
+            "error": "model_provider_failure",
+            "error_code": "model_provider_failure",
+            "failure_class": FailureClassV1.MODEL_PROVIDER_FAILURE.value,
+            "responsible_layer": "model_provider",
+            "materialization_mode": "llm_call_failed",
+            "failure_stage": "director_no_write_materialization_retry",
+            "root_cause_hint": "provider_circuit_open",
+            "detail": (
+                "Forced Director write retry died on an open provider circuit "
+                "or SSL transport failure instead of a missing workspace mutation."
+            ),
+        }
     if "final_physical_context_snapshot_persist_failed" not in tokens:
         return None
     return {
@@ -454,9 +492,7 @@ def _phase_no_materialized_changes(
         primary_llm_claimed_success = bool(primary_llm_summary.get("success")) if primary_llm_summary else False
         direct_side_effect_success = primary_llm_claimed_success and not tool_results
         lifecycle_failure = _primary_llm_tool_dispatch_failure(primary_llm_summary)
-        retry_platform_failure = _no_write_retry_platform_failure_payload(
-            no_write_materialization_retry_summary
-        )
+        retry_platform_failure = _no_write_retry_platform_failure_payload(no_write_materialization_retry_summary)
         if lifecycle_failure is not None:
             error = lifecycle_failure["error"]
             materialization_mode = lifecycle_failure["materialization_mode"]

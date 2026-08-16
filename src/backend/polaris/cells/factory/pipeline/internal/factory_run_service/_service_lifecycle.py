@@ -8,6 +8,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping
 from dataclasses import asdict  # re-exported for lossless surface
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any  # Protocol re-exported for lossless surface
 
 from polaris.cells.runtime.task_runtime.public.contracts import (
@@ -18,6 +19,7 @@ from polaris.cells.runtime.task_runtime.public.service import (
     fence_expired_factory_run_sessions,
 )
 
+from ..factory_deadline_calculations import extend_factory_run_deadline_for_same_run_retry
 from ..factory_event_chain import (
     FactoryRunAdmissionV1,
     build_factory_run_admitted_event,
@@ -97,16 +99,45 @@ class _FactoryRunServiceLifecycleMixin:
                     },
                 )
 
-        physical_drain = self._physical_attempt_coordinator(target_run.id).close()
-        physical_drain_evidence = {
-            "factory_run_id": physical_drain.factory_run_id,
-            "settled": physical_drain.settled,
-            "blocking_reservation_ids": list(physical_drain.blocking_reservation_ids),
-            "terminal_failure_reservation_ids": list(physical_drain.terminal_failure_reservation_ids),
-            "by_authority": [asdict(state) for state in physical_drain.by_authority],
-        }
+        coordinator = self._physical_attempt_coordinators.get(target_run.id)
+        if coordinator is None:
+            # After Launcher-restart the process-local coordinator is gone.
+            # FAILED/CANCELLED drain may reuse the last persisted settled
+            # snapshot or treat the empty new process as already drained.
+            existing_drain = target_run.metadata.get("factory_physical_attempt_drain")
+            existing_map = existing_drain if isinstance(existing_drain, Mapping) else {}
+            if target_run.status not in {FactoryRunStatus.FAILED, FactoryRunStatus.CANCELLED}:
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_replay_required")
+            if existing_map.get("settled") is True:
+                physical_drain_evidence = {
+                    "factory_run_id": target_run.id,
+                    "settled": True,
+                    "blocking_reservation_ids": list(existing_map.get("blocking_reservation_ids") or []),
+                    "terminal_failure_reservation_ids": list(
+                        existing_map.get("terminal_failure_reservation_ids") or []
+                    ),
+                    "by_authority": list(existing_map.get("by_authority") or []),
+                }
+            else:
+                physical_drain_evidence = {
+                    "factory_run_id": target_run.id,
+                    "settled": True,
+                    "blocking_reservation_ids": [],
+                    "terminal_failure_reservation_ids": [],
+                    "by_authority": [],
+                    "reconstructed_after_restart": True,
+                }
+        else:
+            physical_drain = coordinator.close()
+            physical_drain_evidence = {
+                "factory_run_id": physical_drain.factory_run_id,
+                "settled": physical_drain.settled,
+                "blocking_reservation_ids": list(physical_drain.blocking_reservation_ids),
+                "terminal_failure_reservation_ids": list(physical_drain.terminal_failure_reservation_ids),
+                "by_authority": [asdict(state) for state in physical_drain.by_authority],
+            }
         target_run.metadata["factory_physical_attempt_drain"] = physical_drain_evidence
-        if not physical_drain.settled:
+        if physical_drain_evidence.get("settled") is not True:
             return await self._record_drain_conflict(
                 target_run,
                 lease,
@@ -661,11 +692,24 @@ class _FactoryRunServiceLifecycleMixin:
                 raise ValueError(f"Run {run_id} not found after cancelled stage recovery")
             run = await self.assert_mutation_allowed(run_id, current_run=run)
 
-            if run.status in {FactoryRunStatus.COMPLETED, FactoryRunStatus.CANCELLED}:
+            requested_stage = str(target_stage or "").strip()
+            # Completed is terminal for PM/CE/Director replay. Live L2-14
+            # quality_gate passed after skipping rust (lowercase cargo.toml).
+            # Same-run owner repair must be allowed to re-run only quality_gate
+            # without opening a new Factory run or rolling back PM/CE.
+            if run.status == FactoryRunStatus.CANCELLED:
                 return run
-            if run.status != FactoryRunStatus.FAILED:
+            if run.status == FactoryRunStatus.COMPLETED and requested_stage != "quality_gate":
+                return run
+            if run.status != FactoryRunStatus.FAILED and not (
+                run.status == FactoryRunStatus.COMPLETED and requested_stage == "quality_gate"
+            ):
                 raise ValueError(f"Run {run_id} cannot be retried in status {run.status.value}")
 
+            # Launcher-restart can leave an orphaned settle_terminal_run claim.
+            # Finish that exact nonce before recover_run, otherwise retry_phase
+            # conflicts for the workspace TTL (live L2-12 factory_a1b49b0460f2).
+            run = await self._settle_terminal_run_locked(run)
             run = await self._prepare_failed_retry_execution_epoch_locked(run)
             self._require_physical_attempt_admission_open(run.id)
             self._acquire_workspace_lease(run)
@@ -738,6 +782,21 @@ class _FactoryRunServiceLifecycleMixin:
             run.metadata["retry_requested_stage"] = requested_stage or None
             run.metadata["retry_execution_stage"] = retry_execution_stage
             run.metadata[_STAGE_IN_FLIGHT_METADATA_KEY] = False
+            deadline_extension = extend_factory_run_deadline_for_same_run_retry(
+                now_epoch=datetime.now(timezone.utc).timestamp(),
+                metadata=run.metadata,
+                retry_stage=str(retry_execution_stage or retry_stage or ""),
+            )
+            if deadline_extension:
+                run.metadata.update(deadline_extension)
+                start_request = run.metadata.get("factory_start_request")
+                if isinstance(start_request, Mapping):
+                    start_payload = dict(start_request)
+                    start_metadata_raw = start_payload.get("metadata")
+                    start_metadata = dict(start_metadata_raw) if isinstance(start_metadata_raw, Mapping) else {}
+                    start_metadata.update(deadline_extension)
+                    start_payload["metadata"] = start_metadata
+                    run.metadata["factory_start_request"] = start_payload
             if previous_failure:
                 run.metadata["retry_previous_failure"] = previous_failure
             run.metadata["failure"] = None
@@ -1126,67 +1185,87 @@ class _FactoryRunServiceLifecycleMixin:
             if run is None:
                 raise ValueError(f"Run {run_id} not found")
             run = await self.assert_mutation_allowed(run_id, current_run=run)
-            if run.status not in TERMINAL_RUN_STATUSES:
-                return run
-            current = self._admission.current()
-            if current is None or current.run_id != run.id:
-                if expected_fencing_token is None:
-                    return run
-            elif current.state.value == "released":
-                if expected_fencing_token is None or current.fencing_token == expected_fencing_token:
-                    return run
-            elif expected_fencing_token is None:
-                self._attach_workspace_lease(run, current)
+            return await self._settle_terminal_run_locked(
+                run,
+                expected_fencing_token=expected_fencing_token,
+            )
 
-            operation = "settle_terminal_run"
-            nonce = f"lifecycle_{uuid.uuid4().hex}"
-            claimed = False
-            try:
-                lease = self._claim_lifecycle_operation(
+    async def _settle_terminal_run_locked(
+        self: Any,
+        run: FactoryRun,
+        *,
+        expected_fencing_token: int | None = None,
+    ) -> FactoryRun:
+        """Settle one terminal run while the caller already holds ``run_lock``."""
+
+        if run.status not in TERMINAL_RUN_STATUSES:
+            return run
+        current = self._admission.current()
+        if current is None or current.run_id != run.id:
+            if expected_fencing_token is None:
+                return run
+        elif current.state.value == "released":
+            if expected_fencing_token is None or current.fencing_token == expected_fencing_token:
+                return run
+        elif expected_fencing_token is None:
+            self._attach_workspace_lease(run, current)
+
+        operation = "settle_terminal_run"
+        current_claim = current.lifecycle_operation_claim if current is not None and current.run_id == run.id else None
+        # Resume the exact orphaned settle nonce after Launcher-restart instead
+        # of minting a conflicting claim for the workspace TTL.
+        nonce = (
+            current_claim.nonce
+            if current_claim is not None and current_claim.operation == operation
+            else f"lifecycle_{uuid.uuid4().hex}"
+        )
+        claimed = False
+        try:
+            lease = self._claim_lifecycle_operation(
+                run,
+                operation=operation,
+                nonce=nonce,
+                acquire_if_available=False,
+                expected_fencing_token=expected_fencing_token,
+            )
+            claimed = True
+            if lease.state.value == "active":
+                draining_lease = await self._begin_terminal_drain(
+                    run,
+                    reason=f"terminal_{run.status.value}",
+                    operation_nonce=nonce,
+                )
+                if draining_lease is None:
+                    raise RuntimeError("factory_terminal_drain_lease_missing")
+                lease = draining_lease
+            run = await self._finalize_terminal_drain(
+                run,
+                lease,
+                operation_nonce=nonce,
+            )
+            current = self._admission.current()
+            if (
+                current is not None
+                and current.run_id == run.id
+                and current.lifecycle_operation_claim is not None
+                and current.lifecycle_operation_claim.nonce == nonce
+            ):
+                await self._release_lifecycle_operation(
                     run,
                     operation=operation,
                     nonce=nonce,
-                    acquire_if_available=False,
-                    expected_fencing_token=expected_fencing_token,
                 )
-                claimed = True
-                if lease.state.value == "active":
-                    draining_lease = await self._begin_terminal_drain(
-                        run,
-                        reason=f"terminal_{run.status.value}",
-                        operation_nonce=nonce,
-                    )
-                    if draining_lease is None:
-                        raise RuntimeError("factory_terminal_drain_lease_missing")
-                    lease = draining_lease
-                run = await self._finalize_terminal_drain(
+            claimed = False
+            return run
+        except Exception:
+            if claimed:
+                await self._rollback_lifecycle_operation(
                     run,
-                    lease,
-                    operation_nonce=nonce,
+                    operation=operation,
+                    nonce=nonce,
+                    reason="settle_terminal_run_failed",
                 )
-                current = self._admission.current()
-                if (
-                    current is not None
-                    and current.run_id == run.id
-                    and current.lifecycle_operation_claim is not None
-                    and current.lifecycle_operation_claim.nonce == nonce
-                ):
-                    await self._release_lifecycle_operation(
-                        run,
-                        operation=operation,
-                        nonce=nonce,
-                    )
-                claimed = False
-                return run
-            except Exception:
-                if claimed:
-                    await self._rollback_lifecycle_operation(
-                        run,
-                        operation=operation,
-                        nonce=nonce,
-                        reason="settle_terminal_run_failed",
-                    )
-                raise
+            raise
 
     async def recover_stale_workspace_owner(
         self: Any,

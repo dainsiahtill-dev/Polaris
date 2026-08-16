@@ -278,8 +278,10 @@ def test_capability_consume_is_one_use_and_fenced_to_attempt(
         _authority_token=authority_module._CAPABILITY_COMMAND_SEAL,
     )
 
-    first = adapter_module.PROJECT_COMPLETION_OWNER_OBSERVATION_ADAPTER.consume_project_verification_execution_capability(
-        command
+    first = (
+        adapter_module.PROJECT_COMPLETION_OWNER_OBSERVATION_ADAPTER.consume_project_verification_execution_capability(
+            command
+        )
     )
     with pytest.raises(ProjectCompletionOwnerObservationV1Error, match="one-use"):
         adapter_module.PROJECT_COMPLETION_OWNER_OBSERVATION_ADAPTER.consume_project_verification_execution_capability(
@@ -448,6 +450,64 @@ def test_empty_workspace_and_arbitrary_owner_refs_cannot_satisfy_delivery(
     assert observation.contract.to_seed_dict() == contract.to_seed_dict()
     assert observation.evidence == ()
     assert observation.repair_coverage == ()
+
+
+def test_preflight_completed_verified_without_refs_keeps_ledger_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Declared-scope preflight may seal completed_verified with empty refs.
+
+    Live L2-12 TASK-1 / TASK-3-foundation still had append_id/content_id. The
+    owner query must not abort the whole observation, or quality-gate
+    owner_task_retry cannot receive a durable action.
+    """
+
+    contract = _patch_owners(monkeypatch, tmp_path)
+    ledger = _ledger(contract)
+    latest = ledger.projection["task_boundary"]["latest_by_task"]
+    latest["task-1"] = {
+        **latest["task-1"],
+        "evidence_refs": [],
+        "append_id": "append-task-1",
+        "content_id": "content-task-1",
+    }
+    monkeypatch.setattr(adapter_module, "read_run_ledger_projection", lambda query: ledger)
+
+    observation = adapter_module.PROJECT_COMPLETION_OWNER_OBSERVATION_ADAPTER.observe_project_completion(
+        workspace=str(tmp_path),
+        project_id=contract.project_id,
+        run_id=contract.run_id,
+        completion_contract_hash=contract.contract_hash,
+    )
+
+    assert observation.contract.contract_hash == contract.contract_hash
+
+
+def test_task_boundary_without_refs_or_ledger_coords_still_fail_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = _patch_owners(monkeypatch, tmp_path)
+    ledger = _ledger(contract)
+    latest = ledger.projection["task_boundary"]["latest_by_task"]
+    latest["task-1"] = {
+        **latest["task-1"],
+        "evidence_refs": [],
+        "append_id": "",
+        "content_id": "",
+    }
+    monkeypatch.setattr(adapter_module, "read_run_ledger_projection", lambda query: ledger)
+
+    with pytest.raises(ProjectCompletionOwnerObservationV1Error) as exc_info:
+        adapter_module.PROJECT_COMPLETION_OWNER_OBSERVATION_ADAPTER.observe_project_completion(
+            workspace=str(tmp_path),
+            project_id=contract.project_id,
+            run_id=contract.run_id,
+            completion_contract_hash=contract.contract_hash,
+        )
+
+    assert exc_info.value.error_code == "project_completion_task_boundary_identity_invalid"
 
 
 def test_same_task_repair_run_does_not_invalidate_historical_task_boundary(

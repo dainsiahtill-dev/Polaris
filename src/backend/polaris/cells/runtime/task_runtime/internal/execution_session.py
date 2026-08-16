@@ -224,6 +224,38 @@ def build_task_row_snapshot(task_row: dict[str, Any]) -> dict[str, Any]:
     return cast(dict[str, Any], _json_compatible_copy(task_row))
 
 
+_HEARTBEAT_SNAPSHOT_METADATA_KEYS: tuple[str, ...] = (
+    "factory_run_id",
+    "task_id",
+    "run_id",
+)
+
+
+def build_heartbeat_task_row_snapshot(task_row: dict[str, Any]) -> dict[str, Any]:
+    """Return identity-only snapshot for ``heartbeat_renewed`` durable facts.
+
+    Live L2-13: each heartbeat copied ``metadata.adapter_result`` (~1.4MiB)
+    into ``task_runtime.execution.jsonl``. Quality-gate then stalled parsing
+    78MiB of those copies. Heartbeat is lease evidence, not adapter receipt
+    authority; parse-time compact already dropped the blob. Stop writing it.
+    """
+
+    metadata_raw = task_row.get("metadata")
+    metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+    slim_metadata = {key: metadata[key] for key in _HEARTBEAT_SNAPSHOT_METADATA_KEYS if key in metadata}
+    return cast(
+        dict[str, Any],
+        _json_compatible_copy(
+            {
+                "id": task_row.get("id"),
+                "status": task_row.get("status"),
+                "session_id": task_row.get("session_id"),
+                "metadata": slim_metadata,
+            }
+        ),
+    )
+
+
 def is_running_execution_status(status: str) -> bool:
     """Return whether a task-runtime execution status represents active work."""
 
@@ -465,7 +497,11 @@ def build_task_runtime_execution_event_payload(
             session.last_result_summary if session is not None else task_row.get("last_result_summary")
         ),
         "details": dict(details or {}),
-        "task_row_snapshot": build_task_row_snapshot(task_row),
+        "task_row_snapshot": (
+            build_heartbeat_task_row_snapshot(task_row)
+            if event_type_str in {"heartbeat_renewed", "heartbeat"}
+            else build_task_row_snapshot(task_row)
+        ),
         "timestamp": str(timestamp or "").strip() or utc_now_iso(),
     }
     factory_run_id = str(task_metadata.get("factory_run_id") or "").strip()

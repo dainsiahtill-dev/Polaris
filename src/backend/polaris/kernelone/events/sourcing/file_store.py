@@ -63,8 +63,37 @@ _STRICT_STREAM_REASONS = frozenset(_STRICT_REASON_BY_CODE.values())
 # parses. Never let a stale in-flight scan publish over a newer head.
 _PARSED_STREAM_CACHE_MAX = 16
 _PARSED_STREAM_PIN_MIN_RECORDS = 64
+_PARSED_STREAM_TAIL_MIN_BYTES = 2 * 1024 * 1024
+_PARSED_STREAM_TAIL_MAX_BYTES = 64 * 1024 * 1024
+_PARSED_STREAM_TAIL_BYTES_PER_EVENT = 768 * 1024
 _PARSED_STREAM_CACHE: OrderedDict[tuple[str, str, int], tuple[EventEnvelope, ...]] = OrderedDict()
 _PARSED_STREAM_CACHE_LOCK = threading.RLock()
+_HEARTBEAT_EVENT_TYPES = frozenset({"heartbeat_renewed", "heartbeat"})
+_HEARTBEAT_PAYLOAD_KEYS = ("task_id", "status", "session_id", "factory_run_id", "terminal")
+_HEARTBEAT_METADATA_KEYS = ("task_id", "run_id", "factory_run_id")
+
+
+def _compact_non_authoritative_event_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Drop bulky heartbeat snapshots before they enter the parsed-stream cache.
+
+    Live L2-12: each ``heartbeat_renewed`` line is ~64KiB because the writer
+    embeds the full TaskRuntime row.  Caching 4k of those as Python objects
+    grew the isolated backend to 5.8GiB and SIGSEGV'd pid 18062 (signal 11).
+    Settlement ignores non-terminal facts; observers only need identity.
+    Strict integrity reads do not use this helper.
+    """
+
+    event_type = str(record.get("event_type") or "").strip()
+    if event_type not in _HEARTBEAT_EVENT_TYPES:
+        return record
+    compacted = dict(record)
+    payload = record.get("payload")
+    if isinstance(payload, dict):
+        compacted["payload"] = {key: payload[key] for key in _HEARTBEAT_PAYLOAD_KEYS if key in payload}
+    metadata = record.get("metadata")
+    if isinstance(metadata, dict):
+        compacted["metadata"] = {key: metadata[key] for key in _HEARTBEAT_METADATA_KEYS if key in metadata}
+    return compacted
 
 
 class _StrictStreamIntegrityError(EventSourcingError):
@@ -636,7 +665,7 @@ class JsonlEventStore:
                 record = json.loads(line)
                 if not isinstance(record, dict):
                     continue
-                events.append(EventEnvelope.from_record(record))
+                events.append(EventEnvelope.from_record(_compact_non_authoritative_event_record(record)))
             except (RuntimeError, ValueError) as exc:
                 logger.debug("skip malformed event record path=%s: %s", storage_path, exc)
                 continue
@@ -728,6 +757,82 @@ class JsonlEventStore:
                     break
                 _PARSED_STREAM_CACHE.pop(victim, None)
 
+    def _latest_parsed_stream_cache(
+        self,
+        *,
+        logical_path: str,
+    ) -> tuple[int, tuple[EventEnvelope, ...]] | None:
+        """Return the newest in-process parse for this stream identity."""
+
+        identity = (self._storage_identity.token, logical_path)
+        with _PARSED_STREAM_CACHE_LOCK:
+            candidates = [key for key in _PARSED_STREAM_CACHE if key[:2] == identity]
+            if not candidates:
+                return None
+            newest = max(candidates, key=lambda key: key[2])
+            records = _PARSED_STREAM_CACHE.get(newest)
+            if records is None:
+                return None
+            _PARSED_STREAM_CACHE.move_to_end(newest)
+            return newest[2], records
+
+    def _extend_parsed_records_from_tail(
+        self,
+        *,
+        lease: StreamLeaseV1,
+        cached_records: tuple[EventEnvelope, ...],
+        cached_head: int,
+        stream_head: int,
+        storage_path: str,
+    ) -> list[EventEnvelope] | None:
+        """Parse only new tail envelopes when the cached head is behind.
+
+        Live L2-12: each Director write/heartbeat advanced the execution head
+        and forced a 545MiB ``_read_lease_records`` under the stream lock.
+        Task heartbeats then missed their 120s lease. Extend the pinned parse
+        from the descriptor tail when the new records fit that window.
+        """
+
+        if not cached_records or cached_head < 1 or stream_head <= cached_head:
+            return None
+        missing = stream_head - cached_head
+        budget = min(
+            _PARSED_STREAM_TAIL_MAX_BYTES,
+            max(_PARSED_STREAM_TAIL_MIN_BYTES, missing * _PARSED_STREAM_TAIL_BYTES_PER_EVENT),
+        )
+        # Live L2-12 task 266: heartbeat envelopes are ~64KiB.  A 16MiB tail
+        # that started mid-line dropped seq cached_head+1, extend returned
+        # None, and query() reread 696MiB under the stream lock.  Director
+        # heartbeats then missed the 120s lease.  Double the tail until the
+        # new seq window is contiguous; never treat a truncated first line
+        # as "must full-scan".
+        while budget <= _PARSED_STREAM_TAIL_MAX_BYTES:
+            try:
+                tail = lease.read_tail_bytes(budget)
+            except (LockedRegularFileError, OSError, ValueError) as exc:
+                logger.debug("parsed-stream tail extend failed path=%s: %s", storage_path, exc)
+                return None
+            extras = [
+                event
+                for event in self._parse_records(
+                    content=tail.decode("utf-8", errors="replace"),
+                    storage_path=storage_path,
+                )
+                if event.seq > cached_head
+            ]
+            extras.sort(key=lambda item: item.seq)
+            if (
+                extras
+                and extras[0].seq == cached_head + 1
+                and extras[-1].seq == stream_head
+                and all(event.seq == cached_head + 1 + index for index, event in enumerate(extras))
+            ):
+                return [*cached_records, *extras]
+            if budget >= _PARSED_STREAM_TAIL_MAX_BYTES or len(tail) < budget:
+                return None
+            budget = min(_PARSED_STREAM_TAIL_MAX_BYTES, budget * 2)
+        return None
+
     def _read_lease_records_cached(
         self,
         *,
@@ -740,6 +845,8 @@ class JsonlEventStore:
 
         The descriptor lock and tail-derived sequence fence the cache.  Strict
         integrity reads deliberately keep their complete validation pass.
+        When the head advanced a few envelopes, extend the newest older parse
+        from the file tail instead of rereading hundreds of MiB.
         """
 
         if strict_integrity or not lease.exists:
@@ -760,6 +867,22 @@ class JsonlEventStore:
             if cached is not None:
                 _PARSED_STREAM_CACHE.move_to_end(key)
                 return list(cached)
+        older = self._latest_parsed_stream_cache(logical_path=logical_path)
+        if older is not None and 0 < older[0] < stream_head:
+            extended = self._extend_parsed_records_from_tail(
+                lease=lease,
+                cached_records=older[1],
+                cached_head=older[0],
+                stream_head=stream_head,
+                storage_path=logical_path,
+            )
+            if extended is not None:
+                self._publish_parsed_stream_cache(
+                    logical_path=logical_path,
+                    stream_head=stream_head,
+                    records=extended,
+                )
+                return extended
         records = self._read_lease_records(
             stream=stream,
             logical_path=logical_path,

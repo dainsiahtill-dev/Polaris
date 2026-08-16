@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from polaris.cells.roles.kernel.public.service import is_authoritative_write_result
@@ -307,12 +308,62 @@ _CODE_FILE_EXTENSIONS: set[str] = {
     ".vue",
     ".svelte",
     ".md",
+    ".mod",
+    ".sum",
+}
+
+_CODE_FILE_NAMES: set[str] = {
+    "go.mod",
+    "go.sum",
+    "dockerfile",
+    "makefile",
+    "gnumakefile",
+    "requirements.txt",
+    "procfile",
+    "gemfile",
+    "cargo.lock",
+    "cargo.toml",
+}
+
+_CANONICAL_MANIFEST_BASENAMES: dict[str, str] = {
+    "cargo.toml": "Cargo.toml",
+    "cargo.lock": "Cargo.lock",
 }
 
 
-def is_project_code_file(file_suffix: str) -> bool:
-    """Check if file suffix indicates a project code file."""
-    return file_suffix.lower() in _CODE_FILE_EXTENSIONS
+def canonicalize_project_manifest_path(path: str) -> str:
+    """Normalize well-known manifest basenames to the tool-required case.
+
+    Live L2-14: Director wrote ``cargo.toml``. Cargo and the official
+    rust quality sandbox only accept ``Cargo.toml``, so the gate skipped
+    rust compile/test and quality_gate passed with no cargo receipt.
+    """
+
+    normalized = str(path or "").strip().replace("\\", "/")
+    if not normalized:
+        return normalized
+    parts = normalized.split("/")
+    canonical = _CANONICAL_MANIFEST_BASENAMES.get(parts[-1].lower())
+    if canonical is not None:
+        parts[-1] = canonical
+    return "/".join(parts)
+
+
+def is_project_code_file(file_suffix: str, filename: str = "") -> bool:
+    """Check if suffix or well-known delivery filename is a project file.
+
+    Live L2-13: Director wrote ``go.mod`` (suffix ``.mod``). The scanner
+    ignored it, so an authoritative create receipt projected as
+    ``director_no_materialized_changes`` and blocked remaining Go tasks.
+    Manifest names must count even when the suffix is not a language source.
+    """
+    name = Path(filename).name.lower() if filename else ""
+    if name in _CODE_FILE_NAMES:
+        return True
+    suffix = str(file_suffix or "").lower()
+    if not suffix and name:
+        suffix = Path(name).suffix.lower()
+    return suffix in _CODE_FILE_EXTENSIONS
 
 
 # -----------------------------------------------------------------------------

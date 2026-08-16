@@ -271,6 +271,27 @@ def _owner_task_identity(row: Mapping[str, Any]) -> str:
     ).strip()
 
 
+def _task_boundary_has_durable_identity(boundary: Mapping[str, Any], *, owner_task_id: str) -> bool:
+    """Accept TaskBoundary identity from refs or committed ledger coordinates.
+
+    Live L2-12 declared-scope preflight sealed ``completed_verified`` with
+    empty ``evidence_refs`` after CE ``owned_artifacts`` was empty. The
+    boundary still carried ``append_id``/``content_id``. Treating that as a
+    whole-query identity abort hid owner residuals and blocked quality
+    ``owner_task_retry``. Physical completion still comes only from
+    execution-broker receipts; this check is a prerequisite identity gate.
+    """
+
+    if str(boundary.get("task_id") or owner_task_id).strip() != owner_task_id:
+        return False
+    if not str(boundary.get("run_id") or "").strip():
+        return False
+    refs = boundary.get("evidence_refs")
+    if isinstance(refs, (list, tuple)) and refs and all(isinstance(item, str) and item.strip() for item in refs):
+        return True
+    return bool(str(boundary.get("append_id") or "").strip() and str(boundary.get("content_id") or "").strip())
+
+
 def _repair_coverage(
     *,
     workspace: str,
@@ -614,8 +635,12 @@ class ProjectCompletionOwnerObservationAdapter:
                     obligation_id=command.obligation_id,
                 )
             )
-            expected = tuple(getattr(command, name) for name in ProjectVerificationExecutionAuthorityV1.__dataclass_fields__)
-            observed = tuple(getattr(current, name) for name in ProjectVerificationExecutionAuthorityV1.__dataclass_fields__)
+            expected = tuple(
+                getattr(command, name) for name in ProjectVerificationExecutionAuthorityV1.__dataclass_fields__
+            )
+            observed = tuple(
+                getattr(current, name) for name in ProjectVerificationExecutionAuthorityV1.__dataclass_fields__
+            )
             if observed != expected:
                 raise _fail(
                     "project_verification_capability_authority_changed",
@@ -906,9 +931,7 @@ class ProjectCompletionOwnerObservationAdapter:
         )
         frozen_rows = frozen.projection.get("rows") if frozen is not None else ()
         candidates = [
-            dict(row)
-            for row in (frozen_rows if isinstance(frozen_rows, list) else ())
-            if isinstance(row, Mapping)
+            dict(row) for row in (frozen_rows if isinstance(frozen_rows, list) else ()) if isinstance(row, Mapping)
         ]
         candidates.extend(
             dict(row)
@@ -1001,25 +1024,14 @@ class ProjectCompletionOwnerObservationAdapter:
             row = rows_by_id[owner_task_id]
             boundary_raw = latest_by_task.get(owner_task_id)
             boundary = dict(boundary_raw) if isinstance(boundary_raw, Mapping) else None
-            if boundary is not None:
-                boundary_refs = boundary.get("evidence_refs")
-                if (
-                    str(boundary.get("task_id") or owner_task_id).strip() != owner_task_id
-                    # TaskBoundary preserves the Director run that originally
-                    # settled this CE task. Same-task repair legitimately
-                    # advances TaskRuntime to a new workflow_run_id, so these
-                    # two lifecycle identities must not be equated. The
-                    # boundary still has to bind this owner task, one concrete
-                    # historical run, and non-empty evidence.
-                    or not str(boundary.get("run_id") or "").strip()
-                    or not isinstance(boundary_refs, (list, tuple))
-                    or not all(isinstance(item, str) and item.strip() for item in boundary_refs)
-                    or not boundary_refs
-                ):
-                    raise _fail(
-                        "project_completion_task_boundary_identity_invalid",
-                        f"TaskBoundary identity/evidence is invalid for owner task {owner_task_id!r}",
-                    )
+            if boundary is not None and not _task_boundary_has_durable_identity(
+                boundary,
+                owner_task_id=owner_task_id,
+            ):
+                raise _fail(
+                    "project_completion_task_boundary_identity_invalid",
+                    f"TaskBoundary identity/evidence is invalid for owner task {owner_task_id!r}",
+                )
 
         # TaskRuntime, TaskBoundary and Run Ledger remain prerequisites only.
         # Completion evidence comes exclusively from current, exact, owner-

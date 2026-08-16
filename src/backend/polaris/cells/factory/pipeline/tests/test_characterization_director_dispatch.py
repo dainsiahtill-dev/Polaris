@@ -434,6 +434,45 @@ class TestDirectorDispatchLoop:
             await fake_orchestration.active_task
 
     @pytest.mark.asyncio
+    async def test_cancel_active_run_treats_inactive_orchestration_run_as_already_gone(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """L2-12 task 259: expired Director run must not fail-close factory."""
+
+        class _InactiveOrchestrationError(Exception):
+            pass
+
+        _InactiveOrchestrationError.__name__ = "InvalidStateError"
+
+        class _FakeOrchestrationService:
+            def __init__(self) -> None:
+                self.cancelled: list[str] = []
+
+            async def cancel_run(self, run_id: str, force: bool = False) -> object:
+                self.cancelled.append(run_id)
+                raise _InactiveOrchestrationError(f"Run {run_id} is not active")
+
+        fake_orchestration = _FakeOrchestrationService()
+
+        async def _fake_get_orchestration_service() -> _FakeOrchestrationService:
+            return fake_orchestration
+
+        monkeypatch.setattr(
+            "polaris.cells.orchestration.workflow_runtime.public.get_orchestration_service",
+            _fake_get_orchestration_service,
+        )
+
+        result = await RunCompletionWaiter(tmp_path).cancel_active_run(
+            "director-aa724e5f4540",
+            reason="factory_stage_timeout",
+        )
+
+        assert result is None
+        assert fake_orchestration.cancelled == ["director-aa724e5f4540"]
+
+    @pytest.mark.asyncio
     async def test_run_completion_waiter_timeout_preserves_active_director_session_by_default(
         self,
         monkeypatch: pytest.MonkeyPatch,

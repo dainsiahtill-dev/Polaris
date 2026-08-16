@@ -9,7 +9,8 @@ methods. Behavior is preserved verbatim.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+import re
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,7 +27,12 @@ from polaris.cells.runtime.task_runtime.public.service import (
 from polaris.kernelone.llm.budget_policy import FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
 
 from .factory_run_models import _WORKSPACE_VALIDATION_TIMEOUT_SECONDS, FactoryRun
-from .factory_workspace_quality_evidence import _dedupe_workspace_repair_paths
+from .factory_workspace_quality_evidence import (
+    _dedupe_workspace_repair_paths,
+    compact_go_stack_overflow_diagnostic,
+    workspace_quality_latest_task_boundary_scope_filter,
+    workspace_quality_repair_result_has_mutation,
+)
 
 # Module-local constants (mirrors of the ones in ``factory_stage_executor`` so
 # the impl is self-contained without importing the executor module).
@@ -179,6 +185,110 @@ def _is_deferred_declared_test_entrypoint_issue(
     return any(target == entrypoint or target.startswith(prefix) for target in declared_targets)
 
 
+_RESIDUAL_RS_PATH_RE = re.compile(r"-->\s+(?P<path>[^:\s]+\.rs):\d+")
+
+
+def _workspace_quality_residuals_miss_mutated_paths(
+    residual_errors: Sequence[str],
+    repair_results: Sequence[Mapping[str, Any]] | None,
+    owner_paths: Sequence[str] | None = None,
+) -> bool:
+    """True when residual rustc paths on the claimed owner were not mutated.
+
+    Live L2-14: crate rewrite mutated ``src/main.rs`` (TASK-2) while tests
+    still failed. Treating any leftover path as "uncovered residual" launched
+    a same-owner LLM that invented ``pirate_treasure_budgeter_models`` and
+    regressed the deterministic rewrite. Other-owner residuals must wait for
+    the next exact-owner claim.
+    """
+
+    residual_paths: set[str] = set()
+    for error in residual_errors or ():
+        for match in _RESIDUAL_RS_PATH_RE.finditer(str(error or "")):
+            residual_paths.add(match.group("path").replace("\\", "/").lstrip("./"))
+    owned = {str(path or "").replace("\\", "/").lstrip("./") for path in owner_paths or () if str(path or "").strip()}
+    if owned:
+        residual_paths &= owned
+    if not residual_paths:
+        return False
+    mutated_paths: set[str] = set()
+    for item in repair_results or ():
+        payload = dict(item) if isinstance(item, Mapping) else {}
+        if not workspace_quality_repair_result_has_mutation(payload):
+            continue
+        raw_result = payload.get("result")
+        result = raw_result if isinstance(raw_result, Mapping) else {}
+        file_name = str(result.get("file") or result.get("path") or "").replace("\\", "/").lstrip("./")
+        if file_name:
+            mutated_paths.add(file_name)
+    return bool(residual_paths - mutated_paths)
+
+
+def _workspace_quality_round_owner_paths(round_summary: Mapping[str, Any] | None) -> list[str]:
+    """Prefer claimed-owner evidence over optional repair_target_files.
+
+    Live L2-14: deterministic crate rewrite mutated ``src/main.rs`` but the
+    summary omitted ``repair_target_files``. Empty owner_paths skipped the
+    intersect, leftover ``tests/product.rs`` residuals launched a same-owner
+    LLM against stale E0433 text.
+    """
+
+    payload = dict(round_summary) if isinstance(round_summary, Mapping) else {}
+    evidence = payload.get("task_boundary_owner_evidence")
+    evidence = evidence if isinstance(evidence, Mapping) else {}
+    for key in ("owner_target_files", "in_scope_diagnostic_target_files"):
+        raw = evidence.get(key)
+        if isinstance(raw, list | tuple) and raw:
+            return [str(item) for item in raw if str(item or "").strip()]
+    raw = payload.get("repair_target_files")
+    if isinstance(raw, list | tuple):
+        return [str(item) for item in raw if str(item or "").strip()]
+    return []
+
+
+_CRATE_REWRITE_HOLD_MARKERS = (
+    "unlinked crate",
+    "cannot find module or crate",
+    "can't find crate",
+    "cannot find crate",
+    " in `crate`",
+    "unresolved import `crate::",
+)
+
+
+def _workspace_quality_hold_llm_for_plannable_deterministic(
+    plan_probe: Mapping[str, Any] | None,
+    *,
+    write_tool_evidence: bool,
+    residual_errors: Sequence[str] | None = None,
+) -> bool:
+    """Hold Director LLM while an owner-scoped crate rewrite is still plannable.
+
+    Live L2-14: crate rewrite committed ``treasure_budget::`` on ``src/main.rs``,
+    then leftover ``tests/product.rs`` residuals plus ``write_tool_evidence``
+    unblocked LLM. The model used stale E0433 text and reverted the rewrite.
+    A successful deterministic write must not ungate LLM while the same
+    crate rewrite is still the plan for the current diagnostics.
+    """
+
+    del write_tool_evidence
+    payload = dict(plan_probe) if isinstance(plan_probe, Mapping) else {}
+    tools = {
+        str(item or "").strip() for item in (payload.get("plannable_source_tools") or ()) if str(item or "").strip()
+    }
+    hold_tools = {
+        "deterministic_rust_crate_import_rewrite_repair",
+        "deterministic_rust_lib_root_facade_repair",
+        "deterministic_rust_line_suggestion_repair",
+        "deterministic_rust_field_rename_suggestion_repair",
+    }
+    if tools & hold_tools:
+        return True
+    blob = "\n".join(str(item or "") for item in (residual_errors or ()))
+    lowered = blob.lower()
+    return any(marker in blob or marker in lowered for marker in _CRATE_REWRITE_HOLD_MARKERS)
+
+
 def _workspace_quality_repair_errors(executor, results: list[dict[str, Any]]) -> list[str]:
     errors: list[str] = []
     for result in results:
@@ -199,6 +309,7 @@ def _workspace_quality_repair_errors(executor, results: list[dict[str, Any]]) ->
         diagnostic_input = diagnostic_excerpt or stream_output or error_text
         if not diagnostic_input:
             continue
+        diagnostic_input = compact_go_stack_overflow_diagnostic(diagnostic_input)
         command = result.get("command")
         command_text = " ".join(str(part) for part in command) if isinstance(command, list) else str(command or "")
         output = executor._trim_command_output(diagnostic_input)
@@ -386,8 +497,22 @@ def _claim_workspace_quality_repair_attempt(
             # ``_materialize_pm_plan_taskboard`` owns a separate service
             # instance. Reopen TaskRuntime here so this claimant cannot retain
             # the pre-restore empty board cache and report ``task_not_found``.
+            # ``get_task`` is the fact-only observer and can hide the restored
+            # terminal owner after COMPLETED_VERIFIED drain; mutation restore
+            # must walk ``list_task_rows(include_terminal=True)``.
             task_runtime = TaskRuntimeService(str(executor.workspace))
-            restored_row = task_runtime.get_task(frozen_owner_id)
+            restored_row = None
+            for candidate in task_runtime.list_task_rows(include_terminal=True):
+                if not isinstance(candidate, Mapping):
+                    continue
+                candidate_metadata = candidate.get("metadata")
+                candidate_metadata = candidate_metadata if isinstance(candidate_metadata, Mapping) else {}
+                candidate_external = str(
+                    candidate_metadata.get("external_task_id") or candidate.get("external_task_id") or ""
+                ).strip()
+                if candidate_external == frozen_owner_id:
+                    restored_row = candidate
+                    break
             if not isinstance(restored_row, Mapping):
                 raise RuntimeError("workspace_quality_repair_frozen_owner_restore_failed")
             owner_row = restored_row
@@ -956,7 +1081,19 @@ async def _apply_workspace_quality_llm_repairs(
         repair_metadata = {}
         repair_context["metadata"] = repair_metadata
     repair_metadata["task_id"] = repair_task_id
-    repair_metadata["task_runtime_session_id"] = execution_attempt.session_id
+    # Session id alone is reused across quality repair rounds on the same
+    # owner. Transaction invocation identity then minted the same
+    # ``txi_*-0`` turn_outcomes key and same-run retries collided
+    # (live L2-14: append_fact_event idempotency conflict on TASK-2).
+    # Both authoritative scope keys must carry the same composite so
+    # ``_resolve_execution_scope`` does not see a disagreement.
+    quality_execution_scope_id = (
+        f"{execution_attempt.session_id}:a{execution_attempt.attempt}"
+        f":wq{repair_attempt}:{execution_attempt.lease_expires_at}"
+    )
+    repair_metadata["execution_attempt_id"] = quality_execution_scope_id
+    repair_metadata["task_runtime_session_id"] = quality_execution_scope_id
+    repair_context["task_runtime_session_id"] = quality_execution_scope_id
     repair_metadata["workspace_quality_repair"] = True
     heartbeat_stop = asyncio.Event()
     heartbeat_failures: list[dict[str, Any]] = []
@@ -1285,6 +1422,9 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             }
             if deadline_detail:
                 partial_summary["deadline_blocker"] = deadline_detail
+            scope_filter = workspace_quality_latest_task_boundary_scope_filter(partial_summary)
+            if scope_filter:
+                partial_summary["task_boundary_scope_filter"] = scope_filter
             if task_boundary_triage_required:
                 partial_summary.update(
                     {
@@ -1324,11 +1464,19 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             ) or bool(round_summary.get("write_tool_evidence"))
             raw_round_summary_evidence = round_summary.get("evidence")
             llm_repair_attempted_in_round = False
+            hold_llm_for_plannable_deterministic = _workspace_quality_hold_llm_for_plannable_deterministic(
+                executor._workspace_quality_repair_plan_probe_report(repair_errors),
+                write_tool_evidence=round_write_tool_evidence,
+                residual_errors=repair_errors,
+            )
+            if hold_llm_for_plannable_deterministic:
+                round_summary = dict(round_summary)
+                round_summary["held_llm_for_plannable_deterministic_repair"] = True
             if isinstance(raw_round_summary_evidence, list | tuple):
                 round_repair_evidence.extend(
                     str(item) for item in raw_round_summary_evidence if str(item or "").strip()
                 )
-            if round_requires_task_boundary_triage:
+            if not hold_llm_for_plannable_deterministic and round_requires_task_boundary_triage:
                 interface_discrepancy_evidence = executor._workspace_quality_interface_discrepancy_evidence(
                     dict(round_summary),
                     repair_errors,
@@ -1372,7 +1520,8 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                         executor._workspace_quality_repair_result_has_mutation(item) for item in round_repair_results
                     )
             if (
-                not round_requires_task_boundary_triage
+                not hold_llm_for_plannable_deterministic
+                and not round_requires_task_boundary_triage
                 and round_repair_results
                 and not round_write_tool_evidence
                 and not llm_repair_attempted_in_round
@@ -1408,7 +1557,8 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     dict(round_summary)
                 )
             elif (
-                not round_requires_task_boundary_triage
+                not hold_llm_for_plannable_deterministic
+                and not round_requires_task_boundary_triage
                 and not round_repair_results
                 and not llm_repair_attempted_in_round
             ):
@@ -1431,8 +1581,43 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 round_requires_task_boundary_triage = executor._workspace_quality_summary_requires_task_boundary_triage(
                     dict(round_summary)
                 )
+            if (
+                not hold_llm_for_plannable_deterministic
+                and not llm_repair_attempted_in_round
+                and not round_requires_task_boundary_triage
+                and _workspace_quality_residuals_miss_mutated_paths(
+                    repair_errors,
+                    round_repair_results,
+                    owner_paths=_workspace_quality_round_owner_paths(round_summary),
+                )
+            ):
+                # Live L2-14: materialization wrote a rust helper/manifest and
+                # suppressed LLM even though E0573/E0277 residuals lived in
+                # other owner files. Mutation evidence must cover residual paths.
+                deadline_detail = workspace_repair_deadline_blocker(
+                    f"before_uncovered_residual_llm_repair_round_{round_index + 1}"
+                )
+                if deadline_detail:
+                    return write_workspace_validation_failure(
+                        "factory_quality_gate_workspace_repair_deadline_insufficient",
+                        deadline_detail,
+                        repair_override=current_workspace_repair_summary(
+                            residual_errors=repair_errors,
+                            deadline_detail=deadline_detail,
+                        ),
+                    )
+                round_repair_results, round_summary = await executor._apply_workspace_quality_llm_repairs(
+                    run=run,
+                    context=context,
+                    artifact_quality_errors=repair_errors,
+                    repair_attempt=round_index + 1,
+                )
+                llm_repair_attempted_in_round = True
+                round_requires_task_boundary_triage = executor._workspace_quality_summary_requires_task_boundary_triage(
+                    dict(round_summary)
+                )
             deferred_owner_targets = executor._workspace_quality_deferred_owner_targets(dict(round_summary))
-            if deferred_owner_targets:
+            if deferred_owner_targets and not hold_llm_for_plannable_deterministic:
                 # Target inference happens inside the Director adapter after the
                 # first TaskRuntime owner has been claimed. If the precise
                 # verifier targets belong to a different PM task, the adapter
@@ -1534,6 +1719,22 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 if settled_attempt is not None:
                     normalized_round_summary["task_runtime_repair_attempt"] = settled_attempt
                 convergence_stop_reason = "task_boundary_triage_required"
+                break
+            if (
+                isinstance(summary_projection, dict)
+                and str(summary_projection.get("error_code") or "").strip() == "quality_repair_deadline_insufficient"
+            ):
+                settled_attempt = await _settle_pending_workspace_quality_repair_attempt(
+                    executor,
+                    pending_round_attempt,
+                    accepted=False,
+                    reason="workspace_quality_repair_deadline_insufficient",
+                )
+                if settled_attempt is not None:
+                    summary_projection["task_runtime_repair_attempt"] = settled_attempt
+                round_payload["verifier_effect"] = "deadline_insufficient"
+                round_payload["verifier_authoritative_success"] = False
+                convergence_stop_reason = "quality_repair_deadline_insufficient"
                 break
             if not round_write_tool_evidence:
                 # A provider/tool result is attempt evidence, not delivery
@@ -1740,6 +1941,9 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             "consecutive_stagnant_rounds": consecutive_stagnant_rounds,
             "convergence_stop_reason": convergence_stop_reason,
         }
+        scope_filter = workspace_quality_latest_task_boundary_scope_filter(repair_summary)
+        if scope_filter:
+            repair_summary["task_boundary_scope_filter"] = scope_filter
         if task_boundary_triage_required:
             repair_summary.update(
                 {

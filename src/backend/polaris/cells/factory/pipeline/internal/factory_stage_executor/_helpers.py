@@ -146,6 +146,8 @@ _LANGUAGE_NEUTRAL_FILENAMES: frozenset[str] = frozenset(
         "requirements.txt",
         "pyproject.toml",
         "cmakelists.txt",
+        "cargo.toml",
+        "cargo.lock",
     }
 )
 
@@ -677,4 +679,57 @@ _LANGUAGE_NEUTRAL_REPAIR_FILENAMES: tuple[str, ...] = (
     "requirements.txt",
     "pyproject.toml",
     "CMakeLists.txt",
+    "Cargo.toml",
+    "Cargo.lock",
 )
+
+
+def resolve_workspace_quality_existing_file(workspace_root: Path, relative: str) -> Path | None:
+    """Resolve a workspace-relative repair file, including lowercase Cargo.toml."""
+
+    normalized = os.path.normpath(str(relative or "").strip().replace("\\", "/")).replace("\\", "/")
+    if not normalized or normalized == "." or normalized.startswith("../") or normalized.startswith("/"):
+        return None
+    direct = workspace_root / normalized
+    try:
+        if direct.is_file():
+            return direct
+    except OSError:
+        return None
+    wanted = Path(normalized).name.lower()
+    parent = workspace_root / Path(normalized).parent
+    try:
+        if not parent.is_dir():
+            return None
+        for child in parent.iterdir():
+            if child.is_file() and child.name.lower() == wanted:
+                return child
+    except OSError:
+        return None
+    return None
+
+
+def workspace_quality_rust_plan_probe_companion_paths(
+    workspace_root: Path,
+    *,
+    artifact_quality_errors: list[str],
+) -> list[str]:
+    """Include rust crate identity files that diagnostic paths omit.
+
+    Live L2-14 quality plan_probe only loaded ``src/main.rs`` / ``tests/product.rs``.
+    Crate rewrite then saw no ``Cargo.toml`` / ``src/lib.rs`` and stayed
+    ``covered_unplannable`` despite E0433 ``pirate_treasure_budgeter``.
+    """
+
+    joined = "\n".join(str(item or "") for item in artifact_quality_errors).lower()
+    has_rust = ".rs" in joined or "error[e0" in joined or "cargo" in joined
+    if not has_rust:
+        return []
+    companions: list[str] = []
+    manifest = resolve_workspace_quality_existing_file(workspace_root, "Cargo.toml")
+    if manifest is not None:
+        companions.append("Cargo.toml")
+    lib_path = resolve_workspace_quality_existing_file(workspace_root, "src/lib.rs")
+    if lib_path is not None:
+        companions.append("src/lib.rs")
+    return companions

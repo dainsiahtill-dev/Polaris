@@ -923,9 +923,7 @@ class TestRunWorkspaceQualityChecks:
         # missing-member diagnostics; that is phase advancement, not a swap.
         assert (
             classify(
-                before_signature=(
-                    "src/engine/generator.hpp:56:27: error: ‘MoonError’ has not been declared\n",
-                ),
+                before_signature=("src/engine/generator.hpp:56:27: error: ‘MoonError’ has not been declared\n",),
                 after_signature=(
                     "src/engine/generator.cpp:159:22: error: ‘const struct moonpost::Moon’ "
                     "has no member named ‘last_error’\n"
@@ -947,13 +945,35 @@ class TestRunWorkspaceQualityChecks:
             )
             == "equal_count_swap"
         )
+        # Live L2-13: overflow crash -> runnable go test assertions is
+        # unmasking, even when the assertion count is larger than the
+        # compact crash blobs. Treating that as regression stopped repair
+        # after the owner file was actually edited.
+        assert (
+            classify(
+                before_signature=(
+                    "workspace validation command failed (go test ./...): fatal error: stack overflow\n"
+                    "frames=timecapsulemuseum/engine.(*Service).exhibitionIDs",
+                    "workspace validation command failed (go run .): fatal error: stack overflow",
+                    "delivery_depth_contract_failed: production_source_files=5 < 6",
+                ),
+                after_signature=(
+                    "--- FAIL: TestRun_StatsAndSnapshot (0.00s)\n"
+                    "    main_test.go:515: snapshot: want capsule[ entries, got \"\"",
+                    "--- FAIL: TestRun_ListExhibition (0.00s)\n"
+                    "    main_test.go:523: list: want exitOK, got 1",
+                    "delivery_depth_contract_failed: production_source_files=5 < 6",
+                ),
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "forward_unmask"
+        )
         # A read-only turn never earns forward progress regardless of codes.
         assert (
             classify(
                 before_signature=("error[e0432]: unresolved import `a` --> src/lib.rs:5:5",),
-                after_signature=(
-                    "error[e0277]: the trait bound `x: copy` is not satisfied --> src/lib.rs:9:9",
-                ),
+                after_signature=("error[e0277]: the trait bound `x: copy` is not satisfied --> src/lib.rs:9:9",),
                 verifier_passed=False,
                 write_tool_evidence=False,
             )
@@ -2249,9 +2269,7 @@ class TestRunWorkspaceQualityChecks:
         assert evidence["director_retry_allowed"] is True
         assert evidence["llm_fallback_blocked"] is False
         assert evidence["metadata"]["task_boundary_owner_evidence"] == owner_evidence
-        assert OrchestrationStageExecutor._workspace_quality_claimed_owner_repair_targets(evidence) == [
-            "src/lib.rs"
-        ]
+        assert OrchestrationStageExecutor._workspace_quality_claimed_owner_repair_targets(evidence) == ["src/lib.rs"]
 
         # A claimed task must never authorize a diagnostic path it does not own.
         out_of_scope = dict(owner_evidence)
@@ -2651,6 +2669,27 @@ class TestRunWorkspaceQualityChecks:
 # ---------------------------------------------------------------------------
 # Director-evidence truth tables
 # ---------------------------------------------------------------------------
+
+
+def test_latest_task_boundary_scope_filter_lifts_from_repair_rounds() -> None:
+    from polaris.cells.factory.pipeline.internal.factory_workspace_quality_evidence import (
+        workspace_quality_latest_task_boundary_scope_filter,
+    )
+
+    scope = {
+        "schema_version": "director.task_boundary.repair_scope_filter.v1",
+        "ownership_handoff_requests": [{"target_file": "src/models/mood.py", "recommended_route": "owner_task_retry"}],
+    }
+    lifted = workspace_quality_latest_task_boundary_scope_filter(
+        {
+            "rounds": [
+                {"repair_summary": {"task_boundary_scope_filter": {"ownership_handoff_requests": []}}},
+                {"repair_summary": {"task_boundary_scope_filter": scope}},
+            ]
+        }
+    )
+
+    assert lifted == scope
 
 
 def test_deferred_owner_targets_drop_runtime_and_dotfile_noise() -> None:

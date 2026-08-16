@@ -409,7 +409,15 @@ def _check_implementation_depth(
     minimums = extract_level_contract_minimums(resolved_contract, level=resolved_contract.get("level"))
     failures: list[str] = []
 
-    if int(metrics["production_source_files"]) < minimums["min_prod_files"]:
+    plan = _read_plan_json(workspace)
+    declared_source_targets = _extract_declared_source_targets(workspace, plan)
+    _, missing_targets = compute_declared_source_target_coverage(workspace, declared_source_targets)
+    declared_coverage_complete = bool(declared_source_targets) and not missing_targets
+
+    if int(metrics["production_source_files"]) < minimums["min_prod_files"] and not declared_coverage_complete:
+        # Live L2-13: PM/CE declared five Go files and all exist. Level-2
+        # min_prod_files=6 must not invent a sixth undeclared domain file
+        # after tests and other depth mins already pass.
         failures.append(f"production_source_files={metrics['production_source_files']} < {minimums['min_prod_files']}")
     if int(metrics["production_source_lines"]) < minimums["min_prod_lines"]:
         failures.append(f"production_source_lines={metrics['production_source_lines']} < {minimums['min_prod_lines']}")
@@ -427,9 +435,6 @@ def _check_implementation_depth(
     if placeholder_hits:
         failures.append("placeholder_or_stub_markers=" + ",".join(str(item) for item in placeholder_hits[:3]))
 
-    plan = _read_plan_json(workspace)
-    declared_source_targets = _extract_declared_source_targets(workspace, plan)
-    _, missing_targets = compute_declared_source_target_coverage(workspace, declared_source_targets)
     if missing_targets:
         failures.append(f"missing_declared_source_targets={len(missing_targets)}")
 
@@ -721,14 +726,31 @@ def _check_go_compile(workspace: str) -> tuple[bool, str]:
     return True, f"{len(go_files)} Go files compile via per-directory go test"
 
 
+def _find_cargo_manifest_path(workspace: str) -> str | None:
+    canonical = os.path.join(workspace, "Cargo.toml")
+    if os.path.isfile(canonical):
+        return canonical
+    try:
+        for name in os.listdir(workspace):
+            if name.lower() == "cargo.toml" and os.path.isfile(os.path.join(workspace, name)):
+                return os.path.join(workspace, name)
+    except OSError:
+        return None
+    return None
+
+
 def _check_rust_compile(workspace: str) -> tuple[bool, str]:
     rust_files = _iter_files(workspace, ".rs")
     if not rust_files:
         return False, "no .rs files found"
     cargo = shutil.which("cargo")
-    if os.path.exists(os.path.join(workspace, "Cargo.toml")) and cargo:
+    manifest = _find_cargo_manifest_path(workspace)
+    if manifest and cargo:
+        command = [cargo, "check", "--quiet"]
+        if os.path.basename(manifest) != "Cargo.toml":
+            command.extend(["--manifest-path", os.path.basename(manifest)])
         proc = subprocess.run(
-            [cargo, "check", "--quiet"],
+            command,
             cwd=workspace,
             capture_output=True,
             text=True,
@@ -1033,6 +1055,13 @@ def _read_plan_json(workspace: str) -> dict[str, Any] | None:
         os.path.join(workspace, ".polaris", "runtime", "tasks", "plan.json"),
         os.path.join(workspace, "tasks", "plan.json"),
     ]
+    try:
+        from polaris.kernelone.storage import resolve_storage_roots
+
+        runtime_root = resolve_storage_roots(workspace).runtime_root
+        candidates.append(str(Path(runtime_root) / "tasks" / "plan.json"))
+    except (OSError, RuntimeError, TypeError, ValueError):
+        pass
     for path in candidates:
         if os.path.isfile(path):
             try:

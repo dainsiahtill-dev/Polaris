@@ -168,6 +168,7 @@ from ._execution_attempt_helpers import (
     _test_execution_attempt_context,
 )
 
+
 def _install_test_deferred_projection(
     monkeypatch: pytest.MonkeyPatch,
     module: Any,
@@ -247,10 +248,6 @@ def _run_test_materialization_quality_repair_schedule(
         execution_attempt=_test_execution_attempt(workspace, task_id),
     )
     return _project_deferred_repair_results_for_test(workspace, results), summary
-
-
-
-
 
 
 class TestQualityRepairMissingTargetContractA:
@@ -719,6 +716,29 @@ class TestQualityRepairMissingTargetContractA:
         assert summary["deadline_decision"]["can_start"] is False
         assert summary["deadline_decision"]["reason"] == "factory_deadline_insufficient"
         assert summary["deadline_decision"]["deadline_source"] == ("factory_director_execution_deadline_epoch_seconds")
+
+    def test_quality_repair_deadline_prefers_viable_factory_run_over_expired_director_wave(self) -> None:
+        """Live L2-13: quality_gate still had factory budget after Director wave expired."""
+        from polaris.cells.roles.adapters.internal.director.quality_gate._repair_loop import (
+            _quality_repair_deadline_decision,
+        )
+
+        with patch(
+            "polaris.cells.roles.adapters.internal.director.quality_gate._repair_loop.time.time",
+            return_value=1000.0,
+        ):
+            decision = _quality_repair_deadline_decision(
+                {
+                    "factory_run_deadline_epoch_seconds": 1600.0,
+                    "factory_director_execution_deadline_epoch_seconds": 1010.0,
+                },
+                180.0,
+            )
+
+        assert decision["can_start"] is True
+        assert decision["reason"] == "factory_deadline_budgeted"
+        assert decision["deadline_source"] == "factory_run_deadline_epoch_seconds"
+        assert decision["timeout_seconds"] > 30.0
 
     def test_repair_targets_css_import_exact_path(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

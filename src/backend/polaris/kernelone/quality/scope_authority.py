@@ -553,6 +553,8 @@ def _handoff_requests_from_scope_payload(payload: Mapping[str, Any], key: str) -
     2. ``task_boundary_scope_filter.scope_authority[key]``
     3. ``payload[key]``
     4. ``payload.scope_authority[key]``
+    5. last-to-first ``rounds[*].repair_summary.task_boundary_scope_filter``
+    6. last-to-first ``rounds[*].repair_summary``
 
     Each candidate must be a ``list`` or ``tuple`` of ``Mapping`` rows. Any
     non-Mapping row is ignored (string parsing is never used to recover
@@ -567,6 +569,17 @@ def _handoff_requests_from_scope_payload(payload: Mapping[str, Any], key: str) -
     if isinstance(scope_filter_raw, Mapping):
         candidates.extend(_handoff_candidate_values(scope_filter_raw, key))
     candidates.extend(_handoff_candidate_values(payload, key))
+    rounds_raw = payload.get("rounds")
+    if isinstance(rounds_raw, (list, tuple)):
+        for item in reversed(rounds_raw):
+            if not isinstance(item, Mapping):
+                continue
+            summary_raw = item.get("repair_summary")
+            if isinstance(summary_raw, Mapping):
+                summary_filter = summary_raw.get("task_boundary_scope_filter")
+                if isinstance(summary_filter, Mapping):
+                    candidates.extend(_handoff_candidate_values(summary_filter, key))
+                candidates.extend(_handoff_candidate_values(summary_raw, key))
 
     empty_sequence_seen = False
     for candidate in candidates:

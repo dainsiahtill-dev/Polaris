@@ -582,6 +582,50 @@ def _run_materialization_node_manifest(
     return results
 
 
+def _task_declared_write_targets(task: Mapping[str, Any] | None) -> tuple[str, ...]:
+    """Return PM/CE write targets for the currently claimed owner task."""
+
+    if not isinstance(task, Mapping):
+        return ()
+    metadata = task.get("metadata")
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    raw = task.get("target_files") or metadata.get("target_files") or ()
+    if isinstance(raw, str):
+        raw = [raw]
+    targets: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        normalized = str(item or "").strip().replace("\\", "/")
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        targets.append(normalized)
+    return tuple(targets)
+
+
+def _filter_quality_errors_to_write_targets(
+    artifact_quality_errors: Sequence[str],
+    write_targets: Sequence[str],
+) -> list[str]:
+    """Keep diagnostics whose path is owned by the current Director task.
+
+    Live L2-14 crate rewrite planned ``src/main.rs`` plus ``tests/product.rs``.
+    TASK-2 only owns ``src/main.rs``; a whole-plan DEO/task-boundary refuse
+    dropped the in-scope rewrite and fell through to a same-turn LLM that
+    then collided on ``turn_outcomes`` idempotency.
+    """
+
+    owned = {str(path or "").strip().replace("\\", "/") for path in write_targets if str(path or "").strip()}
+    if not owned:
+        return [str(item) for item in artifact_quality_errors]
+    scoped: list[str] = []
+    for raw in artifact_quality_errors:
+        text = str(raw or "")
+        if any(path and path in text.replace("\\", "/") for path in owned):
+            scoped.append(text)
+    return scoped or [str(item) for item in artifact_quality_errors]
+
+
 def _run_materialization_rust_compiler(
     adapter: Any,
     *,
@@ -593,11 +637,12 @@ def _run_materialization_rust_compiler(
     execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    del task
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
     base_files = _collect_materialization_rust_base_files(workspace_path)
+    write_targets = _task_declared_write_targets(task)
+    scoped_errors = _filter_quality_errors_to_write_targets(artifact_quality_errors, write_targets)
     source_tools = _materialization_plannable_runtime_source_tools_from_base_files(
-        artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_errors=scoped_errors,
         artifact_quality_issues=artifact_quality_issues,
         materialization_step_id="materialization.rust_compiler",
         base_files=base_files,
@@ -608,9 +653,10 @@ def _run_materialization_rust_compiler(
             _run_materialization_rust_runtime_repair(
                 adapter,
                 task_id=task_id,
-                artifact_quality_errors=artifact_quality_errors,
+                artifact_quality_errors=scoped_errors,
                 artifact_quality_issues=artifact_quality_issues,
                 source_tool=source_tool,
+                write_targets=write_targets,
                 convergence_verifier=convergence_verifier,
                 execution_attempt=execution_attempt,
             )
@@ -992,6 +1038,7 @@ def _run_materialization_rust_runtime_repair(
     artifact_quality_errors: list[str],
     artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     source_tool: str,
+    write_targets: Sequence[str] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
     execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
@@ -1006,21 +1053,36 @@ def _run_materialization_rust_runtime_repair(
     # are still missing are not present in base_files (so planning sees them as
     # absent), but must still be allowlisted for create-file commit (R71/R74).
     cargo_text = str(base_files.get("Cargo.toml") or "")
-    allowed_paths = tuple(
-        dict.fromkeys(
-            (
-                *base_files.keys(),
-                *_declared_rust_binary_paths_from_cargo(cargo_text),
-                *_rust_missing_binary_paths_from_quality_issues(quality_issues),
+    owned_write_targets = tuple(
+        str(path or "").strip().replace("\\", "/") for path in write_targets if str(path or "").strip()
+    )
+    default_allowed = (
+        *base_files.keys(),
+        *_declared_rust_binary_paths_from_cargo(cargo_text),
+        *_rust_missing_binary_paths_from_quality_issues(quality_issues),
+    )
+    if owned_write_targets:
+        allowed_paths = tuple(
+            dict.fromkeys(
+                path for path in default_allowed if path in owned_write_targets or path in {"Cargo.toml", "src/lib.rs"}
             )
         )
+    else:
+        allowed_paths = tuple(dict.fromkeys(default_allowed))
+    # Keep crate-identity companions (Cargo.toml + lib root) in the planner
+    # input so has_local_lib stays true, but do not plan other owners' files.
+    planning_files = _scope_materialization_rust_planning_files(
+        base_files,
+        allowed_paths=allowed_paths,
     )
+    if not planning_files:
+        return []
     return run_runtime_repair_with_director_tools(
         adapter,
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool=source_tool,
-        base_files=base_files,
+        base_files=planning_files,
         artifact_quality_errors=artifact_quality_errors,
         artifact_quality_issues=quality_issues,
         allowed_paths=allowed_paths,
@@ -1030,11 +1092,49 @@ def _run_materialization_rust_runtime_repair(
     )
 
 
+_RUST_ENUM_DEFINITION_RE = re.compile(r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?enum\s+[A-Z]")
+
+
+def _scope_materialization_rust_planning_files(
+    base_files: Mapping[str, str],
+    *,
+    allowed_paths: Sequence[str],
+) -> dict[str, str]:
+    """Keep crate identity plus owner-writable rust files for planning."""
+
+    files = {str(path): str(content) for path, content in dict(base_files).items()}
+    allowed = {str(path or "").strip().replace("\\", "/") for path in allowed_paths if str(path or "").strip()}
+    if not allowed:
+        return files
+    identity_paths = {"Cargo.toml", *_declared_rust_lib_paths_from_cargo(str(files.get("Cargo.toml") or ""))}
+    if "src/lib.rs" in files:
+        identity_paths.add("src/lib.rs")
+    # Live L2-14: unknown-variant rewrite needs the producer enum bodies as
+    # read-only planning input. Those files stay out of allowed_paths.
+    definition_paths = {
+        path
+        for path, content in files.items()
+        if path.endswith(".rs") and path.startswith("src/") and _RUST_ENUM_DEFINITION_RE.search(content)
+    }
+    keep = allowed | identity_paths | definition_paths
+    scoped = {path: content for path, content in files.items() if path in keep}
+    cargo = files.get("Cargo.toml")
+    if "Cargo.toml" not in scoped and cargo is not None:
+        scoped["Cargo.toml"] = cargo
+    return scoped
+
+
 def _collect_materialization_rust_base_files(workspace_path: Path) -> dict[str, str]:
     if not workspace_path.is_dir():
         return {}
     base_files: dict[str, str] = {}
     cargo_path = workspace_path / "Cargo.toml"
+    if not cargo_path.is_file():
+        with suppress(OSError):
+            for child in workspace_path.iterdir():
+                if child.is_file() and child.name.lower() == "cargo.toml":
+                    cargo_path = child
+                    break
     if cargo_path.is_file():
         with suppress(OSError, UnicodeDecodeError):
             base_files["Cargo.toml"] = cargo_path.read_text(encoding="utf-8")
@@ -1118,6 +1218,21 @@ def _rust_missing_binary_paths_from_quality_issues(
             continue
         paths.append(normalized)
     return tuple(dict.fromkeys(paths))
+
+
+def _declared_rust_lib_paths_from_cargo(cargo_text: str) -> tuple[str, ...]:
+    """Return the configured lib root so crate-identity planning can see it."""
+
+    text = str(cargo_text or "")
+    match = re.search(r"(?is)\[lib\].*?(?=\n\[|\Z)", text)
+    body = str(match.group(0) if match else "")
+    path_match = re.search(r'(?m)^\s*path\s*=\s*["\']([^"\']+)["\']', body)
+    raw = str(path_match.group(1) if path_match else "src/lib.rs").strip().replace("\\", "/")
+    while raw.startswith("./"):
+        raw = raw[2:]
+    if not raw or raw.startswith("/") or any(part == ".." for part in raw.split("/")):
+        return ("src/lib.rs",)
+    return (raw,)
 
 
 def _declared_rust_binary_paths_from_cargo(cargo_text: str) -> tuple[str, ...]:

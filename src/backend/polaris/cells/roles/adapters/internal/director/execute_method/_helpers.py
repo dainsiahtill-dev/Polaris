@@ -99,7 +99,7 @@ def _run_materialization_quality_public_boundary(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Execute materialization-quality repair via the typed roles public boundary."""
 
-    return run_materialization_quality_public_boundary(
+    tool_results, summary = run_materialization_quality_public_boundary(
         adapter,
         task=task,
         task_id=task_id,
@@ -108,9 +108,23 @@ def _run_materialization_quality_public_boundary(
         convergence_verifier=convergence_verifier,
         execution_attempt=execution_attempt,
     )
+    # Lazy import: quality_gate._repair_loop imports execute_method at module
+    # load. Live L2-12 TASK-3-source-modules hit this helper (not the
+    # quality_gate wrapper) so unresolved-import continuation never flipped
+    # triage off and quality_repair fail-closed as CE discrepancy.
+    from ..quality_gate._repair_loop import _annotate_current_task_missing_target_continuation
+
+    return tool_results, _annotate_current_task_missing_target_continuation(
+        summary,
+        task=task,
+        workspace_full=str(getattr(adapter, "workspace", "") or ""),
+        artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=artifact_quality_issues,
+    )
 
 
 _TRANSIENT_LLM_PROVIDER_ERROR_MARKERS = (
+    "circuit_open",
     "connection aborted",
     "connection reset",
     "connectionpool",

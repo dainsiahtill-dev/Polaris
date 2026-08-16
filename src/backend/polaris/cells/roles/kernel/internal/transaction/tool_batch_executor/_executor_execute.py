@@ -63,6 +63,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnId,
 )
 from polaris.cells.roles.kernel.public.turn_events import TurnPhaseEvent
+from polaris.kernelone.tools.tool_kinds import is_write_tool_name
 
 from ._helpers import (
     _DIRECT_READ_TOOLS,
@@ -74,6 +75,7 @@ from ._helpers import (
     _execution_envelope_hash_from_metadata,
     _is_deo_abort_error,
     _is_mutation_for_speculative_routing,
+    _is_recoverable_deo_normalization_abort,
     _merge_batch_receipts,
     _normalize_file_reference_path,
     _recent_edit_failure_in_context,
@@ -676,6 +678,57 @@ class _ToolBatchExecuteMixin:
                         (metadata or {}).get("provider_response_hash") if isinstance(metadata, Mapping) else ""
                     ),
                 )
+            if _is_recoverable_deo_normalization_abort(error_token):
+                # Live L2-12 TASK-2 / M03: native edit_file denied as
+                # deo_tool_normalization_failed must surface as a tool error
+                # receipt so the model can retry. Re-raising aborted the
+                # Director turn and Factory projected
+                # director_no_materialized_changes with no write receipt.
+                normalization_failed_results: list[dict[str, Any]] = []
+                for invocation in invocations:
+                    tool_name = extract_invocation_tool_name(invocation) or "unknown_tool"
+                    normalization_failed_results.append(
+                        {
+                            "call_id": str(getattr(invocation, "call_id", "") or ""),
+                            "tool_name": tool_name,
+                            "status": "error",
+                            "result": {
+                                "ok": False,
+                                "error": error_token,
+                                "error_type": "deo_tool_normalization_failed",
+                            },
+                            "error": error_token,
+                            "effect_receipt": None,
+                            "directed_effect_claim_status": "not_claimed",
+                        }
+                    )
+                normalization_failed_receipts = [
+                    {
+                        "batch_id": str(tool_batch.get("batch_id") or f"{turn_id}_batch"),
+                        "turn_id": turn_id,
+                        "results": normalization_failed_results,
+                        "raw_results": [dict(item) for item in normalization_failed_results],
+                        "success_count": 0,
+                        "failure_count": len(normalization_failed_results),
+                        "pending_async_count": 0,
+                        "has_pending_async": False,
+                    }
+                ]
+                record_receipts_to_ledger(normalization_failed_receipts, ledger)
+                if state_machine.current_state != TurnState.TOOL_BATCH_EXECUTING:
+                    state_machine.transition_to(TurnState.TOOL_BATCH_EXECUTING)
+                state_machine.transition_to(TurnState.TOOL_BATCH_EXECUTED)
+                from polaris.cells.roles.kernel.internal.transaction.finalization import (
+                    FinalizationHandler,
+                )
+
+                return FinalizationHandler.complete_with_tool_results(
+                    decision,
+                    normalization_failed_receipts,
+                    state_machine,
+                    ledger,
+                    self.emit_event,
+                )
             raise
 
         # Effect policy enforcement gate
@@ -1035,10 +1088,18 @@ class _ToolBatchExecuteMixin:
                     "single_batch_contract_violation: write tool batch produced no effects and requires "
                     f"a new invocation within the authorized target scope; error_types={rendered_error_types}"
                 )
-            raise RuntimeError(
-                "tool_dispatch_failed: decoded tool batch produced only failed tool results; "
-                f"decoded_tool_calls={len(invocations)}; error_types={','.join(failure_error_types) or 'unknown'}"
-            )
+            # Live L2-12 TASK-3-source-modules: MiniMax issued
+            # ``execute_command("ls && cat ...")``. Security returned a
+            # recoverable compound-command no-op, DEO then dead-lettered it as
+            # a mutation, and this raise aborted the turn with
+            # error_types=unknown because execute_command is not a WRITE_TOOLS
+            # name. Observational/command failures must stay as receipts so the
+            # model can re-issue read_file / single commands.
+            if any(is_write_tool_name(name) for name in failed_tool_names):
+                raise RuntimeError(
+                    "tool_dispatch_failed: decoded tool batch produced only failed tool results; "
+                    f"decoded_tool_calls={len(invocations)}; error_types={','.join(failure_error_types) or 'unknown'}"
+                )
 
         # 本 turn 的工具批裁决已完成（adopt/join/replay 全部计入 metrics）；在此
         # 发射 per-turn 推测执行汇总，确保它包含全部裁决指标（drain 阶段过早，

@@ -993,14 +993,20 @@ class DirectorAdapter(BaseRoleAdapter):
         if not found_id:
             return True
         status = str(task.get("execution_state") or task.get("status") or "").strip().lower()
-        if status in {"completed", "failed", "cancelled", "canceled", "timeout"}:
-            return True
         board = getattr(self.task_runtime, "_board", None)
         getter = getattr(board, "get", None)
+        normalize = getattr(self.task_runtime, "normalize_task_id", None)
+        normalized = normalize(task.get("id")) if callable(normalize) else task.get("id")
+        board_missing = callable(getter) and getter(normalized) is None
+        # Live L2-12: completed TASK-1 with a live board file was rematerialized
+        # into siblings 225-231. Factory kept dispatching TASK-1 and never
+        # reached TASK-3-source-core. Failed/cancelled still rematerialize.
+        if status in {"completed"} and not board_missing:
+            return False
+        if status in {"failed", "cancelled", "canceled", "timeout"}:
+            return True
         if callable(getter):
-            normalize = getattr(self.task_runtime, "normalize_task_id", None)
-            normalized = normalize(task.get("id")) if callable(normalize) else task.get("id")
-            return getter(normalized) is None
+            return board_missing
         return found_id != str(requested_task_id or "").strip()
 
     def _select_pending_board_task(self) -> dict[str, Any] | None:

@@ -487,6 +487,26 @@ class TestResolveTimeoutSeconds:
                 },
             )
 
+    def test_director_prefers_viable_factory_run_over_expired_wave_deadline(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from polaris.cells.roles.kernel.internal.llm_caller import helpers as helpers_module
+
+        monkeypatch.setattr(helpers_module.time, "time", lambda: 1000.0)
+        profile = MockProfile(role_id="director")
+
+        timeout = resolve_timeout_seconds(
+            cast("RoleProfile", profile),
+            {
+                "factory_run_deadline_epoch_seconds": 1600.0,
+                "factory_director_execution_deadline_epoch_seconds": 990.0,
+            },
+        )
+
+        assert timeout >= 30
+        assert timeout <= 600
+
     def test_non_director_context_timeout_override_wins(self) -> None:
         profile = MockProfile(role_id="pm")
         timeout = resolve_timeout_seconds(

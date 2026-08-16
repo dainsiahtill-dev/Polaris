@@ -70,6 +70,7 @@ from ._package_ns import package_attr
 _MISSING_WORKSPACE_ROOT_FILE_ALLOWLIST: Any
 _NPM_SCRIPT_MISSING_LOCAL_ENTRYPOINT_RE: Any
 _NPM_SCRIPT_MISSING_LOCAL_MODULE_RE: Any
+_filter_unresolved_import_errors_to_task_write_scope: Any
 _extract_task_interface_contract: Any
 _is_test_like_javascript_path: Any
 _missing_workspace_file_quality_repair_target_files: Any
@@ -618,12 +619,16 @@ def _collect_materialization_quality_findings(
     )
     errors.extend(declared_errors)
     scan_issues = (*scan_issues, *declared_issues)
-    scoped_errors = _filter_npm_script_entrypoint_errors_to_task_write_scope(
-        _dedupe_preserve_order(errors),
+    scoped_errors = _filter_unresolved_import_errors_to_task_write_scope(
+        _filter_npm_script_entrypoint_errors_to_task_write_scope(
+            _dedupe_preserve_order(errors),
+            task=task,
+            workspace_name=workspace_name,
+            context=context,
+            issue_payloads=scan_issues,
+        ),
         task=task,
         workspace_name=workspace_name,
-        context=context,
-        issue_payloads=scan_issues,
     )
     boundary_errors = _filter_project_completion_errors_to_task_boundary(
         scoped_errors,

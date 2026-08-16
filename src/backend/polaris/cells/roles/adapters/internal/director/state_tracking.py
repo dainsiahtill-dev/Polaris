@@ -135,7 +135,7 @@ class DirectorStateTracker:
                 continue
             from .helpers import is_project_code_file
 
-            if is_project_code_file(path.suffix):
+            if is_project_code_file(path.suffix, filename=path.name):
                 rel_path = rel.as_posix()
                 stat_info = path.stat()
                 size = int(getattr(stat_info, "st_size", 0) or 0)

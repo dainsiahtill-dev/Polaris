@@ -481,6 +481,7 @@ def _materialization_task_boundary_triage_summary(
     existing_director_retry_allowed = bool(
         existing_evidence.get("director_retry_allowed")
         or summary.get("task_boundary_interface_discrepancy_retry_authorized")
+        or summary.get("task_boundary_director_continuation_allowed")
     )
     existing_metadata = existing_evidence.get("metadata")
     receipt_metadata = dict(existing_metadata) if isinstance(existing_metadata, dict) else {}

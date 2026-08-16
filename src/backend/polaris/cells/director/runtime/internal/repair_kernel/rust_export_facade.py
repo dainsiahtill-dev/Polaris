@@ -331,6 +331,13 @@ def build_rust_lib_root_facade_plan(
 ) -> RepairPlan | None:
     """Build the executable facade subset, preferring path rewrites before exports."""
 
+    inline_shadow = build_rust_lib_root_inline_shadow_plan(
+        base_files=base_files,
+        diagnostics=diagnostics,
+        mode=mode,
+    )
+    if inline_shadow is not None:
+        return inline_shadow
     path_rewrite = build_rust_lib_root_facade_path_rewrite_plan(
         base_files=base_files,
         diagnostics=diagnostics,
@@ -342,6 +349,125 @@ def build_rust_lib_root_facade_plan(
         base_files=base_files,
         diagnostics=diagnostics,
         mode=mode,
+    )
+
+
+_INLINE_MOD_RE = re.compile(
+    r"(?ms)^(?P<header>pub\s+mod\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*)\{(?P<body>.*?)^\}",
+)
+_UNRESOLVED_NESTED_IMPORT_RE = re.compile(
+    r"unresolved import [`'\"](?P<import>[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)+)[`'\"]",
+    re.IGNORECASE,
+)
+_NO_SYMBOL_IN_MODULE_RE = re.compile(
+    r"no [`'\"](?P<symbol>[A-Za-z_][A-Za-z0-9_]*)[`'\"] in [`'\"](?P<module>[A-Za-z_][A-Za-z0-9_]*)[`'\"]",
+    re.IGNORECASE,
+)
+_COULD_NOT_FIND_IN_MODULE_RE = re.compile(
+    r"could not find [`'\"]?(?P<symbol>[A-Za-z_][A-Za-z0-9_]*)[`'\"]? in [`'\"]?(?P<module>[A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE,
+)
+
+
+def _inline_module_is_docs_only(body: str) -> bool:
+    text = str(body or "")
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    cleaned: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("//") or line.startswith("*"):
+            continue
+        cleaned.append(line)
+    return not cleaned
+
+
+def _shadowed_modules_from_diagnostics(diagnostics: Sequence[RepairDiagnostic]) -> set[str]:
+    modules: set[str] = set()
+    for diagnostic in diagnostics:
+        text = _ANSI_ESCAPE_RE.sub("", str(diagnostic.raw or diagnostic.message or ""))
+        for match in _UNRESOLVED_NESTED_IMPORT_RE.finditer(text):
+            parts = [part for part in str(match.group("import") or "").split("::") if part]
+            if len(parts) >= 3 or (len(parts) == 2 and parts[0] not in {"crate", "self", "super"}):
+                modules.add(parts[1])
+        for regex in (_NO_SYMBOL_IN_MODULE_RE, _COULD_NOT_FIND_IN_MODULE_RE):
+            for match in regex.finditer(text):
+                module_name = str(match.group("module") or "").strip()
+                if module_name:
+                    modules.add(module_name)
+    return modules
+
+
+def build_rust_lib_root_inline_shadow_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Replace an empty inline ``pub mod name {}`` that hides ``src/name/mod.rs``.
+
+    Live L2-14: ``src/lib.rs`` kept a docs-only ``pub mod engine { ... }`` while
+    ``src/engine/mod.rs`` already exported ``treasure_rules`` / ``run_domain_rules``.
+    Rust binds the inline module, so ``treasure_budget::engine::treasure_rules``
+    fails even though the directory module is complete.
+    """
+
+    normalized_base = _normalize_base_files(base_files)
+    lib_text = str(normalized_base.get("src/lib.rs") or "")
+    if not lib_text:
+        return None
+    needed = _shadowed_modules_from_diagnostics(diagnostics)
+    if not needed:
+        return None
+    matches: list[re.Match[str]] = []
+    for match in _INLINE_MOD_RE.finditer(lib_text):
+        name = str(match.group("name") or "")
+        if name not in needed:
+            continue
+        if not _inline_module_is_docs_only(str(match.group("body") or "")):
+            continue
+        disk_mod = f"src/{name}/mod.rs"
+        disk_file = f"src/{name}.rs"
+        if disk_mod not in normalized_base and disk_file not in normalized_base:
+            continue
+        matches.append(match)
+    if len(matches) != 1:
+        return None
+    match = matches[0]
+    expected = match.group(0)
+    if lib_text.count(expected) != 1:
+        return None
+    name = str(match.group("name") or "")
+    replacement = f"pub mod {name};"
+    return RepairPlan(
+        rule_id="rust.lib_root_inline_module_shadow",
+        source_tool=RUST_LIB_ROOT_FACADE_SOURCE_TOOL,
+        operations=(
+            RepairOperation(
+                kind="text_replace",
+                path="src/lib.rs",
+                span_start=match.start(),
+                span_end=match.end(),
+                expected=expected,
+                replacement=replacement,
+                before_hash=sha256_text(lib_text),
+                metadata={
+                    "repair_kind": "rust_lib_root_inline_module_shadow",
+                    "edit_strategy": "span_text_replace",
+                    "module_name": name,
+                    "disk_module": (
+                        f"src/{name}/mod.rs" if f"src/{name}/mod.rs" in normalized_base else f"src/{name}.rs"
+                    ),
+                },
+            ),
+        ),
+        diagnostics=tuple(diagnostics or ()),
+        mode=mode,
+        risk_level="low",
+        priority=0,
+        metadata={
+            "repair_kind": "rust_lib_root_inline_module_shadow",
+            "module_name": name,
+        },
     )
 
 

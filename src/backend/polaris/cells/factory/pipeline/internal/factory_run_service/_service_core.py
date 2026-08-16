@@ -420,7 +420,11 @@ class _FactoryRunServiceCore:
             replay_fence=replay_fence,
         )
         self._attach_workspace_lease(run, lease)
-        if run.id not in self._physical_attempt_coordinators:
+        # settle_terminal_run may resume an orphaned FAILED drain after restart.
+        # Reconstructing the physical-attempt coordinator requires ACTIVE or
+        # replay-fenced authority; a factory_run_failed drain is neither.
+        # Finalize creates a fresh coordinator instead (live L2-12 retry).
+        if operation != "settle_terminal_run" and run.id not in self._physical_attempt_coordinators:
             try:
                 self._recover_physical_attempt_coordinator(run=run, lease=lease)
             except (OSError, RuntimeError, TypeError, ValueError):

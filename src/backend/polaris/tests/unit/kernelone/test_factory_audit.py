@@ -390,6 +390,39 @@ def test_multilanguage_compile_checks_dispatch_to_toolchains(monkeypatch: Any, t
     assert [Path(command[0]).name for command in commands] == ["node", "go", "rustc", "g++", "javac"]
 
 
+def test_rust_compile_uses_cargo_check_for_lowercase_cargo_toml(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.rs").write_text(
+        "use pirate_treasure_budgeter::engine::run;\nfn main() {}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "cargo.toml").write_text(
+        '[package]\nname = "treasure_budget"\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def fake_which(name: str) -> str | None:
+        if name == "cargo":
+            return "/tool/cargo"
+        return f"/tool/{name}"
+
+    def fake_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(factory_audit.shutil, "which", fake_which)
+    monkeypatch.setattr(factory_audit.subprocess, "run", fake_run)
+
+    results = run_checks(str(tmp_path), ["rust_compile"])
+    assert results[0]["ok"] is True
+    assert commands
+    assert Path(commands[0][0]).name == "cargo"
+    assert commands[0][1] == "check"
+    assert "--manifest-path" in commands[0]
+    assert "cargo.toml" in commands[0]
+
+
 def test_ts_syntax_uses_isolated_typescript_syntax_parser(monkeypatch: Any, tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.ts").write_text("export const answer: number = 42;\n", encoding="utf-8")
@@ -628,6 +661,100 @@ def test_l2_level_contract_rejects_l1_sized_depth(tmp_path: Path) -> None:
     depth = record["implementation_depth"]
     assert depth["ok"] is False
     assert "production_source_files=3 < 6" in depth["detail"]
+
+
+def test_implementation_depth_does_not_require_undeclared_sixth_prod_file(tmp_path: Path) -> None:
+    """Live L2-13: PM/CE declared 5 Go files and all exist.
+
+    Level-2 min_prod_files=6 must not force an extra undeclared domain file
+    after tests and other depth mins already pass (M10).
+    """
+
+    engine = tmp_path / "engine"
+    models = tmp_path / "models"
+    engine.mkdir()
+    models.mkdir()
+    body = "\n".join(
+        [
+            "package museum",
+            "",
+            "func Classify(score int) string {",
+            '  if score > 80 { return "high" }',
+            '  if score > 40 { return "medium" }',
+            '  return "low"',
+            "}",
+            "func Snapshot() string { return Classify(90) }",
+        ]
+        * 20
+    )
+    files = [
+        tmp_path / "main.go",
+        engine / "service.go",
+        engine / "rules.go",
+        models / "entity.go",
+        models / "state.go",
+    ]
+    for path in files:
+        path.write_text(body + "\n", encoding="utf-8")
+    (tmp_path / "main_test.go").write_text(
+        "\n".join(
+            [
+                "package museum",
+                "",
+                'import "testing"',
+                "",
+                'func TestA(t *testing.T) { if Classify(90) != "high" { t.Fatal(1) } }',
+                'func TestB(t *testing.T) { if Classify(10) != "low" { t.Fatal(2) } }',
+                'func TestC(t *testing.T) { if Snapshot() == "" { t.Fatal(3) } }',
+                'func TestD(t *testing.T) { if Classify(50) != "medium" { t.Fatal(4) } }',
+                'func TestE(t *testing.T) { if Classify(81) != "high" { t.Fatal(5) } }',
+                'func TestF(t *testing.T) { if Classify(41) != "medium" { t.Fatal(6) } }',
+                'func TestG(t *testing.T) { if Classify(0) != "low" { t.Fatal(7) } }',
+                'func TestH(t *testing.T) { if Snapshot() != "high" { t.Fatal(8) } }',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    plan_dir = tmp_path / "tasks"
+    plan_dir.mkdir()
+    (plan_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "target_files": ["main.go", "models/entity.go", "models/state.go"],
+                    },
+                    {
+                        "id": "TASK-2",
+                        "target_files": [
+                            "main.go",
+                            "models/entity.go",
+                            "models/state.go",
+                            "engine/rules.go",
+                            "engine/service.go",
+                        ],
+                    },
+                    {"id": "TASK-3", "target_files": ["main_test.go", "README.md"]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    record = build_factory_audit_record(
+        project={
+            "id": "L2-13",
+            "level": 2,
+            "checks": ["go_compile", "content_any:capsule|museum|riddle|unlock", "source_target_coverage:**/*.go"],
+        },
+        workspace=str(tmp_path),
+    )
+
+    depth = record["implementation_depth"]
+    assert "production_source_files=5 < 6" not in depth["detail"]
+    assert depth["ok"] is True
 
 
 def test_feature_keyword_structure_rejects_keyword_stuffing(tmp_path: Path) -> None:

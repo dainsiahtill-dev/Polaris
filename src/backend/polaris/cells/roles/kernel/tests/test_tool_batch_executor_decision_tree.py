@@ -29,6 +29,7 @@ only writes the bits that are unique to the path under test.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
@@ -628,6 +629,113 @@ async def test_token_scoped_failed_tool_batch_appends_failed_run_ledger_event(tm
     events = RunLedger(tmp_path, run_id="run-tool-failure").read_events()
     gate_event = next(event for event in events if event.get("event_type") == "gate_evaluated")
     assert gate_event["gate"]["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_execute_command_only_failed_batch_returns_receipts_not_dispatch_abort(
+    tmp_path,
+) -> None:
+    """Live L2-12 TASK-3-source-modules: compound ``ls && cat`` is not a write.
+
+    DEO dead-lettered the no-effect command and the batch raise used
+    ``error_types=unknown`` because ``execute_command`` is outside WRITE_TOOLS.
+    That aborted the Director turn and projected ``director_no_materialized_changes``
+    even though declared files already existed. Command failures stay as receipts.
+    """
+
+    async def _runtime(_tool_name: str, _arguments: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "error": "deo_physical_execution_failed:physical mutation produced no effect",
+            "reason": "command_blocked_compound_or_restricted",
+        }
+
+    executor = _make_executor(
+        tool_runtime=AsyncMock(side_effect=_runtime),
+        config=TransactionConfig(role_id="director", mutation_guard_mode="warn"),
+    )
+    turn_id = "turn_execute_command_compound"
+    decision = _decision(
+        turn_id,
+        "b-cmd",
+        [
+            {
+                "call_id": "c1",
+                "tool_name": "execute_command",
+                "arguments": {"command": "ls -la src/ && cat src/__init__.py"},
+                "execution_mode": "write_serial",
+                "effect_type": "write",
+            }
+        ],
+    )
+    decision["metadata"]["workspace"] = str(tmp_path)
+    decision["metadata"]["run_id"] = "run-execute-command"
+    decision["metadata"]["task_id"] = "task-source-modules"
+
+    result = await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        TurnLedger(turn_id=turn_id),
+        [{"role": "user", "content": "inspect src"}],
+        stream=False,
+    )
+
+    assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_deo_tool_normalization_failed_returns_receipts_not_turn_abort(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Live L2-12 TASK-2: native edit_file DEO miss must not abort the turn.
+
+    MiniMax emitted edit_file to remap known_weather_to_genre. DEO denied
+    ``deo_tool_normalization_failed`` and prepare aborted the whole turn.
+    Factory then settled director_no_materialized_changes. M03: return a
+    tool-error receipt so the model can retry the same contract.
+    """
+
+    executor = _make_executor(
+        config=TransactionConfig(role_id="director", mutation_guard_mode="warn"),
+    )
+
+    async def _deny_normalization(**_kwargs: Any) -> Any:
+        raise RuntimeError("deo_tool_normalization_failed")
+
+    monkeypatch.setattr(executor, "_prepare_directed_effect_dispatch", _deny_normalization)
+    turn_id = "turn_edit_file_normalization"
+    decision = _decision(
+        turn_id,
+        "b-edit",
+        [
+            {
+                "call_id": "c-edit",
+                "tool_name": "edit_file",
+                "arguments": {
+                    "file": "src/engine/__init__.py",
+                    "old_string": "from src.engine.forecast import known_weather_to_genre",
+                    "new_string": "from src.models.weather import known_weather_to_genre",
+                },
+            }
+        ],
+    )
+    decision["metadata"]["workspace"] = str(tmp_path)
+    decision["metadata"]["run_id"] = "run-edit-normalization"
+    decision["metadata"]["task_id"] = "task-source-core"
+
+    result = await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        TurnLedger(turn_id=turn_id),
+        [{"role": "user", "content": "remap known_weather_to_genre"}],
+        stream=False,
+    )
+
+    assert result is not None
+    payload = result if isinstance(result, dict) else {}
+    rendered = json.dumps(payload, ensure_ascii=False, default=str)
+    assert "deo_tool_normalization_failed" in rendered
 
 
 # ---------------------------------------------------------------------------

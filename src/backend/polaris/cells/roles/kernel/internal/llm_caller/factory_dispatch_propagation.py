@@ -45,7 +45,8 @@ from .final_request_metrics import provider_native_request_metrics
 _DispatchResultT = TypeVar("_DispatchResultT")
 _StreamResponseT = TypeVar("_StreamResponseT")
 FACTORY_SEMANTIC_DISPATCH_NOT_ENABLED = "factory_role_semantic_request_frozen_physical_dispatch_not_enabled"
-_FINAL_PHYSICAL_SNAPSHOT_PERSIST_ATTEMPTS = 3
+_FINAL_PHYSICAL_SNAPSHOT_PERSIST_ATTEMPTS = 8
+_FINAL_PHYSICAL_SNAPSHOT_PERSIST_SLEEP_SECONDS = 1.0
 _RETRYABLE_SNAPSHOT_PERSIST_MARKERS = (
     "lock unavailable",
     "lock_acquisition_timeout",
@@ -439,7 +440,7 @@ class FactorySemanticDispatchPropagationPort:
                 )
                 if not retryable or persist_attempt >= _FINAL_PHYSICAL_SNAPSHOT_PERSIST_ATTEMPTS:
                     break
-                time.sleep(0.05 * persist_attempt)
+                time.sleep(_FINAL_PHYSICAL_SNAPSHOT_PERSIST_SLEEP_SECONDS * persist_attempt)
         if persist_exc is not None or pin is None:
             raise FinalProviderAttemptQualificationError(
                 "final_physical_context_snapshot_persist_failed"

@@ -440,6 +440,39 @@ def test_retry_start_request_marks_same_run_director_retry_as_resume() -> None:
     assert request.persist_workspace is False
 
 
+def test_retry_start_request_copies_and_extends_expired_factory_deadline() -> None:
+    """Live L2-13: qa_gate retry dropped factory_run_deadline from start metadata."""
+    from polaris.delivery.http.routers.factory import _build_retry_start_request
+
+    now = 2_000_000.0
+    run = _make_factory_run(
+        status="recovering",
+        stages=["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
+        metadata={
+            "retry_execution_stage": "quality_gate",
+            "factory_run_deadline_epoch_seconds": now - 90.0,
+            "factory_run_timeout_seconds": 1800.0,
+            "factory_run_deadline_safety_seconds": 27.0,
+            "factory_start_request": {
+                "workspace": "/tmp/project",
+                "start_from": "pm",
+                "directive": "Build project",
+                "metadata": {
+                    "factory_run_deadline_epoch_seconds": now - 90.0,
+                    "factory_run_timeout_seconds": 1800.0,
+                },
+            },
+        },
+    )
+
+    request = _build_retry_start_request(run, "/tmp/project")
+
+    deadline = float(request.metadata["factory_run_deadline_epoch_seconds"])
+    assert deadline > now
+    assert request.metadata["factory_run_deadline_source"] == "same_run_retry_epoch"
+    assert request.metadata["factory_run_timeout_seconds"] == 1800.0
+
+
 # ---------------------------------------------------------------------------
 # GET /v2/factory/runs
 # ---------------------------------------------------------------------------

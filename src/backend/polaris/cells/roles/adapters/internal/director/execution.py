@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import logging
-import math
 import os
 import re
 import time
@@ -124,21 +123,26 @@ class DirectorPatchExecutor:
         """Apply the live Factory execution deadline as a non-expanding ceiling."""
 
         resolved_timeout = max(0.1, float(timeout_seconds))
-        deadline_raw: Any = None
-        if isinstance(context, dict):
-            deadline_raw = context.get("factory_director_execution_deadline_epoch_seconds")
-            metadata = context.get("metadata")
-            if deadline_raw is None and isinstance(metadata, dict):
-                deadline_raw = metadata.get("factory_director_execution_deadline_epoch_seconds")
-        if deadline_raw is None or isinstance(deadline_raw, bool):
+        if not isinstance(context, dict):
             return resolved_timeout
-        try:
-            deadline_epoch = float(deadline_raw)
-        except (TypeError, ValueError):
-            deadline_epoch = 0.0
-        if not math.isfinite(deadline_epoch) or deadline_epoch <= 0:
-            raise RuntimeError("factory_director_execution_deadline_invalid")
-        remaining_seconds = deadline_epoch - time.time()
+        from polaris.cells.roles.kernel.internal.llm_caller.helpers import (
+            _factory_execution_deadline_epochs,
+            _select_viable_factory_deadline_epoch,
+        )
+
+        candidates = _factory_execution_deadline_epochs(context)
+        if not candidates:
+            return resolved_timeout
+        now = time.time()
+        selected = _select_viable_factory_deadline_epoch(
+            context,
+            now=now,
+            minimum_remaining_seconds=0.0,
+        )
+        if selected is None:
+            raise RuntimeError("factory_director_execution_deadline_exhausted")
+        _source, deadline_epoch = selected
+        remaining_seconds = deadline_epoch - now
         if remaining_seconds <= 0:
             raise RuntimeError("factory_director_execution_deadline_exhausted")
         return min(resolved_timeout, remaining_seconds)

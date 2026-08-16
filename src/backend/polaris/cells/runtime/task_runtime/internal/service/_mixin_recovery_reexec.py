@@ -1386,6 +1386,13 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             # row that still has a raw TaskBoard entity.
             if board_task is not None and not is_terminal_task_row_status(existing_state):
                 return existing
+            # Live L2-12: completed TASK-1 still had a board file. Minting a
+            # new numeric sibling each factory retry looped 225-231 and
+            # starved TASK-2 / TASK-3-source-core. Reuse the completed owner
+            # when the board row is still present; failed/cancelled still
+            # rematerialize, and missing board files still recreate.
+            if board_task is not None and str(existing_state or "").strip().lower() == "completed":
+                return existing
 
         safe_subject = str(subject or "").strip() or external_id
         safe_description = str(description or "").strip()
@@ -1460,7 +1467,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         write succeeded but its execution-fact append did not.
 
         Complexity:
-            O(r + f + n) time and O(r + f + n) memory for observable lookup
+            O(r + f + n) time and O(r + f + n) memory for mutation-row lookup
             plus one O(n) row compare-and-set, where ``n`` is row size.
         """
 
@@ -1473,7 +1480,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         if Path(command.workspace).resolve() != Path(self.workspace).resolve():
             raise ValueError("command workspace must match TaskRuntimeService workspace")
 
-        observable_row = self._resolve_observable_task_row(command.task_id)
+        observable_row = self._resolve_task_row_for_mutation(command.task_id)
         if observable_row is None:
             return _build_factory_run_binding_result(
                 ok=False,
@@ -1618,6 +1625,46 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         """
         return self._resolve_observable_task_row(task_id)
 
+    def _resolve_task_row_for_mutation(self, task_id: Any) -> dict[str, Any] | None:
+        """Resolve a row for bind/claim without the observer projection.
+
+        Live L2-14 quality retry after COMPLETED_VERIFIED drained live
+        TaskRuntime rows into a frozen epoch. ``list_observable_task_rows``
+        is a fact-only read model and hid the still-authoritative terminal
+        owner, so ``bind_task_to_factory_run`` returned ``task_not_found``
+        and workspace quality never wrote the crate rewrite. Mutation APIs
+        must walk ``list_task_rows(include_terminal=True)``.
+        """
+
+        try:
+            rows = self.list_task_rows(include_terminal=True)
+        except ValueError:
+            return None
+        return self._match_task_row(rows, task_id)
+
+    def _match_task_row(self, rows: list[dict[str, Any]], task_id: Any) -> dict[str, Any] | None:
+        external_token = str(task_id or "").strip()
+        if external_token:
+            matches: list[dict[str, Any]] = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                raw_metadata = row.get("metadata")
+                metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+                if self._metadata_matches_external_task_id(metadata, external_token):
+                    matches.append(dict(row))
+            preferred = self._prefer_live_external_task_row(matches)
+            if preferred is not None:
+                return preferred
+        normalized = self.normalize_task_id(task_id)
+        if normalized is not None:
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                if self.normalize_task_id(row.get("id")) == normalized:
+                    return dict(row)
+        return None
+
     def _resolve_observable_task_row(self, task_id: Any) -> dict[str, Any] | None:
         """Resolve one task row from the observable read model.
 
@@ -1635,30 +1682,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
                 exc,
             )
             return None
-
-        external_token = str(task_id or "").strip()
-        if external_token:
-            matches: list[dict[str, Any]] = []
-            for row in observable_rows:
-                if not isinstance(row, dict):
-                    continue
-                raw_metadata = row.get("metadata")
-                metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
-                if self._metadata_matches_external_task_id(metadata, external_token):
-                    matches.append(dict(row))
-            preferred = self._prefer_live_external_task_row(matches)
-            if preferred is not None:
-                return preferred
-
-        normalized = self.normalize_task_id(task_id)
-        if normalized is not None:
-            for row in observable_rows:
-                if not isinstance(row, dict):
-                    continue
-                if self.normalize_task_id(row.get("id")) == normalized:
-                    return dict(row)
-
-        return None
+        return self._match_task_row(observable_rows, task_id)
 
     def update(
         self,

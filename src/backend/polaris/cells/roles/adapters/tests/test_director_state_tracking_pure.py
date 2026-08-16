@@ -267,3 +267,15 @@ def test_collect_workspace_code_files_ignores_kernelone_tags_cache(tmp_path: Any
 
     assert "src/index.js" in snapshot
     assert not any(path.startswith(".polaris") for path in snapshot)
+
+
+def test_collect_workspace_code_files_includes_go_mod(tmp_path: Any) -> None:
+    """Live L2-13: write_file created go.mod but scanner dropped suffix .mod."""
+
+    (tmp_path / "go.mod").write_text("module example.com/capsule\n\ngo 1.22\n", encoding="utf-8")
+    (tmp_path / "main.go").write_text("package main\n", encoding="utf-8")
+
+    snapshot = DirectorStateTracker(str(tmp_path)).collect_workspace_code_files()
+
+    assert "go.mod" in snapshot
+    assert "main.go" in snapshot

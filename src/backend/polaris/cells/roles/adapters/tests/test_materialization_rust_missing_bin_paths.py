@@ -74,6 +74,18 @@ def test_declared_bin_paths_extend_allowed_paths_without_faking_base_files(tmp_p
     assert "src/main.rs" in allowed
 
 
+def test_collect_rust_base_files_maps_lowercase_cargo_toml(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lib.rs").write_text("pub fn ok() {}\n", encoding="utf-8")
+    (tmp_path / "cargo.toml").write_text(
+        '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    base = _collect_materialization_rust_base_files(tmp_path)
+    assert "Cargo.toml" in base
+    assert 'name = "demo"' in base["Cargo.toml"]
+
+
 def test_rust_missing_bin_paths_from_display_string_issues_include_main_rs() -> None:
     """Display-string rehydration must still allowlist src/main.rs for DEO commit."""
 

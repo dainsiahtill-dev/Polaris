@@ -61,6 +61,26 @@ def _is_deo_abort_error(message: str) -> bool:
     return lowered.startswith("deo_") or lowered.startswith("directed_effect_")
 
 
+_RECOVERABLE_DEO_NORMALIZATION_CODES = frozenset({"deo_tool_normalization_failed"})
+
+
+def _is_recoverable_deo_normalization_abort(message: str) -> bool:
+    """Return True when DEO denied only an arg-shape / normalization miss.
+
+    Live L2-12 TASK-2: MiniMax emitted a native ``edit_file`` to remap
+    ``known_weather_to_genre``. Policy snapshot denied
+    ``deo_tool_normalization_failed`` and ``_prepare_directed_effect_dispatch``
+    aborted the whole turn. Run Ledger then projected TOOL_RESULT_FAILED and
+    Factory settled ``director_no_materialized_changes`` even though declared
+    files existed. M03: this is a per-call model arg miss — return a tool
+    error receipt so the model can retry. Path/scope/policy denials stay
+    fail-closed.
+    """
+
+    token = str(message or "").strip().split(":", 1)[0].strip()
+    return token in _RECOVERABLE_DEO_NORMALIZATION_CODES
+
+
 # R149: advisory flock contention under multi-member DEO inventory admit maps
 # (or previously failed to map) to these upstream codes.  Retry after yielding
 # the event loop so concurrent settlement/heartbeat queries can release locks.

@@ -16,6 +16,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
+from polaris.cells.factory.pipeline.internal.factory_deadline_calculations import (
+    extend_factory_run_deadline_for_same_run_retry,
+)
 from polaris.cells.factory.pipeline.public import (
     FactoryRun,
     FactoryRunService,
@@ -95,6 +98,19 @@ _FACTORY_RUN_DEADLINE_METADATA_KEYS = (
     "factory_run_deadline_epoch_seconds",
     "factory_deadline_epoch_seconds",
     "deadline_epoch_seconds",
+)
+_FACTORY_RUN_DEADLINE_RETRY_COPY_KEYS = (
+    *_FACTORY_RUN_DEADLINE_METADATA_KEYS,
+    "factory_director_execution_deadline_epoch_seconds",
+    "factory_run_timeout_seconds",
+    "factory_timeout_seconds",
+    "factory_run_deadline_safety_seconds",
+    "factory_run_deadline_source",
+    "factory_run_started_epoch_seconds",
+    "factory_run_original_deadline_epoch_seconds",
+    "factory_run_deadline_extension_count",
+    "factory_run_deadline_extended_at",
+    "factory_run_deadline_extension_reason",
 )
 _RETRY_START_POLICY_AFTER_CHECKPOINT = "after_checkpoint"
 FactoryStartFrom: TypeAlias = Literal["auto", "architect", "pm", "director_resume"]
@@ -344,6 +360,20 @@ def _build_retry_start_request(run: FactoryRun, workspace: str) -> FactoryStartR
     if directive_value is None:
         directive_value = _coerce_optional_string(run.config.description)
 
+    stored_metadata_raw = start_payload.get("metadata")
+    retry_metadata: dict[str, Any] = dict(stored_metadata_raw) if isinstance(stored_metadata_raw, dict) else {}
+    run_metadata = run.metadata if isinstance(run.metadata, Mapping) else {}
+    for key in _FACTORY_RUN_DEADLINE_RETRY_COPY_KEYS:
+        if key in run_metadata and run_metadata.get(key) is not None:
+            retry_metadata[key] = run_metadata[key]
+    deadline_extension = extend_factory_run_deadline_for_same_run_retry(
+        now_epoch=datetime.now(timezone.utc).timestamp(),
+        metadata=retry_metadata,
+        retry_stage=retry_execution_stage,
+    )
+    if deadline_extension:
+        retry_metadata.update(deadline_extension)
+
     return FactoryStartRequest(
         workspace=str(start_payload.get("workspace") or workspace),
         start_from=cast(FactoryStartFrom, start_from),
@@ -355,6 +385,7 @@ def _build_retry_start_request(run: FactoryRun, workspace: str) -> FactoryStartR
         loop=bool(start_payload.get("loop", run.metadata.get("loop_requested", False))),
         input_source=_coerce_optional_string(start_payload.get("input_source")),
         persist_workspace=False,
+        metadata=retry_metadata,
     )
 
 

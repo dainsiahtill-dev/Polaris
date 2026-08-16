@@ -163,6 +163,139 @@ def test_non_strict_query_reuses_parsed_stream_until_head_advances(
     assert full_scans == 1
 
 
+def test_query_extends_stale_parsed_cache_from_tail_without_full_rescan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live L2-12: write/heartbeat advanced the execution head without a
+    published cache key. The next observer must extend the pinned parse from
+    the descriptor tail, not reread 545MiB under the stream lock.
+    """
+
+    store = _prepared_store(tmp_path / "workspace", "task_runtime.execution")
+    store.append(
+        stream="task_runtime.execution",
+        event_type="created",
+        source="runtime.task_runtime",
+        payload={"task_id": "task-1", "large_snapshot": "x" * 20_000},
+    )
+    with file_store._PARSED_STREAM_CACHE_LOCK:
+        file_store._PARSED_STREAM_CACHE.clear()
+    original_read = store._read_lease_records
+    full_scans = 0
+
+    def read_spy(*args: Any, **kwargs: Any) -> list[EventEnvelope]:
+        nonlocal full_scans
+        full_scans += 1
+        return original_read(*args, **kwargs)
+
+    monkeypatch.setattr(store, "_read_lease_records", read_spy)
+    first = store.query(stream="task_runtime.execution")
+    assert [event.seq for event in first.events] == [1]
+    assert full_scans == 1
+
+    def _skip_publish(**_kwargs: Any) -> None:
+        return None
+
+    original_publish = store._publish_parsed_stream_cache
+    monkeypatch.setattr(store, "_publish_parsed_stream_cache", _skip_publish)
+    store.append(
+        stream="task_runtime.execution",
+        event_type="heartbeat_renewed",
+        source="runtime.task_runtime",
+        payload={"task_id": "task-1", "large_snapshot": "y" * 20_000},
+    )
+    monkeypatch.setattr(store, "_publish_parsed_stream_cache", original_publish)
+
+    advanced = store.query(stream="task_runtime.execution")
+    assert [event.seq for event in advanced.events] == [1, 2]
+    assert full_scans == 1
+
+
+def test_query_extends_large_heartbeat_tail_without_full_rescan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live L2-12 task 266: ~64KiB heartbeat envelopes must not force a
+    696MiB ``_read_lease_records`` when the first tail line is truncated.
+    """
+
+    store = _prepared_store(tmp_path / "workspace", "task_runtime.execution")
+    blob = "h" * 60_000
+    for index in range(3):
+        store.append(
+            stream="task_runtime.execution",
+            event_type="heartbeat_renewed",
+            source="runtime.task_runtime",
+            payload={"task_id": "266", "index": index, "snapshot": blob},
+        )
+    with file_store._PARSED_STREAM_CACHE_LOCK:
+        file_store._PARSED_STREAM_CACHE.clear()
+    original_read = store._read_lease_records
+    full_scans = 0
+
+    def read_spy(*args: Any, **kwargs: Any) -> list[EventEnvelope]:
+        nonlocal full_scans
+        full_scans += 1
+        return original_read(*args, **kwargs)
+
+    monkeypatch.setattr(store, "_read_lease_records", read_spy)
+    first = store.query(stream="task_runtime.execution")
+    assert [event.seq for event in first.events] == [1, 2, 3]
+    assert full_scans == 1
+
+    original_publish = store._publish_parsed_stream_cache
+    monkeypatch.setattr(store, "_publish_parsed_stream_cache", lambda **_kwargs: None)
+    for index in range(3, 8):
+        store.append(
+            stream="task_runtime.execution",
+            event_type="heartbeat_renewed",
+            source="runtime.task_runtime",
+            payload={"task_id": "266", "index": index, "snapshot": blob},
+        )
+    monkeypatch.setattr(store, "_publish_parsed_stream_cache", original_publish)
+
+    advanced = store.query(stream="task_runtime.execution")
+    assert [event.seq for event in advanced.events] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert full_scans == 1
+
+
+def test_non_strict_query_compacts_heartbeat_snapshots(tmp_path: Path) -> None:
+    """Live L2-12 SIGSEGV: parsed cache must not retain 64KiB heartbeat rows."""
+
+    store = _prepared_store(tmp_path / "workspace", "task_runtime.execution")
+    store.append(
+        stream="task_runtime.execution",
+        event_type="heartbeat_renewed",
+        source="runtime.task_runtime",
+        payload={
+            "task_id": "271",
+            "status": "in_progress",
+            "session_id": "tx-heartbeat",
+            "terminal": False,
+            "subject": "x" * 50_000,
+            "metadata_blob": "y" * 10_000,
+        },
+        metadata={"task_id": "271", "run_id": "director-1", "noise": "z" * 8_000},
+    )
+    with file_store._PARSED_STREAM_CACHE_LOCK:
+        file_store._PARSED_STREAM_CACHE.clear()
+
+    result = store.query(stream="task_runtime.execution", strict_integrity=False)
+    assert result.total == 1
+    event = result.events[0]
+    assert event.event_type == "heartbeat_renewed"
+    assert event.payload == {
+        "task_id": "271",
+        "status": "in_progress",
+        "session_id": "tx-heartbeat",
+        "terminal": False,
+    }
+    assert event.metadata == {"task_id": "271", "run_id": "director-1"}
+    assert "subject" not in event.payload
+    assert "noise" not in event.metadata
+
+
 def test_stale_parsed_cache_publish_does_not_wipe_newer_head(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

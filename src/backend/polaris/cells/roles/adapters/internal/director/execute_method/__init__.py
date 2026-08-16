@@ -90,6 +90,7 @@ from ..repair_convergence_verifier import (
 )
 from ..repair_profile_projection import summarize_deterministic_repair_source_tools
 from ._claim import (
+    _append_declared_scope_preflight_task_boundary,
     _append_receipt_bound_preflight_task_boundary,
     _attach_dependency_artifact_receipt_evidence,
     _canonical_task_owner_identity,

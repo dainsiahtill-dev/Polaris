@@ -10,6 +10,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,93 @@ from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDis
 from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
 _WORKSPACE_QUALITY_MUTATION_TOKENS = WRITE_TOOLS | frozenset({"create_file", "text_replace"})
+
+_GO_STACK_OVERFLOW_MARKERS = ("fatal error: stack overflow", "goroutine stack exceeds")
+_GO_STACK_FUNC_RE = re.compile(r"([A-Za-z0-9_./]+\.\(\*?[A-Za-z0-9_]+\)\.[A-Za-z0-9_]+)")
+
+
+def compact_go_stack_overflow_diagnostic(output: str) -> str:
+    """Collapse a Go 1GiB stack dump to the repeating owner frames.
+
+    Live L2-13: ``go test``/``go run`` overflowed in
+    ``exhibitionIDs``/``allCapsules``. The untruncated dump became 173
+    uncovered diagnostics and a 6.7MiB validation artifact.
+    """
+
+    text = str(output or "")
+    if not any(marker in text for marker in _GO_STACK_OVERFLOW_MARKERS):
+        return text
+    counts = Counter(_GO_STACK_FUNC_RE.findall(text))
+    repeating = [name for name, count in counts.most_common() if count >= 3]
+    unique_frames = list(dict.fromkeys(_GO_STACK_FUNC_RE.findall(text)))
+    lines = ["fatal error: stack overflow"]
+    if repeating:
+        lines.append("repeating_frames=" + ",".join(repeating[:4]))
+    if unique_frames:
+        lines.append("frames=" + ",".join(unique_frames[:8]))
+    return "\n".join(lines)
+
+
+_COMPILER_ERROR_START_RE = re.compile(r"(?m)^(?:error(?:\[[^\]]+\])?|warning(?:\[[^\]]+\])?):")
+_COMPILER_SUMMARY_RE = re.compile(r"(?m)^error: could not compile\b")
+_COMPILER_ARROW_RE = re.compile(r"(?m)^\s*-->\s*(?P<path>\S+):(?P<line>\d+)")
+
+
+def compact_compiler_error_blocks(output: str, *, limit: int = 12_000) -> str:
+    r"""Keep unique compiler error blocks (with rustc help) instead of a tail.
+
+    Live L2-14: ``cargo test`` emitted 87 errors. The 8KiB tail kept only
+    the last Eq/label residuals and dropped ``help: a method \`name\` also
+    exists``. Line-suggestion then looked unplannable and quality LLM
+    invented more enum variants.
+    """
+
+    text = str(output or "")
+    if "error[" not in text and not re.search(r"(?m)^error:", text):
+        return text
+    starts = [match.start() for match in _COMPILER_ERROR_START_RE.finditer(text)]
+    if not starts:
+        return text
+    unique_blocks: list[tuple[bool, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(text)
+        summary = _COMPILER_SUMMARY_RE.search(text, start, end)
+        if summary is not None and summary.start() == start:
+            continue
+        if summary is not None:
+            end = summary.start()
+        block = text[start:end].strip()
+        if not block:
+            continue
+        first_line = block.splitlines()[0].strip()
+        if first_line.lower().startswith("warning"):
+            continue
+        arrow = _COMPILER_ARROW_RE.search(block)
+        key = (
+            first_line,
+            str(arrow.group("path") if arrow is not None else ""),
+            str(arrow.group("line") if arrow is not None else ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_blocks.append(("help:" in block.lower(), block))
+    ordered = [block for has_help, block in unique_blocks if has_help]
+    ordered.extend(block for has_help, block in unique_blocks if not has_help)
+    packed: list[str] = []
+    used = 0
+    for block in ordered:
+        extra = len(block) + (1 if packed else 0)
+        if packed and used + extra > max(256, int(limit)):
+            break
+        if not packed and extra > max(256, int(limit)):
+            packed.append(block[: max(256, int(limit))])
+            break
+        packed.append(block)
+        used += extra
+    return "\n".join(packed)
+
 
 _LANGUAGE_NEUTRAL_FILENAMES: frozenset[str] = frozenset(
     {
@@ -172,6 +261,33 @@ def workspace_quality_summary_requires_task_boundary_triage(summary: dict[str, A
     return str(plan_probe.get("status") or "").strip() == "coverage_matched_but_unplannable" and not bool(
         plan_probe.get("plannable_source_tools")
     )
+
+
+def workspace_quality_latest_task_boundary_scope_filter(repair: Mapping[str, Any]) -> dict[str, Any]:
+    """Lift last-round owner-handoff scope filter onto the repair payload.
+
+    Live L2-12 wrote ``ownership_handoff_requests`` only under
+    ``rounds[*].repair_summary.task_boundary_scope_filter``. Factory rework
+    and scope-authority extractors read the repair object itself, so the
+    latest typed filter must be a first-class repair field.
+    """
+
+    existing = repair.get("task_boundary_scope_filter")
+    if isinstance(existing, Mapping) and existing:
+        return dict(existing)
+    rounds = repair.get("rounds")
+    if not isinstance(rounds, list | tuple):
+        return {}
+    for item in reversed(rounds):
+        if not isinstance(item, Mapping):
+            continue
+        summary = item.get("repair_summary")
+        if not isinstance(summary, Mapping):
+            continue
+        scope_filter = summary.get("task_boundary_scope_filter")
+        if isinstance(scope_filter, Mapping) and scope_filter:
+            return dict(scope_filter)
+    return {}
 
 
 def workspace_quality_deferred_owner_targets(summary: dict[str, Any]) -> list[str]:

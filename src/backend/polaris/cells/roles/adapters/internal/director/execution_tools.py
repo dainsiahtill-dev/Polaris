@@ -45,7 +45,7 @@ from polaris.kernelone.llm.toolkit.tool_normalization.normalizers._shared import
 )
 from polaris.kernelone.llm.toolkit.write_policy import validate_tool_write_policy
 
-from .helpers import _MIN_FILES_PATTERN, _MIN_LINES_PATTERN
+from .helpers import _MIN_FILES_PATTERN, _MIN_LINES_PATTERN, canonicalize_project_manifest_path
 from .security import (
     ALLOWED_EXECUTION_COMMANDS,
     TOOLING_SECURITY_AVAILABLE,
@@ -302,7 +302,9 @@ def _precommit_source_syntax_guard(
         before = check_content_syntax(rel_path, before_content)
         preexisting_syntax_failure = before.checked and not before.ok
     error_type = "source_syntax_not_repaired" if preexisting_syntax_failure else "source_syntax_regression"
-    failure_verb = "does not repair the existing syntax error" if preexisting_syntax_failure else "introduces a syntax error"
+    failure_verb = (
+        "does not repair the existing syntax error" if preexisting_syntax_failure else "introduces a syntax error"
+    )
     return {
         "ok": False,
         "blocked": True,
@@ -533,7 +535,7 @@ class DirectorToolExecutor:
     ) -> dict[str, Any]:
         """写入文件工具"""
         raw_file_path = args.get("file") or args.get("path") or args.get("filepath")
-        file_path = str(raw_file_path or "").strip()
+        file_path = canonicalize_project_manifest_path(str(raw_file_path or "").strip())
         content = _recover_write_body_or_none(args.get("content"))
         if content is None:
             # R195/M03: a non-string content body that cannot be recovered to text
@@ -782,7 +784,7 @@ class DirectorToolExecutor:
             or args.get("target_file")
             or args.get("target_path")
         )
-        file_path = str(raw_file_path or "").strip()
+        file_path = canonicalize_project_manifest_path(str(raw_file_path or "").strip())
         if not file_path:
             return {"ok": False, "error": "Missing file path"}
         if "\n" in file_path or "\r" in file_path:
@@ -932,7 +934,7 @@ class DirectorToolExecutor:
     ) -> dict[str, Any]:
         """编辑文件工具（搜索替换）"""
         raw_file_path = args.get("file") or args.get("path") or args.get("filepath")
-        file_path = str(raw_file_path or "").strip()
+        file_path = canonicalize_project_manifest_path(str(raw_file_path or "").strip())
         search = _recover_write_body_or_none(args.get("search") or args.get("old_string") or args.get("oldText"))
         replace = _recover_write_body_or_none(args.get("replace") or args.get("new_string") or args.get("newText"))
 

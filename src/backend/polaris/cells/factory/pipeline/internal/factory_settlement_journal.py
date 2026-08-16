@@ -7,7 +7,7 @@ import json
 import os
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from itertools import pairwise
 from pathlib import Path
@@ -174,6 +174,7 @@ class SettlementJournalReplaySnapshot:
     _terminals: dict[str, SettlementJournalRecord]
     _checkpoint_chains: dict[str, list[_CheckpointChainEntry]]
     _event_ids: set[str]
+    _source_events_by_id: dict[str, int] = field(default_factory=dict)
 
     @classmethod
     def create(
@@ -191,15 +192,22 @@ class SettlementJournalReplaySnapshot:
             states[record.settlement_key] = record
             if record.status in {SettlementJournalStatus.APPLIED, SettlementJournalStatus.DEAD_LETTER}:
                 terminals[record.settlement_key] = record
+        source_events_map = dict(source_events)
+        source_events_by_id: dict[str, int] = {}
+        for offset_key, event in source_events_map.items():
+            event_id = str(event.get("event_id") or "").strip()
+            if event_id:
+                source_events_by_id[event_id] = int(offset_key)
         return cls(
             source_stream=source_stream,
-            source_events=MappingProxyType(dict(source_events)),
+            source_events=MappingProxyType(source_events_map),
             _records=list(records),
             _current_seq=current_seq,
             _states=states,
             _terminals=terminals,
             _checkpoint_chains={source_stream: list(checkpoint_chain)},
             _event_ids={record.event_id for record in records},
+            _source_events_by_id=source_events_by_id,
         )
 
     @property
@@ -229,6 +237,25 @@ class SettlementJournalReplaySnapshot:
                 code="replay_snapshot_source_stream_mismatch",
             )
         return chain[-1].next_source_offset if chain else 0
+
+    def locate_source_event(self, event_id: str) -> tuple[Mapping[str, Any], int] | None:
+        """Return ``(event, 0-based source offset)`` for a known source fact.
+
+        Live L2-12: JetStream redelivered historical heartbeat ids.  Looking
+        those up in the already-validated snapshot is O(1).  Paging
+        ``task_runtime.execution`` from offset 0 on the asyncio loop is not.
+        """
+
+        normalized = str(event_id or "").strip()
+        if not normalized:
+            return None
+        offset_key = self._source_events_by_id.get(normalized)
+        if offset_key is None:
+            return None
+        event = self.source_events.get(offset_key)
+        if event is None:
+            return None
+        return event, offset_key - 1
 
     def checkpoint_chain(self, *, source_stream: str) -> tuple[_CheckpointChainEntry, ...]:
         """Return the validated checkpoint chain for one replay source stream."""
@@ -312,6 +339,7 @@ class SettlementJournalReplaySnapshot:
         self._terminals = replacement._terminals
         self._checkpoint_chains = replacement._checkpoint_chains
         self._event_ids = replacement._event_ids
+        self._source_events_by_id = replacement._source_events_by_id
 
 
 def _canonical_workspace(value: str) -> str:
@@ -712,6 +740,7 @@ class FactorySettlementJournal:
             "barrier_hash": "",
             "evidence_refs": [],
         }
+
         def append_once(expected_seq: int | None) -> FactEventAppendedV1:
             return self._fact_stream.append(
                 AppendFactEventCommandV1(
@@ -742,8 +771,7 @@ class FactorySettlementJournal:
                 (
                     record
                     for record in snapshot.records
-                    if record.status is SettlementJournalStatus.DEAD_LETTER
-                    and dict(record.payload) == payload
+                    if record.status is SettlementJournalStatus.DEAD_LETTER and dict(record.payload) == payload
                 ),
                 None,
             )

@@ -35,6 +35,9 @@ from polaris.cells.factory.verification_guard.public import (
     QueryProjectCompletionDiagnosticsV1,
     query_project_completion_diagnostics,
 )
+from polaris.cells.factory.verification_guard.public.contracts import (
+    ProjectCompletionOwnerObservationV1Error,
+)
 from polaris.cells.runtime.projection.public import (
     DeliveryAxisV1,
     ProjectOutcomeNonFactoryEvidenceRefsV1,
@@ -643,14 +646,17 @@ class ProjectOutcomeNonFactoryOwnerObservationAdapter:
             owner_failed=owner_failed,
         )
 
-        physical_diagnostics = query_project_completion_diagnostics(
-            QueryProjectCompletionDiagnosticsV1(
-                workspace=canonical_workspace,
-                project_id=project_id,
-                run_id=run_id,
-                completion_contract_hash=completion_contract_hash,
+        try:
+            physical_diagnostics = query_project_completion_diagnostics(
+                QueryProjectCompletionDiagnosticsV1(
+                    workspace=canonical_workspace,
+                    project_id=project_id,
+                    run_id=run_id,
+                    completion_contract_hash=completion_contract_hash,
+                )
             )
-        )
+        except ProjectCompletionOwnerObservationV1Error as exc:
+            raise _fail(exc.error_code, str(exc)) from exc
         if physical_diagnostics is not None and type(physical_diagnostics) is not ProjectCompletionDiagnosticsV1:
             raise _fail(
                 "invalid_project_outcome_physical_diagnostics_type",

@@ -303,6 +303,7 @@ from ._repair_loop import (
     _context_float_value,
     _extract_task_interface_contract,
     _filter_materialization_quality_errors_for_repair_targets,
+    _filter_unresolved_import_errors_to_task_write_scope,
     _has_scaffold_marker_quality_error,
     _materialization_interface_discrepancy_evidence,
     _materialization_interface_discrepancy_retry_authorized,

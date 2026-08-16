@@ -798,6 +798,32 @@ def test_resolve_owner_handoff_routing_no_string_recovery_from_inert_metadata() 
     assert routing.has_unresolved_handoffs is False
 
 
+def test_scope_authority_extracts_handoffs_from_repair_round_summaries() -> None:
+    """QA workspace validation nests owner_task_retry under rounds/repair_summary."""
+
+    owned_request = {
+        "schema_version": "file-ownership-handoff-request/1",
+        "target_file": "src/models/mood.py",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+        "owner_step_id": "TASK-1",
+    }
+    payload = {
+        "rounds": [
+            {
+                "repair_summary": {
+                    "task_boundary_scope_filter": {
+                        "ownership_handoff_requests": [owned_request],
+                    }
+                }
+            }
+        ]
+    }
+
+    assert ownership_handoff_requests_from_scope_payload(payload) == (owned_request,)
+    assert owner_task_retry_handoff_requests_from_scope_payload(payload) == (owned_request,)
+
+
 def test_resolve_owner_handoff_routing_uses_task_boundary_scope_filter_priority() -> None:
     """Task-boundary scope-filter payload is searched before top-level keys."""
 

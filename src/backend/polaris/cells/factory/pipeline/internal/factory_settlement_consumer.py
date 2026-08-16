@@ -442,6 +442,7 @@ class FactorySettlementConsumer:
         self._stopped = False
         self._journal_snapshot: SettlementJournalReplaySnapshot | None = None
         self._last_open_barrier_replay_at = 0.0
+        self._last_open_barrier_decision: SettlementDecision | None = None
 
     @property
     def workspace(self) -> str:
@@ -476,17 +477,47 @@ class FactorySettlementConsumer:
                 decisions = await self._replay_locked(recover_applying=False)
                 return SettlementReplayReport(decisions=decisions)
 
-            event, source_offset = self._find_source_fact(hinted_id)
+            snapshot = self._journal_snapshot
+            located: tuple[Mapping[str, Any], int] | None = None
+            if snapshot is not None:
+                located = snapshot.locate_source_event(hinted_id)
+                if located is not None:
+                    event, source_offset = located
+                    checkpoint = snapshot.latest_checkpoint_offset(source_stream=TASK_RUNTIME_EXECUTION_STREAM)
+                    if source_offset < checkpoint:
+                        event_id, event_seq = _source_event_identity(event)
+                        return SettlementReplayReport(
+                            decisions=(
+                                SettlementDecision(
+                                    source_fact_event_id=event_id or hinted_id,
+                                    source_fact_seq=event_seq,
+                                    factory_run_id="",
+                                    workspace_fencing_token=0,
+                                    outcome=SettlementOutcome.DUPLICATE,
+                                    ack_safe=True,
+                                    reason_code="source_fact_already_checkpointed",
+                                ),
+                            )
+                        )
+            if located is None:
+                event, source_offset = await asyncio.to_thread(self._find_source_fact, hinted_id)
+            else:
+                event, source_offset = located
             decision = await self._process_source_event(
                 event,
                 recover_applying=False,
+                journal_snapshot=snapshot,
             )
-            checkpoint = self._journal.latest_checkpoint_offset(source_stream=TASK_RUNTIME_EXECUTION_STREAM)
+            checkpoint = self._journal.latest_checkpoint_offset(
+                source_stream=TASK_RUNTIME_EXECUTION_STREAM,
+                snapshot=snapshot,
+            )
             if decision.ack_safe and source_offset == checkpoint:
                 self._checkpoint(
                     decision,
                     next_source_offset=source_offset + 1,
                     source_event=event,
+                    journal_snapshot=snapshot,
                 )
             return SettlementReplayReport(decisions=(decision,))
 
@@ -497,6 +528,15 @@ class FactorySettlementConsumer:
             self._stopped = True
             self._started = False
             self._journal_snapshot = None
+            self._clear_open_barrier_cooldown()
+
+    def _remember_open_barrier(self, decision: SettlementDecision) -> None:
+        self._last_open_barrier_replay_at = time.monotonic()
+        self._last_open_barrier_decision = decision
+
+    def _clear_open_barrier_cooldown(self) -> None:
+        self._last_open_barrier_replay_at = 0.0
+        self._last_open_barrier_decision = None
 
     def _require_running(self) -> None:
         if not self._started or self._stopped:
@@ -514,6 +554,16 @@ class FactorySettlementConsumer:
             and self._last_open_barrier_replay_at > 0.0
             and (time.monotonic() - self._last_open_barrier_replay_at) < _OPEN_BARRIER_REPLAY_COOLDOWN_SECONDS
         ):
+            # Live L2-12 wave 254-261: factory_stage_heartbeat called un-hinted
+            # wake() many times per second while TASK-3-source-modules sat in
+            # waiting_barrier.  The previous "cooldown" still re-ran
+            # head_recheck + O(T+C) query_factory_settlement_barrier on every
+            # wake.  Checkpoint 3973 never advanced; backend burned 70% CPU /
+            # 6.1 GiB and task 259 lost its 120s lease.  Reuse the last
+            # pending decision until the cooldown expires.
+            cached = self._last_open_barrier_decision
+            if cached is not None and cached.reason_code == "run_ledger_barrier_open":
+                return (cached,)
             checkpoint = journal_snapshot.latest_checkpoint_offset(source_stream=TASK_RUNTIME_EXECUTION_STREAM)
             # source_events is keyed as query_offset+1.  The journal checkpoint
             # is the next 0-based source offset to process.
@@ -530,7 +580,7 @@ class FactorySettlementConsumer:
                 )
                 if not head_decision.ack_safe:
                     if head_decision.reason_code == "run_ledger_barrier_open":
-                        self._last_open_barrier_replay_at = time.monotonic()
+                        self._remember_open_barrier(head_decision)
                     return (head_decision,)
                 self._checkpoint(
                     head_decision,
@@ -538,7 +588,7 @@ class FactorySettlementConsumer:
                     source_event=head_event,
                     journal_snapshot=journal_snapshot,
                 )
-                self._last_open_barrier_replay_at = 0.0
+                self._clear_open_barrier_cooldown()
                 prefix_decisions = (head_decision,)
                 # Barrier closed: continue into the normal tail replay below.
         if journal_snapshot is None:
@@ -576,6 +626,20 @@ class FactorySettlementConsumer:
                 self._read_source_replay_snapshot,
                 start_offset=checkpoint,
             )
+            if not source_snapshot.events:
+                # Live L2-12 epoch 23: control-plane wakes at a current
+                # checkpoint still rebuilt the 27MiB journal snapshot on the
+                # asyncio loop.  Keep the validated view and ACK.
+                self._journal_snapshot = journal_snapshot
+                logger.warning(
+                    "[settlement.startup] phase=decision_replay status=started events=0 checkpoint=%d",
+                    checkpoint,
+                )
+                logger.warning(
+                    "[settlement.startup] phase=decision_replay status=completed duration_ms=0 decisions=%d",
+                    len(prefix_decisions),
+                )
+                return prefix_decisions
             source_events = dict(journal_snapshot.source_events)
             source_events.update(source_snapshot.events_by_offset)
             journal_snapshot = SettlementJournalReplaySnapshot.create(
@@ -603,7 +667,7 @@ class FactorySettlementConsumer:
             decisions.append(decision)
             if not decision.ack_safe:
                 if decision.reason_code == "run_ledger_barrier_open":
-                    self._last_open_barrier_replay_at = time.monotonic()
+                    self._remember_open_barrier(decision)
                 return tuple(decisions)
             self._checkpoint(
                 decision,

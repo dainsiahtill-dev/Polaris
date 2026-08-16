@@ -1323,26 +1323,40 @@ class _DirectedEffectMixin(_ServiceMixinBase):
         fact_map = fact if isinstance(fact, Mapping) else {}
         runtime_execution = metadata_map.get("runtime_execution")
         runtime_map = runtime_execution if isinstance(runtime_execution, Mapping) else {}
+        row_owner = str(
+            row.get("factory_run_id") or metadata_map.get("factory_run_id") or fact_map.get("factory_run_id") or ""
+        ).strip()
         row_session_id = str(
             row.get("session_id") or runtime_map.get("session_id") or fact_map.get("session_id") or ""
         ).strip()
         row_attempt = row.get("claim_attempt") or runtime_map.get("attempt") or fact_map.get("attempt")
-        if isinstance(row_attempt, bool) or not isinstance(row_attempt, (int, str)):
-            return ""
-        try:
-            row_attempt_value = int(row_attempt)
-        except (TypeError, ValueError):
-            return ""
+        row_task_id = 0
+        raw_row_id = row.get("id")
+        if not isinstance(raw_row_id, bool):
+            try:
+                row_task_id = int(raw_row_id)
+            except (TypeError, ValueError):
+                row_task_id = 0
         # ``lease_expires_at`` is intentionally excluded.  Heartbeats rotate
         # that deadline while TaskBoard/fact projections may lag; ownership is
         # bound to the stable execution-attempt identity, not one volatile
         # lease snapshot.  Requiring session_id + attempt still prevents a
         # stale row from lending Factory authority to a replacement attempt.
-        if row_session_id != session.session_id or row_attempt_value != session.attempt:
-            return ""
-        return str(
-            row.get("factory_run_id") or metadata_map.get("factory_run_id") or fact_map.get("factory_run_id") or ""
-        ).strip()
+        if not isinstance(row_attempt, bool) and isinstance(row_attempt, (int, str)):
+            try:
+                row_attempt_value = int(row_attempt)
+            except (TypeError, ValueError):
+                row_attempt_value = None
+            else:
+                if row_session_id == session.session_id and row_attempt_value == session.attempt:
+                    return row_owner
+        # Live L2-12 SIGSEGV: session persisted, TaskBoard claim_attempt /
+        # session_id lagged.  The locked session is still this exact numeric
+        # owner task; row metadata factory_run_id is the Factory owner.
+        # Without the fallback, startup aborts and the instance cannot restart.
+        if row_owner and row_task_id == session.task_id:
+            return row_owner
+        return ""
 
     def reconcile_ambiguous_directed_effects(
         self,

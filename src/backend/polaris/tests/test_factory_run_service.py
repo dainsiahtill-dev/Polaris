@@ -624,6 +624,31 @@ class TestFactoryRunService:
             await service.retry_run_from_stage(run.id, "director_dispatch")
 
     @pytest.mark.asyncio
+    async def test_retry_run_from_stage_reopens_completed_quality_gate_only(self, temp_workspace):
+        service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())
+        config = FactoryConfig(name="test-run", stages=["pm_planning", "director_dispatch", "quality_gate"])
+        run = await service.create_run(config)
+        await service.start_run(run.id)
+        run = await service.get_run(run.id)
+        run.status = FactoryRunStatus.COMPLETED
+        run.completed_at = "2026-08-16T01:12:31+00:00"
+        run.stages_completed = ["pm_planning", "director_dispatch", "quality_gate"]
+        run.metadata["last_successful_stage"] = "quality_gate"
+        await service.store.save_run(run)
+
+        ignored = await service.retry_run_from_stage(run.id, "director_dispatch", "must not rewind")
+        assert ignored.status == FactoryRunStatus.COMPLETED
+
+        retried = await service.retry_run_from_stage(run.id, "quality_gate", "reverify rust cargo")
+        assert retried.status == FactoryRunStatus.RECOVERING
+        assert retried.recovery_point == "quality_gate"
+        assert retried.completed_at is None
+        assert retried.metadata["retry_from_status"] == "completed"
+        assert retried.metadata["retry_requested_stage"] == "quality_gate"
+        assert retried.metadata["retry_execution_stage"] == "quality_gate"
+        assert retried.stages_completed == ["pm_planning", "director_dispatch"]
+
+    @pytest.mark.asyncio
     async def test_all_stage_handlers(self, temp_workspace):
         """Test all stage handlers return proper StageResult"""
         service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())

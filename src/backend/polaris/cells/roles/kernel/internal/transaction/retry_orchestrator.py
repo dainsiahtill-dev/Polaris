@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol, cast
 
@@ -102,6 +103,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 logger = logging.getLogger(__name__)
 
 _TRANSIENT_LLM_PROVIDER_ERROR_MARKERS = (
+    "circuit_open",
     "connection aborted",
     "connection reset",
     "connectionpool",
@@ -116,6 +118,8 @@ _TRANSIENT_LLM_PROVIDER_ERROR_MARKERS = (
     "timed out",
     "timeout",
 )
+_CIRCUIT_OPEN_REMAINING_RE = re.compile(r"circuit_open:(\d+)s_remaining")
+_MAX_CIRCUIT_OPEN_WAIT_SECONDS = 90.0
 
 
 def _is_transient_llm_provider_exception(exc: BaseException) -> bool:
@@ -123,6 +127,24 @@ def _is_transient_llm_provider_exception(exc: BaseException) -> bool:
         return True
     text = f"{type(exc).__name__}: {exc}".lower()
     return any(marker in text for marker in _TRANSIENT_LLM_PROVIDER_ERROR_MARKERS)
+
+
+def _circuit_open_wait_seconds(exc: BaseException) -> float:
+    """Return bounded wait for ``circuit_open:Ns_remaining``; otherwise 0.
+
+    Live L2-12 source-models: SSL opened the MiniMax circuit, then the
+    immediate mutation retry raised ``circuit_open:58s_remaining`` and the
+    task settled as ``director_no_materialized_changes``.  Waiting the
+    remaining cooldown (plus 1s to enter half-open) lets the same write
+    retry reach a recovered provider instead of fail-closed.
+    """
+
+    text = f"{type(exc).__name__}: {exc}".lower()
+    match = _CIRCUIT_OPEN_REMAINING_RE.search(text)
+    if match is None:
+        return 0.0
+    remaining = float(match.group(1)) + 1.0
+    return min(remaining, _MAX_CIRCUIT_OPEN_WAIT_SECONDS)
 
 
 def _with_retry_batch_identity(
@@ -311,9 +333,7 @@ class RetryOrchestrator:
         bootstrap_batch = ToolBatch(
             batch_id=batch_id,
             parallel_readonly=[
-                inv
-                for inv in normalized_invocations
-                if inv.execution_mode == ToolExecutionMode.READONLY_PARALLEL
+                inv for inv in normalized_invocations if inv.execution_mode == ToolExecutionMode.READONLY_PARALLEL
             ],
             readonly_serial=[
                 inv for inv in normalized_invocations if inv.execution_mode == ToolExecutionMode.READONLY_SERIAL
@@ -475,7 +495,8 @@ class RetryOrchestrator:
             llm_call_kwargs["max_tokens_floor"] = retry_output_floor
         stream_callable = self.call_llm_for_decision_stream
         use_stream_retry = stream and stream_callable is not None
-        for provider_attempt in range(2):
+        # Three attempts: first transient (SSL) + circuit cooldown wait + recovered call.
+        for provider_attempt in range(3):
             retry_response = None
             try:
                 if use_stream_retry and stream_callable is not None:
@@ -514,6 +535,16 @@ class RetryOrchestrator:
             except asyncio.CancelledError:
                 raise
             except Exception as retry_exc:
+                wait_seconds = _circuit_open_wait_seconds(retry_exc)
+                if wait_seconds > 0.0 and provider_attempt < 2:
+                    logger.warning(
+                        "mutation-contract retry waiting for provider circuit: turn_id=%s wait_seconds=%.0f error=%s",
+                        turn_id,
+                        wait_seconds,
+                        retry_exc,
+                    )
+                    await asyncio.sleep(wait_seconds)
+                    continue
                 if provider_attempt == 0 and _is_transient_llm_provider_exception(retry_exc):
                     logger.warning(
                         "mutation-contract retry provider transient failure; retrying once: turn_id=%s error=%s",
@@ -732,8 +763,7 @@ class RetryOrchestrator:
                 if not is_provider_tool_surface_violation(retry_exc):
                     raise
                 logger.warning(
-                    "mutation-contract retry rejected out-of-surface provider tool: "
-                    "turn_id=%s attempt=%s error=%s",
+                    "mutation-contract retry rejected out-of-surface provider tool: turn_id=%s attempt=%s error=%s",
                     turn_id,
                     attempt_index + 1,
                     retry_exc,

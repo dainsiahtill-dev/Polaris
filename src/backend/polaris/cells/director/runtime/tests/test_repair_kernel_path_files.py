@@ -87,3 +87,10 @@ def test_strict_and_permissive_diverge_on_parent_segment() -> None:
     raw = "pkg/../secret.ts"
     assert normalize_repair_path_strict(raw) == ""
     assert normalize_repair_path_permissive(raw) == "pkg/../secret.ts"
+
+
+def test_normalize_repair_path_canonicalizes_cargo_manifest_basename() -> None:
+    assert normalize_repair_path_strict("cargo.toml") == "Cargo.toml"
+    assert normalize_repair_path_strict("./cargo.toml") == "Cargo.toml"
+    assert normalize_repair_path_permissive("nested/cargo.toml") == "nested/Cargo.toml"
+    assert normalize_base_files_strict({"cargo.toml": "[package]\n"}) == {"Cargo.toml": "[package]\n"}

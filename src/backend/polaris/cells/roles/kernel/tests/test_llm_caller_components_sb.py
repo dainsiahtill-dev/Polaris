@@ -1593,6 +1593,53 @@ def test_r150_re_pins_actual_sibling_exports_after_tool_loop_history() -> None:
     assert again == rebound
 
 
+def test_zero_artifact_parent_snapshot_counts_as_actual_sibling_exports() -> None:
+    """Live L2-13: TASK-1 sealed as zero-artifact parent (modules=[]).
+
+    Quality-repair coverage required actual_sibling_exports, then rejected the
+    honest empty snapshot because ``_looks_like`` demanded a non-empty module
+    list. LLM never started despite factory_run deadline remaining.
+    """
+    import hashlib
+    import json
+
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+        _looks_like_actual_sibling_exports,
+    )
+    from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import (
+        _ensure_actual_sibling_exports_message_bound,
+    )
+
+    payload: dict[str, object] = {
+        "schema_version": "polaris.actual_sibling_exports.evidence.v2",
+        "source": "roles.adapters.director.task_runtime_dependency_artifact_snapshot",
+        "dependency_task_ids": ["TASK-1"],
+        "covered_parent_task_ids": ["TASK-1"],
+        "zero_artifact_parent_task_ids": ["TASK-1"],
+        "modules": [],
+        "module_count": 0,
+        "total_byte_count": 0,
+        "receipt_coverage_complete": True,
+        "uncovered_artifacts": [],
+    }
+    payload["snapshot_sha256"] = hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    assert _looks_like_actual_sibling_exports(payload, messages=None) is True
+
+    messages = [
+        {"role": "system", "content": "Director role contract."},
+        {"role": "user", "content": "Repair go stack overflow in engine/service.go"},
+    ]
+    rebound = _ensure_actual_sibling_exports_message_bound(
+        messages,
+        {"actual_sibling_exports": payload},
+    )
+    assert _looks_like_actual_sibling_exports(payload, messages=rebound) is True
+    assert f"snapshot_sha256={payload['snapshot_sha256']}" in rebound[1]["content"]
+
+
 @pytest.mark.module_final_request_context
 def test_r152_sibling_export_pin_preserves_current_user_final_role() -> None:
     """R152: re-pin must not make final_role=system after tool-loop history.
