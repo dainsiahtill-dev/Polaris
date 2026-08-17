@@ -38,7 +38,11 @@ from .managed_process_lifecycle import (
     derive_managed_process_evidence_presence,
     project_managed_process_lifecycle,
 )
-from .projection import build_run_ledger_projection, summarize_run_ledger_projection
+from .projection import (
+    build_run_ledger_projection,
+    resolve_execution_capability_for_task,
+    summarize_run_ledger_projection,
+)
 from .provenance import build_run_provenance_bundle
 from .service import (
     append_run_ledger_event,
@@ -207,6 +211,7 @@ __all__ = [
     "read_run_ledger_projection_barrier",
     "read_run_provenance_bundle",
     "reconcile_task_boundary_artifacts_with_workspace",
+    "resolve_execution_capability_for_task",
     "stable_hash",
     "stable_json",
     "summarize_failed_gate_evidence_context_slot",

@@ -20,6 +20,7 @@ from polaris.cells.director.runtime.internal.repair_kernel.javascript_syntax imp
     build_substantive_node_test_script,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.python_syntax import (
+    build_python_missing_module_alias_plan,
     build_python_unresolved_import_symbol_plan,
 )
 from polaris.cells.director.runtime.public import (
@@ -466,6 +467,77 @@ def test_python_unresolved_import_symbol_declines_empty_placeholder_stub() -> No
     assert plan is None
 
 
+def test_python_unresolved_import_symbol_prefers_definition_over_package_reexport() -> None:
+    """L2-19 remint-5: models/__init__.py re-exports forecast_for from weather.py.
+
+    Unique-module lookup used to see two owners and skip the importer rewrite.
+    """
+
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            (
+                "Artifact quality scan failed: unresolved import symbol "
+                "'forecast_for' from 'src.engine.forecast' in tests/test_product.py "
+                "(sibling module does not define it)"
+            )
+        ]
+    )
+    importer = "from src.engine.forecast import (\n    ForecastEngine,\n    forecast_for,\n    forecast_from_mood,\n)\n"
+
+    plan = build_python_unresolved_import_symbol_plan(
+        base_files={
+            "tests/test_product.py": importer,
+            "src/engine/forecast.py": ("class ForecastEngine:\n    pass\n\ndef forecast_from_mood():\n    return 1\n"),
+            "src/models/weather.py": (
+                "def forecast_for(label, *, intensity=0.5, region='unknown'):\n    return label\n"
+            ),
+            "src/models/__init__.py": "from .weather import WeatherSnapshot, forecast_for\n",
+        },
+        diagnostics=diagnostics,
+    )
+
+    assert plan is not None
+    assert plan.operations[0].path == "tests/test_product.py"
+    replacement = str(plan.operations[0].replacement)
+    assert "from src.models.weather import forecast_for" in replacement
+
+
+def test_python_unresolved_import_symbol_rewrites_test_import_to_existing_module() -> None:
+    """L2-19: test imported forecast_for from engine; weather already defines it."""
+
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            (
+                "Artifact quality scan failed: unresolved import symbol "
+                "'forecast_for' from 'src.engine.forecast' in tests/test_product.py "
+                "(sibling module does not define it)"
+            )
+        ]
+    )
+    importer = "from src.engine.forecast import (\n    ForecastEngine,\n    forecast_for,\n    forecast_from_mood,\n)\n"
+
+    plan = build_python_unresolved_import_symbol_plan(
+        base_files={
+            "tests/test_product.py": importer,
+            "src/engine/forecast.py": ("class ForecastEngine:\n    pass\n\ndef forecast_from_mood():\n    return 1\n"),
+            "src/models/weather.py": (
+                "def forecast_for(label, *, intensity=0.5, region='unknown'):\n    return label\n"
+            ),
+        },
+        diagnostics=diagnostics,
+    )
+
+    assert plan is not None
+    assert plan.metadata["runtime_plan_scope"] == "rewrite_importer_to_unique_existing_module"
+    assert plan.operations[0].path == "tests/test_product.py"
+    replacement = str(plan.operations[0].replacement)
+    assert "from src.models.weather import forecast_for" in replacement
+    assert "forecast_for," not in replacement
+    assert "from src.engine.forecast import" in replacement
+    assert "ForecastEngine" in replacement
+    assert "forecast_from_mood" in replacement
+
+
 def test_python_unresolved_import_symbol_allows_real_similar_alias_only() -> None:
     diagnostics = normalize_artifact_quality_errors(
         [
@@ -557,6 +629,54 @@ def test_python_unresolved_import_symbol_runtime_appends_alias_and_receipt(tmp_p
     assert receipt.status == "applied"
     assert receipt.files_changed == ("shared/registry.py",)
     assert receipt.metadata["empty_stub_generation_allowed"] is False
+
+
+def test_python_unresolved_import_symbol_runtime_rewrites_importer_from_workspace_src(
+    tmp_path: Path,
+) -> None:
+    """Live L2-19: quality scan only passes the test file; weather.py is on disk."""
+
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "models").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "engine" / "forecast.py").write_text(
+        "class ForecastEngine:\n    pass\n\ndef forecast_from_mood():\n    return 1\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "models" / "weather.py").write_text(
+        "def forecast_for(label, *, intensity=0.5, region='unknown'):\n    return label\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "models" / "__init__.py").write_text(
+        "from .weather import WeatherSnapshot, forecast_for\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests" / "test_product.py").write_text(
+        "from src.engine.forecast import (\n    ForecastEngine,\n    forecast_for,\n    forecast_from_mood,\n)\n",
+        encoding="utf-8",
+    )
+    writes: list[str] = []
+    edits: list[str] = []
+
+    result = run_runtime_repair(
+        source_tool="deterministic_unresolved_import_symbol_repair",
+        workspace=tmp_path,
+        base_files=_read_base_files(tmp_path, ("tests/test_product.py",)),
+        artifact_quality_errors=(
+            "Artifact quality scan failed: unresolved import symbol "
+            "'forecast_for' from 'src.engine.forecast' in tests/test_product.py "
+            "(sibling module does not define it)",
+        ),
+        writer=_workspace_writer(tmp_path, writes),
+        editor=_workspace_editor(tmp_path, edits),
+        allowed_paths=("tests/test_product.py",),
+    )
+
+    assert result.ok is True
+    rewritten = (tmp_path / "tests" / "test_product.py").read_text(encoding="utf-8")
+    assert "from src.models.weather import forecast_for" in rewritten
+    assert "forecast_for," not in rewritten
+    assert edits == ["tests/test_product.py"] or writes == ["tests/test_product.py"]
 
 
 def test_python_unittest_runtime_failure_runtime_replaces_overstrict_test(tmp_path: Path) -> None:
@@ -725,6 +845,38 @@ def test_python_missing_module_alias_runtime_fails_closed_on_ambiguous_source(tm
     assert result.ok is False
     assert result.error_code == "repair_not_planned"
     assert not (tmp_path / "src" / "weather.py").exists()
+
+
+def test_python_missing_module_alias_rewrites_src_layout_advertised_package_imports() -> None:
+    """Live L2-19: src/ advertises waterdrop_rhythm_pad but is imported as that name."""
+
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            "ModuleNotFoundError: No module named 'waterdrop_rhythm_pad'",
+        ]
+    )
+    plan = build_python_missing_module_alias_plan(
+        base_files={
+            "src/__init__.py": '"""waterdrop_rhythm_pad\n========\n"""\n\ndef build_default_pad():\n    return 1\n',
+            "src/engine/__init__.py": (
+                "from waterdrop_rhythm_pad import WaterDropPad, build_default_pad\n"
+                "from waterdrop_rhythm_pad.models import MoodAxis\n"
+            ),
+            "src/models/__init__.py": (
+                '"""Example::\n\n    from waterdrop_rhythm_pad.models import MoodAxis\n"""\n\n'
+                "class MoodAxis:\n    pass\n"
+            ),
+        },
+        diagnostics=diagnostics,
+    )
+    assert plan is not None
+    assert plan.metadata["runtime_plan_scope"] == "src_layout_advertised_package_importer_rewrite"
+    assert [operation.path for operation in plan.operations] == ["src/engine/__init__.py"]
+    rewritten = str(plan.operations[0].replacement)
+    assert "from src import WaterDropPad, build_default_pad" in rewritten
+    assert "from src.models import MoodAxis" in rewritten
+    assert "from waterdrop_rhythm_pad" not in rewritten
+    assert all(operation.path != "src/models/__init__.py" for operation in plan.operations)
 
 
 def test_python_package_child_reexport_runtime_exports_child_symbol(tmp_path: Path) -> None:

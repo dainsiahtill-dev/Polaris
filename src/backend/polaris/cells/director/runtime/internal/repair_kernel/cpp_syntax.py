@@ -130,16 +130,13 @@ def build_cpp_include_path_plan(
 def repair_cpp_missing_standard_includes_text(text: str) -> str:
     """Add standard library includes required by C/C++ source text."""
 
-    content = str(text or "")
+    content = _strip_include_trailing_garbage(str(text or ""))
+    content = _hoist_trailing_standard_includes(content)
     additions = _missing_standard_includes(content)
     if not additions:
         return content
     lines = content.splitlines()
-    insert_at = 0
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("#define ") or stripped.startswith("#pragma once") or stripped.startswith("#include "):
-            insert_at = index + 1
+    insert_at = _cpp_preamble_end(lines)
     new_lines = [*lines[:insert_at], *additions, *lines[insert_at:]]
     return "\n".join(new_lines) + "\n"
 
@@ -575,6 +572,88 @@ def _public_struct_field_names(base_files: Mapping[str, str]) -> tuple[str, ...]
     return tuple(sorted(fields))
 
 
+_STD_INCLUDE_LINE_RE = re.compile(r"^\s*#\s*include\s*<([^>]+)>\s*$")
+_INCLUDE_TRAILING_GARBAGE_RE = re.compile(
+    r"^(\s*#\s*include\s*(?:<[^>]+>|\"[^\"]+\"))\s*[=#\-_/]+\s*$",
+    re.MULTILINE,
+)
+
+
+def _strip_include_trailing_garbage(content: str) -> str:
+    """Drop leftover punctuation glued to ``#include`` lines.
+
+    Live L2-20 leftover: ``#include <cmath>=============`` made g++ emit
+    ``extra tokens at end of #include directive`` and hid later TUs.
+    """
+
+    repaired = _INCLUDE_TRAILING_GARBAGE_RE.sub(r"\1", str(content or ""))
+    return repaired
+
+
+_CPP_PREAMBLE_DIRECTIVES = frozenset({"pragma", "include", "ifndef", "ifdef", "if", "define", "endif", "else", "elif"})
+_MEMORY_TYPE_RE = re.compile(r"\bstd::(?:unique_ptr|shared_ptr|weak_ptr|make_unique|make_shared)\b")
+_CMATH_SYMBOL_RE = re.compile(r"\b(?:std::(?:isfinite|isnan|isinf|hypot|fabs|sqrt|pow|abs)|isfinite|isnan|isinf)\s*\(")
+
+
+def _is_cpp_preamble_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return True
+    if stripped.startswith("//") or stripped.startswith("/*") or stripped.startswith("*") or stripped.endswith("*/"):
+        return True
+    if not stripped.startswith("#"):
+        return False
+    token = stripped[1:].strip().split(None, 1)
+    return bool(token) and token[0].lower() in _CPP_PREAMBLE_DIRECTIVES
+
+
+def _cpp_preamble_end(lines: Sequence[str]) -> int:
+    insert_at = 0
+    for index, line in enumerate(lines):
+        if _is_cpp_preamble_line(line):
+            insert_at = index + 1
+            continue
+        break
+    return insert_at
+
+
+def _hoist_trailing_standard_includes(content: str) -> str:
+    """Move `#include <std...>` that appear after code back to the preamble.
+
+    Live L2-20 leftover: ``rule.hpp`` declared ``std::unique_ptr`` then put
+    ``#include <memory>`` after the namespace. Presence-only repair treated
+    that as already fixed, so g++ kept ``unique_ptr is not a member of std``.
+    """
+
+    lines = content.splitlines()
+    if not lines:
+        return content
+    preamble_end = _cpp_preamble_end(lines)
+    hoisted: list[str] = []
+    kept: list[str] = []
+    for index, line in enumerate(lines):
+        match = _STD_INCLUDE_LINE_RE.match(line)
+        if match is not None and index >= preamble_end:
+            hoisted.append(f"#include <{match.group(1).strip()}>")
+            continue
+        kept.append(line)
+    if not hoisted:
+        return content
+    insert_at = _cpp_preamble_end(kept)
+    existing = {
+        match.group(1).strip() for line in kept[:insert_at] if (match := _STD_INCLUDE_LINE_RE.match(line)) is not None
+    }
+    additions = [
+        line
+        for line in dict.fromkeys(hoisted)
+        if (match := _STD_INCLUDE_LINE_RE.match(line)) is not None and match.group(1).strip() not in existing
+    ]
+    repaired = "\n".join(kept) if not additions else "\n".join([*kept[:insert_at], *additions, *kept[insert_at:]])
+    if content.endswith("\n"):
+        return repaired + "\n"
+    return repaired
+
+
 def _missing_standard_includes(content: str) -> list[str]:
     additions: list[str] = []
     if _UINT_TYPE_RE.search(content) and "#include <cstdint>" not in content:
@@ -583,6 +662,10 @@ def _missing_standard_includes(content: str) -> list[str]:
         additions.append("#include <vector>")
     if "std::string" in content and "#include <string>" not in content:
         additions.append("#include <string>")
+    if _MEMORY_TYPE_RE.search(content) and "#include <memory>" not in content:
+        additions.append("#include <memory>")
+    if _CMATH_SYMBOL_RE.search(content) and "#include <cmath>" not in content:
+        additions.append("#include <cmath>")
     return additions
 
 

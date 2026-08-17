@@ -48,6 +48,97 @@ from ._helpers import (
 logger = logging.getLogger(__name__)
 
 
+def _job_token_from_director_context(context: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Return the CE/control-plane JobToken already bound to this Director claim."""
+
+    if not isinstance(context, Mapping):
+        return {}
+    candidates: list[Any] = [
+        context.get("job_token"),
+        context.get("capability_token"),
+        context.get("control_plane_job_token"),
+    ]
+    metadata = context.get("metadata")
+    if isinstance(metadata, Mapping):
+        candidates.extend(
+            (
+                metadata.get("job_token"),
+                metadata.get("capability_token"),
+                metadata.get("control_plane_job_token"),
+            )
+        )
+    for raw in candidates:
+        if isinstance(raw, Mapping) and str(raw.get("token_id") or "").strip():
+            return dict(raw)
+    return {}
+
+
+def _project_preflight_execution_capability(
+    adapter: Any,
+    *,
+    context: Mapping[str, Any] | None,
+    target_task_id: str,
+    contract_task_id: str,
+    run_id: str,
+) -> None:
+    """Project a pending_exec JobToken for preflight-only artifact receipt.
+
+    Live L2-19 remint-1: TASK-3-foundation accepted existing
+    ``requirements.txt`` with zero tools, then
+    ``record_project_artifact`` fail-closed because
+    ``execution_capability_by_task`` only indexes ``pending_exec``
+    ``tool_receipt`` gates.  CE already minted
+    ``job-f98bbeae7ce542f388691e3f`` on the blueprint; preflight must
+    append that token before sealing ProjectArtifactReceiptV1.
+    """
+
+    token = _job_token_from_director_context(context)
+    token_id = str(token.get("token_id") or "").strip()
+    owner = str(contract_task_id or "").strip() or str(target_task_id or "").strip()
+    workspace = str(getattr(adapter, "workspace", "") or "").strip()
+    ledger_run_id = str(token.get("factory_run_id") or token.get("run_id") or run_id or "").strip()
+    if not token_id or not owner or not workspace or not ledger_run_id:
+        return
+    projected_token = dict(token)
+    projected_token["task_id"] = owner
+    projected_token["stage"] = "pending_exec"
+    # Capability grants must not inherit CE verifier obligations.  Live
+    # L2-19 remint-9: copying required_evidence_modalities made every
+    # preflight gate look like missing qa/code/command after QA PASS.
+    gate_policy = dict(projected_token.get("gate_policy") or {})
+    if gate_policy:
+        gate_policy["required_evidence_modalities"] = []
+        gate_policy["required_modalities"] = []
+        projected_token["gate_policy"] = gate_policy
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=workspace,
+            run_id=ledger_run_id,
+            event={
+                "event_type": "gate_evaluated",
+                "stage": "pending_exec",
+                "gate": {
+                    "name": "existing_scope_preflight",
+                    "ok": True,
+                    "summary": "existing declared scope accepted under task-local JobToken",
+                },
+                "job_token": projected_token,
+                "physical_evidence": {
+                    "command_count": 0,
+                    "sampled_command_count": 0,
+                    "commands_truncated": False,
+                    "metadata": {
+                        "role": "director",
+                        "task_id": owner,
+                        "runtime_task_id": str(target_task_id or "").strip(),
+                        "source": "director.existing_scope_preflight",
+                    },
+                },
+            },
+        )
+    )
+
+
 def _append_receipt_bound_preflight_task_boundary(
     adapter: Any,
     *,

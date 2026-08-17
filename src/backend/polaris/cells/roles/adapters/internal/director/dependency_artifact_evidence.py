@@ -461,7 +461,10 @@ def build_current_task_project_artifact_receipt_evidence(
         "receipt_paths": receipt_paths,
         "receipt_refs": receipt_refs,
         "missing_or_stale_paths": missing,
-        "ok": bool(queries) and not missing and len(receipt_paths) == len(queries),
+        # Vacuous success when CE assigned zero owned artifacts (L2-19 TASK-2
+        # remint: files already on disk, required_artifact_count=0).  Missing
+        # or stale required receipts still fail closed.
+        "ok": not missing and len(receipt_paths) == len(queries),
     }
 
 

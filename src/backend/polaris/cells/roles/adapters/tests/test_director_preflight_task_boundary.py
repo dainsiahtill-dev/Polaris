@@ -123,6 +123,129 @@ def test_existing_scope_preflight_seals_boundary_when_requires_fresh_is_false(
     assert appended[0]["run_id"] == "director-preflight-1"
 
 
+def test_existing_scope_preflight_projects_pending_exec_job_token(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    """L2-19 remint-1: preflight must append the CE JobToken before receipt seal."""
+
+    from polaris.cells.roles.adapters.internal.director.execute_method import _claim as claim_module
+
+    appended_events: list[dict[str, Any]] = []
+    receipt_evidence = {
+        "schema_version": "polaris.current_task_project_artifact_receipt_evidence.v1",
+        "authority": "runtime.execution_broker.project_artifact_receipt.v1",
+        "ok": True,
+        "required_artifact_count": 1,
+        "receipt_count": 1,
+        "receipt_paths": ["requirements.txt"],
+        "receipt_refs": ["execution-broker://project-verification/artifact/abc"],
+    }
+    existing_evidence = {
+        "ok": True,
+        "reason": "declared_scope_present",
+        "existing_paths": ["requirements.txt"],
+        "project_artifact_receipt_evidence": receipt_evidence,
+    }
+
+    monkeypatch.setattr(
+        preflight_module,
+        "_build_existing_workspace_task_evidence",
+        lambda **kwargs: existing_evidence,
+    )
+    monkeypatch.setattr(
+        preflight_module,
+        "_attach_current_task_project_receipt_evidence",
+        lambda *args, **kwargs: (existing_evidence, True),
+    )
+    monkeypatch.setattr(
+        preflight_module,
+        "_collect_materialization_quality_errors",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        preflight_module,
+        "_can_accept_existing_workspace_scope",
+        lambda **kwargs: True,
+    )
+    monkeypatch.setattr(
+        preflight_module,
+        "_director_existing_scope_preflight_enabled",
+        lambda context: True,
+    )
+    monkeypatch.setattr(
+        preflight_module,
+        "_emit_director_adapter_cognitive_receipt",
+        lambda *args, **kwargs: {"receipt_type": "director_adapter_existing_scope_preflight"},
+    )
+    monkeypatch.setattr(
+        preflight_module,
+        "_finalize_claimed_execution",
+        lambda *args, **kwargs: {
+            "success": True,
+            "identity": {"external_task_id": "TASK-3-foundation"},
+        },
+    )
+    monkeypatch.setattr(
+        preflight_module,
+        "_task_completion_projection_from_context",
+        lambda *args, **kwargs: {
+            "schema_version": "polaris.task_completion_projection.v1",
+            "task_id": "TASK-3-foundation",
+            "project_id": "L2-19",
+        },
+    )
+    monkeypatch.setattr(
+        preflight_module,
+        "_append_receipt_bound_preflight_task_boundary",
+        lambda *args, **kwargs: {"status": "completed_verified", "ok": True},
+    )
+
+    def _capture_append(command: Any) -> Any:
+        appended_events.append(dict(command.event))
+        return SimpleNamespace(success=True)
+
+    monkeypatch.setattr(claim_module, "append_run_ledger_event", _capture_append)
+    adapter = SimpleNamespace(workspace=str(tmp_path), _update_task_progress=lambda *a, **k: None)
+    result = preflight_module._phase_existing_scope_preflight(
+        adapter,
+        board_claim_applied=True,
+        task_execution_attempt_authority=None,
+        context={
+            "job_token": {
+                "token_id": "job-f98bbeae7ce542f388691e3f",
+                "run_id": "factory_9bb8125ddedf",
+                "factory_run_id": "factory_9bb8125ddedf",
+                "project_id": "L2-19",
+                "stage": "pending_exec",
+                "contract_hash": "a" * 64,
+                "blueprint_hash": "b" * 64,
+                "capability_audit": {"ok": True, "issues": []},
+            }
+        },
+        decision_signals=[],
+        requires_fresh_materialization=False,
+        run_id="director-preflight-l219",
+        target_task_id="14",
+        task={"metadata": {"pm_task_id": "TASK-3-foundation", "target_files": ["requirements.txt"]}},
+        task_claim_session_id="session-1",
+        workspace_name="unused",
+        state=MaterializationState.from_locals({}, [], [], [], []),
+    )
+
+    assert result is not None
+    assert result["success"] is True
+    assert len(appended_events) == 1
+    event = appended_events[0]
+    assert event["event_type"] == "gate_evaluated"
+    assert event["stage"] == "pending_exec"
+    assert event["gate"]["name"] == "existing_scope_preflight"
+    assert event["job_token"]["token_id"] == "job-f98bbeae7ce542f388691e3f"
+    assert event["job_token"]["task_id"] == "TASK-3-foundation"
+    assert event["physical_evidence"]["metadata"]["task_id"] == "TASK-3-foundation"
+    assert event["physical_evidence"]["metadata"]["runtime_task_id"] == "14"
+
+
 def test_existing_scope_preflight_seals_declared_paths_when_ce_owned_artifacts_empty(
     monkeypatch: Any,
 ) -> None:

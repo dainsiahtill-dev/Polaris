@@ -150,8 +150,6 @@ def _assert_projection_flock_available(ledger: RunLedger) -> None:
         fcntl.flock(probe.fileno(), fcntl.LOCK_UN)
 
 
-
-
 def test_projection_exposes_failed_tool_lifecycle_without_dropped_dispatch() -> None:
     lifecycle = build_tool_call_lifecycle_receipt(
         run_id="run-1",
@@ -312,6 +310,197 @@ def test_projection_preserves_completed_boundary_after_zero_effect_mutation_bypa
     assert boundary["suppressed_non_mutating_deferred_count"] == 1
     assert boundary["latest"]["status"] == "completed_verified"
     assert boundary["latest_by_task"]["TASK-1"]["status"] == "completed_verified"
+
+
+def test_projection_preserves_completed_boundary_after_cross_run_mutation_bypass() -> None:
+    """Live L2-19: TASK-2 completed on director-A, remint director-B hit bypass.
+
+    Factory latest_by_task must keep the ledger-bound completed_verified epoch.
+    A later zero-effect mutation_bypass_blocked on a new director run_id is
+    not a new delivery and cannot fail-close director_dispatch.
+    """
+
+    projection = build_run_ledger_projection(
+        [
+            {
+                "event_type": "task_boundary_verdict",
+                "run_id": "director-completed",
+                "task_id": "TASK-2",
+                "append_id": "append-complete",
+                "content_id": "content-complete",
+                "task_boundary_verdict": {
+                    "task_id": "TASK-2",
+                    "run_id": "director-completed",
+                    "status": "completed_verified",
+                    "ok": True,
+                    "failure_class": "PASSED",
+                    "reason": "all delivery obligations passed",
+                    "evidence_refs": ["receipt-complete"],
+                },
+            },
+            {
+                "event_type": "task_boundary_verdict",
+                "run_id": "director-remint",
+                "task_id": "TASK-2",
+                "append_id": "append-deferred",
+                "content_id": "content-deferred",
+                "task_boundary_verdict": {
+                    "task_id": "TASK-2",
+                    "run_id": "director-remint",
+                    "status": "deferred_followup_required",
+                    "ok": False,
+                    "failure_class": "DEFERRED_FOLLOWUP_REQUIRED",
+                    "reason": "mutation_bypass_blocked",
+                    "evidence_refs": ["receipt-read-only"],
+                    "target_files": [],
+                    "completed_artifacts": [],
+                    "tool_dispatch": {},
+                },
+            },
+        ]
+    )
+
+    boundary = projection["task_boundary"]
+    assert boundary["ok"] is True
+    assert boundary["suppressed_non_mutating_deferred_count"] == 1
+    assert boundary["latest_by_task"]["TASK-2"]["status"] == "completed_verified"
+    assert boundary["latest_by_task"]["TASK-2"]["run_id"] == "director-completed"
+
+
+def test_projection_preflight_job_token_does_not_mark_passing_qa_missing() -> None:
+    """Live L2-19: existing_scope_preflight inherited CE required modalities.
+
+    Capability-grant / leftover-extra tokens must not union qa/code/command
+    into missing_required after official workspace_validation and qa_verdict
+    already passed.
+    """
+
+    projection = build_run_ledger_projection(
+        [
+            {
+                "event_type": "gate_evaluated",
+                "stage": "pending_exec",
+                "gate": {
+                    "name": "existing_scope_preflight",
+                    "ok": True,
+                    "summary": "existing declared scope accepted under task-local JobToken",
+                },
+                "job_token": {
+                    "token_id": "job-ce",
+                    "stage": "pending_exec",
+                    "task_id": "TASK-3-tests",
+                    "project_id": "L2-19",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {
+                        "required_evidence_modalities": ["tool_receipt", "qa", "code", "command"],
+                    },
+                },
+                "physical_evidence": {
+                    "command_count": 0,
+                    "sampled_command_count": 0,
+                    "commands_truncated": False,
+                    "metadata": {
+                        "source": "director.existing_scope_preflight",
+                        "task_id": "TASK-3-tests",
+                    },
+                },
+            },
+            {
+                "event_type": "gate_evaluated",
+                "stage": "pending_exec",
+                "gate": {"name": "tool_receipt", "ok": True, "summary": "edit receipt"},
+                "job_token": {
+                    "token_id": "job-edit",
+                    "project_id": "L2-19",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+                "physical_evidence": {
+                    "tool_receipts": [{"ok": True, "operation": "edit_file"}],
+                    "command_count": 0,
+                },
+            },
+            {
+                "event_type": "gate_evaluated",
+                "stage": "workspace_validation",
+                "gate": {"name": "workspace_validation", "ok": True, "summary": "unittest passed"},
+                "job_token": {
+                    "token_id": "job-quality",
+                    "project_id": "L2-19",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {"required_evidence_modalities": ["command"]},
+                },
+                "physical_evidence": {
+                    "modalities": {"command": {"present": True, "ok": True, "detail": "31/31"}},
+                },
+            },
+            {
+                "event_type": "gate_evaluated",
+                "stage": "qa",
+                "gate": {"name": "qa_verdict", "ok": True, "summary": "Canonical QA verdict: PASS"},
+                "job_token": {
+                    "token_id": "job-qa",
+                    "project_id": "L2-19",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+                "physical_evidence": {
+                    "modalities": {"qa": {"present": True, "ok": True}},
+                },
+            },
+        ]
+    )
+
+    policy = projection["evidence_policy"]
+    assert policy["missing_required_modalities"] == []
+    assert policy["failed_required_modalities"] == []
+    assert policy["integrity_ok"] is True
+    assert "qa" not in policy["missing_required_modalities"]
+    assert "command" not in policy["missing_required_modalities"]
+    assert projection["execution_capability_by_task"]["TASK-3-tests"]["latest_token_id"] == "job-ce"
+
+
+def test_projection_leftover_extra_token_does_not_mark_passing_qa_missing() -> None:
+    projection = build_run_ledger_projection(
+        [
+            {
+                "event_type": "gate_evaluated",
+                "stage": "pending_exec",
+                "gate": {"name": "leftover_quality_extra", "ok": True, "summary": "leftover extra turn"},
+                "job_token": {
+                    "token_id": "job-leftover",
+                    "task_id": "TASK-3-tests",
+                    "project_id": "L2-19",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {
+                        "required_evidence_modalities": ["tool_receipt", "qa", "code", "command"],
+                    },
+                },
+                "physical_evidence": {
+                    "command_count": 0,
+                    "metadata": {"source": "director.leftover_quality_extra"},
+                },
+            },
+            {
+                "event_type": "gate_evaluated",
+                "stage": "qa",
+                "append_id": "a" * 64,
+                "content_id": "b" * 64,
+                "gate": {"name": "qa_verdict", "ok": True, "summary": "PASS"},
+                "job_token": {
+                    "token_id": "job-qa",
+                    "project_id": "L2-19",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+                "physical_evidence": {"modalities": {"qa": {"present": True, "ok": True}}},
+            },
+        ]
+    )
+
+    policy = projection["evidence_policy"]
+    assert policy["missing_required_modalities"] == []
+    assert "qa" not in policy["required_modalities"]
 
 
 def test_projection_does_not_suppress_mutation_bypass_without_completed_boundary() -> None:

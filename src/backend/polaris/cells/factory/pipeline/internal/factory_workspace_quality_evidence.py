@@ -327,6 +327,18 @@ _CPP_OR_CMAKE_RESIDUAL_PATH_RE = re.compile(
     r":\d+(?::\d+)?:\s+error:",
     re.IGNORECASE,
 )
+_CPP_HEADER_OWNED_DIAGNOSTIC_RE = re.compile(
+    r"(?P<path>(?:src|include)/[^\s:'\"]+\.(?:h|hh|hpp|hxx)):\d+(?::\d+)?:\s+error:\s+"
+    r"(?:"
+    r".*does not name a type"
+    r"|.*is not a member of\s+['\"‘’]std['\"‘’]"
+    r")",
+    re.IGNORECASE,
+)
+_CPP_UNKNOWN_TYPE_NAME_RE = re.compile(
+    r"['\"‘’](?P<name>[A-Za-z_]\w*)['\"‘’]\s+does not name a type",
+    re.IGNORECASE,
+)
 _CPP_FAILING_TU_RE = re.compile(r"(?m)^###\s+(?P<path>\S+)")
 _CPP_FAILING_TU_INDEX_RE = re.compile(r"(?m)^###\s+FAILING_TUS\s+(?P<paths>.+)$")
 _CPP_STD_NAMESPACE_POLLUTION_RE = re.compile(
@@ -337,6 +349,14 @@ _CPP_NAMESPACE_OPEN_RE = re.compile(r"(?m)^\s*namespace\b")
 _CPP_HEADER_SUFFIXES = {".h", ".hh", ".hpp", ".hxx"}
 _UNITTEST_TRACEBACK_TEST_RE = re.compile(
     r'File "[^"\n]+/(?P<path>tests/test_[^"/\s]+\.py)"',
+    re.IGNORECASE,
+)
+_PYTHON_TRACEBACK_SRC_RE = re.compile(
+    r'File "[^"\n]+/(?P<path>src/[^"\n]+\.py)"',
+    re.IGNORECASE,
+)
+_PYTHON_MODULE_NOT_FOUND_NAME_RE = re.compile(
+    r"ModuleNotFoundError:\s+No module named ['\"](?P<module>[A-Za-z_][A-Za-z0-9_]*)['\"]",
     re.IGNORECASE,
 )
 _TYPESCRIPT_SOURCE_SUFFIXES = frozenset({".ts", ".tsx", ".mts", ".cts"})
@@ -661,6 +681,47 @@ def _workspace_relative_source_exists(workspace: Path, rel: str) -> bool:
         return (workspace / cleaned).is_file()
     except OSError:
         return False
+
+
+def _python_modulenotfound_src_importer_targets(blob: str, workspace: Path) -> list[str]:
+    """Prefer the src/ importer from a ModuleNotFoundError traceback.
+
+    Live L2-19: official ``unittest discover`` failed because
+    ``src/engine/__init__.py`` imported ``waterdrop_rhythm_pad``. Leftover
+    only accepted ``tests/test_product.py`` and never leased the in-scope
+    production importer.
+    """
+
+    match = _PYTHON_MODULE_NOT_FOUND_NAME_RE.search(str(blob or ""))
+    if match is None:
+        return []
+    module = str(match.group("module") or "").strip()
+    found: list[str] = []
+    for frame in _PYTHON_TRACEBACK_SRC_RE.finditer(str(blob or "")):
+        rel = str(frame.group("path") or "").replace("\\", "/").strip()
+        if rel and rel not in found and _workspace_relative_source_exists(workspace, rel):
+            found.append(rel)
+    src_root = workspace / "src"
+    if module and src_root.is_dir():
+        import_re = re.compile(rf"(?m)^from[ \t]+{re.escape(module)}(?:\.|[ \t]+import)")
+        try:
+            python_files = sorted(src_root.rglob("*.py"))
+        except OSError:
+            python_files = []
+        for path in python_files:
+            try:
+                rel = path.relative_to(workspace).as_posix()
+            except ValueError:
+                continue
+            if rel in found or "__pycache__" in path.parts:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if import_re.search(text) and _workspace_relative_source_exists(workspace, rel):
+                found.append(rel)
+    return found
 
 
 def _is_typescript_test_path(path: str) -> bool:
@@ -1155,6 +1216,74 @@ def _cpp_residuals_have_std_namespace_pollution(residual_errors: Sequence[str]) 
     return _CPP_STD_NAMESPACE_POLLUTION_RE.search(blob) is not None
 
 
+def _cpp_unknown_type_declaration_targets(blob: str, workspace: Path) -> list[str]:
+    """Lease the existing header that should own an unknown C++ type.
+
+    Live L2-20 reminted ``entity.hpp`` (use site) while leftover said
+    ``'WindSample' does not name a type``. The type belongs in
+    ``src/models/wind.hpp``. Prefer that existing stem header so leftover
+    does not keep inventing the field on the use site.
+    """
+
+    if not workspace.is_dir() or "does not name a type" not in blob.lower():
+        return []
+    names: list[str] = []
+    for match in _CPP_UNKNOWN_TYPE_NAME_RE.finditer(blob):
+        name = str(match.group("name") or "").strip()
+        if name and name not in names:
+            names.append(name)
+    stems: set[str] = set()
+    for name in names:
+        stems.add(name.lower())
+        parts = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])", name)
+        if parts:
+            stems.add(parts[0].lower())
+    found: list[str] = []
+    search_roots = [path for path in (workspace / "src", workspace / "include") if path.is_dir()]
+    ignored = {"build", "cmake-build", "runtime", ".polaris", "out", "target"}
+    for stem in stems:
+        for root in search_roots:
+            try:
+                hits = [
+                    path
+                    for ext in (".hpp", ".hh", ".h", ".hxx")
+                    for path in root.rglob(stem + ext)
+                    if path.is_file() and not any(part in ignored for part in path.parts)
+                ]
+            except OSError:
+                continue
+            for path in sorted(hits, key=lambda item: item.as_posix()):
+                try:
+                    rel = path.relative_to(workspace).as_posix()
+                except ValueError:
+                    continue
+                if rel not in found:
+                    found.append(rel)
+    return found
+
+
+def _cpp_header_owned_diagnostic_targets(blob: str, workspace: Path) -> list[str]:
+    """Lease the header that owns a type/std-member diagnostic.
+
+    Live L2-20 leftover reminted ``entity.cpp`` while
+    ``entity.hpp:39:5: error: 'WindSample' does not name a type`` and
+    ``rule.hpp:161:42: error: 'unique_ptr' is not a member of 'std'`` stayed
+    red. Prefer those header error sites over the including translation units
+    without reviving L2-15 ``has not been declared`` header note sites.
+    """
+
+    if not workspace.is_dir():
+        return []
+    found: list[str] = []
+    for match in _CPP_HEADER_OWNED_DIAGNOSTIC_RE.finditer(blob):
+        rel = str(match.group("path") or "").replace("\\", "/").strip()
+        if not rel or rel in found:
+            continue
+        if (workspace / rel).is_file():
+            found.append(rel)
+    return found
+
+
 def workspace_quality_unclaimed_residual_targets(
     residual_errors: Sequence[str],
     *,
@@ -1229,6 +1358,9 @@ def workspace_quality_unclaimed_residual_targets(
     depth_prod = _delivery_depth_prod_shortfall_targets(blob, workspace)
     if depth_prod:
         leftover = _rotate_claimed_leftover([*depth_prod, *leftover], claimed) or depth_prod
+    src_importers = _python_modulenotfound_src_importer_targets(blob, workspace)
+    if src_importers:
+        leftover = list(dict.fromkeys([*src_importers, *leftover]))
     for match in _UNITTEST_TRACEBACK_TEST_RE.finditer(blob):
         rel = str(match.group("path") or "").replace("\\", "/").strip()
         if rel and rel not in leftover and (workspace / rel).is_file():
@@ -1266,13 +1398,24 @@ def workspace_quality_unclaimed_residual_targets(
     leftover = _demote_python_unittest_helpers_when_js_impl(leftover)
     leftover = _rotate_claimed_leftover(leftover, claimed)
     leftover = _demote_python_unittest_helpers_when_js_impl(leftover)
+    type_homes = _cpp_unknown_type_declaration_targets(blob, workspace)
+    header_owned = _cpp_header_owned_diagnostic_targets(blob, workspace)
+    for rel in (*type_homes, *header_owned):
+        if rel not in leftover:
+            leftover.append(rel)
+    leftover = _rotate_claimed_leftover(leftover, claimed)
     # Live L2-15 remint-4: leftover leased energy.hpp (note/include site)
     # while src/main.cpp still failed. Prefer translation units + cmake lists.
+    # Live L2-20: prefer unknown-type declaration homes, then header-owned
+    # type/std-member error sites, then TUs.
     preferred = [
         path
         for path in leftover
         if Path(path).suffix.lower() in _FAILING_TU_SOURCE_SUFFIXES or path.lower() == "cmakelists.txt"
     ]
+    owned_headers = list(dict.fromkeys([*type_homes, *header_owned]))
+    if owned_headers:
+        preferred = list(dict.fromkeys([*owned_headers, *preferred]))
     if _cpp_residuals_have_std_namespace_pollution(residual_errors):
         headers = [path for path in workspace_quality_unclosed_namespace_headers(workspace) if path not in claimed]
         if headers:
@@ -1347,6 +1490,12 @@ def workspace_quality_unclaimed_failing_tu_targets(
         return list(dict.fromkeys(unittest_helpers))
     leftover = unittest_helpers
     leftover = _rotate_claimed_leftover(leftover, claimed)
+    type_homes = _cpp_unknown_type_declaration_targets(blob, workspace)
+    header_owned = _cpp_header_owned_diagnostic_targets(blob, workspace)
+    owned_headers = list(dict.fromkeys([*type_homes, *header_owned]))
+    if owned_headers:
+        leftover = list(dict.fromkeys([*owned_headers, *leftover]))
+        leftover = _rotate_claimed_leftover(leftover, claimed)
     if leftover:
         # Compile/link TUs still fail. Immediate rotate must stay on those
         # TUs — remint-21 R4 leased tests/ while main.cpp was still red.
@@ -1366,6 +1515,9 @@ def workspace_quality_unclaimed_failing_tu_targets(
         ctor_homes = _rotate_claimed_leftover(_cpp_runtime_ctor_throw_targets(blob, workspace), claimed)
         if ctor_homes:
             return ctor_homes
+    src_importers = _python_modulenotfound_src_importer_targets(blob, workspace)
+    if src_importers:
+        return _rotate_claimed_leftover(src_importers, claimed) or src_importers
     for match in _UNITTEST_TRACEBACK_TEST_RE.finditer(blob):
         rel = str(match.group("path") or "").replace("\\", "/").strip()
         if rel and rel not in leftover and (workspace / rel).is_file():

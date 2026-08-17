@@ -512,13 +512,31 @@ _CPP_DIAGNOSTIC_DEFINITION_PATH_RE = re.compile(
     re.IGNORECASE,
 )
 _CPP_NAMED_TYPE_RE = re.compile(
-    r"(?:class|struct)\s+(?:[\w:]+::)*(?P<type>[A-Za-z_]\w*)"
+    r"(?:class|struct|enum(?:\s+class)?)\s+(?:[\w:]+::)*(?P<type>[A-Za-z_]\w*)"
     r"|no matching function for call to\s+[''‘\"](?:[\w:]+::)*(?P<ctor>[A-Za-z_]\w*)::"
     r"|has no member named\s+[''‘\"](?P<member>[A-Za-z_]\w*)"
+    r"|[''‘\"](?P<missing>[A-Za-z_]\w*)[''‘\"]\s+is not a member of\s+[''‘\"](?P<owner>[\w:]+)[''‘\"]"
+    r"|cannot convert\s+.*?\s+to\s+[''‘\"](?:[\w:]+::)*(?P<conv>[A-Za-z_]\w*)"
     r"|what\(\):\s+(?P<throw>[A-Za-z_]\w*)::(?P=throw):",
     re.IGNORECASE,
 )
-_CPP_ITEM_DEFINITION_RE = re.compile(r"(?m)^\s*(?:class|struct)\s+(?P<name>[A-Z][A-Za-z0-9_]*)\b")
+_CPP_ITEM_DEFINITION_RE = re.compile(r"(?m)^\s*(?:class|struct|enum(?:\s+class)?)\s+(?P<name>[A-Z][A-Za-z0-9_]*)\b")
+_CPP_SKIP_NAMED_TYPES = frozenset(
+    {
+        "std",
+        "string",
+        "basic_string",
+        "__cxx11",
+        "vector",
+        "optional",
+        "unique_ptr",
+        "shared_ptr",
+        "size_t",
+        "uint8_t",
+        "int64_t",
+    }
+)
+_CPP_QUOTE_INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.MULTILINE)
 _DIAGNOSTIC_NAMED_TYPE_RE = re.compile(
     r"(?:method not found in|on type|for (?:struct|enum|reference)|found for (?:enum|struct))\s+"
     r"[`'](?P<type>&?(?:mut\s+)?[A-Za-z_][A-Za-z0-9_:]*)[`']",
@@ -591,17 +609,28 @@ def _diagnostic_named_cpp_types(errors: list[str]) -> list[str]:
     seen: set[str] = set()
     for error in errors:
         for match in _CPP_NAMED_TYPE_RE.finditer(str(error or "")):
+            groups = match.groupdict()
+            owner = str(groups.get("owner") or "").strip()
+            owner_leaf = owner.rsplit("::", 1)[-1] if owner else ""
+            if owner_leaf in _CPP_SKIP_NAMED_TYPES:
+                owner_leaf = ""
             raw = str(
-                match.group("type") or match.group("ctor") or match.group("member") or match.group("throw") or ""
+                groups.get("type")
+                or groups.get("ctor")
+                or groups.get("conv")
+                or owner_leaf
+                or groups.get("member")
+                or groups.get("throw")
+                or ""
             ).strip()
             name = raw.rsplit("::", 1)[-1]
-            if not name:
+            if not name or name in _CPP_SKIP_NAMED_TYPES:
                 continue
             candidates = [name]
-            if match.group("member"):
+            if groups.get("member"):
                 candidates.append(name[:1].upper() + name[1:])
             for candidate in candidates:
-                if not candidate or candidate in seen:
+                if not candidate or candidate in seen or candidate in _CPP_SKIP_NAMED_TYPES:
                     continue
                 seen.add(candidate)
                 names.append(candidate)
@@ -753,6 +782,128 @@ def _cpp_type_definition_refs(
             if not wanted:
                 return refs
     return refs
+
+
+def _resolve_cpp_quoted_include(workspace: Path, importer: Path, include_path: str) -> Path | None:
+    token = str(include_path or "").replace("\\", "/").strip()
+    if not token or token.startswith("/") or ".." in Path(token).parts:
+        return None
+    for candidate in (
+        importer.parent / token,
+        workspace / "src" / token,
+        workspace / "include" / token,
+        workspace / token,
+    ):
+        try:
+            resolved = candidate.resolve()
+            resolved.relative_to(workspace)
+        except (OSError, ValueError):
+            continue
+        if resolved.is_file():
+            return resolved
+    return None
+
+
+def _cpp_header_public_api_excerpt(text: str, *, budget: int = 1800) -> str:
+    """Keep enum/class declarations and existing label/parser signatures."""
+
+    lines = str(text or "").splitlines()
+    kept: list[str] = []
+    used = 0
+    capture_enum = 0
+    for line in lines:
+        stripped = line.strip()
+        keep = False
+        if re.match(r"^(?:enum\s+class|enum|struct|class)\s+[A-Z]", stripped):
+            keep = True
+            capture_enum = 8 if stripped.startswith("enum") else 0
+        elif capture_enum > 0:
+            keep = bool(stripped) and not stripped.startswith("#")
+            capture_enum -= 1
+            if "}" in stripped:
+                capture_enum = 0
+        elif stripped.startswith("[[nodiscard]]") or re.match(
+            r"^(?:inline\s+)?(?:constexpr\s+)?(?:bool|void|std::string_view|std::string)\s+\w+(?:_label|try_parse_\w*)?\s*\(",
+            stripped,
+        ):
+            keep = True
+        if not keep:
+            continue
+        remaining = budget - used
+        if remaining <= 0:
+            break
+        clipped = line[:remaining]
+        kept.append(clipped)
+        used += len(clipped) + 1
+    return "\n".join(kept)
+
+
+def _cpp_included_header_api_block(
+    *,
+    workspace_full: str,
+    repair_target_files: list[str],
+) -> str:
+    """Project included C++ headers as read-only existing API evidence.
+
+    Live L2-20 leftover reminted ``src/main.cpp`` after ``isfinite`` /
+    string-to-``EntityKind`` residuals. The model then invented
+    ``wind::to_string`` / ``severity_to_string`` / ``ResultStatus::Partial``
+    instead of ``result_status_label`` / ``try_parse_kind``. Included
+    headers already declared those names.
+    """
+
+    workspace = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
+    if workspace is None or not workspace.is_dir() or not repair_target_files:
+        return ""
+    headers: list[Path] = []
+    seen: set[str] = set()
+    for rel_path in repair_target_files[:6]:
+        rel = _normalize_declared_task_path(rel_path)
+        if not rel or Path(rel).suffix.lower() not in {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}:
+            continue
+        try:
+            importer = (workspace / rel).resolve()
+            importer.relative_to(workspace)
+            text = importer.read_text(encoding="utf-8")
+        except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+            continue
+        for match in _CPP_QUOTE_INCLUDE_RE.finditer(text):
+            header = _resolve_cpp_quoted_include(workspace, importer, match.group(1))
+            if header is None:
+                continue
+            key = header.as_posix()
+            if key in seen:
+                continue
+            seen.add(key)
+            headers.append(header)
+    if not headers:
+        return ""
+    blocks: list[str] = []
+    used = 0
+    total_budget = 6000
+    for header in headers[:8]:
+        try:
+            rel = header.relative_to(workspace).as_posix()
+            excerpt = _cpp_header_public_api_excerpt(header.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+        if not excerpt:
+            continue
+        remaining = max(0, total_budget - used)
+        if remaining <= 0:
+            break
+        excerpt = excerpt[:remaining]
+        used += len(excerpt)
+        blocks.append(f"--- {rel} (READ-ONLY EXISTING API) ---\n```text\n{excerpt}\n```")
+    if not blocks:
+        return ""
+    return (
+        "EXISTING C++ PUBLIC API FROM INCLUDED HEADERS (READ-ONLY; NEVER INVENT SIBLINGS):\n"
+        "Use only these exact names. If g++ says X is not a member of NS, remap the "
+        "use-site to an existing label/parser below. Never invent NS::to_string, "
+        "*_to_string, extra enum enumerators, or extra struct fields. Assign enums "
+        "via existing try_parse_* helpers, not raw std::string.\n" + "\n".join(blocks) + "\n"
+    )
 
 
 _TS_TSC_SITE_RE = re.compile(
@@ -1156,6 +1307,9 @@ def _diagnostic_referenced_definition_context_block(
             "If g++ says class T has no member named M and a header below "
             "defines type M (energy -> Energy), T does not own M. Compose the "
             "existing type at the use-site. Never invent T::M / T::M_* accessors. "
+            "If g++ says X is not a member of NS or enum E, remap the use-site "
+            "to an existing NS label/parser/enumerator from the headers below. "
+            "Never invent NS::to_string, *_to_string, or extra enumerators. "
             "If g++ says no matching function for call to T::T(args), keep the "
             "existing constructor and fix the call-site arguments; never invent "
             "a new overload. CLI abort `std::invalid_argument` / "
@@ -2111,6 +2265,10 @@ def _build_materialization_quality_repair_message(
         artifact_quality_errors=artifact_quality_errors,
         repair_target_files=prompt_repair_target_files,
     )
+    cpp_included_api_block = _cpp_included_header_api_block(
+        workspace_full=workspace_full,
+        repair_target_files=prompt_repair_target_files,
+    )
     # C7-text W3 (2026-06-16 deliberation): cross-file coherence repair. An
     # unresolved relative import means the importer references a module that
     # does not exist yet; QA detects it, but the bare "MISSING TARGET FILES"
@@ -2399,6 +2557,7 @@ def _build_materialization_quality_repair_message(
         f"{repair_context_block}"
         f"{verifier_source_context_block}"
         f"{referenced_definition_context_block}"
+        f"{cpp_included_api_block}"
         f"{coherence_block}"
         f"{symbol_repair_block}"
         f"{javascript_named_export_block}"

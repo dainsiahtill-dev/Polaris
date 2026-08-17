@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public.directed_effect_receipt_validation import (
@@ -100,8 +102,10 @@ def _preserves_completed_task_boundary(
     ``mutation_bypass_blocked`` means the follow-up turn was rejected before
     any requested mutation was dispatched.  It is useful stagnation evidence,
     but it cannot erase an earlier, ledger-bound ``completed_verified`` fact
-    for the same task/run.  Real boundary defects and failed verifier evidence
-    still replace the prior verdict and remain fail-closed.
+    for the same contract task.  Same-task Director remints open a new
+    ``director-*`` run_id; a zero-effect bypass on that new run is not a new
+    delivery epoch.  Real boundary defects and failed verifier evidence still
+    replace the prior verdict and remain fail-closed.
     """
 
     if not isinstance(current, dict):
@@ -119,7 +123,9 @@ def _preserves_completed_task_boundary(
         and _clean_string(candidate.get("reason")).lower() == "mutation_bypass_blocked"
     ):
         return False
-    if _clean_string(current.get("run_id")) != _clean_string(candidate.get("run_id")):
+    current_task = _clean_string(current.get("task_id"))
+    candidate_task = _clean_string(candidate.get("task_id"))
+    if current_task and candidate_task and current_task != candidate_task:
         return False
     if not (
         _clean_string(current.get("append_id"))
@@ -212,6 +218,79 @@ def _verifier_entries(value: Any) -> list[dict[str, Any]]:
 def _required_modalities_from_job_token(job_token: dict[str, Any]) -> list[str]:
     gate_policy = _dict_value(job_token.get("gate_policy"))
     return _modality_list(gate_policy.get("required_evidence_modalities") or gate_policy.get("required_modalities"))
+
+
+_OFFICIAL_VERIFIER_GATE_NAMES = frozenset(
+    {
+        "qa_verdict",
+        "qa_role_evidence",
+        "workspace_validation",
+        "real_run_gate",
+        "tool_receipt",
+        "director_repair_gate",
+    }
+)
+
+
+def _gate_owns_required_evidence_obligations(
+    event: Mapping[str, Any],
+    gate: Mapping[str, Any],
+    physical_evidence: Mapping[str, Any],
+) -> bool:
+    """Return whether this gate may contribute required-modality missingness.
+
+    Live L2-19 remint-9: ``existing_scope_preflight`` pending_exec gates
+    copied the CE JobToken ``required_evidence_modalities`` so they could
+    mint ``execution_capability_by_task``.  Those capability grants have
+    zero verifier evidence.  Treating them as local qa/code/command
+    obligations marked an already-passing QA as
+    ``missing_required_modalities``.  Leftover / quality-extra tokens with
+    the same empty physical surface must not do that either.
+    """
+
+    name = _clean_string(gate.get("name")).lower()
+    if name in _OFFICIAL_VERIFIER_GATE_NAMES:
+        return True
+    if name == "existing_scope_preflight":
+        return False
+    metadata = _dict_value(physical_evidence.get("metadata"))
+    source = _clean_string(metadata.get("source")).lower()
+    if source.startswith("director.existing_scope_preflight") or source.startswith("director.leftover"):
+        return False
+    if source in {"director.quality_extra_round", "director.quality_repair_extra"}:
+        return False
+    stage = _clean_string(event.get("stage")).lower()
+    modalities = physical_evidence.get("modalities")
+    has_local_modalities = isinstance(modalities, Mapping) and bool(modalities)
+    command_count = _int_value(physical_evidence.get("command_count"))
+    return not (stage == "pending_exec" and not has_local_modalities and command_count == 0)
+
+
+def _drop_modalities_satisfied_by_official_gates(
+    missing: Sequence[str],
+    gates: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    """Keep leftover/preflight missing from overriding a later official pass."""
+
+    satisfied: set[str] = set()
+    for gate in gates:
+        if not isinstance(gate, Mapping) or not gate.get("effective"):
+            continue
+        name = _clean_string(gate.get("name")).lower()
+        modalities = gate.get("evidence_modalities")
+        modality_map = modalities if isinstance(modalities, Mapping) else {}
+        if name == "qa_verdict" and bool(gate.get("ok")):
+            satisfied.add("qa")
+        if name in {"workspace_validation", "real_run_gate"} and bool(gate.get("ok")):
+            for key in ("command", "code"):
+                item = modality_map.get(key)
+                if isinstance(item, Mapping) and item.get("present") and item.get("ok"):
+                    satisfied.add(key)
+        if name == "tool_receipt":
+            item = modality_map.get("tool_receipt")
+            if isinstance(item, Mapping) and item.get("present") and item.get("ok"):
+                satisfied.add("tool_receipt")
+    return [name for name in missing if name not in satisfied]
 
 
 def _enabled_modalities_from_job_token(job_token: dict[str, Any]) -> list[str]:
@@ -1026,6 +1105,8 @@ def _latest_task_boundary_epochs(events: list[dict[str, Any]]) -> dict[str, dict
         for key in ("task_id", "run_id", "turn_id"):
             if not _clean_string(verdict.get(key)):
                 verdict[key] = _clean_string(event.get(key))
+        verdict.setdefault("append_id", _clean_string(event.get("append_id")))
+        verdict.setdefault("content_id", _clean_string(event.get("content_id") or event.get("event_id")))
         task_key = _task_boundary_task_key(verdict)
         if _preserves_completed_task_boundary(latest_by_task.get(task_key), verdict):
             continue
@@ -1149,6 +1230,51 @@ def _required_modalities_by_gate_obligation(
             ]
         )
     return required_by_obligation
+
+
+_TASK_SPLIT_OWNER_RE = re.compile(
+    r"(?i:task[-_])?0*(?P<num>\d+)-(?P<kind>"
+    r"foundation|tests|docs|source-models|source-core|source-modules|entrypoints)$"
+)
+
+
+def _parent_task_owner_aliases(owner_task_id: str) -> tuple[str, ...]:
+    """Return parent TASK-N / N aliases for a CE split owner.
+
+    Live L2-19 remint-1: ``record_project_artifact`` looked up
+    ``execution_capability_by_task['TASK-3-foundation']`` while the only
+    pending_exec tokens were keyed by parent ``TASK-1`` / ``TASK-2``.
+    A split owner may consume the parent numeric token.  Sibling splits
+    (``TASK-3-tests`` vs ``TASK-3-foundation``) stay distinct.
+    """
+
+    token = str(owner_task_id or "").strip()
+    if not token:
+        return ()
+    split = _TASK_SPLIT_OWNER_RE.fullmatch(token)
+    if split is None:
+        return ()
+    num = str(int(split.group("num")))
+    return (f"TASK-{num}", num)
+
+
+def resolve_execution_capability_for_task(
+    capability_by_task: Mapping[str, Any] | None,
+    owner_task_id: str,
+) -> dict[str, Any] | None:
+    """Resolve task-local JobToken capability without sibling-split leakage."""
+
+    token = str(owner_task_id or "").strip()
+    if not token or not isinstance(capability_by_task, Mapping):
+        return None
+    exact = capability_by_task.get(token)
+    if isinstance(exact, Mapping):
+        return dict(exact)
+    for alias in _parent_task_owner_aliases(token):
+        raw = capability_by_task.get(alias)
+        if isinstance(raw, Mapping):
+            return dict(raw)
+    return None
 
 
 def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1287,10 +1413,17 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             )
         gate_enabled_modalities = _enabled_modalities_from_job_token(job_token)
         declared_gate_required_modalities = _required_modalities_from_job_token(job_token)
+        owns_required_obligations = _gate_owns_required_evidence_obligations(
+            event,
+            gate,
+            physical_evidence,
+        )
+        if not owns_required_obligations:
+            declared_gate_required_modalities = []
         gate_revision_key = _gate_revision_key(event)
         gate_required_modalities = (
             required_modalities_by_obligation.get(gate_revision_key, declared_gate_required_modalities)
-            if gate_is_effective and gate_revision_key is not None
+            if gate_is_effective and gate_revision_key is not None and owns_required_obligations
             else declared_gate_required_modalities
         )
         if gate_is_effective:
@@ -1361,7 +1494,10 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     )
     enabled_modalities = _string_list(enabled_modalities)
     required_modalities = _string_list(required_modalities)
-    missing_required_modalities = _string_list(missing_required_modalities)
+    missing_required_modalities = _drop_modalities_satisfied_by_official_gates(
+        _string_list(missing_required_modalities),
+        gates,
+    )
     failed_required_modalities = _string_list(failed_required_modalities)
     evidence_policy_integrity_ok = bool(effective_gates) and not missing_required_modalities
     evidence_policy_outcome_ok = bool(effective_gates) and not failed_required_modalities

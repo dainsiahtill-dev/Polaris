@@ -21,6 +21,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     ReadRunLedgerProjectionQueryV1,
     RunLedgerProjectionResultV1,
     read_run_ledger_projection,
+    resolve_execution_capability_for_task,
 )
 from polaris.cells.control_plane.verifier_policy.public import (
     EvaluateVerifierCommandPolicyQueryV1,
@@ -565,7 +566,7 @@ class ProjectCompletionOwnerObservationAdapter:
             "run_ledger.run_projection.execution_capability_by_task",
         )
         capability = _mapping(
-            capability_by_task.get(intent.owner_task_id),
+            resolve_execution_capability_for_task(capability_by_task, intent.owner_task_id),
             f"run_ledger.run_projection.execution_capability_by_task[{intent.owner_task_id!r}]",
         )
         if ledger.get("query_scope") != {

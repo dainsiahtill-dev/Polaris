@@ -356,11 +356,12 @@ class WorkspaceQualityRunner:
             return []
 
     def _cpp_workspace_quality_commands(self) -> list[list[str]]:
+        cpp_ignored = {"build", "cmake-build", "runtime", ".polaris", "out", "target"}
         cpp_files = [
             path
             for ext in ("*.cpp", "*.cc", "*.cxx", "*.c")
             for path in self.workspace.rglob(ext)
-            if path.is_file() and "build" not in path.parts and "cmake-build" not in path.parts
+            if path.is_file() and not any(part in cpp_ignored for part in path.parts)
         ]
         manifests = self._cpp_manifest_candidates()
         if not cpp_files and not manifests:
@@ -381,10 +382,11 @@ include_flags = []
 for inc in (".", "src", "include"):
     if (root / inc).is_dir():
         include_flags += ["-I", str(root / inc)]
+ignored = {"build", "cmake-build", "runtime", ".polaris", "out", "target"}
 files = sorted(
     path for ext in ("*.cpp", "*.cc", "*.cxx", "*.c")
     for path in root.rglob(ext)
-    if path.is_file() and "build" not in path.parts and "cmake-build" not in path.parts
+    if path.is_file() and not any(part in ignored for part in path.parts)
 )
 if not files:
     print("No C++ translation units found", file=sys.stderr)
@@ -401,9 +403,10 @@ for path in files:
         errors="replace",
         timeout=30,
     )
-    if completed.returncode != 0:
+    blob = completed.stderr or completed.stdout or ""
+    if completed.returncode != 0 or "extra tokens at end of #include" in blob:
         failed_paths.append(str(path))
-        body = (completed.stderr or completed.stdout or "")[:1200]
+        body = blob[:1200]
         failed.append(f"### {path}\\n{body}")
 if failed:
     # Live L2-15: first TU's unclosed-namespace dump (75+ stdexcept
@@ -439,6 +442,27 @@ if not canonical.is_file():
         )
     else:
         print("CMakeLists.txt:1:1: error: CMakeLists.txt is missing", file=sys.stderr)
+    raise SystemExit(1)
+cmake_text = canonical.read_text(encoding="utf-8")
+src_root = root / "src"
+quoted_models = False
+if src_root.is_dir():
+    for path in src_root.rglob("*"):
+        if path.suffix.lower() not in {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}:
+            continue
+        try:
+            body = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if '#include "models/' in body or "#include <models/" in body:
+            quoted_models = True
+            break
+if quoted_models and "target_include_directories" not in cmake_text:
+    print(
+        "CMakeLists.txt:1:1: error: official leftover cmake requires "
+        "target_include_directories covering src/ (headers included as models/*.hpp)",
+        file=sys.stderr,
+    )
     raise SystemExit(1)
 for command in (["cmake", "-S", ".", "-B", "build"], ["cmake", "--build", "build"]):
     completed = subprocess.run(

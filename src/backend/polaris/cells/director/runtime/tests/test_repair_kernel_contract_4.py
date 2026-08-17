@@ -1213,7 +1213,7 @@ def test_typescript_argument_shape_uses_build_scenario_and_phase_getter() -> Non
         "  Type 'SimulationConfig' is missing the following properties from type "
         "'{ readonly plane: object; readonly wind: object; readonly launchAngle: object; "
         "readonly launchSpeedMs: number; }': plane, wind, launchAngle",
-        "src/web.ts(5,19): error TS2322: Type 'string' is not assignable to type '\"climb\" | \"cruise\" | \"descent\" | \"landed\"'.",
+        'src/web.ts(5,19): error TS2322: Type \'string\' is not assignable to type \'"climb" | "cruise" | "descent" | "landed"\'.',
     )
     planning = plan_director_repair(
         PlanDirectorRepairCommandV1(
@@ -1260,7 +1260,10 @@ def test_typescript_nonfinite_altitude_guard_lands_step_flight() -> None:
     planning = plan_director_repair(
         PlanDirectorRepairCommandV1(
             source_tool="deterministic_typescript_nonfinite_altitude_guard_repair",
-            base_files={"src/models/Flight.ts": flight, "src/models/Wind.ts": "export function effectiveWindSpeed() {}"},
+            base_files={
+                "src/models/Flight.ts": flight,
+                "src/models/Wind.ts": "export function effectiveWindSpeed() {}",
+            },
             artifact_quality_errors=(diagnostic,),
             mode="shadow",
         )
@@ -2414,6 +2417,51 @@ def test_cpp_standard_include_rule_builds_canonical_plan_without_diagnostics() -
     assert plan.operations[0].metadata["repair_kind"] == "cpp_standard_include"
 
 
+def test_cpp_standard_include_hoists_trailing_memory_include() -> None:
+    content = (
+        "#pragma once\n"
+        "#include <vector>\n"
+        "namespace wind {\n"
+        "struct RuleBook {\n"
+        "    std::vector<std::unique_ptr<int>> rules_;\n"
+        "};\n"
+        "}  // namespace wind\n"
+        "#include <memory>\n"
+    )
+
+    repaired = repair_cpp_missing_standard_includes_text(content)
+    plan = build_cpp_standard_include_plan(
+        base_files={"src/models/rule.hpp": content},
+        diagnostics=(),
+        mode="shadow",
+    )
+
+    assert repaired.index("#include <memory>") < repaired.index("namespace wind")
+    assert repaired.count("#include <memory>") == 1
+    assert plan is not None
+    assert plan.operations[0].path == "src/models/rule.hpp"
+    assert "#include <memory>" in plan.operations[0].content
+    assert plan.operations[0].content.index("#include <memory>") < plan.operations[0].content.index("namespace wind")
+
+
+def test_cpp_standard_include_strips_trailing_garbage_on_include() -> None:
+    content = "#include <cmath>=============\nint parse(double value) { return std::isfinite(value) ? 1 : 0; }\n"
+
+    repaired = repair_cpp_missing_standard_includes_text(content)
+
+    assert "#include <cmath>====" not in repaired
+    assert "#include <cmath>\n" in repaired or repaired.startswith("#include <cmath>\n")
+
+
+def test_cpp_standard_include_adds_cmath_for_isfinite() -> None:
+    content = "#include <string>\nint parse(double value) { return isfinite(value) ? 1 : 0; }\n"
+
+    repaired = repair_cpp_missing_standard_includes_text(content)
+
+    assert "#include <cmath>" in repaired
+    assert repaired.index("#include <cmath>") < repaired.index("isfinite")
+
+
 def test_cpp_missing_private_members_rule_builds_canonical_plan_without_diagnostics() -> None:
     content = (
         "#pragma once\n"
@@ -2845,5 +2893,3 @@ def test_go_error_string_helper_rule_uses_typed_identifier_metadata() -> None:
     assert operation.metadata["identifier"] == "errString"
     assert operation.replacement is not None
     assert "type errString string" in operation.replacement
-
-

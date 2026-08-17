@@ -19,6 +19,7 @@ from polaris.cells.factory.pipeline.internal.factory_workspace_quality import (
 )
 from polaris.cells.factory.pipeline.internal.factory_workspace_quality_evidence import (
     compact_go_stack_overflow_diagnostic,
+    workspace_quality_unclaimed_failing_tu_targets,
 )
 
 
@@ -70,6 +71,31 @@ def test_workspace_quality_pythonpath_overrides_host_src_shadow(
     assert result["passed"] is True
     assert "WORKSPACE" in stdout
     assert "HOST" not in stdout
+
+
+def test_python_modulenotfound_leftover_prefers_src_importer(tmp_path: Path) -> None:
+    engine = tmp_path / "src" / "engine" / "__init__.py"
+    engine.parent.mkdir(parents=True)
+    engine.write_text("from waterdrop_rhythm_pad import WaterDropPad\n", encoding="utf-8")
+    forecast = tmp_path / "src" / "engine" / "forecast.py"
+    forecast.write_text("from waterdrop_rhythm_pad.models import MoodAxis\n", encoding="utf-8")
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_product.py").write_text("from src.engine.forecast import forecast_from_mood\n", encoding="utf-8")
+    blob = (
+        f'  File "{tmp_path}/tests/test_product.py", line 53, in <module>\n'
+        "    from src.engine.forecast import (\n"
+        f'  File "{tmp_path}/src/engine/__init__.py", line 25, in <module>\n'
+        "    from waterdrop_rhythm_pad import WaterDropPad, build_default_pad\n"
+        "ModuleNotFoundError: No module named 'waterdrop_rhythm_pad'\n"
+    )
+    leftover = workspace_quality_unclaimed_failing_tu_targets(
+        [blob],
+        claimed_targets=[],
+        workspace=tmp_path,
+    )
+    assert leftover[:2] == ["src/engine/__init__.py", "src/engine/forecast.py"]
+    assert "tests/test_product.py" not in leftover[:2]
 
 
 def test_compact_go_stack_overflow_keeps_repeating_owner_frames() -> None:

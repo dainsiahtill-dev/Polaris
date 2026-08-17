@@ -125,6 +125,76 @@ async def _execute_standard_llm_flow(
     if preflight_result is not None:
         return preflight_result
 
+    existing_contract_evidence = _build_existing_workspace_task_evidence(
+        task=task,
+        current_files=state.current_files,
+        workspace_full=str(getattr(adapter, "workspace", "") or ""),
+        workspace_name=workspace_name,
+    )
+    existing_contract_evidence, _pre_llm_receipt_evidence = _attach_current_task_project_receipt_evidence(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        context=context,
+        existing_contract_evidence=existing_contract_evidence,
+    )
+    pre_llm_quality_errors = _collect_materialization_quality_errors(
+        adapter,
+        task=task,
+        all_affected_files=list(existing_contract_evidence.get("existing_paths") or []),
+        workspace_name=workspace_name,
+        context=context,
+        task_boundary=True,
+    )
+    if pre_llm_quality_errors and existing_contract_evidence.get("existing_paths"):
+        # Live L2-19 remint-3: existing tests/test_product.py failed quality
+        # (wrong-module import) then first LLM hit
+        # final_request_context_quality_failed. Deterministic repair must run
+        # before another provider turn.
+        existing_contract_evidence = dict(existing_contract_evidence)
+        existing_contract_evidence["reason"] = "declared_scope_quality_failed"
+        existing_contract_evidence["artifact_quality_errors"] = list(pre_llm_quality_errors)
+        existing_contract_evidence["ok"] = False
+        (
+            state,
+            existing_contract_evidence,
+            _,
+            _,
+            quality_repair_summary,
+        ) = await _phase_pre_materialization_quality(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            context=context,
+            baseline_files=baseline_files,
+            existing_contract_evidence=existing_contract_evidence,
+            can_accept_existing_scope=False,
+            write_tool_evidence=has_successful_write_tool(state.tool_results),
+            requires_fresh_materialization=requires_fresh_materialization,
+            primary_llm_summary=None,
+            quality_repair_attempts=quality_repair_attempts,
+            quality_repair_summary=quality_repair_summary,
+            workspace_name=workspace_name,
+            state=state,
+        )
+        preflight_result = await asyncio.to_thread(
+            _phase_existing_scope_preflight,
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=context,
+            board_claim_applied=board_claim_applied,
+            task_execution_attempt_authority=task_execution_attempt_authority,
+            task_claim_session_id=task_claim_session_id,
+            decision_signals=decision_signals,
+            requires_fresh_materialization=requires_fresh_materialization,
+            workspace_name=workspace_name,
+            state=state,
+        )
+        if preflight_result is not None:
+            return preflight_result
+
     state, primary_llm_summary = await _phase_first_llm_call(
         adapter,
         task=task,
@@ -469,6 +539,7 @@ async def _execute_standard_llm_flow(
 from ..quality_gate import (  # noqa: E402
     _build_existing_workspace_task_evidence as _build_existing_workspace_task_evidence,
     _can_accept_existing_workspace_scope as _can_accept_existing_workspace_scope,
+    _collect_materialization_quality_errors as _collect_materialization_quality_errors,
     _evaluate_acceptance_verify_exists as _evaluate_acceptance_verify_exists,
     _task_requires_fresh_materialization as _task_requires_fresh_materialization,
 )

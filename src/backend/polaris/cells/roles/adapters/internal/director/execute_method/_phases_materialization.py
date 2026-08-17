@@ -37,6 +37,7 @@ from ._claim import (
     _execution_attempt_identity_from_context,
     _extract_resident_agi_repair_advisory_overlay,
     _finalize_claimed_execution,
+    _project_preflight_execution_capability,
     _record_project_artifacts_before_settlement,
     _task_completion_projection_from_context,
     _task_runtime_finalization_failed_result,
@@ -458,6 +459,13 @@ def _phase_existing_scope_preflight(
             if isinstance(projection, dict):
                 contract_task_id = str(projection.get("task_id") or "").strip() or target_task_id
                 try:
+                    _project_preflight_execution_capability(
+                        adapter,
+                        context=context,
+                        target_task_id=target_task_id,
+                        contract_task_id=contract_task_id,
+                        run_id=run_id,
+                    )
                     _record_project_artifacts_before_settlement(
                         adapter,
                         contract_task_id=contract_task_id,
@@ -523,6 +531,20 @@ def _phase_existing_scope_preflight(
         )
         completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
         if board_claim_applied:
+            preflight_projection = _task_completion_projection_from_context(
+                context,
+                target_task_id=target_task_id,
+            )
+            contract_task_id = target_task_id
+            if isinstance(preflight_projection, dict):
+                contract_task_id = str(preflight_projection.get("task_id") or "").strip() or target_task_id
+            _project_preflight_execution_capability(
+                adapter,
+                context=context,
+                target_task_id=target_task_id,
+                contract_task_id=contract_task_id,
+                run_id=run_id,
+            )
             finalize_result = _finalize_claimed_execution(
                 adapter,
                 target_task_id=target_task_id,

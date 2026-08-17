@@ -370,6 +370,56 @@ def test_artifact_authority_ignores_later_global_qa_token(
     assert receipt.job_token_id == "job-token-1"
 
 
+def test_split_owner_artifact_uses_parent_task_capability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L2-19: TASK-3-foundation receipts may bind the parent TASK-3 JobToken."""
+
+    contract = _patch_owners(monkeypatch, tmp_path)
+    foundation_artifact = ArtifactObligationV1(
+        "artifact.main",
+        "src/main.py",
+        "entrypoint",
+        "required",
+        "TASK-3-foundation",
+    )
+    contract = replace(
+        contract,
+        covered_task_ids=(*contract.covered_task_ids, "TASK-3-foundation"),
+        obligations=replace(
+            contract.obligations,
+            artifacts=(foundation_artifact, contract.obligations.artifacts[1]),
+        ),
+    )
+    monkeypatch.setattr(adapter_module, "query_project_completion_contract", lambda query: contract)
+    ledger = _ledger(contract).projection
+    capability = dict(ledger["run_projection"]["execution_capability_by_task"]["task-1"])
+    capability["task_id"] = "TASK-3"
+    ledger["run_projection"]["execution_capability_by_task"] = {"TASK-3": capability}
+    monkeypatch.setattr(
+        adapter_module,
+        "read_run_ledger_projection",
+        lambda query: RunLedgerProjectionResultV1(projection=ledger),
+    )
+    source = tmp_path / "src" / "main.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("print('foundation')\n", encoding="utf-8")
+
+    receipt = record_project_artifact(
+        RecordProjectArtifactCommandV1(
+            workspace=str(tmp_path),
+            project_id=contract.project_id,
+            run_id=contract.run_id,
+            completion_contract_hash=contract.contract_hash,
+            obligation_id="artifact.main",
+            owner_task_id="TASK-3-foundation",
+            path="src/main.py",
+        )
+    )
+    assert receipt.job_token_id == "job-token-1"
+
+
 def test_nonzero_physical_command_receipt_is_failed_not_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

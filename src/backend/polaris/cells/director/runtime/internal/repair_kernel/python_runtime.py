@@ -37,6 +37,37 @@ from .python_syntax import (
 PlanBuilderFn = Callable[..., RepairPlan | None]
 
 
+def _merge_workspace_python_src_files(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+) -> dict[str, str]:
+    """Include src/**/*.py so importer rewrite can see existing declarations.
+
+    Live L2-19 TASK-3-tests only passed ``tests/test_product.py`` as
+    base_files.  ``forecast_for`` already existed in ``src/models/weather.py``.
+    """
+
+    merged = {str(path): str(content or "") for path, content in dict(base_files or {}).items()}
+    root = Path(workspace)
+    src = root / "src"
+    if not src.is_dir():
+        return merged
+    for path in src.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        if rel in merged:
+            continue
+        try:
+            merged[rel] = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+    return merged
+
+
 @dataclass(frozen=True)
 class PythonRepairPlanning:
     """Internal planning result for Python repairs."""
@@ -410,7 +441,7 @@ def run_python_unresolved_import_symbol_repair(
 
     return _run_python_repair(
         workspace=workspace,
-        base_files=base_files,
+        base_files=_merge_workspace_python_src_files(workspace, base_files),
         artifact_quality_errors=artifact_quality_errors,
         writer=writer,
         editor=editor,

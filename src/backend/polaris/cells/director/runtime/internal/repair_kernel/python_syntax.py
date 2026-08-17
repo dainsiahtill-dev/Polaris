@@ -269,10 +269,47 @@ def build_python_missing_module_alias_plan(
     operations: list[RepairOperation] = []
     matched: list[RepairDiagnostic] = []
     seen_targets: set[str] = set()
+    advertised = _python_src_layout_advertised_package_name(normalized_base)
+    importer_rewrites = 0
     for diagnostic in diagnostics:
         module_name = _python_missing_top_level_module_name(diagnostic)
         if not module_name:
             continue
+        if advertised == module_name:
+            for path, text in list(normalized_base.items()):
+                if path in seen_targets or not path.endswith(".py"):
+                    continue
+                rewritten = _rewrite_python_import_package_prefix(
+                    text,
+                    missing_package=module_name,
+                    target_package="src",
+                )
+                if not rewritten or rewritten == text:
+                    continue
+                operations.append(
+                    RepairOperation(
+                        kind="text_replace",
+                        path=path,
+                        span_start=0,
+                        span_end=len(text),
+                        expected=text,
+                        replacement=rewritten,
+                        before_hash=sha256_text(text),
+                        metadata={
+                            "repair_kind": "python_missing_module_alias_importer_rewrite",
+                            "missing_module": module_name,
+                            "target_module": "src",
+                            "edit_file_preferred": True,
+                            "diagnostic_id": diagnostic.diagnostic_id,
+                        },
+                    )
+                )
+                normalized_base[path] = rewritten
+                seen_targets.add(path)
+                importer_rewrites += 1
+                matched.append(diagnostic)
+            if importer_rewrites:
+                continue
         target = f"src/{module_name}.py"
         if target in normalized_base or target in seen_targets:
             continue
@@ -316,9 +353,12 @@ def build_python_missing_module_alias_plan(
         risk_level="medium",
         priority=1,
         metadata={
-            "runtime_plan_scope": "missing_module_alias",
+            "runtime_plan_scope": (
+                "src_layout_advertised_package_importer_rewrite" if importer_rewrites else "missing_module_alias"
+            ),
             "unsafe_cases_fail_closed": True,
-            "requires_unique_nested_module_candidate": True,
+            "requires_unique_nested_module_candidate": importer_rewrites == 0,
+            "importer_rewrite_count": importer_rewrites,
         },
     )
 
@@ -327,6 +367,45 @@ def _python_missing_top_level_module_name(diagnostic: RepairDiagnostic) -> str:
     raw = str(diagnostic.raw or diagnostic.message or "")
     match = _PYTHON_MODULE_NOT_FOUND_RE.search(raw)
     return str(match.group("module") or "").strip() if match is not None else ""
+
+
+def _python_src_layout_advertised_package_name(base_files: Mapping[str, str]) -> str:
+    """Return the unique package name advertised by ``src/__init__.py``.
+
+    Live L2-19: ``src/`` is the implementation, but generated modules import
+    ``waterdrop_rhythm_pad``. The first docstring token is the advertised
+    distribution name. Anything that is not a single identifier fail-closes.
+    """
+
+    init_text = str(base_files.get("src/__init__.py") or "")
+    match = re.match(r'\s*"""\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\n|""")', init_text)
+    if match is None:
+        return ""
+    name = str(match.group(1) or "").strip()
+    return name if _PYTHON_IDENTIFIER_RE.match(name) else ""
+
+
+def _rewrite_python_import_package_prefix(
+    text: str,
+    *,
+    missing_package: str,
+    target_package: str,
+) -> str | None:
+    if not text or not missing_package or not target_package or missing_package == target_package:
+        return None
+    if not _PYTHON_IDENTIFIER_RE.match(missing_package) or not _PYTHON_IDENTIFIER_RE.match(target_package):
+        return None
+    pattern = re.compile(
+        rf"(?m)^from[ \t]+{re.escape(missing_package)}"
+        rf"(?P<rest>(?:\.[A-Za-z_][A-Za-z0-9_]*)*)[ \t]+import[ \t]+"
+    )
+    rewritten, count = pattern.subn(
+        lambda match: f"from {target_package}{match.group('rest')} import ",
+        text,
+    )
+    if count < 1 or rewritten == text:
+        return None
+    return rewritten
 
 
 def _python_nested_module_alias_candidates(base_files: Mapping[str, str], module_name: str) -> tuple[str, ...]:
@@ -349,20 +428,65 @@ def build_python_unresolved_import_symbol_plan(
     diagnostics: Sequence[RepairDiagnostic],
     mode: str = "commit",
 ) -> RepairPlan | None:
-    """Append a narrow Python export alias for unresolved import-symbol diagnostics."""
+    """Repair unresolved Python import symbols without inventing domain APIs.
+
+    Live L2-19 TASK-3-tests: ``tests/test_product.py`` imported
+    ``forecast_for`` from ``src.engine.forecast`` while that helper already
+    lived in ``src.models.weather``.  Prefer rewriting the importer to the
+    unique existing declaration; exporter aliases stay a fallback.
+    """
 
     normalized_base = _normalize_base_files(base_files)
     operations: list[RepairOperation] = []
     matched: list[RepairDiagnostic] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
+    importer_rewrites = 0
     for diagnostic in diagnostics:
         for target in _python_unresolved_import_symbol_targets(diagnostic):
             exporter = target["exporter"]
             symbol = target["symbol"]
-            key = (exporter, symbol)
+            importer = target["importer"]
+            key = (importer, exporter, symbol)
             if key in seen:
                 continue
             seen.add(key)
+            importer_text = normalized_base.get(importer)
+            source_rel = _python_unique_existing_symbol_module(
+                normalized_base,
+                symbol=symbol,
+                exclude_paths={importer, exporter},
+            )
+            if importer_text is not None and source_rel:
+                rewritten = _rewrite_python_from_import_module(
+                    importer_text,
+                    symbol=symbol,
+                    to_module=_python_module_name_from_rel(source_rel),
+                    wrong_module=_python_module_name_from_rel(exporter),
+                )
+                if rewritten and rewritten != importer_text:
+                    operations.append(
+                        RepairOperation(
+                            kind="text_replace",
+                            path=importer,
+                            span_start=0,
+                            span_end=len(importer_text),
+                            expected=importer_text,
+                            replacement=rewritten,
+                            before_hash=sha256_text(importer_text),
+                            metadata={
+                                "repair_kind": "python_unresolved_import_symbol_importer_rewrite",
+                                "diagnostic_id": diagnostic.diagnostic_id,
+                                "symbol": symbol,
+                                "wrong_module": exporter,
+                                "source_module": source_rel,
+                                "edit_file_preferred": True,
+                            },
+                        )
+                    )
+                    normalized_base[importer] = rewritten
+                    importer_rewrites += 1
+                    matched.append(diagnostic)
+                    continue
             exporter_text = normalized_base.get(exporter)
             if exporter_text is None or _python_symbol_defined(exporter_text, symbol):
                 continue
@@ -376,12 +500,18 @@ def build_python_unresolved_import_symbol_plan(
                     addition="\n" + stub + "\n",
                     repair_kind="python_unresolved_import_symbol",
                     diagnostic=diagnostic,
-                    metadata={"symbol": symbol, "importer": target["importer"], "stub_line": stub},
+                    metadata={"symbol": symbol, "importer": importer, "stub_line": stub},
                 )
             )
             matched.append(diagnostic)
     if not operations:
         return None
+    if importer_rewrites and importer_rewrites == len(operations):
+        runtime_scope = "rewrite_importer_to_unique_existing_module"
+    elif importer_rewrites == 0:
+        runtime_scope = "append_alias_to_existing_similar_symbol_only"
+    else:
+        runtime_scope = "importer_rewrite_or_exporter_alias"
     return RepairPlan(
         rule_id="python.unresolved_import_symbol",
         source_tool=PYTHON_UNRESOLVED_IMPORT_SYMBOL_SOURCE_TOOL,
@@ -391,9 +521,10 @@ def build_python_unresolved_import_symbol_plan(
         risk_level="medium",
         priority=1,
         metadata={
-            "runtime_plan_scope": "append_alias_to_existing_similar_symbol_only",
+            "runtime_plan_scope": runtime_scope,
             "unsafe_cases_fail_closed": True,
             "empty_stub_generation_allowed": False,
+            "importer_rewrite_count": importer_rewrites,
         },
     )
 
@@ -743,6 +874,101 @@ __all__ = _polaris_existing_all
 """
 
 
+def _python_module_name_from_rel(path: str) -> str:
+    token = str(path or "").strip().replace("\\", "/")
+    if not token.endswith(".py"):
+        return ""
+    return token[:-3].replace("/", ".")
+
+
+def _python_unique_existing_symbol_module(
+    base_files: Mapping[str, str],
+    *,
+    symbol: str,
+    exclude_paths: set[str],
+) -> str:
+    defined: list[str] = []
+    reexported: list[str] = []
+    for path, text in base_files.items():
+        if path in exclude_paths or not path.endswith(".py"):
+            continue
+        if any(part in {"tests", "test", "__pycache__"} for part in PurePosixPath(path).parts):
+            continue
+        kind = _python_symbol_definition_kind(text, symbol)
+        if kind == "defined":
+            defined.append(path)
+        elif kind == "reexport":
+            reexported.append(path)
+    # Live L2-19: weather.py defines forecast_for and models/__init__.py
+    # re-exports it. Treating both as owners made unique-module lookup
+    # fail-closed and skipped the in-scope test import rewrite.
+    if len(defined) == 1:
+        return defined[0]
+    if not defined and len(reexported) == 1:
+        return reexported[0]
+    return ""
+
+
+def _parse_python_import_names(body: str) -> list[str]:
+    names: list[str] = []
+    for raw in str(body or "").split(","):
+        token = raw.split("#", 1)[0].strip()
+        if token:
+            names.append(token)
+    return names
+
+
+def _format_python_parenthesized_import(module: str, names: Sequence[str], *, indent: str) -> str:
+    inner_indent = indent + "    "
+    rendered = ",\n".join(f"{inner_indent}{name}" for name in names)
+    return f"{indent}from {module} import (\n{rendered},\n{indent})"
+
+
+def _rewrite_python_from_import_module(
+    text: str,
+    *,
+    symbol: str,
+    to_module: str,
+    wrong_module: str,
+) -> str | None:
+    if not text or not symbol or not to_module or not wrong_module or to_module == wrong_module:
+        return None
+    paren_re = re.compile(
+        rf"(?ms)^(?P<indent>[ \t]*)from[ \t]+{re.escape(wrong_module)}[ \t]+import[ \t]*\((?P<body>.*?)\)"
+    )
+    flat_re = re.compile(
+        rf"(?m)^(?P<indent>[ \t]*)from[ \t]+{re.escape(wrong_module)}[ \t]+import[ \t]+(?P<body>[^\n(]+)$"
+    )
+    match = paren_re.search(text) or flat_re.search(text)
+    if match is None:
+        return None
+    names = _parse_python_import_names(str(match.group("body") or ""))
+    kept_alias = ""
+    remaining: list[str] = []
+    for name in names:
+        exported = name.split(" as ", 1)[0].strip()
+        if exported == symbol:
+            kept_alias = name
+        else:
+            remaining.append(name)
+    if not kept_alias:
+        return None
+    indent = str(match.group("indent") or "")
+    new_import = f"{indent}from {to_module} import {kept_alias}"
+    if remaining:
+        if match.re is paren_re or "\n" in str(match.group("body") or ""):
+            rebuilt = _format_python_parenthesized_import(wrong_module, remaining, indent=indent)
+        else:
+            rebuilt = f"{indent}from {wrong_module} import {', '.join(remaining)}"
+        replacement = f"{rebuilt}\n{new_import}"
+    else:
+        replacement = new_import
+    original = match.group(0)
+    if text.count(original) != 1:
+        return None
+    return text[: match.start()] + replacement + text[match.end() :]
+
+
 def _python_unresolved_import_symbol_targets(diagnostic: RepairDiagnostic) -> tuple[dict[str, str], ...]:
     metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
     symbol = str(metadata.get("symbol") or "").strip()
@@ -767,14 +993,20 @@ def _python_unresolved_import_symbol_targets(diagnostic: RepairDiagnostic) -> tu
     )
 
 
-def _python_symbol_defined(text: str, symbol: str) -> bool:
+def _python_symbol_definition_kind(text: str, symbol: str) -> str:
     escaped = re.escape(symbol)
-    patterns = (
-        rf"(?m)^\s*(?:class|def|async\s+def)\s+{escaped}\b",
-        rf"(?m)^\s*from\s+[.\w]+\s+import\s+.*\b{escaped}\b",
+    if re.search(rf"(?m)^\s*(?:class|def|async\s+def)\s+{escaped}\b", text) or re.search(
         rf"(?m)^\s*{escaped}\s*=",
-    )
-    return any(re.search(pattern, text) for pattern in patterns)
+        text,
+    ):
+        return "defined"
+    if re.search(rf"(?m)^\s*from\s+[.\w]+\s+import\s+.*\b{escaped}\b", text):
+        return "reexport"
+    return ""
+
+
+def _python_symbol_defined(text: str, symbol: str) -> bool:
+    return bool(_python_symbol_definition_kind(text, symbol))
 
 
 def _build_python_symbol_stub(text: str, symbol: str) -> str:

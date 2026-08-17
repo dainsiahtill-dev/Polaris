@@ -434,6 +434,32 @@ def test_current_task_retry_accepts_only_complete_byte_current_project_receipts(
     assert stale["missing_or_stale_paths"] == ["README.md"]
 
 
+def test_zero_required_artifacts_are_vacuous_receipt_success(tmp_path: Path) -> None:
+    """L2-19 TASK-2 remint: CE owned_artifacts=[] must not block existing-scope."""
+
+    task = {
+        "id": 13,
+        "metadata": {"external_task_id": "TASK-2"},
+        "task_completion_projection": {
+            "task_id": "TASK-2",
+            "project_id": "L2-19",
+            "run_id": "factory-l219",
+            "project_contract_hash": "a" * 64,
+            "owned_artifacts": [],
+        },
+    }
+    evidence = build_current_task_project_artifact_receipt_evidence(
+        task=task,
+        task_id="13",
+        workspace=str(tmp_path),
+        lookup=lambda query: None,
+    )
+    assert evidence["required_artifact_count"] == 0
+    assert evidence["receipt_count"] == 0
+    assert evidence["missing_or_stale_paths"] == []
+    assert evidence["ok"] is True
+
+
 def test_multiple_receipts_for_same_path_use_last_successful_write(tmp_path: Path) -> None:
     """R132: materialize then quality-repair rewrite must not fail sibling projection.
 

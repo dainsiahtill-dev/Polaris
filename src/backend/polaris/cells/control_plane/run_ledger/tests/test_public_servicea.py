@@ -2214,6 +2214,38 @@ def test_task_execution_capability_ignores_later_qa_token() -> None:
     }
 
 
+def test_split_owner_resolves_parent_execution_capability_not_sibling() -> None:
+    """L2-19 remint-1: TASK-3-foundation may use parent TASK-3 token.
+
+    TASK-3-tests must not consume a foundation-only capability map.
+    """
+
+    from polaris.cells.control_plane.run_ledger.public.projection import (
+        resolve_execution_capability_for_task,
+    )
+
+    parent = {
+        "ok": True,
+        "latest_token_id": "job-task-3",
+        "task_id": "TASK-3",
+    }
+    foundation = {
+        "ok": True,
+        "latest_token_id": "job-foundation",
+        "task_id": "TASK-3-foundation",
+    }
+    by_parent = {"TASK-3": parent, "TASK-2": {"ok": True, "latest_token_id": "job-2"}}
+    by_foundation = {"TASK-3-foundation": foundation}
+
+    resolved = resolve_execution_capability_for_task(by_parent, "TASK-3-foundation")
+    assert resolved is not None
+    assert resolved["latest_token_id"] == "job-task-3"
+    assert resolve_execution_capability_for_task(by_parent, "TASK-3-tests") is not None
+    assert resolve_execution_capability_for_task(by_foundation, "TASK-3-tests") is None
+    assert resolve_execution_capability_for_task(by_foundation, "TASK-3-foundation") == foundation
+    assert resolve_execution_capability_for_task(by_parent, "14") is None
+
+
 def test_qa_verdict_effective_only_for_latest_task_boundary_epoch() -> None:
     def boundary(run_id: str) -> dict[str, Any]:
         return {

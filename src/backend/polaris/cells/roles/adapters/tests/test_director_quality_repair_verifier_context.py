@@ -336,3 +336,71 @@ def test_quality_repair_includes_named_cpp_class_when_gxx_omits_header_path(
     assert "Never invent members" in message
     assert "qualify the use-site as ::NS::models" in message
     assert "An unclosed A swallows later includes into A::std" in message
+
+
+def test_quality_repair_projects_existing_cpp_enum_and_included_header_api(tmp_path: Path) -> None:
+    """g++ 'X is not a member of NS' must show existing labels, not invent to_string.
+
+    Live L2-20 reminted src/main.cpp after isfinite / string-to-EntityKind.
+    The model invented wind::to_string, severity_to_string, and
+    ResultStatus::Partial while result.hpp already had result_status_label
+    and ResultStatus::{Ok,Warn,Fail,Empty,InvalidInput}.
+    """
+
+    src = tmp_path / "src"
+    models = src / "models"
+    models.mkdir(parents=True)
+    (src / "main.cpp").write_text(
+        '#include "models/result.hpp"\n'
+        '#include "models/entity.hpp"\n'
+        "int main() { wind::ResultStatus status = wind::ResultStatus::Partial; }\n",
+        encoding="utf-8",
+    )
+    (models / "result.hpp").write_text(
+        "#pragma once\n"
+        "#include <string_view>\n"
+        "namespace wind {\n"
+        "enum class ResultStatus : std::uint8_t {\n"
+        "    Ok = 0,\n"
+        "    Warn = 1,\n"
+        "    Fail = 2,\n"
+        "    Empty = 3,\n"
+        "    InvalidInput = 4,\n"
+        "};\n"
+        "[[nodiscard]] std::string_view result_status_label(ResultStatus s) noexcept;\n"
+        "[[nodiscard]] bool try_parse_result_status(std::string_view text, ResultStatus& out) noexcept;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (models / "entity.hpp").write_text(
+        "#pragma once\n"
+        "#include <string_view>\n"
+        "namespace wind {\n"
+        "enum class EntityKind : std::uint8_t { Unknown = 0, Sensor = 1 };\n"
+        "[[nodiscard]] std::string_view kind_label(EntityKind kind) noexcept;\n"
+        "[[nodiscard]] bool try_parse_kind(std::string_view text, EntityKind& out) noexcept;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair the g++ leftover failure.",
+        artifact_quality_errors=[
+            "src/main.cpp:3:48: error: ‘Partial’ is not a member of ‘wind::ResultStatus’\n"
+            "src/main.cpp:438:27: error: cannot convert ‘const std::__cxx11::basic_string<char>’ "
+            "to ‘wind::EntityKind’ in assignment\n"
+            "src/main.cpp:526:41: error: ‘to_string’ is not a member of ‘wind’\n"
+        ],
+        changed_files=["src/main.cpp"],
+        repair_target_files=["src/main.cpp"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "REFERENCED TYPE DEFINITIONS (READ-ONLY EVIDENCE; NEVER EDIT THESE FILES)" in message
+    assert "src/models/result.hpp" in message
+    assert "result_status_label" in message
+    assert "InvalidInput" in message
+    assert "EXISTING C++ PUBLIC API FROM INCLUDED HEADERS" in message
+    assert "try_parse_kind" in message
+    assert "Never invent NS::to_string" in message
+    assert "READ-ONLY EXISTING API" in message

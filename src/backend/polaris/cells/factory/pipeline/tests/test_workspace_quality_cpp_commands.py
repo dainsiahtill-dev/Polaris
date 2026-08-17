@@ -280,6 +280,104 @@ def test_unclaimed_residual_targets_rotate_off_mutating_header_owner(tmp_path: P
     assert "src/models/queue.hpp" not in leftover
 
 
+def test_unclaimed_residual_targets_prefer_header_owned_type_diagnostics(tmp_path: Path) -> None:
+    """Header-owned type/std-member errors must beat including TUs.
+
+    Live L2-20 reminted entity.cpp while entity.hpp still said WindSample
+    does not name a type and rule.hpp kept unique_ptr after a trailing
+    ``#include <memory>``.
+    """
+
+    from polaris.cells.factory.pipeline.internal.factory_workspace_quality_evidence import (
+        workspace_quality_unclaimed_failing_tu_targets,
+        workspace_quality_unclaimed_residual_targets,
+    )
+
+    models = tmp_path / "src" / "models"
+    models.mkdir(parents=True)
+    (models / "wind.hpp").write_text("struct WindEvent {};\n", encoding="utf-8")
+    (models / "entity.hpp").write_text("struct Entity {};\n", encoding="utf-8")
+    (models / "rule.hpp").write_text("struct Rule {};\n", encoding="utf-8")
+    (models / "entity.cpp").write_text('#include "entity.hpp"\n', encoding="utf-8")
+    (tmp_path / "src" / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+    residual = [
+        "### FAILING_TUS src/models/entity.cpp src/main.cpp\n"
+        "### src/models/entity.cpp\n"
+        "In file included from src/models/entity.cpp:7:\n"
+        "src/models/entity.hpp:39:5: error: ‘WindSample’ does not name a type\n"
+        "### src/main.cpp\n"
+        "src/models/rule.hpp:161:42: error: ‘unique_ptr’ is not a member of ‘std’\n"
+        "src/main.cpp:131:15: error: ‘isfinite’ was not declared in this scope\n"
+    ]
+    leftover = workspace_quality_unclaimed_residual_targets(
+        residual,
+        claimed_targets=["src/models/entity.cpp"],
+        workspace=tmp_path,
+    )
+    tus = workspace_quality_unclaimed_failing_tu_targets(
+        residual,
+        claimed_targets=["src/models/entity.cpp"],
+        workspace=tmp_path,
+    )
+    assert leftover[0] == "src/models/wind.hpp"
+    assert leftover[1] == "src/models/entity.hpp"
+    assert "src/models/rule.hpp" in leftover
+    assert tus[0] == "src/models/wind.hpp"
+    assert "src/models/entity.hpp" in tus
+    assert leftover.index("src/models/entity.hpp") < leftover.index("src/main.cpp")
+
+
+def test_cpp_quality_commands_ignore_polaris_snapshot_translation_units(tmp_path: Path) -> None:
+    """Official C++ leftover must not compile Factory snapshot copies.
+
+    Live L2-20 leftover FAILING_TUS listed
+    ``.polaris/factory_snapshots/pre_director/files/src/models/entity.cpp``
+    beside the real ``src/models/entity.cpp``.
+    """
+
+    src = tmp_path / "src" / "models"
+    src.mkdir(parents=True)
+    (src / "entity.cpp").write_text("int entity() { return 0; }\n", encoding="utf-8")
+    snapshot = tmp_path / ".polaris" / "factory_snapshots" / "pre_director" / "files" / "src" / "models"
+    snapshot.mkdir(parents=True)
+    (snapshot / "entity.cpp").write_text("int snapshot() { return 0; }\n", encoding="utf-8")
+    (tmp_path / "cmakelists.txt").write_text("cmake_minimum_required(VERSION 3.16)\n", encoding="utf-8")
+
+    commands = WorkspaceQualityRunner(tmp_path)._cpp_workspace_quality_commands()
+    script = commands[0][2]
+    assert ".polaris" in script
+    assert "ignored" in script
+    assert "part in ignored" in script or "part in ignored" in script.replace(" ", "")
+    assert "extra tokens at end of #include" in script
+
+
+def test_cpp_quality_cmake_requires_include_directories_for_models_headers(tmp_path: Path) -> None:
+    """Official leftover cmake must fail-closed without src include dirs.
+
+    Live L2-20 leftover wrote CMakeLists.txt then cmake died on
+    ``models/entity.hpp: No such file or directory`` because the list had
+    no target_include_directories covering src/.
+    """
+
+    src = tmp_path / "src" / "models"
+    src.mkdir(parents=True)
+    (tmp_path / "src" / "main.cpp").write_text(
+        '#include "models/entity.hpp"\nint main() { return 0; }\n',
+        encoding="utf-8",
+    )
+    (src / "entity.hpp").write_text("struct Entity {};\n", encoding="utf-8")
+    (tmp_path / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.16)\nproject(wind LANGUAGES CXX)\nadd_executable(wind src/main.cpp)\n",
+        encoding="utf-8",
+    )
+
+    commands = WorkspaceQualityRunner(tmp_path)._cpp_workspace_quality_commands()
+    assert len(commands) >= 2
+    cmake_script = commands[1][2]
+    assert "target_include_directories covering src/" in cmake_script
+    assert "headers included as models/*.hpp" in cmake_script
+
+
 def test_unclaimed_failing_tus_read_index_before_truncated_body(tmp_path: Path) -> None:
     """Huge first-TU stderr must not hide later ### units.
 
