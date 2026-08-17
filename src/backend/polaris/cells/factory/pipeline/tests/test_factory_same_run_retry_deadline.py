@@ -42,7 +42,7 @@ def test_same_run_retry_keeps_still_viable_factory_deadline() -> None:
     result = extend_factory_run_deadline_for_same_run_retry(
         now_epoch=now,
         metadata={
-            "factory_run_deadline_epoch_seconds": now + 900.0,
+            "factory_run_deadline_epoch_seconds": now + 2000.0,
             "factory_run_timeout_seconds": 1800.0,
         },
         retry_stage="director_dispatch",
@@ -51,20 +51,38 @@ def test_same_run_retry_keeps_still_viable_factory_deadline() -> None:
     assert result is None
 
 
-def test_same_run_retry_still_extends_after_sixteenth_quality_remint() -> None:
+def test_l217_implementation_remint_when_remaining_cannot_admit_director() -> None:
+    """Live L2-17 remint-2: rem=259 skipped, then dispatch_deadline_blocker."""
+
+    now = 2_000_000.0
+    result = extend_factory_run_deadline_for_same_run_retry(
+        now_epoch=now,
+        metadata={
+            "factory_run_deadline_epoch_seconds": now + 259.0,
+            "factory_run_timeout_seconds": 1800.0,
+        },
+        retry_stage="implementation",
+    )
+
+    assert result is not None
+    remaining = float(result["factory_run_deadline_epoch_seconds"]) - now
+    assert remaining >= 1800.0 - 30.0
+
+
+def test_same_run_retry_still_extends_after_twentieth_quality_remint() -> None:
     now = 2_000_000.0
     result = extend_factory_run_deadline_for_same_run_retry(
         now_epoch=now,
         metadata={
             "factory_run_deadline_epoch_seconds": now - 10.0,
             "factory_run_timeout_seconds": 1800.0,
-            "factory_run_deadline_extension_count": 16,
+            "factory_run_deadline_extension_count": 20,
         },
         retry_stage="quality_gate",
     )
 
     assert result is not None
-    assert result["factory_run_deadline_extension_count"] == 17
+    assert result["factory_run_deadline_extension_count"] == 21
 
 
 def test_same_run_retry_caps_deadline_extensions() -> None:
@@ -74,7 +92,7 @@ def test_same_run_retry_caps_deadline_extensions() -> None:
         metadata={
             "factory_run_deadline_epoch_seconds": now - 10.0,
             "factory_run_timeout_seconds": 1800.0,
-            "factory_run_deadline_extension_count": 20,
+            "factory_run_deadline_extension_count": 32,
         },
         retry_stage="director_dispatch",
     )

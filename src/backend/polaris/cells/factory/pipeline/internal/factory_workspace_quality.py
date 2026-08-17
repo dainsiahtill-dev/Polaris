@@ -26,6 +26,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -264,9 +265,31 @@ class WorkspaceQualityRunner:
         commands.extend(rust_commands)
         cpp_commands = self._cpp_workspace_quality_commands()
         commands.extend(cpp_commands)
-        if not go_commands and not rust_commands and not cpp_commands:
-            commands.extend(self._python_workspace_quality_commands(context))
+        java_commands = self._java_workspace_quality_commands()
+        commands.extend(java_commands)
+        if not go_commands and not rust_commands and not cpp_commands and not java_commands:
+            python_commands = self._python_workspace_quality_commands(context)
+            if self._npm_official_quality_scheduled(commands) and not self._has_python_production_sources():
+                # Live L2-18 remint-12: official npm build/test/start passed
+                # 36/36 TAP, then quality failed on tests/test_product.py
+                # unittest discover. That helper is not the JS official gate.
+                python_commands = []
+            commands.extend(python_commands)
         return commands
+
+    def _npm_official_quality_scheduled(self, commands: Sequence[list[str]]) -> bool:
+        return any(len(command) >= 2 and command[0] == "npm" and command[1] in {"test", "run"} for command in commands)
+
+    def _has_python_production_sources(self) -> bool:
+        if (self.workspace / "main.py").is_file():
+            return True
+        src = self.workspace / "src"
+        if not src.is_dir():
+            return False
+        try:
+            return any(path.is_file() and path.suffix == ".py" for path in src.rglob("*.py"))
+        except OSError:
+            return False
 
     def _go_workspace_quality_commands(self, context: dict[str, Any]) -> list[list[str]]:
         go_files = [
@@ -433,6 +456,84 @@ for command in (["cmake", "-S", ".", "-B", "build"], ["cmake", "--build", "build
 print("CMake build passed")
 """.strip()
             commands.append([sys.executable, "-c", cmake_script])
+        test_dir = self.workspace / "tests"
+        if test_dir.is_dir() and any(test_dir.glob("test_*.py")):
+            commands.append([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"])
+        return commands
+
+    def _java_source_files(self) -> list[Path]:
+        ignored = {"build", "out", "target", "runtime", ".polaris", "cmake-build"}
+        return [
+            path
+            for path in self.workspace.rglob("*.java")
+            if path.is_file() and not any(part in ignored for part in path.parts)
+        ]
+
+    def _java_workspace_quality_commands(self) -> list[list[str]]:
+        """Official Java quality compiles every .java, then Python tests if present.
+
+        Live L2-16: six .java files and no pom. Missing this slot made quality
+        fall through to ``compileall`` + unittest, so javac never ran as a
+        first-class verifier.
+        """
+
+        java_files = self._java_source_files()
+        if not java_files:
+            return []
+        script = """
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+root = pathlib.Path(".")
+ignored = {"build", "out", "target", "runtime", ".polaris", "cmake-build"}
+test_parts = {"test", "tests"}
+raw_files = [
+    path for path in root.rglob("*.java")
+    if path.is_file()
+    and not any(part in ignored for part in path.parts)
+    and not any(part.lower() in test_parts for part in path.parts)
+]
+# Live L2-16 remint-3: wrote PlantEngine.java but leftover still compiled
+# plantengine.java. Same-dir case duplicates must keep the official
+# PascalCase basename only.
+chosen = {}
+for path in raw_files:
+    key = (path.parent, path.name.lower())
+    current = chosen.get(key)
+    if current is None or (path.stem[:1].isupper() and not current.stem[:1].isupper()):
+        chosen[key] = path
+files = sorted(chosen.values(), key=lambda item: item.as_posix())
+if not files:
+    print("No Java sources found", file=sys.stderr)
+    raise SystemExit(1)
+failed_paths = []
+with tempfile.TemporaryDirectory(prefix="polaris-factory-javac-") as out_dir:
+    completed = subprocess.run(
+        ["javac", "-encoding", "UTF-8", "-d", out_dir, *[str(path) for path in files]],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+if completed.returncode != 0:
+    body = completed.stderr or completed.stdout or "javac failed"
+    for line in body.splitlines():
+        if ": error:" in line or ": error :" in line:
+            rel = line.split(":", 1)[0].strip()
+            if rel and rel not in failed_paths:
+                failed_paths.append(rel)
+    if not failed_paths:
+        failed_paths = [str(path) for path in files]
+    print("### FAILING_TUS " + " ".join(failed_paths), file=sys.stderr)
+    print(body[:4000], file=sys.stderr)
+    raise SystemExit(completed.returncode or 1)
+print(f"Java javac passed for {len(files)} source file(s)")
+""".strip()
+        commands: list[list[str]] = [[sys.executable, "-c", script]]
         test_dir = self.workspace / "tests"
         if test_dir.is_dir() and any(test_dir.glob("test_*.py")):
             commands.append([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"])

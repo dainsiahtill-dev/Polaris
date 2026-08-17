@@ -30,6 +30,8 @@ from .factory_run_models import _WORKSPACE_VALIDATION_TIMEOUT_SECONDS, FactoryRu
 from .factory_workspace_quality_evidence import (
     _dedupe_workspace_repair_paths,
     compact_go_stack_overflow_diagnostic,
+    leftover_rotate_allows_quality_extra_round,
+    leftover_targets_should_force_owner_rotate,
     workspace_quality_latest_task_boundary_scope_filter,
     workspace_quality_repair_result_has_mutation,
     workspace_quality_unclaimed_failing_tu_targets,
@@ -44,7 +46,10 @@ _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS = 5.0
 # round (E0432 -> E0277 -> E0507, live L1-05), so the same-run loop needs
 # headroom beyond the two-round stagnation breaker while staying bounded by
 # the per-round deadline checks and the oscillation-aware stagnation counter.
-_WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 5
+# Live L2-15 remint-21: last round was ``progress`` (7 compile residuals
+# back to 5 CLI abort) then the hard cap stopped the loop. C++ syntax ->
+# cmake -> unittest unmask needs more than 5 same-run rounds.
+_WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 8
 _WORKSPACE_QUALITY_REPAIR_MIN_LLM_START_BUDGET_SECONDS = FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
 _WORKSPACE_QUALITY_REPAIR_LEASE_TTL_SECONDS = 300
 _WORKSPACE_QUALITY_REPAIR_HEARTBEAT_INTERVAL_SECONDS = 30.0
@@ -409,6 +414,22 @@ def _claim_workspace_quality_repair_attempt(
     normalized_targets = {
         str(path or "").strip().replace("\\", "/") for path in target_files if str(path or "").strip()
     }
+    # javac `class X is public, should be declared in X.java` leftover names
+    # the official basename. The owning task still lists melodymodel.java.
+    # Score the same-directory existing .java siblings so claim does not
+    # raise workspace_quality_repair_canonical_owner_missing.
+    workspace_root = Path(executor.workspace)
+    for rel in list(normalized_targets):
+        if not rel.endswith(".java"):
+            continue
+        parent = workspace_root / Path(rel).parent
+        if not parent.is_dir():
+            continue
+        try:
+            for sibling in parent.glob("*.java"):
+                normalized_targets.add(sibling.relative_to(workspace_root).as_posix())
+        except (OSError, ValueError):
+            continue
 
     def row_owner_score(candidate: Mapping[str, Any]) -> tuple[int, int]:
         return executor._workspace_quality_repair_owner_score(
@@ -966,6 +987,8 @@ async def _apply_workspace_quality_llm_repairs(
     )
     repair_context: dict[str, Any] = {
         "delivery_mode": "materialize_changes",
+        "run_id": run_id,
+        "factory_run_id": run_id,
         "target_files": (target_files or changed_files)[:80],
         "changed_files": changed_files[:80],
         # Quality repair is an executable Director turn. ``auto`` allowed the
@@ -1084,6 +1107,8 @@ async def _apply_workspace_quality_llm_repairs(
         repair_metadata = {}
         repair_context["metadata"] = repair_metadata
     repair_metadata["task_id"] = repair_task_id
+    repair_metadata.setdefault("factory_run_id", run_id)
+    repair_metadata.setdefault("run_id", run_id)
     # Session id alone is reused across quality repair rounds on the same
     # owner. Transaction invocation identity then minted the same
     # ``txi_*-0`` turn_outcomes key and same-run retries collided
@@ -1442,7 +1467,15 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             return partial_summary
 
         forced_next_owner_targets: list[str] = []
-        for round_index in range(max_rounds):
+        leftover_extra_pending = False
+        for round_index in range(max_rounds + 2):
+            if not leftover_rotate_allows_quality_extra_round(
+                round_index=round_index,
+                max_rounds=max_rounds,
+                leftover_extra_pending=leftover_extra_pending,
+            ):
+                break
+            leftover_extra_pending = False
             owner_override = list(forced_next_owner_targets) or None
             forced_next_owner_targets = []
             if latest_check_results and all(bool(item.get("passed")) for item in latest_check_results):
@@ -1450,10 +1483,12 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             repair_errors = executor._workspace_quality_repair_errors(latest_check_results or results)
             if not repair_errors:
                 break
-            if owner_override is None:
+            if owner_override is None and round_index == 0:
                 # Live L2-15 remint-11/12: leftover only ran AFTER a TU
                 # stagnated, so the first four rounds never leased the
                 # unclosed queue.hpp that produced ProjectNS::std.
+                # Later rounds must not re-seed claimed=[] (that bounced
+                # remint-22 back onto src/main.cpp after a type-home rotate).
                 seeded = workspace_quality_unclaimed_failing_tu_targets(
                     repair_errors,
                     claimed_targets=[],
@@ -1807,22 +1842,26 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     # structured verifier feedback on the next bounded round.
                     consecutive_stagnant_rounds = 1
                     last_nonprogress_effect = "no_op"
-                leftover_after_noop = workspace_quality_unclaimed_residual_targets(
-                    repair_errors,
-                    claimed_targets=owned_round_targets
+                claimed_noop_targets = (
+                    owned_round_targets
                     or [
                         str(item or "").strip()
                         for item in (round_summary.get("repair_target_files") or [])
                         if str(item or "").strip()
                     ]
-                    or list(owner_override[:1] if owner_override else []),
+                    or list(owner_override[:1] if owner_override else [])
+                )
+                leftover_after_noop = workspace_quality_unclaimed_residual_targets(
+                    repair_errors,
+                    claimed_targets=claimed_noop_targets,
                     workspace=Path(executor.workspace),
                 )
-                if leftover_after_noop:
+                if leftover_targets_should_force_owner_rotate(leftover_after_noop, claimed_noop_targets):
                     # Live L2-15: generator.cpp went syntax-green so the
                     # engine owner no-op'd while ### src/main.cpp still
                     # failed. Do not retry the same Director task.
                     forced_next_owner_targets = leftover_after_noop
+                    leftover_extra_pending = True
                     consecutive_stagnant_rounds = 0
                     last_nonprogress_effect = ""
                     last_nonprogress_task_id = ""
@@ -1964,24 +2003,28 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             if round_prepare_failed:
                 convergence_stop_reason = "prepare_after_repair_failed"
                 break
-            leftover_tus = workspace_quality_unclaimed_failing_tu_targets(
-                after_errors,
-                claimed_targets=owned_round_targets
+            claimed_round_targets = (
+                owned_round_targets
                 or [
                     str(item or "").strip()
                     for item in (round_summary.get("repair_target_files") or [])
                     if str(item or "").strip()
                 ]
-                or list(owner_override[:1] if owner_override else []),
+                or list(owner_override[:1] if owner_override else [])
+            )
+            leftover_tus = workspace_quality_unclaimed_failing_tu_targets(
+                after_errors,
+                claimed_targets=claimed_round_targets,
                 workspace=Path(executor.workspace),
             )
-            if leftover_tus:
+            if leftover_targets_should_force_owner_rotate(leftover_tus, claimed_round_targets):
                 # Live L2-15 remint-9: models kept mutating queue.hpp/.cpp
                 # (classified progress / forward_unmask) while ### src/main.cpp
                 # stayed red. Waiting for two same-owner stagnations never
                 # leased the failing TU. Any unsuccessful round with unclaimed
                 # ### TUs must rotate immediately.
                 forced_next_owner_targets = leftover_tus
+                leftover_extra_pending = True
                 consecutive_stagnant_rounds = 0
                 last_nonprogress_effect = ""
                 last_nonprogress_task_id = ""
@@ -1989,19 +2032,21 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             if consecutive_stagnant_rounds >= 2:
                 leftover_owners = workspace_quality_unclaimed_residual_targets(
                     after_errors,
-                    claimed_targets=owned_round_targets
-                    or [
-                        str(item or "").strip()
-                        for item in (round_summary.get("repair_target_files") or [])
-                        if str(item or "").strip()
-                    ],
+                    claimed_targets=claimed_round_targets,
                     workspace=Path(executor.workspace),
                 )
-                if leftover_owners:
+                if leftover_targets_should_force_owner_rotate(leftover_owners, claimed_round_targets):
                     forced_next_owner_targets = leftover_owners
+                    leftover_extra_pending = True
                     consecutive_stagnant_rounds = 0
                     last_nonprogress_effect = ""
                     last_nonprogress_task_id = ""
+                    continue
+                if leftover_tus:
+                    # Live L2-16 remint-6: Plant.java/Season.java existed,
+                    # leftover_tus stayed on claimed PlantEngine.java
+                    # (MelodyModel.Note). Aborting at 2 stagnant wasted
+                    # remaining javac rounds on the same owner.
                     continue
                 convergence_stop_reason = "two_consecutive_stagnant_repairs"
                 break

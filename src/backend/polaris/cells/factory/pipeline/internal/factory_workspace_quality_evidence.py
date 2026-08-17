@@ -335,6 +335,774 @@ _CPP_STD_NAMESPACE_POLLUTION_RE = re.compile(
 )
 _CPP_NAMESPACE_OPEN_RE = re.compile(r"(?m)^\s*namespace\b")
 _CPP_HEADER_SUFFIXES = {".h", ".hh", ".hpp", ".hxx"}
+_UNITTEST_TRACEBACK_TEST_RE = re.compile(
+    r'File "[^"\n]+/(?P<path>tests/test_[^"/\s]+\.py)"',
+    re.IGNORECASE,
+)
+_TYPESCRIPT_SOURCE_SUFFIXES = frozenset({".ts", ".tsx", ".mts", ".cts"})
+_FAILING_TU_SOURCE_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx", ".java"}) | _TYPESCRIPT_SOURCE_SUFFIXES
+_TYPESCRIPT_TSC_ERROR_RE = re.compile(
+    r"(?m)^(?P<path>(?:src|tests|lib|app)/[^\s:()]+?\.(?:ts|tsx|mts|cts))\(\d+,\d+\):\s+error\s+TS\d+",
+    re.IGNORECASE,
+)
+_NODE_STACK_SOURCE_RE = re.compile(
+    r"(?P<path>(?:src|tests)/[A-Za-z0-9_./-]+\.(?:ts|tsx|mts|cts|js|mjs|cjs)):\d+(?::\d+)?",
+    re.IGNORECASE,
+)
+_JS_TAP_LOCATION_RE = re.compile(
+    r"(?im)location:\s*['\"][^'\"]*?(?P<path>(?:src|tests)/[A-Za-z0-9_./-]+\.(?:js|mjs|cjs)):(?P<line>\d+)"
+)
+_JS_CALL_IDENT_RE = re.compile(r"\b(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_JS_TAP_RESERVED_CALLS = frozenset(
+    {
+        "if",
+        "for",
+        "while",
+        "switch",
+        "catch",
+        "function",
+        "return",
+        "typeof",
+        "await",
+        "void",
+        "assert",
+        "test",
+        "describe",
+        "it",
+        "equal",
+        "deepEqual",
+        "strictEqual",
+        "throws",
+        "doesNotThrow",
+        "ok",
+        "ifError",
+        "match",
+        "doesNotMatch",
+        "rejects",
+        "doesNotReject",
+        "notEqual",
+        "notDeepEqual",
+        "notStrictEqual",
+        "Error",
+        "TypeError",
+        "Object",
+        "Array",
+        "String",
+        "Number",
+        "Boolean",
+        "JSON",
+        "Math",
+        "console",
+        "require",
+        "import",
+    }
+)
+_CPP_LINKER_TU_RE = re.compile(
+    r"(?:(?P<obj>[A-Za-z_][\w-]*)\.cpp\.o|(?P<file>[A-Za-z_][\w-]*\.cpp):)",
+    re.IGNORECASE,
+)
+
+
+_CPP_RUNTIME_CTOR_THROW_RE = re.compile(
+    r"what\(\):\s+(?P<type>[A-Za-z_]\w*)::(?P=type):",
+    re.IGNORECASE,
+)
+
+
+_DELIVERY_DEPTH_FAILED_RE = re.compile(r"delivery_depth_contract_failed|production_source_lines\s*=\s*\d+\s*<")
+_PROD_SOURCE_SUFFIXES = {
+    ".java",
+    ".kt",
+    ".scala",
+    ".go",
+    ".rs",
+    ".cpp",
+    ".cc",
+    ".cxx",
+    ".c",
+    ".py",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+}
+
+
+def _delivery_depth_prod_shortfall_targets(blob: str, workspace: Path) -> list[str]:
+    """Lease production sources when delivery-depth is the residual.
+
+    Live L2-16: unittest went green; leftover still leased tests/ because the
+    depth blob mentioned ``test_files=2`` / ``File ".../tests/test_*.py"``.
+    Depth shortfalls are implementation size, not test rewrites.
+    """
+
+    if _DELIVERY_DEPTH_FAILED_RE.search(blob) is None or not workspace.is_dir():
+        return []
+    search_roots = [path for path in (workspace / "src" / "main" / "java", workspace / "src") if path.is_dir()]
+    if not search_roots:
+        return []
+    found: list[str] = []
+    for root in search_roots:
+        try:
+            hits = [path for path in root.rglob("*") if path.is_file()]
+        except OSError:
+            continue
+        for path in sorted(hits, key=lambda item: item.as_posix()):
+            if path.suffix.lower() not in _PROD_SOURCE_SUFFIXES:
+                continue
+            if any(part.lower() in {"test", "tests"} for part in path.parts):
+                continue
+            if any(part in {"build", "out", "target", "runtime", ".polaris"} for part in path.parts):
+                continue
+            try:
+                rel = path.relative_to(workspace).as_posix()
+            except ValueError:
+                continue
+            if rel not in found:
+                found.append(rel)
+        if found:
+            break
+    return found
+
+
+_JAVA_PUBLIC_TYPE_FILE_RE = re.compile(
+    r"(?P<path>[^\s:]+\.java):\d+:\s+error:\s+(?:class|enum|interface|record)\s+"
+    r"(?P<type>[A-Za-z_]\w*)\s+is public, should be declared in a file named "
+    r"(?P<want>[A-Za-z_]\w*\.java)",
+    re.IGNORECASE,
+)
+
+
+_JAVA_MISSING_PACKAGE_SYMBOL_RE = re.compile(
+    r"symbol:\s+class\s+(?P<type>[A-Za-z_]\w*)\s+"
+    r"location:\s+package\s+(?P<pkg>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)",
+    re.IGNORECASE,
+)
+
+
+def _java_sibling_declares_nested_type(workspace: Path, package_dir: Path, type_name: str) -> bool:
+    """True when an existing same-package .java already declares nested ``type_name``."""
+
+    parent = workspace / package_dir
+    if not parent.is_dir() or not type_name:
+        return False
+    nested = re.compile(
+        rf"\b(?:(?:public|protected|private|static|final|sealed|non-sealed)\s+)*"
+        rf"(?:class|enum|interface|record)\s+{re.escape(type_name)}\b"
+    )
+    try:
+        siblings = list(parent.glob("*.java"))
+    except OSError:
+        return False
+    for path in siblings:
+        if path.stem == type_name:
+            continue
+        try:
+            if path.stat().st_size <= 0:
+                continue
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if nested.search(text):
+            return True
+    return False
+
+
+def _java_missing_package_symbol_targets(blob: str, workspace: Path) -> list[str]:
+    """Map ``cannot find symbol class X`` + package P onto ``src/main/java/P/X.java``.
+
+    Live L2-16 remint-5: Melody.java existed, then javac failed
+    ``class Plant`` / ``class Season`` in ``polaris.factory.domain`` while
+    leftover stayed on claimed PlantEngine.java.
+    """
+
+    found: list[str] = []
+    if "cannot find symbol" not in blob.lower():
+        return found
+    for match in _JAVA_MISSING_PACKAGE_SYMBOL_RE.finditer(blob):
+        type_name = str(match.group("type") or "").strip()
+        pkg = str(match.group("pkg") or "").strip()
+        if not type_name or not pkg:
+            continue
+        rel = "src/main/java/" + pkg.replace(".", "/") + "/" + type_name + ".java"
+        parent = workspace / Path(rel).parent
+        if not parent.is_dir():
+            continue
+        candidate = workspace / rel
+        try:
+            if candidate.is_file() and candidate.stat().st_size > 0:
+                continue
+        except OSError:
+            continue
+        if _java_sibling_declares_nested_type(workspace, Path(rel).parent, type_name):
+            # Live L2-16 remint-11: ``class Note`` already lives in Melody.java.
+            # Inventing domain/Note.java forced write_file and a type clash.
+            continue
+        if rel not in found:
+            found.append(rel)
+    return found
+
+
+def _java_official_public_type_targets(
+    blob: str,
+    compile_tus: Sequence[str] | None = None,
+) -> list[str]:
+    """Map javac public-type filename errors onto the official basename.
+
+    Live L2-16 remint-2: eight source-modules rounds edited ``melodymodel.java``
+    / dropped ``public`` instead of writing ``Melody.java``.
+    Live L2-16 remint-12: FAILING_TUS stayed on PlantEngine.java, but a
+    public-type residual on plantmodel.java rotated leftover to a missing
+    PlantModel.java create. Only rewrite the official basename of a
+    still-red compile TU.
+    """
+
+    compile_set = {
+        str(path or "").replace("\\", "/").strip() for path in (compile_tus or []) if str(path or "").strip()
+    }
+    found: list[str] = []
+    for match in _JAVA_PUBLIC_TYPE_FILE_RE.finditer(blob):
+        src = str(match.group("path") or "").replace("\\", "/").strip()
+        want = str(match.group("want") or "").strip()
+        if not src or not want:
+            continue
+        if compile_set and src not in compile_set:
+            continue
+        official = Path(src).with_name(want).as_posix()
+        if official not in found:
+            found.append(official)
+        if src not in found:
+            found.append(src)
+    return found
+
+
+def _drop_java_case_duplicate_paths(paths: Sequence[str]) -> list[str]:
+    """Keep official PascalCase .java when a case-variant sibling is listed."""
+
+    chosen: dict[tuple[str, str], str] = {}
+    order: list[tuple[str, str]] = []
+    for raw in paths:
+        path = str(raw or "").strip().replace("\\", "/")
+        if not path.endswith(".java"):
+            key = ("", path)
+            if key not in chosen:
+                chosen[key] = path
+                order.append(key)
+            continue
+        key = (str(Path(path).parent.as_posix()), Path(path).name.lower())
+        current = chosen.get(key)
+        if current is None:
+            chosen[key] = path
+            order.append(key)
+            continue
+        if Path(path).stem[:1].isupper() and not Path(current).stem[:1].isupper():
+            chosen[key] = path
+    return [chosen[key] for key in order]
+
+
+def _prefer_java_prod_failing_tus(paths: Sequence[str]) -> list[str]:
+    """Keep src/main/java ahead of src/test when both javac-fail.
+
+    Live L2-16 remint-1: official javac listed plantenginetest.java. After
+    claiming prod files leftover_tus rotated to TASK-1-tests.
+    """
+
+    ordered = [str(path or "").strip().replace("\\", "/") for path in paths if str(path or "").strip()]
+    prod = [
+        path
+        for path in ordered
+        if path.endswith(".java") and "/test/" not in f"/{path.lower()}/" and "/tests/" not in f"/{path.lower()}/"
+    ]
+    return prod or ordered
+
+
+def _prefer_java_unittest_helper_when_official_compile_green(
+    leftover: Sequence[str],
+    blob: str,
+    workspace: Path,
+) -> list[str]:
+    """Keep the unittest helper when official javac already passed.
+
+    Live L2-16 remint-24: official wrapper printed ``Java javac passed for
+    9 source file(s)``. Unittest staging javac of PlantEngine.java alone
+    still failed. leftover leased PlantEngine and R8 deferred to
+    TASK-1-source-modules.
+    """
+
+    ordered = [str(path or "").strip().replace("\\", "/") for path in leftover if str(path or "").strip()]
+    if "### FAILING_TUS" in blob:
+        return ordered
+    helpers: list[str] = [
+        path
+        for path in ordered
+        if path.endswith(".py") and (path.startswith("tests/") or "/tests/" in f"/{path.lower()}/")
+    ]
+    for match in _UNITTEST_TRACEBACK_TEST_RE.finditer(blob):
+        rel = str(match.group("path") or "").replace("\\", "/").strip()
+        if (
+            rel.endswith(".py")
+            and rel not in helpers
+            and (workspace / rel).is_file()
+            and (rel.startswith("tests/") or "/tests/" in f"/{rel.lower()}/")
+        ):
+            helpers.append(rel)
+    staging_only = "build/staging" in blob.replace("\\", "/")
+    unittest_javac = "javac failed" in blob.lower() and "test_product.py" in blob
+    if helpers and staging_only and unittest_javac:
+        return list(dict.fromkeys(helpers))
+    return ordered
+
+
+def _workspace_relative_source_exists(workspace: Path, rel: str) -> bool:
+    cleaned = str(rel or "").replace("\\", "/").strip()
+    if not cleaned or cleaned.startswith("/") or ".." in Path(cleaned).parts:
+        return False
+    try:
+        return (workspace / cleaned).is_file()
+    except OSError:
+        return False
+
+
+def _is_typescript_test_path(path: str) -> bool:
+    rel = str(path or "").replace("\\", "/").strip().lower()
+    name = Path(rel).name.lower()
+    return (
+        rel.startswith("tests/")
+        or "/tests/" in f"/{rel}/"
+        or name.endswith(".test.ts")
+        or name.endswith(".test.tsx")
+        or name.endswith(".spec.ts")
+        or name.endswith(".spec.tsx")
+    )
+
+
+def _typescript_tsc_error_targets(blob: str, workspace: Path) -> list[str]:
+    """Parse official ``tsc`` ``path.ts(n,m): error TSxxxx`` sites.
+
+    Live L2-17 remint-3: official ``npm run build`` printed simulation /
+    reputation / web residuals, but leftover only accepted ``### FAILING_TUS``
+    C++/Java suffixes. Eight TASK-2 rounds never rotated onto the still-red
+    source-models owner.
+    """
+
+    found: list[str] = []
+    for match in _TYPESCRIPT_TSC_ERROR_RE.finditer(blob):
+        rel = str(match.group("path") or "").replace("\\", "/").strip()
+        if rel and rel not in found and _workspace_relative_source_exists(workspace, rel):
+            found.append(rel)
+    return found
+
+
+def _typescript_runtime_stack_targets(blob: str, workspace: Path) -> list[str]:
+    """Parse Node TAP / stack frames such as ``src/verify.ts:11:19``.
+
+    Live L2-17 remint-3: ``npm test`` failed ``ENOENT scandir '/tmp/src'``
+    from ``filesUnder`` in ``src/verify.ts``. That is not a tsc site.
+    """
+
+    found: list[str] = []
+    for match in _NODE_STACK_SOURCE_RE.finditer(blob):
+        rel = str(match.group("path") or "").replace("\\", "/").strip()
+        if rel and rel not in found and _workspace_relative_source_exists(workspace, rel):
+            found.append(rel)
+    impl = [path for path in found if path.startswith("src/") and not _is_typescript_test_path(path)]
+    if impl:
+        return [*impl, *[path for path in found if path not in impl]]
+    return found
+
+
+_JS_TAP_NOT_DEFINED_RE = re.compile(
+    r"(?:error:\s*['\"]|ReferenceError:\s*)(?P<name>[A-Za-z_][A-Za-z0-9_]*) is not defined",
+    re.IGNORECASE,
+)
+_JS_UNDECLARED_ASSIGN_TEMPLATE = r"(?m)^(?P<indent>\s*){name}\s*="
+
+
+_JS_SYNTAX_ERROR_TEST_RE = re.compile(
+    r"(?:syntax error in |SyntaxError[^\n]*?)(?P<path>tests/[A-Za-z0-9_./-]+\.(?:js|mjs|cjs|ts|tsx))",
+    re.IGNORECASE,
+)
+
+
+def _javascript_syntax_broken_official_tests(blob: str, workspace: Path) -> list[str]:
+    """Keep leftover on the official TAP file while it cannot parse.
+
+    Live L2-18 remint-9: TASK-2 deleted the meteor ``describe(`` opener.
+    ``node --test`` failed ``Unexpected token '}'`` at the leftover closer.
+    leftover then leased ``src/queue.js`` and the official suite stayed
+    unparseable.
+    """
+
+    found: list[str] = []
+    for match in _JS_SYNTAX_ERROR_TEST_RE.finditer(blob):
+        rel = str(match.group("path") or "").replace("\\", "/").strip()
+        if rel and rel not in found and _workspace_relative_source_exists(workspace, rel):
+            found.append(rel)
+    return found
+
+
+def _javascript_tap_reference_error_impl_targets(blob: str, workspace: Path) -> list[str]:
+    """Map TAP ``X is not defined`` onto undeclared ``X =`` assignments.
+
+    Live L2-18 remint-7: Director dropped ``const`` on
+    ``text = clampString(...)`` in ``src/wish.js``. TAP located the
+    ``test()`` header, leftover stayed on tests, and ESM threw
+    ReferenceError on every makeWish path.
+    """
+
+    names = [
+        str(match.group("name") or "")
+        for match in _JS_TAP_NOT_DEFINED_RE.finditer(blob)
+        if str(match.group("name") or "")
+    ]
+    if not names:
+        return []
+    src_root = workspace / "src"
+    if not src_root.is_dir():
+        return []
+    patterns = {
+        name: re.compile(_JS_UNDECLARED_ASSIGN_TEMPLATE.format(name=re.escape(name))) for name in dict.fromkeys(names)
+    }
+    found: list[str] = []
+    try:
+        files = [path for suffix in ("*.js", "*.mjs", "*.cjs") for path in src_root.rglob(suffix) if path.is_file()]
+    except OSError:
+        return []
+    for path in sorted(files, key=lambda item: item.as_posix()):
+        try:
+            rel = path.relative_to(workspace).as_posix()
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+        name_token = Path(rel).name.lower()
+        if (
+            any(part in {"node_modules", "dist", "build"} for part in Path(rel).parts)
+            or ".test." in name_token
+            or ".spec." in name_token
+        ):
+            continue
+        for pattern in patterns.values():
+            match = pattern.search(text)
+            if match is None:
+                continue
+            indent_line = match.group(0)
+            if re.match(r"^\s*(?:const|let|var)\s+", indent_line):
+                continue
+            # Same-line declarator already handled; reject `const` on the match
+            # start by checking the line prefix.
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            line = text[line_start : match.end()]
+            if re.match(r"^\s*(?:const|let|var)\b", line):
+                continue
+            if rel not in found:
+                found.append(rel)
+            break
+    return found
+
+
+def _javascript_tap_callee_impl_targets(blob: str, workspace: Path) -> list[str]:
+    """Map TAP location-only residuals onto existing src/*.js callees.
+
+    Live L2-18 remint-5: official residual listed only
+    ``tests/product.test.js:206`` and ``meteorId must be a non-empty string``.
+    No stack frame named ``src/wish.js``. After TASK-2 claimed the TAP
+    file, leftover stayed on tests until equal_count_swap.
+    """
+
+    names: list[str] = []
+    for match in _JS_TAP_LOCATION_RE.finditer(blob):
+        rel = str(match.group("path") or "").replace("\\", "/").strip()
+        if not rel or not _workspace_relative_source_exists(workspace, rel):
+            continue
+        try:
+            line_number = max(1, int(match.group("line")))
+            lines = (workspace / rel).read_text(encoding="utf-8").splitlines()
+        except (OSError, TypeError, UnicodeDecodeError, ValueError):
+            continue
+        start = max(0, line_number - 4)
+        end = min(len(lines), line_number + 20)
+        for raw in lines[start:end]:
+            for call in _JS_CALL_IDENT_RE.finditer(str(raw or "")):
+                name = str(call.group("name") or "")
+                if name and name not in _JS_TAP_RESERVED_CALLS and name not in names:
+                    names.append(name)
+    if not names:
+        return []
+    src_root = workspace / "src"
+    if not src_root.is_dir():
+        return []
+    patterns = {name: re.compile(rf"(?m)^(?:export\s+)?(?:async\s+)?function\s+{re.escape(name)}\b") for name in names}
+    found: list[str] = []
+    found_names: set[str] = set()
+    try:
+        files = [path for suffix in ("*.js", "*.mjs", "*.cjs") for path in src_root.rglob(suffix) if path.is_file()]
+    except OSError:
+        return []
+    for path in sorted(files, key=lambda item: item.as_posix()):
+        try:
+            rel = path.relative_to(workspace).as_posix()
+        except ValueError:
+            continue
+        name_token = Path(rel).name.lower()
+        if (
+            any(part in {"node_modules", "dist", "build"} for part in Path(rel).parts)
+            or ".test." in name_token
+            or ".spec." in name_token
+        ):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for name, pattern in patterns.items():
+            if name in found_names:
+                continue
+            if pattern.search(text) is None:
+                continue
+            if rel not in found:
+                found.append(rel)
+            found_names.add(name)
+        if len(found_names) >= len(names):
+            break
+    return found
+
+
+def _demote_python_unittest_helpers_when_js_impl(paths: Sequence[str]) -> list[str]:
+    """After official TAP is claimed, do not let test_*.py block src/*.js.
+
+    Live L2-18 remint-11 leftover after claiming ``tests/product.test.js``
+    was ``tests/test_product.py`` first. TASK-2 re-leased the Python helper
+    for six rounds while ``src/index.js`` (validateIndex/createIndex TAP)
+    never became leftover[0].
+    """
+
+    ordered = [str(path or "").strip().replace("\\", "/") for path in paths if str(path or "").strip()]
+    js_impl = [
+        path for path in ordered if path.startswith("src/") and Path(path).suffix.lower() in {".js", ".mjs", ".cjs"}
+    ]
+    py_helpers = [path for path in ordered if path.endswith(".py") and Path(path).name.startswith("test_")]
+    if not js_impl or not py_helpers:
+        return ordered
+    rest = [path for path in ordered if path not in js_impl and path not in py_helpers]
+    official = [
+        path
+        for path in rest
+        if path.endswith((".test.js", ".spec.js", ".test.mjs", ".spec.mjs")) or Path(path).name.endswith(".test.cjs")
+    ]
+    other = [path for path in rest if path not in official]
+    return [*official, *js_impl, *other, *py_helpers]
+
+
+def _prefer_javascript_official_tap_tests(paths: Sequence[str]) -> list[str]:
+    """Keep official Node TAP tests ahead of Python unittest helpers.
+
+    Live L2-18 remint-2: leftover listed ``tests/test_product.py`` first because
+    the TAP residual also mentioned that helper. Ten QA rounds stayed on
+    ``src/meteor.js`` after TASK-2 could not lease the Python helper, while
+    official ``npm test`` was ``tests/product.test.js``.
+    """
+
+    ordered = [str(path or "").strip().replace("\\", "/") for path in paths if str(path or "").strip()]
+    js_tests = [
+        path
+        for path in ordered
+        if path.endswith((".test.js", ".spec.js", ".test.mjs", ".spec.mjs")) or Path(path).name.endswith(".test.cjs")
+    ]
+    if not js_tests:
+        return ordered
+    other = [path for path in ordered if path not in js_tests]
+    return [*js_tests, *other]
+
+
+def _prefer_typescript_compile_sites(paths: Sequence[str]) -> list[str]:
+    """Keep still-red tsc compile sites ahead of tests/ while compile fails."""
+
+    ordered = [str(path or "").strip().replace("\\", "/") for path in paths if str(path or "").strip()]
+    ts_compile = [
+        path
+        for path in ordered
+        if Path(path).suffix.lower() in _TYPESCRIPT_SOURCE_SUFFIXES and not _is_typescript_test_path(path)
+    ]
+    other = [path for path in ordered if Path(path).suffix.lower() not in _TYPESCRIPT_SOURCE_SUFFIXES]
+    if ts_compile:
+        return [*ts_compile, *other]
+    return ordered
+
+
+def leftover_rotate_allows_quality_extra_round(
+    *,
+    round_index: int,
+    max_rounds: int,
+    leftover_extra_pending: bool,
+    extra_cap: int = 2,
+) -> bool:
+    """Allow a leftover owner rotate after the last scheduled QA round.
+
+    Live L2-17 remint-5: R8 greened ``npm run build`` so leftover_tus became
+    ``src/verify.ts`` from the TAP stack, but ``max_rounds=8`` ended the
+    loop before TASK-3 could lease the npm-test residual.
+    """
+
+    scheduled = max(1, int(max_rounds))
+    cap = max(0, int(extra_cap))
+    index = max(0, int(round_index))
+    if leftover_extra_pending and index < scheduled + cap:
+        return True
+    return index < scheduled
+
+
+def leftover_targets_should_force_owner_rotate(
+    leftover: Sequence[str],
+    claimed_targets: Sequence[str],
+) -> bool:
+    """Force leftover rotate only onto a path the last owner did not lease.
+
+    Live L2-15 remint-22: leftover_tus kept returning claimed ``src/main.cpp``
+    and reset ``consecutive_stagnant_rounds``, so four stagnant CLI-abort
+    rounds never tripped the breaker.
+    """
+
+    if not leftover:
+        return False
+    first = str(leftover[0] or "").strip().replace("\\", "/")
+    if not first:
+        return False
+    claimed = {str(path or "").strip().replace("\\", "/") for path in claimed_targets if str(path or "").strip()}
+    if first in claimed:
+        return False
+    # patrol.cpp / patrol.hpp are one owner. Stem-equal leftover is stay,
+    # not rotate — remint-22 reset the breaker on the same CLI file.
+    claimed_stems = {Path(path).stem.lower() for path in claimed}
+    return Path(first).stem.lower() not in claimed_stems
+
+
+def _cpp_runtime_ctor_throw_targets(blob: str, workspace: Path) -> list[str]:
+    """Map ``Type::Type:`` abort text onto existing type sources.
+
+    Live L2-15 remint-22 unittest aborted
+    ``Patrol::Patrol: requires at least 2 distinct nodes`` after eight
+    ``src/main.cpp`` mutations. The throwing constructor lives on the type.
+    """
+
+    if not workspace.is_dir():
+        return []
+    types: list[str] = []
+    for match in _CPP_RUNTIME_CTOR_THROW_RE.finditer(blob):
+        name = str(match.group("type") or "").strip()
+        if name and name not in types:
+            types.append(name)
+    if not types:
+        return []
+    search_roots = [path for path in (workspace / "src", workspace / "include") if path.is_dir()]
+    if not search_roots:
+        search_roots = [workspace]
+    found: list[str] = []
+    for name in types:
+        stem = name.lower()
+        for root in search_roots:
+            try:
+                hits = [
+                    path
+                    for ext in (".cpp", ".cc", ".cxx", ".c", ".hpp", ".hh", ".h", ".hxx")
+                    for path in root.rglob(stem + ext)
+                    if path.is_file() and "build" not in path.parts and "cmake-build" not in path.parts
+                ]
+            except OSError:
+                continue
+            for path in sorted(
+                hits,
+                key=lambda item: (0 if item.suffix.lower() in {".c", ".cc", ".cpp", ".cxx"} else 1, item.as_posix()),
+            ):
+                try:
+                    rel = path.relative_to(workspace).as_posix()
+                except ValueError:
+                    continue
+                if rel not in found:
+                    found.append(rel)
+    return found
+
+
+def _rotate_claimed_leftover(paths: Sequence[str], claimed: set[str]) -> list[str]:
+    """Drop claimed paths only when another still-failing path exists.
+
+    Live L2-15 remint-21 R3: ``### FAILING_TUS src/main.cpp`` stayed red,
+    claimed was that same TU, leftover then leased ``tests/test_product.py``.
+    """
+
+    ordered = [str(path or "").strip().replace("\\", "/") for path in paths if str(path or "").strip()]
+    unclaimed = [path for path in ordered if path not in claimed]
+    return unclaimed or ordered
+
+
+def _prefer_cpp_cli_entrypoint_for_unittest_residuals(
+    leftover: list[str],
+    *,
+    claimed: set[str],
+    workspace: Path,
+    persist_claimed: bool = False,
+) -> list[str]:
+    """CLI unittest residuals are implementation bugs first.
+
+    Live L2-15 remint-20: leftover leased only ``tests/test_product.py``.
+    Two equal_count_swap rounds stagnated while ``src/main.cpp`` still
+    aborted (``Patrol requires at least 2 distinct nodes``).
+
+    Immediate leftover_tus rotate (``persist_claimed=False``) must keep
+    ``src/main.cpp`` even after one claimed attempt. Residual leftover
+    after two same-owner stagnations (``persist_claimed=True``) may fall
+    through to the unittest file.
+    """
+
+    if not any(path.startswith("tests/test_") and path.endswith(".py") for path in leftover):
+        return leftover
+    entry = "src/main.cpp"
+    if entry in leftover or not (workspace / entry).is_file():
+        return leftover
+    if persist_claimed and entry in claimed:
+        return leftover
+    return [entry, *leftover]
+
+
+def _cpp_linker_undefined_reference_targets(blob: str, workspace: Path) -> list[str]:
+    """Map ld ``undefined reference`` object names to existing project TUs.
+
+    Live L2-15 remint-18: official cmake --build printed
+    ``queue.cpp.o`` / ``queue.cpp:(.text)`` without ``path:line: error:``.
+    """
+
+    if "undefined reference" not in blob.lower() or not workspace.is_dir():
+        return []
+    stems: list[str] = []
+    for match in _CPP_LINKER_TU_RE.finditer(blob):
+        raw = str(match.group("obj") or match.group("file") or "").strip()
+        stem = Path(raw).stem if raw else ""
+        if stem and stem not in stems:
+            stems.append(stem)
+    if not stems:
+        return []
+    search_roots = [path for path in (workspace / "src", workspace / "include") if path.is_dir()]
+    if not search_roots:
+        search_roots = [workspace]
+    found: list[str] = []
+    for stem in stems:
+        for root in search_roots:
+            try:
+                hits = [
+                    path
+                    for ext in (".cpp", ".cc", ".cxx", ".c")
+                    for path in root.rglob(stem + ext)
+                    if path.is_file() and "build" not in path.parts and "cmake-build" not in path.parts
+                ]
+            except OSError:
+                continue
+            for path in sorted(hits, key=lambda item: item.as_posix()):
+                try:
+                    rel = path.relative_to(workspace).as_posix()
+                except ValueError:
+                    continue
+                if rel not in found:
+                    found.append(rel)
+    return found
 
 
 def _cpp_header_unclosed_namespace_count(text: str) -> int:
@@ -409,47 +1177,101 @@ def workspace_quality_unclaimed_residual_targets(
     for match in _CPP_FAILING_TU_INDEX_RE.finditer(blob):
         for rel in str(match.group("paths") or "").split():
             rel = rel.replace("\\", "/").strip()
-            if not rel or rel in claimed or rel in leftover:
+            if not rel or rel in leftover:
                 continue
             if (workspace / rel).is_file():
                 leftover.append(rel)
     for match in _CPP_FAILING_TU_RE.finditer(blob):
         rel = str(match.group("path") or "").replace("\\", "/")
-        if not rel or rel == "FAILING_TUS" or rel in claimed or rel in leftover:
+        if not rel or rel == "FAILING_TUS" or rel in leftover:
             continue
         if (workspace / rel).is_file():
             leftover.append(rel)
+    for rel in _typescript_tsc_error_targets(blob, workspace):
+        if rel not in leftover:
+            leftover.append(rel)
+    leftover = _rotate_claimed_leftover(leftover, claimed)
     for match in _CPP_OR_CMAKE_RESIDUAL_PATH_RE.finditer(blob):
         rel = str(match.group("path") or "").replace("\\", "/")
-        if not rel or rel in claimed or rel in leftover:
+        if not rel or rel in leftover:
             continue
         candidate = workspace / rel
         if candidate.is_file():
             leftover.append(rel)
-            if rel.lower() == "cmakelists.txt" and "CMakeLists.txt" not in claimed and "CMakeLists.txt" not in leftover:
+            if rel.lower() == "cmakelists.txt" and "CMakeLists.txt" not in leftover:
                 leftover.append("CMakeLists.txt")
             continue
         if rel.lower() == "cmakelists.txt":
             # Live L2-15 remint-16: leftover leased the existing
             # ``cmakelists.txt`` and docs no_op'd. Official Linux cmake
             # needs the exact ``CMakeLists.txt`` basename as a write target.
-            if "CMakeLists.txt" not in claimed and "CMakeLists.txt" not in leftover:
+            if "CMakeLists.txt" not in leftover:
                 leftover.append("CMakeLists.txt")
             try:
                 for path in workspace.iterdir():
                     if path.is_file() and path.name.lower() == "cmakelists.txt":
                         name = path.name
-                        if name not in claimed and name not in leftover:
+                        if name not in leftover:
                             leftover.append(name)
                         break
             except OSError:
                 continue
+    leftover = _rotate_claimed_leftover(leftover, claimed)
+    for rel in _cpp_linker_undefined_reference_targets(blob, workspace):
+        if rel not in leftover:
+            leftover.append(rel)
+    leftover = _rotate_claimed_leftover(leftover, claimed)
+    if claimed:
+        for rel in _cpp_runtime_ctor_throw_targets(blob, workspace):
+            if rel not in leftover:
+                leftover.append(rel)
+        leftover = _rotate_claimed_leftover(leftover, claimed)
+    depth_prod = _delivery_depth_prod_shortfall_targets(blob, workspace)
+    if depth_prod:
+        leftover = _rotate_claimed_leftover([*depth_prod, *leftover], claimed) or depth_prod
+    for match in _UNITTEST_TRACEBACK_TEST_RE.finditer(blob):
+        rel = str(match.group("path") or "").replace("\\", "/").strip()
+        if rel and rel not in leftover and (workspace / rel).is_file():
+            leftover.append(rel)
+    compile_still_red = any(
+        Path(path).suffix.lower() in _FAILING_TU_SOURCE_SUFFIXES and not _is_typescript_test_path(path)
+        for path in leftover
+    )
+    if not compile_still_red:
+        for rel in _typescript_runtime_stack_targets(blob, workspace):
+            if rel not in leftover:
+                leftover.append(rel)
+        for rel in _javascript_tap_callee_impl_targets(blob, workspace):
+            if rel not in leftover:
+                leftover.append(rel)
+        for rel in _javascript_tap_reference_error_impl_targets(blob, workspace):
+            if rel not in leftover:
+                leftover.append(rel)
+    leftover = _prefer_cpp_cli_entrypoint_for_unittest_residuals(
+        leftover,
+        claimed=claimed,
+        workspace=workspace,
+        persist_claimed=True,
+    )
+    leftover = _prefer_typescript_compile_sites(leftover)
+    syntax_tests = _javascript_syntax_broken_official_tests(blob, workspace)
+    if syntax_tests:
+        leftover = list(dict.fromkeys([*syntax_tests, *leftover]))
+    else:
+        ref_err_impl = _javascript_tap_reference_error_impl_targets(blob, workspace)
+        if ref_err_impl:
+            leftover = list(dict.fromkeys([*ref_err_impl, *leftover]))
+        else:
+            leftover = _prefer_javascript_official_tap_tests(leftover)
+    leftover = _demote_python_unittest_helpers_when_js_impl(leftover)
+    leftover = _rotate_claimed_leftover(leftover, claimed)
+    leftover = _demote_python_unittest_helpers_when_js_impl(leftover)
     # Live L2-15 remint-4: leftover leased energy.hpp (note/include site)
     # while src/main.cpp still failed. Prefer translation units + cmake lists.
     preferred = [
         path
         for path in leftover
-        if Path(path).suffix.lower() in {".c", ".cc", ".cpp", ".cxx"} or path.lower() == "cmakelists.txt"
+        if Path(path).suffix.lower() in _FAILING_TU_SOURCE_SUFFIXES or path.lower() == "cmakelists.txt"
     ]
     if _cpp_residuals_have_std_namespace_pollution(residual_errors):
         headers = [path for path in workspace_quality_unclosed_namespace_headers(workspace) if path not in claimed]
@@ -480,13 +1302,104 @@ def workspace_quality_unclaimed_failing_tu_targets(
         indexed.extend(str(match.group("paths") or "").split())
     for rel in (*indexed, *(str(match.group("path") or "") for match in _CPP_FAILING_TU_RE.finditer(blob))):
         rel = rel.replace("\\", "/").strip()
-        if not rel or rel == "FAILING_TUS" or rel in claimed or rel in leftover:
+        if not rel or rel == "FAILING_TUS" or rel in leftover:
             continue
         suffix = Path(rel).suffix.lower()
-        if suffix not in {".c", ".cc", ".cpp", ".cxx"}:
+        if suffix not in _FAILING_TU_SOURCE_SUFFIXES:
             continue
         if (workspace / rel).is_file():
             leftover.append(rel)
+    for rel in _typescript_tsc_error_targets(blob, workspace):
+        if rel not in leftover:
+            leftover.append(rel)
+    leftover = _prefer_java_prod_failing_tus(leftover)
+    leftover = _prefer_typescript_compile_sites(leftover)
+    leftover = _prefer_javascript_official_tap_tests(leftover)
+    compile_tus = list(leftover)
+    leftover = [
+        *_java_missing_package_symbol_targets(blob, workspace),
+        *_java_official_public_type_targets(blob, compile_tus),
+        *compile_tus,
+    ]
+    leftover = _drop_java_case_duplicate_paths(list(dict.fromkeys(leftover)))
+    empty_official: list[str] = []
+    for rel in leftover:
+        if not rel.endswith(".java") or not Path(rel).stem[:1].isupper():
+            continue
+        candidate = workspace / rel
+        try:
+            if not candidate.is_file() or candidate.stat().st_size <= 0:
+                empty_official.append(rel)
+        except OSError:
+            empty_official.append(rel)
+    if empty_official:
+        leftover = [*empty_official, *leftover]
+    leftover = _rotate_claimed_leftover(leftover, claimed)
+    for rel in _cpp_linker_undefined_reference_targets(blob, workspace):
+        if rel not in leftover:
+            leftover.append(rel)
+    leftover = _rotate_claimed_leftover(leftover, claimed)
+    unittest_helpers = _prefer_java_unittest_helper_when_official_compile_green(leftover, blob, workspace)
+    # Live L2-16 remint-25: helper kept tests/test_product.py, then
+    # _rotate_claimed dropped the only claimed path. Even rounds became
+    # owner_missing; only 4 of 8 rounds wrote.
+    if unittest_helpers and unittest_helpers != leftover:
+        return list(dict.fromkeys(unittest_helpers))
+    leftover = unittest_helpers
+    leftover = _rotate_claimed_leftover(leftover, claimed)
+    if leftover:
+        # Compile/link TUs still fail. Immediate rotate must stay on those
+        # TUs — remint-21 R4 leased tests/ while main.cpp was still red.
+        if _cpp_residuals_have_std_namespace_pollution(residual_errors):
+            headers = [path for path in workspace_quality_unclosed_namespace_headers(workspace) if path not in leftover]
+            if headers:
+                leftover = [*headers, *leftover]
+        return leftover
+    depth_prod = _delivery_depth_prod_shortfall_targets(blob, workspace)
+    if depth_prod:
+        # Depth shortfall is an implementation-size residual. Seed and
+        # post-test leftover must lease prod sources, not tests/.
+        return _rotate_claimed_leftover(depth_prod, claimed) or depth_prod
+    if claimed:
+        # First-round seed (claimed empty) still prefers src/main.cpp.
+        # After a claimed CLI attempt, rotate to the throwing type home.
+        ctor_homes = _rotate_claimed_leftover(_cpp_runtime_ctor_throw_targets(blob, workspace), claimed)
+        if ctor_homes:
+            return ctor_homes
+    for match in _UNITTEST_TRACEBACK_TEST_RE.finditer(blob):
+        rel = str(match.group("path") or "").replace("\\", "/").strip()
+        if rel and rel not in leftover and (workspace / rel).is_file():
+            leftover.append(rel)
+    for rel in _typescript_runtime_stack_targets(blob, workspace):
+        if rel not in leftover:
+            leftover.append(rel)
+    for rel in _javascript_tap_callee_impl_targets(blob, workspace):
+        if rel not in leftover:
+            leftover.append(rel)
+    for rel in _javascript_tap_reference_error_impl_targets(blob, workspace):
+        if rel not in leftover:
+            leftover.append(rel)
+    leftover = _prefer_cpp_cli_entrypoint_for_unittest_residuals(
+        leftover,
+        claimed=claimed,
+        workspace=workspace,
+        persist_claimed=False,
+    )
+    syntax_tests = _javascript_syntax_broken_official_tests(blob, workspace)
+    if syntax_tests:
+        leftover = list(dict.fromkeys([*syntax_tests, *leftover]))
+    else:
+        ref_err_impl = _javascript_tap_reference_error_impl_targets(blob, workspace)
+        if ref_err_impl:
+            leftover = list(dict.fromkeys([*ref_err_impl, *leftover]))
+        else:
+            leftover = _prefer_javascript_official_tap_tests(leftover)
+    leftover = _demote_python_unittest_helpers_when_js_impl(leftover)
+    js_impl = [
+        path for path in leftover if path.startswith("src/") and Path(path).suffix.lower() in {".js", ".mjs", ".cjs"}
+    ]
+    if js_impl and not syntax_tests:
+        leftover = _rotate_claimed_leftover(leftover, claimed)
     if _cpp_residuals_have_std_namespace_pollution(residual_errors):
         headers = [
             path

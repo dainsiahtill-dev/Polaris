@@ -600,6 +600,19 @@ def build_director_dependency_artifact_snapshot(
                     parent_task_id=dependency_id,
                     path=path,
                 ) from exc
+            if not body:
+                # Live L2-16 remint-23: PM declared melodymodel.java was a
+                # zero-byte sibling of MelodyModel.java. Including body="" made
+                # _looks_like() reject the whole snapshot, so required
+                # actual_sibling_exports stayed missing.
+                uncovered_artifacts.append(
+                    {
+                        "parent_task_id": dependency_id,
+                        "path": path,
+                        "reason": "empty_utf8_body",
+                    }
+                )
+                continue
             total_bytes += snapshot.size
             if total_bytes > _MAX_TOTAL_BYTES:
                 raise _fail(
@@ -706,6 +719,75 @@ def build_director_dependency_artifact_snapshot(
     return TrustedDirectorDependencyArtifactSnapshotV2(
         _payload_json=_canonical_json_bytes(payload).decode("utf-8"),
         _message_lines=tuple(message_lines),
+    )
+
+
+def sibling_export_payload_is_coverage_ready(value: Any) -> bool:
+    """Return True when the payload can satisfy final-request sibling coverage."""
+
+    if not isinstance(value, dict):
+        return False
+    if value.get("schema_version") != _SCHEMA_VERSION or value.get("source") != _SOURCE:
+        return False
+    modules = value.get("modules")
+    if not isinstance(modules, list) or type(value.get("module_count")) is not int:
+        return False
+    if value.get("module_count") != len(modules):
+        return False
+    payload = dict(value)
+    snapshot_hash = str(payload.get("snapshot_sha256") or "").strip()
+    unsigned = dict(payload)
+    unsigned.pop("snapshot_sha256", None)
+    if snapshot_hash != _canonical_hash(unsigned):
+        return False
+    if not modules:
+        if type(value.get("total_byte_count")) is not int or value.get("total_byte_count") != 0:
+            return False
+        if value.get("receipt_coverage_complete") is not True:
+            return False
+        dependency_ids = [str(item).strip() for item in (value.get("dependency_task_ids") or []) if str(item).strip()]
+        covered_ids = [str(item).strip() for item in (value.get("covered_parent_task_ids") or []) if str(item).strip()]
+        zero_ids = [
+            str(item).strip() for item in (value.get("zero_artifact_parent_task_ids") or []) if str(item).strip()
+        ]
+        return bool(
+            dependency_ids
+            and dependency_ids == covered_ids
+            and len(set(dependency_ids)) == len(dependency_ids)
+            and set(zero_ids) == set(dependency_ids)
+        )
+    return all(isinstance(module, dict) and bool(str(module.get("body") or "")) for module in modules)
+
+
+def recover_trusted_director_dependency_artifact_snapshot(
+    value: Any,
+) -> TrustedDirectorDependencyArtifactSnapshotV2 | None:
+    """Rebuild the exact-type token from an already-projected sibling-export payload.
+
+    Live L2-16 remint-21: quality repair projected a legal zero-artifact
+    ``actual_sibling_exports`` payload but omitted the non-serializable
+    trusted token. ``_rebind`` then called ``_prepare``, which projects None
+    and wipes the payload before the LLM request, so coverage still failed
+    ``missing_required_refs=actual_sibling_exports``.
+    """
+
+    if not sibling_export_payload_is_coverage_ready(value):
+        return None
+    modules = value.get("modules")
+    # Live L2-16 remint-22: do not recover non-empty module snapshots here.
+    # Those must come from a live _prepare against current receipts.
+    if not isinstance(modules, list) or modules:
+        return None
+    payload = dict(value)
+    snapshot_hash = str(payload.get("snapshot_sha256") or "").strip()
+    return TrustedDirectorDependencyArtifactSnapshotV2(
+        _payload_json=_canonical_json_bytes(payload).decode("utf-8"),
+        _message_lines=(
+            (
+                f"{_SCHEMA_VERSION} snapshot_sha256={snapshot_hash} "
+                "(effect-receipt bound; exact bodies below are authoritative)"
+            ),
+        ),
     )
 
 

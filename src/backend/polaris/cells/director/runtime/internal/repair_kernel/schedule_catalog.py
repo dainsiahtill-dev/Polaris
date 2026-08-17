@@ -309,6 +309,8 @@ _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
     "deterministic_typescript_missing_closing_brace_repair",
     "deterministic_typescript_missing_export_repair",
     "deterministic_typescript_missing_member_repair",
+    # Live L2-17: barrel in src/models/index.ts imported ./models/types.js.
+    "deterministic_typescript_missing_relative_module_repair",
     "deterministic_typescript_nullable_canvas_context_repair",
     "deterministic_typescript_number_to_string_argument_repair",
     "deterministic_typescript_readonly_assignment_repair",

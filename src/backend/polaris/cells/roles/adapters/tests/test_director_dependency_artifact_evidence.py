@@ -121,6 +121,42 @@ def test_snapshot_is_bound_to_parent_task_effect_receipt_and_exact_body(tmp_path
     assert body in rendered
 
 
+def test_snapshot_skips_empty_receipt_bound_sibling_file(tmp_path: Path) -> None:
+    """Empty declared siblings must not poison coverage with body=''.
+
+    Live L2-16 remint-23: melodymodel.java was 0 bytes next to MelodyModel.java.
+    The 5-module snapshot kept body='', _looks_like rejected the whole payload.
+    """
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit._payloads import (
+        _looks_like_actual_sibling_exports,
+    )
+
+    models = tmp_path / "src" / "main" / "java" / "polaris" / "factory" / "domain"
+    models.mkdir(parents=True)
+    filled = "src/main/java/polaris/factory/domain/MelodyModel.java"
+    empty = "src/main/java/polaris/factory/domain/melodymodel.java"
+    body = "package polaris.factory.domain;\nclass MelodyModel {}\n"
+    (tmp_path / filled).write_text(body, encoding="utf-8")
+    (tmp_path / empty).write_text("", encoding="utf-8")
+
+    snapshot = build_director_dependency_artifact_snapshot(
+        workspace=str(tmp_path),
+        child_task=_child_task([1]),
+        get_task=_resolver({"1": _parent_row(paths=(filled, empty))}),
+    )
+    assert type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2
+    payload = snapshot.payload()
+    assert payload["module_count"] == 1
+    assert payload["modules"][0]["path"] == filled
+    assert payload["modules"][0]["body"] == body
+    assert any(item.get("path") == empty for item in payload["uncovered_artifacts"])
+    assert _looks_like_actual_sibling_exports(payload, messages=None) is True
+    marker = f"polaris.actual_sibling_exports.evidence.v2 snapshot_sha256={payload['snapshot_sha256']}"
+    rendered = "\n".join(snapshot.message_lines())
+    assert _looks_like_actual_sibling_exports(payload, messages=[{"role": "user", "content": rendered}]) is True
+    assert marker in rendered
+
+
 def test_completion_adapter_result_tool_results_feed_sibling_snapshot(tmp_path: Path) -> None:
     """R129: completed parent adapter_result must carry receipt-bound tool_results.
 
@@ -594,6 +630,173 @@ def test_projecting_none_wipes_sibling_exports_and_rebind_restores_them(tmp_path
     # Second rebind is a no-op when trusted token already present.
     again = adapter._rebind_director_dependency_artifact_for_dialogue(context)
     assert again is rebound
+
+
+def test_rebind_keeps_projected_zero_artifact_when_parent_receipts_missing(tmp_path: Path) -> None:
+    """Live L2-16 remint-21: dialogue rebind must not wipe a legal zero-artifact payload.
+
+    Quality repair projected actual_sibling_exports without the trusted token.
+    _rebind then called _prepare, which project(None) wiped the payload, so the
+    final request still failed missing_required_refs=actual_sibling_exports.
+    """
+    from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
+    from polaris.cells.roles.adapters.internal.director.dependency_artifact_evidence import (
+        DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY,
+        recover_trusted_director_dependency_artifact_snapshot,
+    )
+    from polaris.cells.roles.adapters.internal.director.quality_gate._repair_loop import (
+        _quality_repair_zero_artifact_sibling_snapshot,
+    )
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit._payloads import (
+        _looks_like_actual_sibling_exports,
+    )
+
+    adapter = DirectorAdapter(str(tmp_path))
+    adapter._get_task = lambda _task_id: None
+    task = {
+        "task_id": "TASK-1-tests",
+        "metadata": {"external_task_id": "TASK-1-tests"},
+    }
+    snapshot = _quality_repair_zero_artifact_sibling_snapshot(task)
+    assert type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2
+    context: dict[str, Any] = {
+        "task": task,
+        "task_id": "TASK-1-tests",
+        "run_id": "factory_l216_zero",
+    }
+    project_director_dependency_artifact_snapshot(context, snapshot)
+    context.pop(DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY, None)
+    assert DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY not in context
+    projected = dict(context["actual_sibling_exports"])
+    assert projected["module_count"] == 0
+    assert recover_trusted_director_dependency_artifact_snapshot(projected) is not None
+
+    rebound = adapter._rebind_director_dependency_artifact_for_dialogue(context)
+
+    assert type(rebound) is TrustedDirectorDependencyArtifactSnapshotV2
+    kept = context["actual_sibling_exports"]
+    assert kept["zero_artifact_parent_task_ids"] == ["TASK-1-source-modules"]
+    assert kept["snapshot_sha256"] == projected["snapshot_sha256"]
+    # Same contract as _invoke_role_runtime_session after rebind.
+    trusted = context.pop(DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY, None)
+    if type(trusted) is not TrustedDirectorDependencyArtifactSnapshotV2:
+        trusted = recover_trusted_director_dependency_artifact_snapshot(context.get("actual_sibling_exports"))
+    project_director_dependency_artifact_snapshot(
+        context,
+        trusted if type(trusted) is TrustedDirectorDependencyArtifactSnapshotV2 else None,
+    )
+    final_payload = context["actual_sibling_exports"]
+    marker = f"polaris.actual_sibling_exports.evidence.v2 snapshot_sha256={final_payload['snapshot_sha256']}"
+    assert _looks_like_actual_sibling_exports(
+        final_payload,
+        messages=[{"role": "user", "content": marker}],
+    )
+
+
+def test_recover_rejects_stale_nonempty_or_incomplete_zero_artifact_payload() -> None:
+    """Recover must not keep a hash-only payload that coverage would reject.
+
+    Live L2-16 remint-22: recover accepted a stale parent snapshot, skipped
+    _prepare and the zero-artifact fallback, and coverage still failed
+    missing_required_refs=actual_sibling_exports.
+    """
+    from polaris.cells.roles.adapters.internal.director.dependency_artifact_evidence import (
+        recover_trusted_director_dependency_artifact_snapshot,
+    )
+
+    nonempty = {
+        "schema_version": "polaris.actual_sibling_exports.evidence.v2",
+        "source": "roles.adapters.director.task_runtime_dependency_artifact_snapshot",
+        "dependency_task_ids": ["TASK-1-source-modules"],
+        "covered_parent_task_ids": ["TASK-1-source-modules"],
+        "zero_artifact_parent_task_ids": [],
+        "modules": [{"path": "src/main/java/polaris/factory/engine/PlantEngine.java", "body": "class X {}"}],
+        "module_count": 1,
+        "total_byte_count": 10,
+        "receipt_coverage_complete": True,
+        "uncovered_artifacts": [],
+    }
+    import hashlib
+    import json
+
+    nonempty["snapshot_sha256"] = hashlib.sha256(
+        json.dumps(nonempty, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    assert recover_trusted_director_dependency_artifact_snapshot(nonempty) is None
+
+    incomplete_empty = {
+        "schema_version": "polaris.actual_sibling_exports.evidence.v2",
+        "source": "roles.adapters.director.task_runtime_dependency_artifact_snapshot",
+        "dependency_task_ids": ["TASK-1-source-modules"],
+        "covered_parent_task_ids": ["TASK-1-source-modules"],
+        "modules": [],
+        "module_count": 0,
+        "total_byte_count": 0,
+        "uncovered_artifacts": [],
+    }
+    incomplete_empty["snapshot_sha256"] = hashlib.sha256(
+        json.dumps(incomplete_empty, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    assert recover_trusted_director_dependency_artifact_snapshot(incomplete_empty) is None
+
+
+def test_incomplete_quality_repair_parent_receipts_do_not_shadow_ce_handoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live L2-16 remint-16: last quality-repair adapter_result is not the parent contract.
+
+    TASK-1-source-modules declared five java files, then quality repair only
+    wrote PlantEngine.java. That write_tool_evidence row must not shadow the
+    CE handoff + project-receipt rehydrate path for TASK-1-tests.
+    """
+    from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
+
+    path = "src/main/java/polaris/factory/main.java"
+    run_id = "factory_l216_tests"
+    live_parent = {
+        "id": 1,
+        "status": "failed",
+        "target_files": [
+            path,
+            "src/main/java/polaris/factory/domain/plantmodel.java",
+        ],
+        "metadata": {
+            "external_task_id": "TASK-1-source-modules",
+            "factory_run_id": run_id,
+            "target_files": [
+                path,
+                "src/main/java/polaris/factory/domain/plantmodel.java",
+            ],
+            "adapter_result": {
+                "new_files": ["src/main/java/polaris/factory/engine/PlantEngine.java"],
+                "modified_files": [],
+                "write_tool_evidence": True,
+                "primary_llm": {"metadata": {"batch_receipt": {"raw_results": []}}},
+            },
+        },
+    }
+    child = {
+        "id": 2,
+        "metadata": {
+            "external_task_id": "TASK-1-tests",
+            "factory_run_id": run_id,
+            "resolved_depends_on_task_ids": ["TASK-1-source-modules"],
+        },
+    }
+    adapter = DirectorAdapter(str(tmp_path))
+    adapter._get_task = lambda task_id: (  # type: ignore[method-assign]
+        live_parent if "source-modules" in str(task_id) or str(task_id) in {"1"} else child
+    )
+
+    resolved = adapter._resolve_dependency_parent_task(
+        "TASK-1-source-modules",
+        child_task=child,
+        context={"run_id": run_id, "factory_run_id": run_id},
+    )
+    # Incomplete live receipts must not be returned as the parent authority.
+    # CE handoff may still be unavailable in this isolated fixture.
+    assert resolved is not live_parent
 
 
 def test_rebind_restores_drained_parent_from_strict_ce_projection_and_project_receipt(

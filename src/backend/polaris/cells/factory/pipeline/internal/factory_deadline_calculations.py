@@ -68,10 +68,19 @@ _CHIEF_ENGINEER_LLM_TIMEOUT_ENV_KEYS = (
 _SAME_RUN_RETRY_MIN_REMAINING_SECONDS = 180.0
 _SAME_RUN_RETRY_DEFAULT_TIMEOUT_SECONDS = 1800.0
 _SAME_RUN_RETRY_MAX_TIMEOUT_SECONDS = 5400.0
+# Live L2-17 remint-2: remaining=259 >= 180 skipped remint, then
+# director.dispatch_deadline_blocker (requested 139, remaining 259).
+# Implementation retries need a full Director epoch, same as quality_gate.
+_SAME_RUN_RETRY_FULL_EPOCH_STAGES = frozenset(
+    {"quality_gate", "implementation", "director_dispatch"},
+)
 # Live L2-14: remints were consumed diagnosing bind/observer, crate rewrite
 # plan_probe, and LLM reverting a committed rewrite. Another same-run
 # quality retry is still the frozen PM/CE contract, not a new Factory run.
-_SAME_RUN_RETRY_MAX_EXTENSIONS = 20
+# Live L2-16: 21 remints diagnosed sibling-export coverage; remint-24
+# finally reached LLM edits of tests/test_product.py. Same-run QA repair
+# of that helper still needs leftover+prompt room after the coverage bug.
+_SAME_RUN_RETRY_MAX_EXTENSIONS = 32
 _SAME_RUN_RETRY_DEADLINE_SOURCE = "same_run_retry_epoch"
 
 
@@ -160,7 +169,9 @@ def extend_factory_run_deadline_for_same_run_retry(
     # Live L2-15: rem=193 after a 19-minute quality wave skipped remint
     # because 193 >= 180. A leftover sliver is not a quality epoch.
     min_remaining = (
-        _SAME_RUN_RETRY_DEFAULT_TIMEOUT_SECONDS if stage == "quality_gate" else _SAME_RUN_RETRY_MIN_REMAINING_SECONDS
+        _SAME_RUN_RETRY_DEFAULT_TIMEOUT_SECONDS
+        if stage in _SAME_RUN_RETRY_FULL_EPOCH_STAGES
+        else _SAME_RUN_RETRY_MIN_REMAINING_SECONDS
     )
     if remaining_seconds >= min_remaining:
         return None
@@ -168,7 +179,7 @@ def extend_factory_run_deadline_for_same_run_retry(
     timeout_seconds = _positive_metadata_float(meta, "factory_run_timeout_seconds", "factory_timeout_seconds")
     if timeout_seconds is None:
         timeout_seconds = _SAME_RUN_RETRY_DEFAULT_TIMEOUT_SECONDS
-    if stage == "quality_gate":
+    if stage in _SAME_RUN_RETRY_FULL_EPOCH_STAGES:
         timeout_seconds = max(timeout_seconds, _SAME_RUN_RETRY_DEFAULT_TIMEOUT_SECONDS)
     timeout_seconds = max(
         _SAME_RUN_RETRY_MIN_REMAINING_SECONDS,

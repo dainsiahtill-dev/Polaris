@@ -205,10 +205,10 @@ class TestPackageJsonParsing:
 
         commands = executor._workspace_quality_commands({})
 
-        assert len(commands) == 1
         assert commands[0][:2] == [sys.executable, "-c"]
         assert "g++" in commands[0][2]
-        assert "unittest" not in commands[0][2]
+        assert not any(cmd[:3] == [sys.executable, "-m", "compileall"] for cmd in commands)
+        assert not any(cmd[:3] == [sys.executable, "-m", "pip"] for cmd in commands)
 
     def test_workspace_quality_commands_rust_project_include_cargo_test(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)

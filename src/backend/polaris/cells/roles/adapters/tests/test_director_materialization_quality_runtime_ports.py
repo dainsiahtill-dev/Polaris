@@ -225,6 +225,28 @@ def test_typescript_compiler_source_tools_follow_runtime_coverage_for_new_rules(
     assert result.metadata["materialization_step_id"] == "materialization.typescript_compiler"
 
 
+def test_typescript_compiler_plans_directory_prefix_relative_module_rewrite() -> None:
+    """Live L2-17: TS2307 `./models/types.js` from `src/models/index.ts` is plannable."""
+
+    diagnostics = [
+        "src/models/index.ts(47,8): error TS2307: Cannot find module './models/types.js' "
+        "or its corresponding type declarations.",
+    ]
+    result = query_director_repair_materialization_plan_probe(
+        QueryDirectorRepairMaterializationPlanProbeV1(
+            artifact_quality_errors=diagnostics,
+            base_files={
+                "src/models/index.ts": "export { brandId } from './models/types.js';\n",
+                "src/models/types.ts": "export function brandId(value: string): string { return value; }\n",
+            },
+            step_id="materialization.typescript_compiler",
+        )
+    )
+
+    assert "deterministic_typescript_missing_relative_module_repair" in result.requested_source_tools
+    assert "deterministic_typescript_missing_relative_module_repair" in result.plannable_source_tools
+
+
 def test_materialization_summary_reports_coverage_matched_but_unplannable_plan_probe(tmp_path: Path) -> None:
     diagnostics = [
         "TypeScript syntax check failed: src/models/Flight.ts(6,47): error TS1005: ',' expected.",

@@ -478,6 +478,71 @@ class TestDirectorFailureClosureA:
         assert settled[0].outcome == "failed"
         assert "owner does not match claimed task" in settled[0].metadata["project_artifact_receipt_error"]
 
+    def test_foundation_split_projection_matches_numeric_claimed_row(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """TASK-3-foundation must settle against TaskRuntime row 3.
+
+        Live L2-19: existing requirements.txt preflight then finalize compared
+        projection TASK-3-foundation to claimed 3 and fail-closed the tests split.
+        """
+
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _record_project_artifacts_before_settlement,
+            _task_owner_compatible,
+        )
+
+        assert _task_owner_compatible("TASK-3-foundation", "3")
+        assert _task_owner_compatible("TASK-3-foundation", "TASK-3")
+        assert not _task_owner_compatible("TASK-3-foundation", "TASK-3-tests")
+        assert not _task_owner_compatible("TASK-3-tests", "2")
+
+        artifact = tmp_path / "requirements.txt"
+        artifact.write_text("pytest>=8\n", encoding="utf-8")
+        recorded: list[str] = []
+
+        def record_project_artifact(command: Any) -> Any:
+            recorded.append(command.path)
+            return SimpleNamespace(
+                project_id=command.project_id,
+                run_id=command.run_id,
+                completion_contract_hash=command.completion_contract_hash,
+                obligation_id=command.obligation_id,
+                owner_task_id=command.owner_task_id,
+                path=command.path,
+                artifact_hash="a" * 64,
+                receipt_hash="b" * 64,
+                receipt_ref="execution-broker://project-verification/artifact/" + "b" * 64,
+            )
+
+        monkey_adapter = SimpleNamespace(workspace=str(tmp_path))
+        with patch(
+            "polaris.cells.roles.adapters.internal.director.execute_method._claim.record_project_artifact",
+            side_effect=record_project_artifact,
+        ):
+            receipts, missing = _record_project_artifacts_before_settlement(
+                monkey_adapter,
+                contract_task_id="3",
+                task_completion_projection={
+                    "schema_version": "polaris.task_completion_projection.v1",
+                    "project_id": "project-1",
+                    "run_id": "factory-run-1",
+                    "project_contract_hash": "c" * 64,
+                    "task_id": "TASK-3-foundation",
+                    "owned_artifacts": [
+                        {
+                            "obligation_id": "artifact-0",
+                            "owner_task_id": "TASK-3-foundation",
+                            "path": "requirements.txt",
+                        }
+                    ],
+                },
+            )
+        assert missing == []
+        assert recorded == ["requirements.txt"]
+        assert len(receipts) == 1
+
     def test_finalization_records_exact_project_artifact_before_task_runtime_settlement(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -2788,5 +2853,3 @@ export function summary() {
         raw_adapter_result = metadata.get("adapter_result")
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
         assert adapter_result.get("materialization_error") == "director_materialization_semantic_quality_failed"
-
-    @pytest.mark.asyncio

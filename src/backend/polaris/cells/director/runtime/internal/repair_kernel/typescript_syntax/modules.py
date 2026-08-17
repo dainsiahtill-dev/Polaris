@@ -82,6 +82,7 @@ def build_typescript_json_as_source_plan(
         },
     )
 
+
 def _build_typescript_commonjs_package_type_plan(
     *,
     base_files: Mapping[str, str],
@@ -117,6 +118,7 @@ def _build_typescript_commonjs_package_type_plan(
         risk_level="medium",
         metadata={"package_type": "commonjs"},
     )
+
 
 def _build_typescript_entrypoint_plan(
     *,
@@ -167,6 +169,7 @@ def _build_typescript_entrypoint_plan(
         metadata={"compiled_entrypoint": compiled_entrypoint, "source_entrypoint": source_entrypoint},
     )
 
+
 def _build_typescript_missing_relative_module_plan(
     *,
     base_files: Mapping[str, str],
@@ -177,11 +180,26 @@ def _build_typescript_missing_relative_module_plan(
 
     operations: list[RepairOperation] = []
     created: list[dict[str, str]] = []
+    rewritten: list[dict[str, str]] = []
     seen_paths: set[str] = set()
     for item in _parse_typescript_missing_relative_module_errors(diagnostics):
         importer = item["file"]
         module_ref = item["module"]
         if not module_ref.startswith("."):
+            continue
+        collapsed = _collapse_redundant_relative_module_ref(importer, module_ref)
+        if collapsed:
+            importer_text = str(base_files.get(importer) or "")
+            rewrite_ops = _rewrite_relative_module_specifier_operations(
+                path=importer,
+                content=importer_text,
+                old_spec=module_ref,
+                new_spec=collapsed,
+            )
+            if rewrite_ops:
+                operations.extend(rewrite_ops)
+                rewritten.append({"file": importer, "module": module_ref, "rewritten_module": collapsed})
+            # Never invent `src/models/models/types.ts` for a doubled specifier.
             continue
         target = _relative_module_stub_path(importer, module_ref)
         if not target or target in base_files or target in seen_paths:
@@ -225,8 +243,9 @@ def _build_typescript_missing_relative_module_plan(
         operations=operations,
         diagnostics=diagnostics,
         mode=mode,
-        metadata={"modules": created},
+        metadata={"modules": created, "rewritten_modules": rewritten},
     )
+
 
 def _build_typescript_invalid_module_augmentation_plan(
     *,
@@ -263,6 +282,7 @@ def _build_typescript_invalid_module_augmentation_plan(
         metadata={"removed_augmentations": removed},
     )
 
+
 def _parse_typescript_missing_relative_module_errors(
     diagnostics: Sequence[RepairDiagnostic],
 ) -> list[dict[str, str]]:
@@ -287,7 +307,18 @@ def _parse_typescript_missing_relative_module_errors(
             if module.startswith(".") and key not in seen:
                 seen.add(key)
                 parsed.append({"file": path, "module": module, "line": str(diagnostic.line or "")})
+        for match in re.finditer(
+            r"unresolved relative import ['\"](?P<module>[^'\"]+)['\"] in (?P<file>\S+)",
+            text,
+        ):
+            path = _normalize_repair_path(str(match.group("file") or ""))
+            module = str(match.group("module") or "").strip()
+            key = (path, module)
+            if path and module.startswith(".") and key not in seen:
+                seen.add(key)
+                parsed.append({"file": path, "module": module, "line": ""})
     return parsed
+
 
 def _parse_typescript_invalid_module_augmentation_errors(
     diagnostics: Sequence[RepairDiagnostic],
@@ -320,6 +351,7 @@ def _parse_typescript_invalid_module_augmentation_errors(
                 parsed.append({"file": path, "module": module, "line": str(diagnostic.line or "")})
     return parsed
 
+
 def _relative_module_stub_path(importer: str, module_ref: str) -> str:
     importer_dir = posixpath.dirname(importer) or "."
     cleaned = module_ref.strip()
@@ -335,6 +367,71 @@ def _relative_module_stub_path(importer: str, module_ref: str) -> str:
     while joined.startswith("./"):
         joined = joined[2:]
     return joined
+
+
+def _collapse_redundant_relative_module_ref(importer: str, module_ref: str) -> str:
+    """Rewrite `./dirname/x` when the importer already lives in `dirname/`.
+
+    Live L2-17: `src/models/index.ts` imported `./models/types.js` while
+    `src/models/types.ts` already existed. Inventing `src/models/models/types.ts`
+    would duplicate the sibling instead of fixing the specifier.
+    """
+
+    token = str(module_ref or "").strip().replace("\\", "/")
+    if not token.startswith("./"):
+        return ""
+    parent_name = posixpath.basename(posixpath.dirname(_normalize_repair_path(importer)) or "")
+    if not parent_name or parent_name in {".", ""}:
+        return ""
+    prefix = f"./{parent_name}/"
+    if not token.startswith(prefix):
+        return ""
+    rest = token[len(prefix) :]
+    if not rest or rest.startswith("."):
+        return ""
+    return f"./{rest}"
+
+
+def _rewrite_relative_module_specifier_operations(
+    *,
+    path: str,
+    content: str,
+    old_spec: str,
+    new_spec: str,
+) -> list[RepairOperation]:
+    if not content or not old_spec or old_spec == new_spec:
+        return []
+    operations: list[RepairOperation] = []
+    before_hash = sha256_text(content)
+    for quote in ("'", '"'):
+        needle = f"{quote}{old_spec}{quote}"
+        replacement = f"{quote}{new_spec}{quote}"
+        start = 0
+        while True:
+            index = content.find(needle, start)
+            if index < 0:
+                break
+            operations.append(
+                RepairOperation(
+                    kind="text_replace",
+                    path=path,
+                    span_start=index,
+                    span_end=index + len(needle),
+                    expected=needle,
+                    replacement=replacement,
+                    before_hash=before_hash,
+                    metadata={
+                        "repair_kind": "typescript_redundant_directory_import",
+                        "module": old_spec,
+                        "rewritten_module": new_spec,
+                        "importer": path,
+                    },
+                )
+            )
+            start = index + len(needle)
+    operations.sort(key=lambda item: int(item.span_start or 0), reverse=True)
+    return operations
+
 
 def _build_typescript_relative_module_stub_content(*, module_ref: str, importer_text: str) -> str:
     """Minimal stub for a missing relative module based on importer usage."""
@@ -397,6 +494,7 @@ def _build_typescript_relative_module_stub_content(*, module_ref: str, importer_
             )
     return "\n".join(lines).rstrip() + "\n"
 
+
 def _remove_typescript_declare_module_block_operation(
     *,
     path: str,
@@ -448,6 +546,7 @@ def _remove_typescript_declare_module_block_operation(
         },
     )
 
+
 def _is_package_manifest_json_content(content: str) -> bool:
     """Return True when a TypeScript path body is actually a package.json object."""
 
@@ -473,6 +572,7 @@ def _is_package_manifest_json_content(content: str) -> bool:
         return True
     return len(keys & _PACKAGE_MANIFEST_JSON_KEYS) >= 3
 
+
 def _typescript_smoke_verify_module_content(*, path: str) -> str:
     """Minimal valid TypeScript module for a path that previously held package JSON."""
 
@@ -494,9 +594,11 @@ def _typescript_smoke_verify_module_content(*, path: str) -> str:
         "}\n"
     )
 
+
 def _typescript_commonjs_package_type_signal(diagnostics: Sequence[RepairDiagnostic]) -> bool:
     text = _diagnostic_text(diagnostics).lower()
     return "commonjs" in text and "type" in text and "module" in text
+
 
 def _typescript_entrypoint_signal(diagnostics: Sequence[RepairDiagnostic]) -> bool:
     text = _diagnostic_text(diagnostics).lower()
@@ -505,6 +607,7 @@ def _typescript_entrypoint_signal(diagnostics: Sequence[RepairDiagnostic]) -> bo
     if "entrypoint" in text or "entry point" in text:
         return True
     return "cannot find module" in text and any(prefix in text for prefix in ("dist/", "build/", "out/", "bin/"))
+
 
 def _detect_typescript_entrypoint_from_package(package_data: Mapping[str, Any]) -> str:
     candidates: list[str] = []
@@ -522,6 +625,7 @@ def _detect_typescript_entrypoint_from_package(package_data: Mapping[str, Any]) 
             return token
     return ""
 
+
 def _typescript_source_entrypoint_for_compiled_path(compiled_path: str) -> str:
     token = str(compiled_path or "").strip().replace("\\", "/")
     if not token.startswith(("dist/", "build/", "out/", "bin/")):
@@ -530,6 +634,7 @@ def _typescript_source_entrypoint_for_compiled_path(compiled_path: str) -> str:
     if len(parts) < 2:
         return ""
     return posixpath.join("src", *parts[1:-1], re.sub(r"\.m?js$|\.cjs$", ".ts", parts[-1]))
+
 
 def _build_typescript_entrypoint_aggregator(*, modules: Sequence[str], entrypoint_dir: str) -> str:
     imports: list[str] = []
@@ -544,6 +649,7 @@ def _build_typescript_entrypoint_aggregator(*, modules: Sequence[str], entrypoin
         imports.append(f"import * as {alias} from '{module_ref}';")
         exports.append(f"export {{ {alias} }};")
     return "\n".join([*imports, "", *exports, ""]) if imports else "export {};\n"
+
 
 __all__ = (
     "_build_typescript_commonjs_package_type_plan",

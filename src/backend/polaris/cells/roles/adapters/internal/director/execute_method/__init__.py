@@ -108,6 +108,7 @@ from ._claim import (
     _resolve_claim_external_task_id,
     _suspend_claimed_execution_for_cancellation,
     _task_completion_projection_from_context,
+    _task_owner_compatible,
     _task_runtime_finalization_failed_result,
     _task_runtime_finalize_failed_signal,
     _task_runtime_heartbeat_exception_signal,

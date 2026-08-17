@@ -13,11 +13,13 @@ from polaris.kernelone.quality.artifact_quality._models import (
     _FileArtifactQualityEvidence,
 )
 
-_JS_NAMED_IMPORT_RE = re.compile(r"\bimport\s*\{\s*(?P<symbols>[^}]+)\s*\}\s*from\s*['\"](?P<specifier>\.[^'\"]+)['\"]")
-_JS_NAMESPACE_IMPORT_RE = re.compile(
-    r"\bimport\s*\*\s*as\s+(?P<alias>[A-Za-z_$][\w$]*)\s+from\s*['\"](?P<specifier>\.[^'\"]+)['\"]"
+_JS_NAMED_IMPORT_RE = re.compile(
+    r"\bimport\s*\{\s*(?P<symbols>[^}]+)\s*\}\s*from\s*['\"](?P<specifier>\.\.?/[^'\"]+)['\"]"
 )
-_JS_RELATIVE_FROM_RE = re.compile(r"\bfrom\s*['\"](?P<specifier>\.[^'\"]+)['\"]")
+_JS_NAMESPACE_IMPORT_RE = re.compile(
+    r"\bimport\s*\*\s*as\s+(?P<alias>[A-Za-z_$][\w$]*)\s+from\s*['\"](?P<specifier>\.\.?/[^'\"]+)['\"]"
+)
+_JS_RELATIVE_FROM_RE = re.compile(r"\bfrom\s*['\"](?P<specifier>\.\.?/[^'\"]+)['\"]")
 _JS_MEMBER_ACCESS_RE = re.compile(r"(?<![./])\b(?P<alias>[A-Za-z_$][\w$]*)\.(?P<member>[A-Za-z_$][\w$]*)")
 _JS_CATALOG_FIXTURE_RE = re.compile(r"\b(?P<name>DEFAULT_[A-Z][A-Z0-9_]*)\b")
 _JS_LOCAL_BINDING_RE = re.compile(r"\b(?:const|let|var|function)\s+(?P<name>DEFAULT_[A-Z][A-Z0-9_]*)\b")

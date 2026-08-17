@@ -440,6 +440,8 @@ _TYPESCRIPT_TYPECHECK_DETAIL_MAX_LINES = 40
 
 _TYPESCRIPT_TYPECHECK_DETAIL_MAX_CHARS = 4000
 
+_TS_DIAGNOSTIC_LINE_RE = re.compile(r"^(?P<path>(?:[A-Za-z]:)?[^:\n]+?)\((?P<line>\d+),(?P<col>\d+)\):")
+
 
 def _typescript_typecheck_diagnostic_detail(raw_output: str, returncode: int) -> str:
     """Capture enough tsc output to preserve TS error codes for repair matching.
@@ -457,6 +459,36 @@ def _typescript_typecheck_diagnostic_detail(raw_output: str, returncode: int) ->
     if not detail:
         detail = f"tsc --noEmit exited with code {returncode}"
     return detail[:_TYPESCRIPT_TYPECHECK_DETAIL_MAX_CHARS]
+
+
+def _normalize_typecheck_scope_path(path: str) -> str:
+    token = str(path or "").strip().replace("\\", "/")
+    while token.startswith("./"):
+        token = token[2:]
+    return token
+
+
+def _typescript_typecheck_output_for_paths(raw_output: str, relative_paths: list[str]) -> str:
+    """Keep tsc diagnostic lines that name a file in the current scan scope.
+
+    Live L2-17: a TASK-2 scan of `src/web.ts` still ran project `tsc` and
+    fail-closed on `src/models/index.ts` TS2307 owned by TASK-1-entrypoints.
+    """
+
+    allowed = {
+        _normalize_typecheck_scope_path(path) for path in relative_paths if _normalize_typecheck_scope_path(path)
+    }
+    if not allowed:
+        return ""
+    kept: list[str] = []
+    for line in str(raw_output or "").splitlines():
+        match = _TS_DIAGNOSTIC_LINE_RE.match(line.strip())
+        if match is None:
+            continue
+        path = _normalize_typecheck_scope_path(str(match.group("path") or ""))
+        if path in allowed:
+            kept.append(line)
+    return "\n".join(kept)
 
 
 def _typescript_project_typecheck_issue(
@@ -515,7 +547,13 @@ def _scan_typescript_project_typecheck_evidence(
         return _FileArtifactQualityEvidence()
     if proc.returncode == 0:
         return _FileArtifactQualityEvidence()
-    detail = _typescript_typecheck_diagnostic_detail(f"{proc.stdout}\n{proc.stderr}", proc.returncode)
+    scoped_output = _typescript_typecheck_output_for_paths(
+        f"{proc.stdout}\n{proc.stderr}",
+        relative_paths,
+    )
+    if not scoped_output.strip():
+        return _FileArtifactQualityEvidence()
+    detail = _typescript_typecheck_diagnostic_detail(scoped_output, proc.returncode)
     error = f"Artifact quality scan failed: TypeScript project typecheck failed: {detail}"
     return _FileArtifactQualityEvidence(
         errors=(error,),

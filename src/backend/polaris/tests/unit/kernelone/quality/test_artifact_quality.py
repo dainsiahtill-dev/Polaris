@@ -1319,6 +1319,31 @@ def test_scan_detects_python_runtime_masquerading_as_npm_manifest(tmp_path: Path
     assert any("Python package dependency 'pytest'" in error for error in errors)
 
 
+def test_scan_ignores_javascript_comment_ellipsis_import(tmp_path: Path) -> None:
+    """Doc comments like ``import mwq from '...'`` are not relative modules.
+
+    Live L2-18: ``src/index.js`` documented the default export with that
+    ellipsis. The scanner treated ``...`` as a missing ``.\\`` specifier and
+    fail-closed TASK-1-entrypoints.
+    """
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "meteor.js").write_text("export const createMeteor = () => ({});\n", encoding="utf-8")
+    (src / "index.js").write_text(
+        "import * as meteorModule from './meteor.js';\n"
+        "export const index = { createMeteor: meteorModule.createMeteor };\n"
+        "// Default export so `import mwq from '...'` works.\n"
+        "export default index;\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/index.js"])
+
+    assert not any("Cannot find module '...'" in error for error in errors), errors
+    assert not any("javascript_missing_relative_module" in error for error in errors), errors
+
+
 def test_scan_detects_unresolved_runtime_typescript_imports(tmp_path: Path) -> None:
     package_json = tmp_path / "package.json"
     package_json.write_text(

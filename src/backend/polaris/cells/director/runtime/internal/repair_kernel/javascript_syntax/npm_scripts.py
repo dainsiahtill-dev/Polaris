@@ -171,6 +171,20 @@ def build_npm_script_contract_plan(
             continue
         if has_typescript_context:
             updates[("scripts", script_name)] = _fallback_script_for_missing_entrypoint(script_name)
+            continue
+        # Live L2-18: extra ``test:py`` pointed at missing
+        # ``tests/run_python_tests.js``. Official ``test`` already existed.
+        # Extra-script fallback used to be TypeScript-only, so JS materialization
+        # stalled on the dangling helper instead of rewriting to the official
+        # Node test contract.
+        replacement = _fallback_script_for_python_command_script(
+            script_name,
+            normalized_base,
+            package_payload,
+            has_typescript_context=False,
+        )
+        if replacement:
+            updates[("scripts", script_name)] = replacement
 
     if not updates:
         return None

@@ -43,6 +43,7 @@ from ..dependency_artifact_evidence import (
     build_director_dependency_artifact_snapshot,
     project_director_dependency_artifact_snapshot,
     query_project_artifact_receipt_payload,
+    recover_trusted_director_dependency_artifact_snapshot,
 )
 from ..dialogue import get_settings_safe
 from ..execute_method import execute_director_task
@@ -421,6 +422,13 @@ class DirectorAdapter(BaseRoleAdapter):
             DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY,
             None,
         )
+        if type(trusted_dependency_snapshot) is not TrustedDirectorDependencyArtifactSnapshotV2:
+            # Live L2-16 remint-21: quality repair projected a legal
+            # zero-artifact payload without the trusted token. Projecting
+            # None here wiped it and coverage failed closed.
+            trusted_dependency_snapshot = recover_trusted_director_dependency_artifact_snapshot(
+                context_payload.get("actual_sibling_exports")
+            )
         project_director_dependency_artifact_snapshot(
             context_payload,
             (
@@ -1260,6 +1268,19 @@ class DirectorAdapter(BaseRoleAdapter):
         existing = context.get(DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY)
         if type(existing) is TrustedDirectorDependencyArtifactSnapshotV2:
             return existing
+        recovered = recover_trusted_director_dependency_artifact_snapshot(context.get("actual_sibling_exports"))
+        if recovered is None:
+            metadata = context.get("metadata")
+            if isinstance(metadata, Mapping):
+                recovered = recover_trusted_director_dependency_artifact_snapshot(
+                    metadata.get("actual_sibling_exports")
+                )
+        if type(recovered) is TrustedDirectorDependencyArtifactSnapshotV2:
+            # Live L2-16 remint-21: keep an already-legal projected payload.
+            # _prepare starts by projecting None, which would wipe it.
+            context[DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY] = recovered
+            project_director_dependency_artifact_snapshot(context, recovered)
+            return recovered
         task = self._resolve_child_task_for_dependency_artifact(context)
         if task is None:
             return None
@@ -1317,8 +1338,30 @@ class DirectorAdapter(BaseRoleAdapter):
                 live_adapter_result.get(key) not in (None, "", [], (), {})
                 for key in ("tool_results", "batch_receipt", "primary_llm")
             )
-            if has_live_receipt_evidence:
+            declared_targets = {
+                str(path or "").strip().replace("\\", "/")
+                for path in (
+                    *(live_parent.get("target_files") or ()),
+                    *(live_metadata.get("target_files") or ()),
+                )
+                if str(path or "").strip()
+            }
+            result_files = {
+                str(path or "").strip().replace("\\", "/")
+                for path in (
+                    *(live_adapter_result.get("new_files") or ()),
+                    *(live_adapter_result.get("modified_files") or ()),
+                )
+                if str(path or "").strip()
+            }
+            live_receipts_cover_declared = (not declared_targets) or declared_targets.issubset(result_files)
+            if has_live_receipt_evidence and live_receipts_cover_declared:
                 return dict(live_parent)
+            # Live L2-16 remint-16: quality-repair overwrote TASK-1-source-modules
+            # adapter_result with only PlantEngine.java. That write evidence
+            # shadowed CE handoff, so TASK-1-tests snapshot raised
+            # dependency_artifact_receipt_missing for the original five
+            # declared files and final-request coverage failed closed.
             # Live L2-12 epoch 2/3: rematerialized TASK-1/TASK-2 completed with a
             # CE completion projection but empty adapter_result (no new writes).
             # Treating that projection-only row as sufficient shadowed the CE

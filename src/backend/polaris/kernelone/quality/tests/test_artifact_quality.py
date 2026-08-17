@@ -1529,6 +1529,49 @@ def test_artifact_quality_evidence_uses_direct_typescript_project_typecheck_issu
     assert metadata["diagnostic_kind"] == "typescript_project_typecheck_failed"
 
 
+def test_artifact_quality_scoped_typecheck_ignores_out_of_scope_tsc_lines(tmp_path: Path) -> None:
+    """Live L2-17: TASK-2 must not inherit TASK-1-entrypoints tsc residuals."""
+
+    (tmp_path / "tsconfig.json").write_text('{"compilerOptions":{"strict":true}}\n', encoding="utf-8")
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "web.ts").write_text("export function boot(): void {}\n", encoding="utf-8")
+    bin_dir = tmp_path / "node_modules" / ".bin"
+    bin_dir.mkdir(parents=True)
+    tsc = bin_dir / ("tsc.cmd" if os.name == "nt" else "tsc")
+    if os.name == "nt":
+        tsc.write_text(
+            "@echo off\n"
+            "echo src/models/index.ts(47,8): error TS2307: Cannot find module ./models/types.js\n"
+            "echo src/web.ts(1,1): error TS2339: Property item does not exist\n"
+            "exit /b 2\n",
+            encoding="utf-8",
+        )
+    else:
+        tsc.write_text(
+            "#!/usr/bin/env sh\n"
+            "echo 'src/models/index.ts(47,8): error TS2307: Cannot find module ./models/types.js'\n"
+            "echo 'src/web.ts(1,1): error TS2339: Property item does not exist'\n"
+            "exit 2\n",
+            encoding="utf-8",
+        )
+        tsc.chmod(0o755)
+
+    out_of_scope = scan_workspace_artifact_quality_evidence(
+        str(tmp_path),
+        relative_paths=["src/web.ts"],
+    )
+    assert len(out_of_scope.errors) == 1
+    assert "src/web.ts(1,1): error TS2339" in out_of_scope.errors[0]
+    assert "src/models/index.ts" not in out_of_scope.errors[0]
+
+    ignored = scan_workspace_artifact_quality_evidence(
+        str(tmp_path),
+        relative_paths=["src/engine/simulation.ts"],
+    )
+    assert not any("TypeScript project typecheck failed" in error for error in ignored.errors)
+
+
 def test_artifact_quality_issue_projection_maps_typescript_project_typecheck_failed_diagnostic_kind() -> None:
     """Stable scanner metadata must classify without depending on message text."""
 

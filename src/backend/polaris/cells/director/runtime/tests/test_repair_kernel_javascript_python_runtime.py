@@ -659,9 +659,7 @@ def test_python_missing_module_alias_runtime_creates_executable_source_root_brid
     source = tmp_path / "src" / "models" / "weather.py"
     source.parent.mkdir(parents=True)
     source.write_text(
-        "class Weather:\n"
-        "    def summary(self) -> str:\n"
-        "        return 'temperature=22C'\n",
+        "class Weather:\n    def summary(self) -> str:\n        return 'temperature=22C'\n",
         encoding="utf-8",
     )
     command = [
@@ -1218,6 +1216,62 @@ def test_npm_script_contract_repairs_python_commands_from_typed_metadata() -> No
     assert {operation.value for operation in plan.operations} == {"node --test tests/product.test.js"}
 
 
+def test_npm_script_contract_repairs_javascript_extra_missing_entrypoint() -> None:
+    """JS-only extra ``test:py`` missing a helper must rewrite to official node --test.
+
+    Live L2-18: package.json already had ``test: node --test tests/product.test.js``
+    plus ``test:py: node tests/run_python_tests.js``. Extra-script fallback was
+    TypeScript-only, so materialization stalled on the missing helper.
+    """
+
+    package_text = json.dumps(
+        {
+            "name": "meteor-wish-queue",
+            "version": "0.1.0",
+            "type": "module",
+            "scripts": {
+                "test": "node --test tests/product.test.js",
+                "test:py": "node tests/run_python_tests.js",
+                "test:all": "npm run test:js && npm run test:py",
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    diagnostics = (
+        RepairDiagnostic(
+            source="artifact_quality",
+            code="npm_script_missing_local_entrypoint",
+            message=(
+                "Artifact quality scan failed: npm package manifest script "
+                "'test:py' references missing local entrypoint "
+                "'tests/run_python_tests.js' in package.json"
+            ),
+            path="package.json",
+            raw=("script 'test:py' references missing local entrypoint: tests/run_python_tests.js"),
+            metadata={
+                "script_name": "test:py",
+                "script_issue": "missing_local_entrypoint",
+                "entrypoint": "tests/run_python_tests.js",
+            },
+        ),
+    )
+    base_files = {
+        "package.json": package_text,
+        "tests/product.test.js": "import test from 'node:test';\ntest('ok', () => {});\n",
+    }
+
+    plan = build_npm_script_contract_plan(
+        base_files=base_files,
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    values = {operation.json_path: operation.value for operation in plan.operations}
+    assert values[("scripts", "test:py")] == "node --test tests/product.test.js"
+
+
 def test_npm_script_contract_declines_plain_javascript_placeholder_without_source() -> None:
     package_text = json.dumps(
         {
@@ -1435,7 +1489,7 @@ def test_npm_script_contract_uses_typed_repairable_test_script_metadata() -> Non
             "devDependencies": {"typescript": "^5.0.0"},
             "scripts": {
                 "build": "tsc -p tsconfig.json",
-                "test": "node -e \"console.log('unterminated)\"",
+                "test": 'node -e "console.log(\'unterminated)"',
             },
         },
         ensure_ascii=False,

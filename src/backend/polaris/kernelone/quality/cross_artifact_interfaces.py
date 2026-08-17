@@ -17,7 +17,7 @@ import os
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 SCHEMA_VERSION = "cross_artifact.interface_snapshot.v1"
@@ -794,6 +794,13 @@ def _scan_ts_js_file(
             owner = _resolve_ts_relative_path(root, relative_path, specifier)
             if owner:
                 reexports.append(_ReexportEdge(specifier=owner, symbols=mapping))
+            else:
+                # Live L2-17: `src/models/index.ts` re-exported `./models/types.js`.
+                # The from-path is doubled, but the barrel still advertises those
+                # names. Dropping them fail-closes consumers as missing sibling
+                # exports and forces Director to rewrite a working barrel.
+                for _source, exported in mapping.items():
+                    exports.append(_symbol(exported, "value", relative_path, f"{module_id}.{exported}", "value"))
             continue
         for _source, exported in mapping.items():
             exports.append(_symbol(exported, "value", relative_path, f"{module_id}.{exported}", "value"))
@@ -1027,7 +1034,33 @@ def _resolve_ts_relative_path(root: Path, importer_path: str, specifier: str) ->
             continue
         if resolved.is_file():
             return resolved.relative_to(root).as_posix()
+    collapsed = _collapse_redundant_relative_directory(importer_path, specifier)
+    if collapsed and collapsed != specifier:
+        return _resolve_ts_relative_path(root, importer_path, collapsed)
     return ""
+
+
+def _collapse_redundant_relative_directory(importer_path: str, specifier: str) -> str:
+    """Collapse `./dirname/x` when the importer already lives in `dirname/`.
+
+    Live L2-17: `src/models/index.ts` imported `./models/types.js`, which
+    literally resolves to the missing `src/models/models/types.js`. The
+    authored sibling is `src/models/types.ts`.
+    """
+
+    token = str(specifier or "").strip().replace("\\", "/")
+    if not token.startswith("./"):
+        return ""
+    parent_name = PurePosixPath(str(importer_path or "").replace("\\", "/")).parent.name
+    if not parent_name or parent_name in {".", ""}:
+        return ""
+    prefix = f"./{parent_name}/"
+    if not token.startswith(prefix):
+        return ""
+    rest = token[len(prefix) :]
+    if not rest or rest.startswith("."):
+        return ""
+    return f"./{rest}"
 
 
 def _python_assignment_names(targets: list[ast.expr]) -> list[str]:

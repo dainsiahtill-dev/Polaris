@@ -575,7 +575,9 @@ def reconcile_task_boundary_artifacts_with_workspace(
         if _path_exists(workspace_path, path):
             completed.append(path)
             completed_set.add(path)
-    downstream = tuple(path for path in pending_raw if path not in completed_set and not _path_exists(workspace_path, path))
+    downstream = tuple(
+        path for path in pending_raw if path not in completed_set and not _path_exists(workspace_path, path)
+    )
     return tuple(completed), downstream
 
 
@@ -727,10 +729,13 @@ def evaluate_task_boundary_verdict(
             **base_kwargs,
         )
 
-    scoped_source_paths = tuple(_dedupe_paths([*targets, *completed]))
+    # Live L2-17: scanning every completed artifact let TASK-2 inherit
+    # TASK-1-entrypoints `src/models/index.ts -> ./models/types.js` and
+    # fail-close after it had already materialized its own targets.
+    owner_source_paths = tuple(_dedupe_paths(list(targets))) or tuple(_dedupe_paths(list(completed)))
     semantic_mismatches = _artifact_semantic_mismatches(
         workspace=workspace_path,
-        source_paths=scoped_source_paths,
+        source_paths=owner_source_paths,
     )
     if semantic_mismatches:
         return TaskBoundaryVerdictV1(
@@ -745,7 +750,7 @@ def evaluate_task_boundary_verdict(
 
     unresolved_imports = _unresolved_local_imports(
         workspace=workspace_path,
-        source_paths=scoped_source_paths,
+        source_paths=owner_source_paths,
         known_artifacts=known_artifacts,
     )
     if unresolved_imports:

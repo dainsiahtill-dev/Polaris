@@ -98,6 +98,24 @@ class TestTypescriptNamespaceExports:
 
         assert issues == []
 
+    def test_typescript_directory_prefix_doubled_reexport_still_exposes_symbol(self, tmp_path: Path) -> None:
+        """Live L2-17: barrel already in models/ re-exported `./models/types.js`."""
+
+        _write(
+            tmp_path / "src/models/types.ts",
+            "export function brandId(value: string): string { return value; }\n",
+        )
+        _write(tmp_path / "src/models/index.ts", "export { brandId } from './models/types.js';\n")
+        _write(
+            tmp_path / "src/main.ts",
+            "import { brandId } from './models/index.js';\nexport const id = brandId('x');\n",
+        )
+
+        issues = scan_cross_artifact_consistency(tmp_path)
+        messages = [issue.message for issue in issues]
+
+        assert not any("unresolved import symbol 'brandId'" in message for message in messages)
+
     def test_typescript_dangling_barrel_export_is_reported_to_artifact_quality(self, tmp_path: Path) -> None:
         _write(tmp_path / "src/weather.ts", "export interface WeatherSnapshot { condition: string }\n")
         _write(tmp_path / "src/index.ts", "export { WeatherReport } from './weather';\n")

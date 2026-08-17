@@ -360,6 +360,13 @@ def _attach_dependency_artifact_receipt_evidence(
     return adapter_result
 
 
+_TASK_NUMERIC_OWNER_RE = re.compile(r"(?i:task[-_])?0*(?P<num>\d+)$")
+_TASK_SPLIT_OWNER_RE = re.compile(
+    r"(?i:task[-_])?0*(?P<num>\d+)-(?P<kind>"
+    r"foundation|tests|docs|source-models|source-core|source-modules|entrypoints)$"
+)
+
+
 def _canonical_task_owner_identity(value: Any) -> str:
     """Normalize the TaskRuntime integer alias without weakening task ownership.
 
@@ -372,10 +379,36 @@ def _canonical_task_owner_identity(value: Any) -> str:
     token = str(value or "").strip()
     if not token:
         return ""
-    match = re.fullmatch(r"(?i:task[-_])?0*(\d+)", token)
+    match = _TASK_NUMERIC_OWNER_RE.fullmatch(token)
     if match is not None:
-        return str(int(match.group(1)))
+        return str(int(match.group("num")))
     return token
+
+
+def _task_owner_compatible(left: Any, right: Any) -> bool:
+    """Return whether two owner tokens name the same claimed TaskRuntime row.
+
+    Live L2-19 remint-0: TASK-3-foundation existing-scope preflight saw
+    ``requirements.txt`` on disk, then finalize compared projection
+    ``TASK-3-foundation`` to claimed row ``3`` and raised
+    ``owner does not match claimed task``. That fail-closed the whole
+    TASK-3 split tree (tests/docs never claimed). ``TASK-3-tests`` still
+    must not authorize ``TASK-3-foundation``.
+    """
+
+    a = _canonical_task_owner_identity(left)
+    b = _canonical_task_owner_identity(right)
+    if a and a == b:
+        return True
+    left_token = str(left or "").strip()
+    right_token = str(right or "").strip()
+    split_left = _TASK_SPLIT_OWNER_RE.fullmatch(left_token)
+    split_right = _TASK_SPLIT_OWNER_RE.fullmatch(right_token)
+    numeric_left = _TASK_NUMERIC_OWNER_RE.fullmatch(left_token)
+    numeric_right = _TASK_NUMERIC_OWNER_RE.fullmatch(right_token)
+    if split_left and numeric_right and int(split_left.group("num")) == int(numeric_right.group("num")):
+        return True
+    return bool(split_right and numeric_left and int(split_right.group("num")) == int(numeric_left.group("num")))
 
 
 def _task_completion_projection_from_context(
@@ -529,7 +562,7 @@ def _record_project_artifacts_before_settlement(
     if projection.get("schema_version") != "polaris.task_completion_projection.v1":
         raise ValueError("task completion projection schema is invalid")
     projected_task_id = str(projection.get("task_id") or "").strip()
-    if _canonical_task_owner_identity(projected_task_id) != _canonical_task_owner_identity(contract_task_id):
+    if not _task_owner_compatible(projected_task_id, contract_task_id):
         raise ValueError("task completion projection owner does not match claimed task")
     project_id = str(projection.get("project_id") or "").strip()
     run_id = str(projection.get("run_id") or "").strip()
@@ -550,11 +583,7 @@ def _record_project_artifacts_before_settlement(
         obligation_id = str(raw_artifact.get("obligation_id") or "").strip()
         owner_task_id = str(raw_artifact.get("owner_task_id") or "").strip()
         path = str(raw_artifact.get("path") or "").strip()
-        if (
-            not obligation_id
-            or _canonical_task_owner_identity(owner_task_id) != _canonical_task_owner_identity(projected_task_id)
-            or not path
-        ):
+        if not obligation_id or not _task_owner_compatible(owner_task_id, projected_task_id) or not path:
             raise ValueError(f"owned_artifacts[{index}] lacks exact task-owned identity")
         identity = (owner_task_id, path)
         prior = seen.get(obligation_id)

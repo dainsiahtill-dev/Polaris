@@ -751,7 +751,9 @@ def test_r180_ts2300_duplicate_interface_member_keeps_first() -> None:
     assert plan is not None
     assert plan.source_tool == TYPESCRIPT_DUPLICATE_OBJECT_PROPERTY_SOURCE_TOOL
     op = plan.operations[0]
-    after = base["src/engine/renderer.ts"][: op.span_start] + op.replacement + base["src/engine/renderer.ts"][op.span_end :]
+    after = (
+        base["src/engine/renderer.ts"][: op.span_start] + op.replacement + base["src/engine/renderer.ts"][op.span_end :]
+    )
     assert after.count("fillStyle:") == 1
     assert "fillRect" in after
 
@@ -837,6 +839,36 @@ def test_r180_ts2307_missing_relative_module_stub() -> None:
     assert plan.source_tool == TYPESCRIPT_MISSING_RELATIVE_MODULE_SOURCE_TOOL
     assert plan.operations[0].path == "src/verify.ts"
     assert "runVerification" in str(plan.operations[0].content or "")
+
+
+def test_l217_ts2307_directory_prefix_rewrite_does_not_invent_nested_module() -> None:
+    from polaris.cells.director.runtime.internal.repair_kernel.typescript_syntax import (
+        TYPESCRIPT_MISSING_RELATIVE_MODULE_SOURCE_TOOL,
+        build_typescript_runtime_plan_for_source_tool,
+    )
+
+    base = {
+        "src/models/index.ts": "export { brandId } from './models/types.js';\n",
+        "src/models/types.ts": "export function brandId(value: string): string { return value; }\n",
+    }
+    diags = _diags(
+        [
+            "src/models/index.ts(1,27): error TS2307: Cannot find module './models/types.js' "
+            "or its corresponding type declarations.",
+        ]
+    )
+    plan = build_typescript_runtime_plan_for_source_tool(
+        source_tool=TYPESCRIPT_MISSING_RELATIVE_MODULE_SOURCE_TOOL,
+        base_files=base,
+        diagnostics=diags,
+        mode="commit",
+    )
+    assert plan is not None
+    assert plan.operations
+    assert all(operation.path != "src/models/models/types.ts" for operation in plan.operations)
+    assert plan.operations[0].kind == "text_replace"
+    assert plan.operations[0].path == "src/models/index.ts"
+    assert plan.operations[0].replacement == "'./types.js'"
 
 
 def test_r180_ts2339_declare_const_literal_and_ts2664_augmentation() -> None:

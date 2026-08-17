@@ -235,10 +235,11 @@ def _looks_like_embedded_cpp_compile_failure(text: str) -> bool:
             "invalid initialization",
             "fatal error:",
             "g++",
+            "undefined reference",
         )
     ):
         return False
-    return bool(re.search(r"\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx)", lowered))
+    return bool(re.search(r"\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx)", lowered) or "undefined reference" in lowered)
 
 
 def _workspace_relative_cpp_repair_target(raw_path: str, workspace_root: Path) -> str:
@@ -281,6 +282,37 @@ def _embedded_cpp_compile_repair_target_files(text: str, workspace_root: Path) -
         rel = _workspace_relative_cpp_repair_target(str(match.group("path") or ""), workspace_root)
         if rel:
             targets.append(rel)
+    if "undefined reference" in blob.lower():
+        stems: list[str] = []
+        for match in re.finditer(
+            r"(?:(?P<obj>[A-Za-z_][\w-]*)\.cpp\.o|(?P<file>[A-Za-z_][\w-]*\.cpp):)",
+            blob,
+            flags=re.IGNORECASE,
+        ):
+            raw = str(match.group("obj") or match.group("file") or "").strip()
+            stem = Path(raw).stem if raw else ""
+            if stem and stem not in stems:
+                stems.append(stem)
+        search_roots = [path for path in (workspace_root / "src", workspace_root / "include") if path.is_dir()]
+        if not search_roots:
+            search_roots = [workspace_root]
+        for stem in stems:
+            for root in search_roots:
+                try:
+                    hits = [
+                        path
+                        for ext in (".cpp", ".cc", ".cxx", ".c")
+                        for path in root.rglob(stem + ext)
+                        if path.is_file() and "build" not in path.parts and "cmake-build" not in path.parts
+                    ]
+                except OSError:
+                    continue
+                for path in sorted(hits, key=lambda item: item.as_posix()):
+                    try:
+                        rel = path.resolve().relative_to(workspace_root.resolve()).as_posix()
+                    except (OSError, ValueError):
+                        continue
+                    targets.append(rel)
     return _dedupe_preserve_order(targets)[:_QUALITY_REPAIR_TARGET_BATCH_LIMIT]
 
 

@@ -182,6 +182,36 @@ def test_task_boundary_reports_unresolved_local_import_in_current_source(tmp_pat
     assert verdict["unresolved_local_imports"] == ["src/meteor.js -> ./_util/hash.js (src/_util/hash.js)"]
 
 
+def test_task_boundary_does_not_inherit_unresolved_import_from_other_task_completed_file(
+    tmp_path: Path,
+) -> None:
+    """Live L2-17: TASK-2 must not fail-close on TASK-1-entrypoints barrel paths."""
+
+    models_dir = tmp_path / "src" / "models"
+    models_dir.mkdir(parents=True)
+    (models_dir / "index.ts").write_text(
+        "export { brandId } from './models/types.js';\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "web.ts").write_text(
+        "export function boot(): void {}\n",
+        encoding="utf-8",
+    )
+
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-2",
+        run_id="run-2",
+        target_files=["src/web.ts"],
+        completed_artifacts=["src/models/index.ts", "src/web.ts"],
+        downstream_pending_artifacts=["src/verify.ts"],
+    ).to_dict()
+
+    assert verdict["ok"] is True
+    assert verdict["status"] == "completed_verified"
+    assert verdict["unresolved_local_imports"] == []
+
+
 def test_task_boundary_reports_test_framework_content_in_non_test_source(tmp_path: Path) -> None:
     src_dir = tmp_path / "src" / "models"
     src_dir.mkdir(parents=True)

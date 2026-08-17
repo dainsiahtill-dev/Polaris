@@ -15,6 +15,7 @@ import os
 import re
 import shlex
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Iterable, Mapping, cast
 
@@ -362,6 +363,34 @@ _PYTHON_TRACEBACK_SOURCE_RE = re.compile(
     r'^\s*File\s+["\'](?P<path>[^"\']+)["\'],\s+line\s+(?P<line>\d+)',
     re.MULTILINE,
 )
+_NODE_TAP_LOCATION_RE = re.compile(
+    r"(?im)location:\s*['\"](?:file://)?(?P<path>[^'\"]+?\.(?:js|mjs|cjs|ts|tsx|mts|cts)):(?P<line>\d+)(?::\d+)?['\"]"
+)
+_NODE_STACK_FRAME_RE = re.compile(
+    r"\((?:file://)?(?P<path>[^()\s'\"]+?\.(?:js|mjs|cjs|ts|tsx|mts|cts)):(?P<line>\d+)(?::\d+)?\)"
+)
+_JS_TAP_RESERVED_CALLS = frozenset(
+    {
+        "assert",
+        "test",
+        "describe",
+        "it",
+        "equal",
+        "deepEqual",
+        "strictEqual",
+        "throws",
+        "doesNotThrow",
+        "ok",
+        "ifError",
+        "match",
+        "doesNotMatch",
+        "rejects",
+        "doesNotReject",
+        "notEqual",
+        "notDeepEqual",
+        "notStrictEqual",
+    }
+)
 
 
 def _is_verifier_source_path(rel_path: str) -> bool:
@@ -409,6 +438,7 @@ def _verifier_source_context_block(
         _normalize_declared_task_path(item) for item in repair_target_files if _normalize_declared_task_path(item)
     }
     refs: list[tuple[str, int]] = []
+    tap_refs: set[tuple[str, int]] = set()
     for error in artifact_quality_errors:
         for match in _PYTHON_TRACEBACK_SOURCE_RE.finditer(str(error or "")):
             raw_path = Path(str(match.group("path") or ""))
@@ -423,6 +453,24 @@ def _verifier_source_context_block(
             ref = (rel, line_number)
             if ref not in refs:
                 refs.append(ref)
+        error_text = str(error or "")
+        tap_is_suite = "type: 'suite'" in error_text.lower() or 'type: "suite"' in error_text.lower()
+        for match in (*_NODE_TAP_LOCATION_RE.finditer(error_text), *_NODE_STACK_FRAME_RE.finditer(error_text)):
+            raw_path = Path(str(match.group("path") or ""))
+            try:
+                absolute = raw_path.resolve() if raw_path.is_absolute() else (workspace / raw_path).resolve()
+                rel = absolute.relative_to(workspace).as_posix()
+                line_number = max(1, int(match.group("line")))
+            except (OSError, RuntimeError, TypeError, ValueError):
+                continue
+            if rel in repair_targets or not _is_verifier_source_path(rel):
+                continue
+            if tap_is_suite:
+                continue
+            ref = (rel, line_number)
+            if ref not in refs:
+                refs.append(ref)
+            tap_refs.add(ref)
 
     blocks: list[str] = []
     total_budget = 8000
@@ -434,8 +482,11 @@ def _verifier_source_context_block(
             lines = source_path.read_text(encoding="utf-8").splitlines()
         except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
             continue
+        # Node TAP `location` is the test() header, not the assertion/call.
+        # Live L2-18 remint-5: location 206 hid grantWish(...) at 211.
+        after = 24 if (rel, line_number) in tap_refs else 4
         start = max(0, line_number - 5)
-        end = min(len(lines), line_number + 4)
+        end = min(len(lines), line_number + after)
         excerpt = "\n".join(f"{index + 1}: {lines[index]}" for index in range(start, end))
         remaining = max(0, total_budget - used)
         if remaining <= 0:
@@ -463,7 +514,8 @@ _CPP_DIAGNOSTIC_DEFINITION_PATH_RE = re.compile(
 _CPP_NAMED_TYPE_RE = re.compile(
     r"(?:class|struct)\s+(?:[\w:]+::)*(?P<type>[A-Za-z_]\w*)"
     r"|no matching function for call to\s+[''‘\"](?:[\w:]+::)*(?P<ctor>[A-Za-z_]\w*)::"
-    r"|has no member named\s+[''‘\"](?P<member>[A-Za-z_]\w*)",
+    r"|has no member named\s+[''‘\"](?P<member>[A-Za-z_]\w*)"
+    r"|what\(\):\s+(?P<throw>[A-Za-z_]\w*)::(?P=throw):",
     re.IGNORECASE,
 )
 _CPP_ITEM_DEFINITION_RE = re.compile(r"(?m)^\s*(?:class|struct)\s+(?P<name>[A-Z][A-Za-z0-9_]*)\b")
@@ -539,7 +591,9 @@ def _diagnostic_named_cpp_types(errors: list[str]) -> list[str]:
     seen: set[str] = set()
     for error in errors:
         for match in _CPP_NAMED_TYPE_RE.finditer(str(error or "")):
-            raw = str(match.group("type") or match.group("ctor") or match.group("member") or "").strip()
+            raw = str(
+                match.group("type") or match.group("ctor") or match.group("member") or match.group("throw") or ""
+            ).strip()
             name = raw.rsplit("::", 1)[-1]
             if not name:
                 continue
@@ -552,6 +606,99 @@ def _diagnostic_named_cpp_types(errors: list[str]) -> list[str]:
                 seen.add(candidate)
                 names.append(candidate)
     return names
+
+
+_JAVA_NAMED_TYPE_RE = re.compile(
+    r"symbol:\s+class\s+(?P<symbol>[A-Za-z_]\w*)"
+    r"|cannot find symbol[^\n]*\n[^\n]*\b(?P<use>[A-Z][A-Za-z0-9_]*)\b"
+    r"|package\s+(?P<pkg>[A-Za-z_]\w*)\s+does not exist"
+    r"|(?:polaris\.factory(?:\.[A-Za-z_]\w*)*\.)(?P<qual>[A-Z][A-Za-z0-9_]*)",
+    re.IGNORECASE,
+)
+
+
+def _diagnostic_named_java_types(errors: list[str]) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for error in errors:
+        for match in _JAVA_NAMED_TYPE_RE.finditer(str(error or "")):
+            name = str(
+                match.group("symbol") or match.group("use") or match.group("pkg") or match.group("qual") or ""
+            ).strip()
+            if not name or name[:1].islower() or name in seen:
+                continue
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def _java_type_definition_refs(
+    *,
+    workspace: Path,
+    type_names: list[str],
+    repair_targets: set[str],
+) -> list[tuple[str, int]]:
+    """Map javac ``cannot find symbol class X`` onto existing type homes (read-only).
+
+    Live L2-16 remint-12: PlantEngine used ``Melody`` without import while
+    Melody.java already existed. The LLM only saw the use-site and mixed
+    Melody / MelodyModel / invented Note types.
+    Live L2-16 remint-14: a top-level Note.java had been invented. Looking up
+    ``class Note`` preferred that file over Melody.Note / MelodyModel.Note,
+    so eight PlantEngine edits kept swapping APIs (duration vs durationTicks).
+    """
+
+    refs: list[tuple[str, int]] = []
+    if not type_names:
+        return refs
+    src_root = workspace / "src" / "main" / "java"
+    if not src_root.is_dir():
+        return refs
+    nested = {
+        name: re.compile(
+            rf"\b(?:(?:public|protected|private|static|final|sealed|non-sealed)\s+)*"
+            rf"(?:class|enum|interface|record)\s+{re.escape(name)}\b"
+        )
+        for name in dict.fromkeys(type_names)
+        if name
+    }
+    try:
+        java_files = [path for path in src_root.rglob("*.java") if path.is_file()]
+    except OSError:
+        return refs
+    nested_refs: list[tuple[str, int]] = []
+    top_level_refs: list[tuple[str, int]] = []
+    for path in sorted(java_files, key=lambda item: item.as_posix()):
+        try:
+            rel = path.relative_to(workspace).as_posix()
+        except ValueError:
+            continue
+        if rel in repair_targets or any(part.lower() in {"test", "tests", "build"} for part in Path(rel).parts):
+            continue
+        try:
+            if path.stat().st_size <= 0:
+                continue
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for name, pattern in nested.items():
+            match = pattern.search(text)
+            if match is None:
+                continue
+            line_number = text.count("\n", 0, match.start()) + 1
+            ref = (rel, line_number)
+            if path.stem == name:
+                if ref not in top_level_refs:
+                    top_level_refs.append(ref)
+            elif ref not in nested_refs:
+                nested_refs.append(ref)
+    # Nested homes beat an invented same-name top-level file.
+    for ref in (*nested_refs, *top_level_refs):
+        if ref not in refs:
+            refs.append(ref)
+        if len(refs) >= 8:
+            break
+    return refs
 
 
 def _cpp_type_definition_refs(
@@ -606,6 +753,291 @@ def _cpp_type_definition_refs(
             if not wanted:
                 return refs
     return refs
+
+
+_TS_TSC_SITE_RE = re.compile(
+    r"(?m)^(?P<path>(?:src|tests|lib|app)/[^\s:()]+?\.(?:ts|tsx|mts|cts))\((?P<line>\d+),\d+\):\s+error\s+TS(?P<code>\d+)",
+    re.IGNORECASE,
+)
+_TS_CALL_IDENT_RE = re.compile(r"\b(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_TS_RESERVED_CALLS = frozenset(
+    {
+        "if",
+        "for",
+        "while",
+        "switch",
+        "catch",
+        "function",
+        "return",
+        "typeof",
+        "await",
+        "void",
+        "super",
+        "this",
+        "constructor",
+        "Error",
+        "TypeError",
+        "Promise",
+        "Array",
+        "Object",
+        "String",
+        "Number",
+        "Boolean",
+        "Date",
+        "Map",
+        "Set",
+        "JSON",
+        "Math",
+        "console",
+        "require",
+        "import",
+        "parseInt",
+        "parseFloat",
+        "isNaN",
+        "setTimeout",
+        "setInterval",
+    }
+)
+
+
+def _typescript_residuals_need_result_unwrap(errors: Sequence[str]) -> bool:
+    blob = "\n".join(str(item or "") for item in errors)
+    return "DomainResult<" in blob and "is not assignable" in blob.lower()
+
+
+def _typescript_call_names_near_line(lines: Sequence[str], line_number: int) -> list[str]:
+    start = max(0, line_number - 10)
+    end = min(len(lines), max(line_number, 0))
+    names: list[str] = []
+    for raw in lines[start:end]:
+        for match in _TS_CALL_IDENT_RE.finditer(str(raw or "")):
+            name = str(match.group("name") or "")
+            if not name or name in _TS_RESERVED_CALLS or name in names:
+                continue
+            names.append(name)
+    return names[-4:]
+
+
+def _typescript_export_function_refs(
+    *,
+    workspace: Path,
+    names: Sequence[str],
+    repair_targets: set[str],
+) -> list[tuple[str, int]]:
+    wanted = [name for name in dict.fromkeys(names) if name]
+    if not wanted:
+        return []
+    src_root = workspace / "src"
+    if not src_root.is_dir():
+        return []
+    patterns = {name: re.compile(rf"(?m)^export\s+(?:async\s+)?function\s+{re.escape(name)}\b") for name in wanted}
+    found: list[tuple[str, int]] = []
+    found_names: set[str] = set()
+    try:
+        files = [path for suffix in ("*.ts", "*.tsx") for path in src_root.rglob(suffix) if path.is_file()]
+    except OSError:
+        return []
+    for path in sorted(files, key=lambda item: item.as_posix()):
+        try:
+            rel = path.relative_to(workspace).as_posix()
+        except ValueError:
+            continue
+        name_token = Path(rel).name.lower()
+        if (
+            rel in repair_targets
+            or any(part in {"node_modules", "dist", "build"} for part in Path(rel).parts)
+            or ".test." in name_token
+            or ".spec." in name_token
+        ):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for name, pattern in patterns.items():
+            if name in found_names:
+                continue
+            match = pattern.search(text)
+            if match is None:
+                continue
+            found.append((rel, text.count("\n", 0, match.start()) + 1))
+            found_names.add(name)
+        if len(found_names) >= len(wanted) or len(found) >= 8:
+            break
+    return found
+
+
+def _typescript_callee_definition_refs(
+    *,
+    workspace: Path,
+    artifact_quality_errors: Sequence[str],
+    repair_targets: set[str],
+) -> list[tuple[str, int]]:
+    """Map tsc TS2554/TS2345/TS2322 use-sites onto existing exported callees.
+
+    Live L2-17 remint-4: eight TASK-2 rounds saw ``restock(inventory, Item, …)``
+    and ``DomainResult<Inventory>`` assigned into ``Inventory`` without the
+    existing ``export function restock(…, itemId: ItemId, …)`` / ``isOk``
+    signatures. rustc/g++ already project definition homes; tsc does not.
+    """
+
+    names: list[str] = []
+    for error in artifact_quality_errors:
+        for match in _TS_TSC_SITE_RE.finditer(str(error or "")):
+            rel = _normalize_declared_task_path(match.group("path"))
+            if not rel:
+                continue
+            try:
+                line_number = max(1, int(match.group("line")))
+                source = (workspace / rel).resolve()
+                source.relative_to(workspace)
+                if not source.is_file():
+                    continue
+                lines = source.read_text(encoding="utf-8").splitlines()
+            except (OSError, RuntimeError, TypeError, UnicodeDecodeError, ValueError):
+                continue
+            for name in _typescript_call_names_near_line(lines, line_number):
+                if name not in names:
+                    names.append(name)
+    if _typescript_residuals_need_result_unwrap(artifact_quality_errors):
+        for name in ("isOk", "ok", "err"):
+            if name not in names:
+                names.append(name)
+    return _typescript_export_function_refs(
+        workspace=workspace,
+        names=names,
+        repair_targets=repair_targets,
+    )
+
+
+def _javascript_tap_residuals_need_callee_contract(errors: Sequence[str]) -> bool:
+    blob = "\n".join(str(item or "") for item in errors)
+    lowered = blob.lower()
+    return "not ok " in lowered and (
+        "err_test_failure" in lowered
+        or "location:" in lowered
+        or "must be a non-empty string" in lowered
+        or "missing expected exception" in lowered
+        or "err_assertion" in lowered
+        or "is not defined" in lowered
+        or "referenceerror" in lowered
+    )
+
+
+def _javascript_tap_residuals_are_reference_error(errors: Sequence[str]) -> bool:
+    blob = "\n".join(str(item or "") for item in errors).lower()
+    return "is not defined" in blob or "referenceerror" in blob
+
+
+def _javascript_call_names_near_line(lines: Sequence[str], line_number: int) -> list[str]:
+    """Collect calls in the TAP test body, not only lines before the header.
+
+    tsc diagnostics name the call line. Node TAP ``location`` names the
+    ``test()`` header. Live L2-18 remint-5 hid ``grantWish(...)`` five
+    lines below that header.
+    """
+
+    start = max(0, line_number - 4)
+    end = min(len(lines), line_number + 20)
+    reserved = _TS_RESERVED_CALLS | _JS_TAP_RESERVED_CALLS
+    names: list[str] = []
+    for raw in lines[start:end]:
+        for match in _TS_CALL_IDENT_RE.finditer(str(raw or "")):
+            name = str(match.group("name") or "")
+            if not name or name in reserved or name in names:
+                continue
+            names.append(name)
+    return names[:8]
+
+
+def _javascript_export_function_refs(
+    *,
+    workspace: Path,
+    names: Sequence[str],
+    repair_targets: set[str],
+) -> list[tuple[str, int]]:
+    wanted = [name for name in dict.fromkeys(names) if name]
+    if not wanted:
+        return []
+    src_root = workspace / "src"
+    if not src_root.is_dir():
+        return []
+    patterns = {name: re.compile(rf"(?m)^(?:export\s+)?(?:async\s+)?function\s+{re.escape(name)}\b") for name in wanted}
+    found: list[tuple[str, int]] = []
+    found_names: set[str] = set()
+    try:
+        files = [path for suffix in ("*.js", "*.mjs", "*.cjs") for path in src_root.rglob(suffix) if path.is_file()]
+    except OSError:
+        return []
+    for path in sorted(files, key=lambda item: item.as_posix()):
+        try:
+            rel = path.relative_to(workspace).as_posix()
+        except ValueError:
+            continue
+        name_token = Path(rel).name.lower()
+        if (
+            rel in repair_targets
+            or any(part in {"node_modules", "dist", "build"} for part in Path(rel).parts)
+            or ".test." in name_token
+            or ".spec." in name_token
+        ):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for name, pattern in patterns.items():
+            if name in found_names:
+                continue
+            match = pattern.search(text)
+            if match is None:
+                continue
+            found.append((rel, text.count("\n", 0, match.start()) + 1))
+            found_names.add(name)
+        if len(found_names) >= len(wanted) or len(found) >= 8:
+            break
+    return found
+
+
+def _javascript_callee_definition_refs(
+    *,
+    workspace: Path,
+    artifact_quality_errors: Sequence[str],
+    repair_targets: set[str],
+) -> list[tuple[str, int]]:
+    """Map Node TAP use-sites onto existing JavaScript callees.
+
+    Live L2-18 remint-5: TASK-2 saw ``grantWish(closeWish(openWish(w)))``
+    without ``function grantWish(wish, meteorId)``. rustc/g++/tsc already
+    project definition homes; Node TAP only names the test() header.
+    """
+
+    names: list[str] = []
+    for error in artifact_quality_errors:
+        for match in (
+            *_NODE_TAP_LOCATION_RE.finditer(str(error or "")),
+            *_NODE_STACK_FRAME_RE.finditer(str(error or "")),
+        ):
+            raw_path = Path(str(match.group("path") or ""))
+            try:
+                absolute = raw_path.resolve() if raw_path.is_absolute() else (workspace / raw_path).resolve()
+                rel = absolute.relative_to(workspace).as_posix()
+                line_number = max(1, int(match.group("line")))
+                source = (workspace / rel).resolve()
+                source.relative_to(workspace)
+                if not source.is_file() or not _is_verifier_source_path(rel):
+                    continue
+                lines = source.read_text(encoding="utf-8").splitlines()
+            except (OSError, RuntimeError, TypeError, UnicodeDecodeError, ValueError):
+                continue
+            for name in _javascript_call_names_near_line(lines, line_number):
+                if name not in names:
+                    names.append(name)
+    return _javascript_export_function_refs(
+        workspace=workspace,
+        names=names,
+        repair_targets=repair_targets,
+    )
 
 
 def _diagnostic_referenced_definition_context_block(
@@ -672,6 +1104,27 @@ def _diagnostic_referenced_definition_context_block(
     ):
         if ref not in refs:
             refs.append(ref)
+    for ref in _java_type_definition_refs(
+        workspace=workspace,
+        type_names=_diagnostic_named_java_types(artifact_quality_errors),
+        repair_targets=repair_targets,
+    ):
+        if ref not in refs:
+            refs.append(ref)
+    for ref in _typescript_callee_definition_refs(
+        workspace=workspace,
+        artifact_quality_errors=artifact_quality_errors,
+        repair_targets=repair_targets,
+    ):
+        if ref not in refs:
+            refs.append(ref)
+    for ref in _javascript_callee_definition_refs(
+        workspace=workspace,
+        artifact_quality_errors=artifact_quality_errors,
+        repair_targets=repair_targets,
+    ):
+        if ref not in refs:
+            refs.append(ref)
 
     blocks: list[str] = []
     total_budget = 16000
@@ -703,17 +1156,57 @@ def _diagnostic_referenced_definition_context_block(
             "If g++ says class T has no member named M and a header below "
             "defines type M (energy -> Energy), T does not own M. Compose the "
             "existing type at the use-site. Never invent T::M / T::M_* accessors. "
+            "If g++ says no matching function for call to T::T(args), keep the "
+            "existing constructor and fix the call-site arguments; never invent "
+            "a new overload. CLI abort `std::invalid_argument` / "
+            "`terminate called` is a runtime argument bug at the CLI "
+            "entrypoint, not a test rewrite. "
             "If '{anonymous}::NS' cannot see NS::models, qualify the use-site as "
             "::NS::models; do not rewrite header namespace nesting. C++17 "
             "`namespace A::B` must stay one opener/closer; nested "
             "`namespace A { namespace B {` needs two closers. An unclosed "
             "A swallows later includes into A::std.\n"
         )
+    typescript_result_note = ""
+    if _typescript_residuals_need_result_unwrap(artifact_quality_errors) or any(
+        rel.endswith((".ts", ".tsx", ".mts", ".cts")) for rel, _line in refs
+    ):
+        typescript_result_note = (
+            "If tsc TS2554/TS2345 names a call, use the existing exported "
+            "function signature below. Change the call-site arguments to match; "
+            "never invent a new overload or domain helper. If tsc TS2322/TS2352 "
+            "says DomainResult<T> or DomainOk<U> is not assignable to T, unwrap "
+            "with the workspace isOk/ok helpers already exported. Never assign a "
+            "Result to T and never invent a new Result type.\n"
+        )
+    javascript_tap_note = ""
+    if _javascript_tap_residuals_need_callee_contract(artifact_quality_errors) or any(
+        rel.endswith((".js", ".mjs", ".cjs")) for rel, _line in refs
+    ):
+        javascript_tap_note = (
+            "If Node TAP / npm test names a TypeError or assertion on a call, "
+            "use the existing exported function signature below. "
+            "If you are editing the test, change the call-site to match that "
+            "arity and required fields; never invent a new helper or overload. "
+            "Extra arguments are not enough when a prior helper in the same "
+            "call (close/open/reset) still produces a status or field the "
+            "callee rejects — rebuild the input to an accepted state. "
+            "If you are editing the implementation, honor the failing TAP call "
+            "without wiping fields the callee still reads, and keep the exported "
+            "signature. Do not relax the callee to accept a state another TAP "
+            "requires to throw. A TAP location line is the test() header — the "
+            "call is inside the following body.\n"
+        )
     return (
         "REFERENCED TYPE DEFINITIONS (READ-ONLY EVIDENCE; NEVER EDIT THESE FILES):\n"
         "Use only the existing variants, methods, and fields shown below. "
         "Never invent members that are absent from these definitions. "
-        "This evidence does not expand write scope.\n" + cpp_sibling_note + "\n".join(blocks) + "\n"
+        "This evidence does not expand write scope.\n"
+        + cpp_sibling_note
+        + typescript_result_note
+        + javascript_tap_note
+        + "\n".join(blocks)
+        + "\n"
     )
 
 
@@ -1652,6 +2145,37 @@ def _build_materialization_quality_repair_message(
         directive_quality_errors,
         repair_target_files=prompt_repair_target_files,
     )
+    javascript_tap_contract_block = ""
+    if _javascript_tap_residuals_need_callee_contract(artifact_quality_errors):
+        javascript_tap_contract_block = (
+            "NODE TAP CALL CONTRACT: a TAP location line is the test() header; "
+            "the failing call is in the following test body. Use the existing "
+            "exported callee signature from READ-ONLY DEFINITION or CURRENT UTF-8 "
+            "CONTENT. If editing the test, change the call-site to match that "
+            "arity and required fields; never invent a new helper. Extra "
+            "arguments are not enough when a prior helper in the same call "
+            "(close/open/reset) still produces a status or field the callee "
+            "rejects — rebuild the input to an accepted state. If editing the "
+            "implementation, honor the failing TAP call without wiping fields the "
+            "callee still reads, and keep the exported signature. Do not relax "
+            "the callee to accept a state another TAP requires to throw.\n"
+        )
+        if _javascript_tap_residuals_are_reference_error(artifact_quality_errors):
+            javascript_tap_contract_block += (
+                "NODE TAP REFERENCEERROR: `X is not defined` under ESM/strict "
+                "mode is almost always a dropped const/let on an existing "
+                "`X = ...` assignment in the authorized product file. Restore "
+                "the declaration (`const X = ...`). Do not invent a global and "
+                "do not rewrite unrelated tests to paper over the ReferenceError.\n"
+            )
+    tap_blob = "\n".join(str(item or "") for item in artifact_quality_errors).lower()
+    if "syntaxerror" in tap_blob or "syntax error in tests/" in tap_blob:
+        javascript_tap_contract_block += (
+            "NODE TAP SYNTAXERROR: Unexpected token `}` / `)` in the official "
+            "Node TAP file usually means a deleted `describe(` / `test(` opener. "
+            "Restore the missing opener so braces match. Do not delete the "
+            "closer and do not rewrite later suites.\n"
+        )
     runtime_smoke_text = "\n".join(str(item or "") for item in directive_quality_errors).lower()
     html5_canvas_entrypoint_block = ""
     if "canvas entrypoint did not render non-empty pixels" in runtime_smoke_text or (
@@ -1706,11 +2230,10 @@ def _build_materialization_quality_repair_message(
     typescript_strict_null_block = ""
     _strict_null_signatures = (
         "TS18048",
-        "TS2322",
         "is possibly 'undefined'",
         'is possibly "undefined"',
-        "Type 'number | undefined'",
-        "Type 'string | undefined'",
+        "| undefined'",
+        '| undefined"',
     )
     if any(any(sig in str(item) for sig in _strict_null_signatures) for item in artifact_quality_errors):
         # Round B amplification (L1-01 m03-r18): a weak Director (MiniMax-M3)
@@ -1820,6 +2343,48 @@ def _build_materialization_quality_repair_message(
         )
         if target_lines:
             interface_discrepancy_block += f"Authorized repair targets:\n{target_lines}\n"
+    java_public_class_block = ""
+    verifier_blob = "\n".join(str(item or "") for item in artifact_quality_errors)
+    if "should be declared in a file named" in verifier_blob or "cannot find symbol" in verifier_blob:
+        java_public_class_block = (
+            "JAVA PUBLIC TYPE FILENAME:\n"
+            "- javac `class X is public, should be declared in a file named X.java` "
+            "means write the authorized source as X.java and keep the type public.\n"
+            "- Do not drop `public` to silence the error: other packages then fail "
+            "`X is not public ... cannot be accessed from outside package`.\n"
+            "- javac `cannot find symbol class Note` or `class Melody` at a "
+            "use-site: import the existing type (`import polaris.factory.domain.Melody` "
+            "then `Melody` / `Melody.Note`). Melody is a class, not a package — "
+            "`package Melody does not exist` / `package polaris.factory.domain.Melody "
+            "does not exist` means keep Melody as a type. Nested `Note(String,int)` "
+            "must stay public. Do not invent a top-level Note or rewrite already-"
+            "written Plant.java/Season.java when the failing TU is PlantEngine.\n"
+            "- If the use-site already imports MelodyModel, the return type and "
+            "Note type must be MelodyModel / MelodyModel.Note. If the signature "
+            "uses Melody, add `import polaris.factory.domain.Melody`. Do not mix "
+            "Melody and MelodyModel in the same method.\n"
+            "- If Melody.java already declares a public nested Note, do not "
+            "import or construct a top-level `polaris.factory.domain.Note`. "
+            "Pick Melody.Note or MelodyModel.Note and use that one type in "
+            "every List/new/for-each. Keep main.java on the same melody type.\n"
+            "- If python unittest stages a private javac of one .java and "
+            "cannot find same-package types that official `javac` already "
+            "compiled, edit the test helper to compile every "
+            "`src/main/java/**/*.java` together. Do not invent missing "
+            "siblings inside the test.\n"
+            "- When official javac already passed the production tree, do "
+            "not rewrite imports, rename Melody→MelodyModel, or copy "
+            "sources into build/staging with symbol substitutions. One "
+            "`javac` line over the real `src/main/java/**/*.java` files "
+            "is the authorized helper. Do not edit PlantEngine.java for "
+            "a unittest helper failure.\n"
+            "- Same-directory case duplicates (`plantengine.java` next to "
+            "`PlantEngine.java`) must keep only the PascalCase file, "
+            "exactly like official quality. Compiling every rglob `*.java` "
+            "or renaming lowercase files into staging reintroduces "
+            "`class X is public, should be declared in X.java` and "
+            "cannot-find-symbol. Do not stage.\n"
+        )
     return (
         "[mode:materialize]\n"
         '<SESSION_PATCH>{"delivery_mode":"materialize_changes","task_progress":"implementing"}</SESSION_PATCH>\n'
@@ -1838,6 +2403,7 @@ def _build_materialization_quality_repair_message(
         f"{symbol_repair_block}"
         f"{javascript_named_export_block}"
         f"{javascript_module_system_block}"
+        f"{javascript_tap_contract_block}"
         f"{html5_canvas_entrypoint_block}"
         f"{syntax_block}"
         f"{typescript_strict_null_block}"
@@ -1845,6 +2411,7 @@ def _build_materialization_quality_repair_message(
         f"{npm_manifest_block}"
         f"{forbidden_marker_block}"
         f"{interface_discrepancy_block}"
+        f"{java_public_class_block}"
         "EDIT CONSISTENCY PREFLIGHT (mandatory before every tool call):\n"
         "- For every identifier, enum/member, import, callable, or mapping key introduced by an edit, verify that "
         "its definition already exists in the CURRENT UTF-8 CONTENT or READ-ONLY referenced definition files. "
