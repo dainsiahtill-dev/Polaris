@@ -424,6 +424,7 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
         if manifests:
             cmake_script = """
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -444,23 +445,42 @@ if not canonical.is_file():
         print("CMakeLists.txt:1:1: error: CMakeLists.txt is missing", file=sys.stderr)
     raise SystemExit(1)
 cmake_text = canonical.read_text(encoding="utf-8")
-src_root = root / "src"
-quoted_models = False
-if src_root.is_dir():
-    for path in src_root.rglob("*"):
-        if path.suffix.lower() not in {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}:
+ignored = {"build", "cmake-build", "runtime", ".polaris", "out", "target"}
+include_re = re.compile(r'^\\s*#\\s*include\\s*[<"]([^">]+)[>"]', re.MULTILINE)
+inferred_roots = []
+for path in root.rglob("*"):
+    if not path.is_file() or path.suffix.lower() not in {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}:
+        continue
+    if any(part in ignored for part in path.parts):
+        continue
+    try:
+        body = path.read_text(encoding="utf-8")
+    except OSError:
+        continue
+    for match in include_re.finditer(body):
+        token = match.group(1).replace("\\\\", "/").strip()
+        if not token or token.startswith("/") or ".." in token.split("/"):
             continue
-        try:
-            body = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        if '#include "models/' in body or "#include <models/" in body:
-            quoted_models = True
-            break
-if quoted_models and "target_include_directories" not in cmake_text:
+        for ancestor in [path.parent, *path.parents]:
+            try:
+                ancestor.relative_to(root)
+            except ValueError:
+                break
+            candidate = ancestor / token
+            if candidate.is_file():
+                try:
+                    rel = ancestor.relative_to(root).as_posix()
+                except ValueError:
+                    break
+                root_token = "." if rel in {".", ""} else rel
+                if root_token not in inferred_roots:
+                    inferred_roots.append(root_token)
+                break
+if inferred_roots and "target_include_directories" not in cmake_text:
+    roots = ", ".join(inferred_roots[:8])
     print(
         "CMakeLists.txt:1:1: error: official leftover cmake requires "
-        "target_include_directories covering src/ (headers included as models/*.hpp)",
+        f"target_include_directories covering CE-declared include roots ({roots})",
         file=sys.stderr,
     )
     raise SystemExit(1)

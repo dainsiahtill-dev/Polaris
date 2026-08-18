@@ -127,17 +127,10 @@ def _pm_typescript_factory_contract_missing(contracts: list[dict[str, Any]], dir
     for required in ("package.json", "tsconfig.json", "index.html", "README.md"):
         if required.lower() not in lower_targets:
             missing.append(required)
-    if not any(target.startswith("src/") and target.endswith((".ts", ".tsx")) for target in targets):
-        missing.append("src/**/*.ts")
-    if not any(target.startswith("src/models/") and target.endswith((".ts", ".tsx")) for target in targets):
-        missing.append("src/models/*.ts")
-    if "src/engine/renderer.ts" not in lower_targets and "src/core/renderer.ts" not in lower_targets:
-        missing.append("src/engine/renderer.ts")
-    if not any(
-        target.startswith("tests/") and target.endswith((".test.ts", ".spec.ts", ".test.tsx", ".spec.tsx"))
-        for target in targets
-    ):
-        missing.append("tests/*.test.ts")
+    if not any(target.endswith((".ts", ".tsx")) for target in targets):
+        missing.append("*.ts")
+    if not any(target.endswith((".test.ts", ".spec.ts", ".test.tsx", ".spec.tsx")) for target in targets):
+        missing.append("*.test.ts")
     return missing
 
 

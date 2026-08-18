@@ -584,11 +584,11 @@ def _build_language_runnable_contract(primary_language: str) -> str:
 
 
 def _build_source_tree_contract(primary_language: str, project_type: str) -> str:
-    """Build explicit source tree structure requirements for the given language/type.
+    """Require real source + tests; Chief Engineer owns directory topology.
 
-    This ensures the PM -> Chief Engineer -> Director chain creates src/
-    directories and core source files rather than only scaffolding files like
-    package.json and tsconfig.json.
+    Polar is must not force ``src/models`` + ``src/engine`` as the only legal
+    tree. CE blueprint names modules, public files, and entrypoints; Director
+    executes that topology. Scaffold-only delivery still fails.
     """
     lang = primary_language.lower().strip()
     ptype = project_type.lower().strip()
@@ -596,89 +596,64 @@ def _build_source_tree_contract(primary_language: str, project_type: str) -> str
     sections: list[str] = []
     sections.append("## Source Tree Structure Contract (MANDATORY)\n")
     sections.append(
-        "PM -> Chief Engineer -> Director 必须按以下结构创建源代码文件, 仅生成 package.json / tsconfig.json 等配置文件"
-        "不算完成, 必须包含核心业务逻辑源码:\n"
+        "Polaris 不规定唯一目录范式。**目录拓扑由 Chief Engineer 决定**：\n"
+        "CE 蓝图必须命名具体模块、公开文件与入口；Director 只能无损执行该拓扑。\n"
+        "禁止 PM/Director/QA/bench 把 `src/models/` + `src/engine/` 写成唯一合法结构。\n"
+        "仅生成 package.json / tsconfig.json / CMakeLists.txt 等脚手架不算完成。\n"
     )
 
     if lang == "typescript":
         sections.append(
-            "- 必须包含 `src/` 目录, 核心业务逻辑在 `src/` 下的 `.ts` 文件中。\n"
-            "- 至少包含以下类型的源文件:\n"
-            "  - `src/models/` — 数据模型/实体定义\n"
-            "  - `src/engine/` 或 `src/core/` — 核心引擎/逻辑\n"
-            "  - `src/index.ts` — 应用入口\n"
-            "- 必须包含 `tests/` 目录下的至少一个 `.test.ts` 测试文件。\n"
-            '- tsconfig.json 的 `include` 必须包含 `"src/**/*.ts"`。\n'
+            "- 必须有 TypeScript 业务源码（`.ts`/`.tsx`），路径由 CE 决定。\n"
+            "- 必须有可运行入口（Node CLI、浏览器 HTML+脚本，或 CE 声明的等价入口）。\n"
+            "- 必须有至少一个可执行测试/检查文件。\n"
+            "- `package.json` / `tsconfig.json` 必须指向 CE 选定的真实源码根。\n"
         )
     elif lang == "javascript":
         sections.append(
-            "- 必须包含 `src/` 目录, 核心业务逻辑在 `src/` 下的 `.js` 文件中。\n"
-            "- 至少包含以下类型的源文件:\n"
-            "  - `src/models/` — 数据模型/实体定义\n"
-            "  - `src/engine/` 或 `src/core/` — 核心引擎/逻辑\n"
-            "  - `src/index.js` — 应用入口\n"
-            "- 必须包含 `tests/` 目录下的至少一个测试文件。\n"
+            "- 必须有 JavaScript 业务源码（`.js`/`.mjs`/`.cjs`），路径由 CE 决定。\n"
+            "- 必须有可运行入口与至少一个测试/检查文件。\n"
         )
     elif lang == "python":
         sections.append(
-            "- 必须包含 `src/` 目录(或项目级 Python 包), 核心业务逻辑在 `.py` 文件中。\n"
-            "- 至少包含以下类型的源文件:\n"
-            "  - `src/models/` — 数据模型/实体定义\n"
-            "  - `src/engine/` 或 `src/core/` — 核心引擎/逻辑\n"
-            "  - `src/__init__.py` 或项目入口 `.py` 文件\n"
-            "- 必须包含 `tests/` 目录下的至少一个 `test_*.py` 测试文件。\n"
+            "- 必须有 Python 业务源码（`.py` 包或模块），路径由 CE 决定。\n"
+            "- 必须有可运行入口与至少一个 `test_*.py`（或 CE 声明的等价检查）。\n"
         )
     elif lang == "go":
         sections.append(
-            "- 必须包含 `src/` 或项目级 Go 包, 核心业务逻辑在 `.go` 文件中。\n"
-            "- 至少包含以下类型的源文件:\n"
-            "  - `src/models/` 或 `models/` — 数据模型/实体定义\n"
-            "  - `src/engine/` 或 `engine/` — 核心引擎/逻辑\n"
-            "  - `main.go` 或 `cmd/` — 应用入口\n"
-            "- 必须包含 `*_test.go` 测试文件。\n"
+            "- 必须有 Go 业务源码（`.go` 包），路径由 CE 决定。\n"
+            "- 必须有 `main` 包或 `cmd/` 入口，以及 `*_test.go`。\n"
         )
     elif lang == "rust":
         sections.append(
-            "- 必须包含 `src/` 目录, 核心业务逻辑在 `src/` 下的 `.rs` 文件中。\n"
-            "- 至少包含以下类型的源文件:\n"
-            "  - `src/models/` 或 `src/model.rs` — 数据模型/实体定义\n"
-            "  - `src/engine/` 或 `src/lib.rs` — 核心引擎/逻辑\n"
-            "  - `src/main.rs` — 应用入口\n"
-            "- 必须包含 `tests/` 目录下的集成测试或 `#[test]` 单元测试。\n"
+            "- 必须有 Rust 业务源码（`.rs`），crate 布局由 CE 决定。\n"
+            "- 必须有可构建入口（bin/lib）与测试。\n"
         )
     elif lang == "cpp":
         sections.append(
-            "- 必须包含 `src/` 目录, 核心业务逻辑在 `.cpp`/`.hpp` 文件中。\n"
-            "- 至少包含以下类型的源文件:\n"
-            "  - `src/models/` 或 `include/models/` — 数据模型/实体定义\n"
-            "  - `src/engine/` 或 `src/core/` — 核心引擎/逻辑\n"
-            "  - `src/main.cpp` — 应用入口\n"
-            "- 必须包含 `tests/` 目录下的测试文件。\n"
+            "- 必须有 C++ 业务源码（`.cpp`/`.hpp` 等），include 根与目录由 CE 决定。\n"
+            "- 必须有可构建入口与测试；CMake/构建文件必须匹配 CE 选定的 include 根。\n"
         )
     elif lang == "java":
         sections.append(
-            "- 必须包含 `src/main/java/` 目录, 核心业务逻辑在 `.java` 文件中。\n"
-            "- 至少包含以下类型的源文件:\n"
-            "  - `src/main/java/**/models/` — 数据模型/实体定义\n"
-            "  - `src/main/java/**/engine/` 或 `core/` — 核心引擎/逻辑\n"
-            "  - `src/main/java/**/App.java` — 应用入口\n"
-            "- 必须包含 `src/test/java/` 下的测试文件。\n"
+            "- 必须有 Java 业务源码（`.java`），包路径由 CE 决定。\n"
+            "- 必须有可运行入口与测试源码。\n"
         )
     else:
         sections.append(
-            f"- primary_language={lang!r} — 请按该语言惯例创建 src/ 目录结构, "
-            "包含核心业务逻辑源码、数据模型和测试文件。\n"
+            f"- primary_language={lang!r} — 必须有该语言的真实业务源码、入口与测试；"
+            "目录与模块切分由 Chief Engineer 决定。\n"
         )
 
     if "simulation" in ptype or "game" in ptype or "interactive" in ptype:
         sections.append(
-            "- simulation/game/interactive 项目必须包含一个可渲染的场景/引擎核心文件 "
-            "(如 `src/engine/renderer.ts`, `src/core/simulation.py` 等)。\n"
+            "- simulation/game/interactive 必须有真实场景/渲染/交互源码；"
+            "文件名与目录由 CE 决定，不强制 `src/engine/renderer.ts`。\n"
         )
 
     sections.append(
-        "\n**重要**: Director 任务的 target_files 必须覆盖 src/ 下的源文件, "
-        "不能只包含 package.json / tsconfig.json / index.html 等脚手架文件。\n"
+        "\n**重要**: Director `target_files` 必须覆盖 CE 蓝图声明的业务源码与入口，"
+        "不能只包含配置/脚手架。CE 选定的路径即权威。\n"
     )
     return "".join(sections)
 

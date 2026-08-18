@@ -374,8 +374,37 @@ def test_cpp_quality_cmake_requires_include_directories_for_models_headers(tmp_p
     commands = WorkspaceQualityRunner(tmp_path)._cpp_workspace_quality_commands()
     assert len(commands) >= 2
     cmake_script = commands[1][2]
-    assert "target_include_directories covering src/" in cmake_script
-    assert "headers included as models/*.hpp" in cmake_script
+    assert "target_include_directories covering CE-declared include roots" in cmake_script
+    assert "src/models" not in cmake_script or "CE-declared include roots" in cmake_script
+
+
+def test_cpp_quality_cmake_infers_include_root_outside_src(tmp_path: Path) -> None:
+    """Leftover cmake must infer CE include roots, not assume src/models.
+
+    A CE-chosen ``include/wind/entity.hpp`` + ``#include "wind/entity.hpp"``
+    must fail-closed naming that include root, not ``src/``.
+    """
+
+    include = tmp_path / "include" / "wind"
+    include.mkdir(parents=True)
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "main.cpp").write_text(
+        '#include "wind/entity.hpp"\nint main() { return 0; }\n',
+        encoding="utf-8",
+    )
+    (include / "entity.hpp").write_text("struct Entity {};\n", encoding="utf-8")
+    (tmp_path / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.16)\n"
+        "project(wind LANGUAGES CXX)\n"
+        "add_executable(wind app/main.cpp)\n",
+        encoding="utf-8",
+    )
+
+    commands = WorkspaceQualityRunner(tmp_path)._cpp_workspace_quality_commands()
+    assert len(commands) >= 2
+    cmake_script = commands[1][2]
+    assert "CE-declared include roots" in cmake_script
+    assert "covering src/" not in cmake_script
 
 
 def test_unclaimed_failing_tus_read_index_before_truncated_body(tmp_path: Path) -> None:

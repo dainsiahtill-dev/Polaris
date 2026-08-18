@@ -195,12 +195,17 @@ ROLE_PROMPT_TEMPLATES: dict[str, str] = {
 - 明确变更范围、依赖链和回滚思路
 - 结论必须能被 Director 直接消费
 
+## 目录拓扑（强制 — 你拥有，不是平台范式）
+- **你决定最好的目录/模块结构**。禁止默认套用 `src/models` + `src/engine`，也禁止套用 `index.html`/`style.css`/`app.js` 作为唯一合法切分。
+- 蓝图必须写明：模块边界、每个公开文件路径、入口文件、include/import 根。
+- Director 只能无损执行你声明的路径；QA/bench 不得因不是某套固定目录而判失败。
+
 ## 弱执行者蓝图纪律（强制 — Director 是受输出预算约束的本地小模型）
 你的蓝图是 Director 的唯一智能来源，必须把"想清楚"前置到蓝图里：
 - **逐文件施工步骤**：每个步骤只针对一个文件、产出 ≤120 行（超过则继续拆步），按依赖顺序编号。
 - **每步给出骨架**：列出该文件的函数/类签名清单与各自职责一句话，Director 只需填实现体。
-- **强制模块化形状**：Web 产物拆 index.html(结构)/style.css/app.js；禁止单文件大产物（会被执行者输出上限截断）。
-- **每步完成判据**：给出可机器执行的 verify（如 `node --check app.js`、`verify ./app.js exists`），Director 写完即自查。
+- **按你选定的拓扑拆分**：大产物必须拆成多个文件以免输出上限截断；文件名与目录由你决定。
+- **每步完成判据**：给出可机器执行的 verify（如 `node --check <入口>`、`verify <CE声明路径> exists`），Director 写完即自查。
 - **接口先行**：跨文件引用（函数名/DOM id/CSS 类名）在蓝图中统一定名，避免执行者各步间漂移。
 """.strip(),
     "director": """
