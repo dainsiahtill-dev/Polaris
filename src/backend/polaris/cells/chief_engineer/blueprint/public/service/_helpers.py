@@ -35,6 +35,63 @@ _CAMEL_TOKEN_RE = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|[0-9]+")
 
 _WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
+_CE_OWNED_TOPOLOGY_AUTHORITY = "chief_engineer"
+_TOOLCHAIN_BASENAMES = frozenset(
+    {
+        "package.json",
+        "tsconfig.json",
+        "go.mod",
+        "cargo.toml",
+        "cmakelists.txt",
+        "pom.xml",
+        "requirements.txt",
+        "readme.md",
+        "index.html",
+    }
+)
+_SOURCE_TOPOLOGY_SUFFIXES = frozenset(
+    {
+        ".ts",
+        ".tsx",
+        ".mts",
+        ".cts",
+        ".js",
+        ".mjs",
+        ".cjs",
+        ".py",
+        ".go",
+        ".rs",
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cxx",
+        ".h",
+        ".hh",
+        ".hpp",
+        ".hxx",
+        ".java",
+    }
+)
+
+
+def _pm_task_declares_ce_owned_topology(task: Mapping[str, Any]) -> bool:
+    metadata = task.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return False
+    return str(metadata.get("topology_authority") or "").strip() == _CE_OWNED_TOPOLOGY_AUTHORITY
+
+
+def _is_ce_source_topology_path(path: str) -> bool:
+    normalized = str(path or "").strip().replace("\\", "/")
+    if not normalized:
+        return False
+    basename = normalized.rsplit("/", 1)[-1].lower()
+    if basename in _TOOLCHAIN_BASENAMES:
+        return False
+    suffix = f".{basename.rsplit('.', 1)[-1]}" if "." in basename else ""
+    return suffix in _SOURCE_TOPOLOGY_SUFFIXES
+
+
 _BLUEPRINT_FILE_PATH_KEYS = frozenset(
     {
         "path",
@@ -305,13 +362,28 @@ def query_blueprint_provenance(
             code="blueprint_provenance_target_files_invalid",
             details={"field": "target_files", "reason": str(exc)},
         ) from exc
-    if target_files != expected_target_files:
+    missing_pm_targets = [path for path in expected_target_files if path not in set(target_files)]
+    if missing_pm_targets:
         raise ChiefEngineerBlueprintErrorV1(
-            "blueprint provenance target_files do not match expected PM targets",
+            "blueprint provenance target_files dropped required PM artifacts",
             code="blueprint_provenance_target_files_mismatch",
             details={
                 "expected_target_files": list(expected_target_files),
                 "observed_target_files": list(target_files),
+                "missing_pm_targets": missing_pm_targets,
+            },
+        )
+    extra_targets = [path for path in target_files if path not in set(expected_target_files)]
+    if _pm_task_declares_ce_owned_topology(pm_task) and not any(
+        _is_ce_source_topology_path(path) for path in extra_targets
+    ):
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance requires Chief Engineer to name source topology beyond PM toolchain artifacts",
+            code="blueprint_provenance_ce_topology_required",
+            details={
+                "expected_target_files": list(expected_target_files),
+                "observed_target_files": list(target_files),
+                "extra_targets": extra_targets,
             },
         )
     try:

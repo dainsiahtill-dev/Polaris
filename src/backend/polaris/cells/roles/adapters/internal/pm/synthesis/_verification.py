@@ -121,6 +121,11 @@ def _attach_synthesized_verification_commands(
 
     contract_target_sets = tuple({path.lower() for path in _synthesized_task_target_files(item)} for item in contracts)
     contract_set_owns_manifest = any(targets.intersection(manifest_names) for targets in contract_target_sets)
+    ce_owns_topology = any(
+        str(((item.get("metadata") or {}) if isinstance(item, dict) else {}).get("topology_authority") or "").strip()
+        == "chief_engineer"
+        for item in contracts
+    )
 
     finalized: list[dict[str, Any]] = []
     for index, raw_item in enumerate(contracts):
@@ -146,7 +151,16 @@ def _attach_synthesized_verification_commands(
             commands.append({"modality": "build", "argv": list(profile["build"]), "cwd": "."})
         if owns_test:
             commands.append({"modality": "test", "argv": list(profile["test"]), "cwd": "."})
-        if owns_entrypoint:
+        toolchain_generic_entrypoint = language in {
+            "go",
+            "rust",
+            "typescript",
+            "javascript",
+            "cpp",
+        }
+        if owns_entrypoint or (
+            ce_owns_topology and toolchain_generic_entrypoint and (owns_manifest or owns_build_input)
+        ):
             commands.append({"modality": "entrypoint", "argv": list(profile["entrypoint"]), "cwd": "."})
         item["verification_commands"] = commands
         finalized.append(item)

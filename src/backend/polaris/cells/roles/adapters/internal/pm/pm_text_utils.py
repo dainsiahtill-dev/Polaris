@@ -71,8 +71,10 @@ _PM_SCOPE_PATH_ROOTS = {
 _PM_SCOPE_PATH_FILENAMES = {
     "CMakeLists.txt",
     "cmakelists.txt",
+    "Cargo.toml",
     "go.mod",
     "package.json",
+    "pom.xml",
     "README.md",
     "requirements.txt",
     "tsconfig.json",
@@ -105,6 +107,7 @@ _PM_SCOPE_PATH_SUFFIXES = {
     ".toml",
     ".ts",
     ".tsx",
+    ".xml",
     ".yaml",
     ".yml",
 }

@@ -59,6 +59,21 @@ def _string_items(value: Any) -> list[str]:
     return _string_list(value)
 
 
+def _ce_named_target_files(record: dict[str, Any]) -> list[str]:
+    """Collect Chief Engineer-declared source paths for JobToken write scope."""
+
+    files: list[str] = []
+    blueprint = record.get("chief_engineer_blueprint")
+    if isinstance(blueprint, dict):
+        files.extend(_string_list(blueprint.get("target_files")))
+        rows = blueprint.get("blueprints")
+        if isinstance(rows, (list, tuple)):
+            for row in rows:
+                if isinstance(row, dict):
+                    files.extend(_string_list(row.get("target_files")))
+    return list(dict.fromkeys(files))
+
+
 def _modality_list(value: Any) -> list[str]:
     if isinstance(value, str):
         raw_items = [item.strip() for item in value.replace(";", ",").split(",")]
@@ -692,6 +707,10 @@ def build_job_token_from_record(
         or record.get("declared_source_targets")
         or record.get("code_files")
     )
+    ce_named_targets = _ce_named_target_files(record)
+    if ce_named_targets:
+        target_files = list(dict.fromkeys([*target_files, *ce_named_targets]))
+        allowed_paths = list(dict.fromkeys([*allowed_paths, *ce_named_targets]))
     required_artifacts = _string_list(record.get("required_artifacts") or record.get("code_files"))
     parent_token_id = _clean_string(
         record.get("parent_token_id") or record.get("previous_job_token_id") or record.get("repair_parent_token_id")

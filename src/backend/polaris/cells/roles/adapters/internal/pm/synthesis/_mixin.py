@@ -18,14 +18,10 @@ from ._checks import (
 )
 from ._delivery import (
     _append_delivery_depth_to_contracts,
-    _contract_keyword_tokens,
+    _ce_owned_topology_metadata,
     _delivery_depth_contract,
     _delivery_plan_document,
-    _domain_module_name,
     _extract_typescript_semantic_keywords,
-    _javascript_model_targets_from_keywords,
-    _pascal_case_token,
-    _typescript_model_targets_from_keywords,
 )
 from ._language import (
     _directive_requires_cpp_package_contract,
@@ -303,7 +299,6 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
         if root_workspace_targets:
             source_file, test_file, readme_file = root_workspace_targets
             if source_file == "index.html" and _directive_requires_typescript_package_contract(directive):
-                domain_token = _pm_path_token_from_subject(str(domain_label or domain)) or str(domain or "app")
                 deterministic_checks = _extract_deterministic_checks_from_directive(directive)
                 content_keywords = _extract_content_any_keywords_from_directive(directive)
                 if not content_keywords:
@@ -316,28 +311,19 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     if deterministic_checks
                     else ("html; ts_syntax; package_scripts")
                 )
-                model_file_targets = _typescript_model_targets_from_keywords(
-                    content_keywords,
-                    domain_token=domain_token,
+                topology_metadata = _ce_owned_topology_metadata(
+                    source_metadata,
+                    required_source_kinds=["domain_modules", "public_api", "entrypoint"],
                 )
                 model_targets = [
                     "package.json",
                     "tsconfig.json",
-                    "src/index.ts",
-                    "src/main.ts",
-                    "src/models/types.ts",
-                    *model_file_targets,
-                    "src/models/index.ts",
                 ]
                 visual_targets = [
                     "index.html",
-                    "src/engine/simulation.ts",
-                    "src/engine/renderer.ts",
-                    "src/web.ts",
                 ]
                 validation_targets = [
                     "package.json",
-                    "src/verify.ts",
                     "tests/verify.test.ts",
                     "README.md",
                 ]
@@ -350,55 +336,53 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                             "非占位 package 脚本和需求驱动的核心模块。"
                         ),
                         "description": (
-                            "创建 package.json、tsconfig.json、src/index.ts、src/main.ts 与需求派生的领域模块，"
+                            "创建 package.json、tsconfig.json；领域模块、公开 API 与入口路径由 Chief Engineer 决定，"
                             f"覆盖需求关键词和确定性检查：{keyword_summary}。"
                         ),
                         "scope": model_targets,
                         "target_files": model_targets,
                         "steps": [
                             "创建 package.json，声明真实 build/test/start 脚本，禁止 echo-only 或 manifest-only 脚本",
-                            "创建 tsconfig.json，启用 strict、DOM/ES2020 lib、outDir=dist、rootDir=src，并保持 package.json type 与 compilerOptions.module 一致",
-                            "实现 src/models/types.ts，集中定义跨模型共享类型、状态接口和领域枚举，禁止让多个文件重复定义同名类型",
-                            "实现 src/index.ts、src/main.ts 与 src/models/ 需求派生领域模块，暴露可运行入口和核心需求状态",
-                            "实现 src/models/index.ts 作为唯一模型聚合导出面，后续 engine/web/test 任务只能通过该公开面或具体模型文件导入",
-                            "`npm start` 必须先 build 或引用当前存在的源码入口，不能指向未生成的 dist 文件",
-                            "`npm start` 必须运行 Node-safe 入口（如 src/main.ts 或 dist/main.js），不得在 Node 中直接执行 DOM/browser 入口（src/web.ts 或 dist/web.js）",
+                            "创建 tsconfig.json，启用 strict、DOM/ES2020 lib，并保持 package.json type 与 compilerOptions.module 一致；rootDir/outDir 必须指向 CE 选定的源码根",
+                            "按 CE 蓝图声明的目录拓扑实现领域模块与公开 API，禁止默认套用 src/models + src/engine",
+                            "CE 必须命名具体源码路径、入口文件与导出面；Director 只能无损执行该拓扑",
+                            "`npm start` 必须先 build 或引用 CE 声明的真实源码入口，不能指向未生成的 dist 文件",
+                            "`npm start` 必须运行 Node-safe 入口；不得在 Node 中直接执行依赖 document/window 的浏览器入口",
                             "若 package.json 使用 type=module，则 TypeScript 必须输出可被 Node/浏览器加载的 ESM；否则不要声明 type=module",
                         ],
                         "acceptance": [
-                            "`package.json`、`tsconfig.json`、`src/index.ts`、`src/main.ts`、`src/models/types.ts`、`src/models/index.ts` 与 `src/models/` 需求派生领域模块存在且非空",
+                            "`package.json` 与 `tsconfig.json` 存在且指向 CE 选定的真实源码根",
                             "`npm run build`、`npm run test` 与 `npm start` 对真实入口执行检查",
                             "package.json type 与 tsconfig module 不得出现 ESM/CommonJS 错配",
-                            "`src/models/types.ts` 是共享类型唯一来源，`src/models/index.ts` 导出模型公共 API，避免下游任务产生 unresolved local import",
-                            "`npm start` 不得在 Node 中直接运行 `dist/web.js`、`src/web.ts` 或其他依赖 document/window 的浏览器入口",
+                            "目录拓扑由 CE 蓝图声明；不得把 src/models + src/engine 写成唯一合法结构",
+                            "`npm start` 不得在 Node 中直接运行依赖 document/window 的浏览器入口",
                             f"源码或测试覆盖需求关键词：{keyword_summary}",
                         ],
                         "phase": "requirements",
                         "depends_on": [],
                         "assigned_to": "Director",
-                        "metadata": dict(source_metadata),
+                        "metadata": dict(topology_metadata),
                     },
                     {
                         "id": "TASK-2",
                         "title": f"实现 {domain_label} 模拟流程、Web 入口与验证资产",
                         "goal": f"实现 {domain_label} 的需求流程和浏览器入口。",
                         "description": (
-                            "补齐 src/engine/simulation、src/engine/renderer、index.html、"
-                            f"src/web.ts，让页面和源码共同体现需求关键词：{keyword_summary}。"
+                            "补齐 index.html 与 CE 声明的浏览器/场景源码，"
+                            f"让页面和源码共同体现需求关键词：{keyword_summary}。"
                         ),
                         "scope": visual_targets,
                         "target_files": visual_targets,
                         "steps": [
-                            "实现 src/engine/simulation.ts 的状态更新或计算流程",
-                            "实现 src/engine/renderer.ts，将核心状态渲染为浏览器可见内容",
-                            "实现 src/web.ts 或等价浏览器 bootstrap，在 DOM 可用后初始化引擎并绘制首帧",
+                            "按 CE 蓝图实现场景/模拟/渲染源码；文件名与目录由 CE 决定，不强制 src/engine/renderer.ts",
+                            "实现 CE 声明的浏览器 bootstrap，在 DOM 可用后初始化并绘制首帧",
                             "创建 index.html，包含有效 <html>、HTML5 canvas 与可视化容器",
-                            'index.html 不得把 Node-only CLI 入口直接作为 <script type="module"> 引入；必须引用浏览器入口或内联浏览器 bootstrap',
+                            'index.html 不得把 Node-only CLI 入口直接作为 <script type="module"> 引入；必须引用 CE 声明的浏览器入口或内联浏览器 bootstrap',
                             f"在页面或源码中保留验收关键词：{keyword_summary}",
                         ],
                         "acceptance": [
                             "`index.html` 存在并包含有效 `<html>` 标签、`<canvas>` 与模拟容器",
-                            "`src/engine/` 存在并包含可渲染场景或引擎核心文件",
+                            "CE 声明的场景/渲染源码存在且可被浏览器入口加载",
                             "浏览器入口在首屏自动绘制非空 canvas，无需用户先点击",
                             "HTML 入口引用的脚本/资源在 build 后真实存在并能被浏览器加载",
                             f"源码或页面包含需求关键词：{keyword_summary}",
@@ -406,19 +390,17 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "phase": "implementation",
                         "depends_on": ["TASK-1"],
                         "assigned_to": "Director",
-                        "metadata": dict(source_metadata),
+                        "metadata": dict(topology_metadata),
                     },
                     {
                         "id": "TASK-3",
                         "title": f"固化 {domain_label} 验证脚本与交付说明",
                         "goal": f"为 {domain_label} 固化自动验证、运行说明和 QA 交付证据。",
-                        "description": (
-                            f"实现 src/verify.ts、tests/verify.test.ts 与 README，覆盖确定性检查：{check_summary}。"
-                        ),
+                        "description": (f"实现 tests/verify.test.ts 与 README，覆盖确定性检查：{check_summary}。"),
                         "scope": validation_targets,
                         "target_files": validation_targets,
                         "steps": [
-                            f"实现 src/verify.ts 与 tests/verify.test.ts，覆盖确定性检查：{check_summary}",
+                            f"实现 tests/verify.test.ts 与 CE 声明的 verifier 源码，覆盖确定性检查：{check_summary}",
                             "更新 package.json 的 test/verify 脚本，使其运行 Node-compatible verifier；不得依赖浏览器 document/window，也不得在 ESM 模式使用 require.main",
                             "编写 README，说明 npm install/build/test/start 与浏览器运行方式",
                         ],
@@ -433,7 +415,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "phase": "verification",
                         "depends_on": ["TASK-2"],
                         "assigned_to": "Director",
-                        "metadata": dict(source_metadata),
+                        "metadata": dict(topology_metadata),
                     },
                 ]
                 root_contracts = _attach_synthesized_verification_commands(
@@ -691,15 +673,16 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
         content_keywords = _extract_content_any_keywords_from_directive(directive)
         if not content_keywords:
             content_keywords = self._extract_domain_keywords(directive, limit=6)
+        if not content_keywords and domain_token:
+            content_keywords = [domain_token]
         keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
         check_summary = "; ".join(deterministic_checks[:8]) if deterministic_checks else "js_syntax; package_scripts"
-        model_targets = _javascript_model_targets_from_keywords(content_keywords, domain_token=domain_token)
+        topology_metadata = _ce_owned_topology_metadata(
+            source_metadata,
+            required_source_kinds=["domain_modules", "entrypoint"],
+        )
         source_targets = [
             "package.json",
-            "src/index.js",
-            "src/engine/rules.js",
-            "src/engine/runner.js",
-            *model_targets,
         ]
         verification_targets = [
             "tests/product.test.js",
@@ -730,20 +713,19 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "需求驱动的核心业务源码。"
                     ),
                     "description": (
-                        "创建 package.json、src/index.js、src/engine/ 与需求派生的 src/*.js 领域模块，"
+                        "创建 package.json；JavaScript 领域模块与入口路径由 Chief Engineer 决定，"
                         f"覆盖需求关键词和确定性检查：{keyword_summary}。"
                     ),
                     "scope": source_targets,
                     "target_files": source_targets,
                     "steps": [
                         "创建 package.json，声明真实 build/test/start 脚本，禁止 echo-only 或 manifest-only 脚本",
-                        "实现 src/index.js 作为 Node-safe CLI 或模块入口，可通过 npm start 执行",
-                        "实现 src/engine/rules.js 与 src/engine/runner.js，封装核心匹配、计算或流程规则",
-                        "实现 src/ 下的需求派生领域模块，源码必须真实使用需求关键词",
-                        "执行 `node --check` 或等价语法检查覆盖 src/**/*.js",
+                        "按 CE 蓝图实现 Node-safe CLI 或模块入口，可通过 npm start 执行；禁止默认套用 src/engine",
+                        "按 CE 蓝图实现需求派生领域模块，源码必须真实使用需求关键词",
+                        "执行 `node --check` 或等价语法检查覆盖 CE 声明的 JavaScript 源码",
                     ],
                     "acceptance": [
-                        "`package.json`、`src/index.js`、`src/engine/` 与需求派生 `src/*.js` JavaScript 源码存在且非空",
+                        "`package.json` 存在，且 CE 声明的 JavaScript 源码与入口非空",
                         "`npm run build`、`npm test` 与 `npm start` 都执行真实入口或验证逻辑",
                         f"源码或测试覆盖需求关键词：{keyword_summary}",
                         f"确定性检查进入任务验收：{check_summary}",
@@ -751,7 +733,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "phase": "requirements",
                     "depends_on": [],
                     "assigned_to": "Director",
-                    "metadata": dict(source_metadata),
+                    "metadata": dict(topology_metadata),
                 },
                 {
                     "id": "TASK-2",
@@ -766,8 +748,8 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "context_files": source_targets,
                     "steps": [
                         "实现 tests/product.test.js，使用 Node 标准库 assert 或内置 test runner 验证核心规则",
-                        "实现 tests/test_product.py，使用 Python unittest 检查 package.json 脚本、src/**/*.js 覆盖和 node 入口",
-                        "更新 package.json 的 test/build/start 脚本，使其运行当前存在的 JavaScript 文件",
+                        "实现 tests/test_product.py，使用 Python unittest 检查 package.json 脚本、CE 声明的 JS 源码覆盖和 node 入口",
+                        "更新 package.json 的 test/build/start 脚本，使其运行 CE 声明的 JavaScript 文件",
                         "编写 README，说明 npm install、npm run build、npm test、npm start 和验证脚本",
                         f"验证脚本覆盖确定性检查：{check_summary}",
                     ],
@@ -781,7 +763,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "phase": "implementation",
                     "depends_on": ["TASK-1"],
                     "assigned_to": "Director",
-                    "metadata": dict(source_metadata),
+                    "metadata": dict(topology_metadata),
                 },
             ],
             delivery_plan_document=delivery_plan_document,
@@ -801,17 +783,15 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             content_keywords = self._extract_domain_keywords(directive, limit=6)
         keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
         check_summary = "; ".join(deterministic_checks[:8]) if deterministic_checks else "py_compile; min_files"
+        topology_metadata = _ce_owned_topology_metadata(
+            source_metadata,
+            required_source_kinds=["domain_modules", "entrypoint"],
+        )
         model_targets = [
-            "src/__init__.py",
-            "src/models/__init__.py",
-            "src/models/mood.py",
-            "src/models/weather.py",
+            "requirements.txt",
         ]
         engine_targets = [
-            "src/engine/__init__.py",
-            "src/engine/forecast.py",
-            "src/radio.py",
-            "src/main.py",
+            "requirements.txt",
         ]
         verification_targets = [
             "requirements.txt",
@@ -837,83 +817,82 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 {
                     "id": "TASK-1",
                     "title": f"实现 {domain_label} Python 包结构与领域模型",
-                    "goal": f"在工作区根交付 {domain_label} 的 Python src/ 包、领域模型和可导入核心源码。",
+                    "goal": f"在工作区根交付 {domain_label} 的 Python 包、领域模型和可导入核心源码。",
                     "description": (
-                        "创建 requirements.txt、src/__init__.py、src/models/ 与需求派生模型文件，"
-                        f"确保 src/**/*.py 覆盖需求关键词和确定性检查：{keyword_summary}。"
+                        "创建 requirements.txt；Python 包布局与领域模块路径由 Chief Engineer 决定，"
+                        f"确保源码覆盖需求关键词和确定性检查：{keyword_summary}。"
                     ),
-                    "scope": ["requirements.txt", *model_targets],
-                    "target_files": ["requirements.txt", *model_targets],
+                    "scope": model_targets,
+                    "target_files": model_targets,
                     "steps": [
                         "创建 requirements.txt；如无第三方依赖也必须保留可执行的空依赖文件或注释说明",
-                        "实现 src/__init__.py 与 src/models/__init__.py，公开核心模型入口",
-                        "实现 src/models/mood.py 与 src/models/weather.py，表达 mood、weather、radio、forecast 等需求概念",
-                        "执行 `python -m compileall -q src` 验证 src/**/*.py 可编译",
+                        "按 CE 蓝图实现可导入包与领域模块；禁止默认套用 src/models + src/engine",
+                        "领域模块必须表达当前需求概念，不得硬编码无关样例模型",
+                        "执行 `python -m compileall -q` 验证 CE 声明的 Python 源码可编译",
                     ],
                     "acceptance": [
-                        "`requirements.txt`、`src/__init__.py` 与 `src/models/*.py` 存在且非空",
-                        f"src/**/*.py 源码包含需求关键词：{keyword_summary}",
+                        "`requirements.txt` 存在，且 CE 声明的 Python 源码非空可导入",
+                        f"Python 源码包含需求关键词：{keyword_summary}",
                         f"确定性检查进入任务验收：{check_summary}",
                     ],
                     "phase": "requirements",
                     "depends_on": [],
                     "assigned_to": "Director",
-                    "metadata": dict(source_metadata),
+                    "metadata": dict(topology_metadata),
                 },
                 {
                     "id": "TASK-2",
                     "title": f"实现 {domain_label} Python 引擎与 CLI 入口",
-                    "goal": f"实现 {domain_label} 的核心规则引擎、广播输出和可执行 Python 入口。",
+                    "goal": f"实现 {domain_label} 的核心规则引擎和可执行 Python 入口。",
                     "description": (
-                        "补齐 src/engine/forecast.py、src/radio.py 与 src/main.py，"
-                        f"让 CLI 入口真实运行并输出覆盖需求关键词的结果：{keyword_summary}。"
+                        "按 CE 蓝图补齐核心规则与 CLI 入口，"
+                        f"让入口真实运行并输出覆盖需求关键词的结果：{keyword_summary}。"
                     ),
                     "scope": engine_targets,
                     "target_files": engine_targets,
                     "steps": [
-                        "实现 src/engine/forecast.py，将 mood 输入映射为 weather/forecast 结果",
-                        "实现 src/radio.py，将 forecast 组织成私人 radio 播报文本或数据结构",
-                        "实现 src/main.py，必须同时支持 `python src/main.py` 与 `python -m src.main` 两种入口",
+                        "按 CE 蓝图实现核心规则与可执行入口；文件名与包路径由 CE 决定",
                         "入口必须运行真实核心规则，不能只打印静态占位文本",
+                        "入口命令以 CE 蓝图为准，禁止平台默认写成 python src/main.py",
                     ],
                     "acceptance": [
-                        "`src/engine/forecast.py`、`src/radio.py` 与 `src/main.py` 存在且非空",
-                        "`python src/main.py` 与 `python -m src.main` 都可执行并返回成功",
+                        "CE 声明的 Python 入口存在且可执行",
+                        "入口运行真实核心规则并返回成功",
                         f"源码或入口输出覆盖需求关键词：{keyword_summary}",
                     ],
                     "phase": "implementation",
                     "depends_on": ["TASK-1"],
                     "assigned_to": "Director",
-                    "metadata": dict(source_metadata),
+                    "metadata": dict(topology_metadata),
                 },
                 {
                     "id": "TASK-3",
                     "title": f"实现 {domain_label} Python 验证脚本与 README",
                     "goal": f"固化 {domain_label} 的编译、单元测试、入口 smoke 和交付说明。",
                     "description": (
-                        "创建 tests/test_product.py 与 README，验证 src/**/*.py 覆盖、py_compile、"
+                        "创建 tests/test_product.py 与 README，验证 CE 声明源码覆盖、py_compile、"
                         f"真实入口和核心领域规则：{check_summary}。"
                     ),
-                    "scope": [*model_targets, *engine_targets, *verification_targets],
-                    "target_files": [*model_targets, *engine_targets, *verification_targets],
+                    "scope": verification_targets,
+                    "target_files": verification_targets,
                     "steps": [
-                        "实现 tests/test_product.py，使用 Python unittest 覆盖模型、forecast 引擎、radio 输出和 CLI 入口",
-                        "测试必须检查 src/**/*.py 至少存在多个源文件，避免只生成 tests/ 或 HTML/CSS 脚手架",
-                        "README 记录依赖安装、compileall、unittest、`python src/main.py` 和 `python -m src.main`",
+                        "实现 tests/test_product.py，使用 Python unittest 覆盖 CE 声明的领域模块、规则和 CLI 入口",
+                        "测试必须检查 CE 声明的多个源文件，避免只生成 tests/ 或 HTML/CSS 脚手架",
+                        "README 记录依赖安装、compileall、unittest 和 CE 声明的启动命令",
                         f"验证脚本覆盖确定性检查：{check_summary}",
                     ],
                     "acceptance": [
                         "`tests/test_product.py` 存在且可执行",
-                        "`python -m compileall -q src tests` 返回成功",
+                        "`python -m compileall -q` 对 CE 声明源码返回成功",
                         "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
-                        "`python src/main.py` 与 `python -m src.main` 都返回 PASS",
+                        "CE 声明的 Python 入口返回成功",
                         "`README.md` 包含依赖安装、编译、测试和启动步骤",
                         f"确定性检查进入任务验收：{check_summary}",
                     ],
                     "phase": "verification",
                     "depends_on": ["TASK-2"],
                     "assigned_to": "Director",
-                    "metadata": dict(source_metadata),
+                    "metadata": dict(topology_metadata),
                 },
             ],
             delivery_plan_document=delivery_plan_document,
@@ -933,15 +912,15 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             content_keywords = self._extract_domain_keywords(directive, limit=6)
         keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
         check_summary = "; ".join(deterministic_checks[:8]) if deterministic_checks else "go_compile; go test ./..."
+        topology_metadata = _ce_owned_topology_metadata(
+            source_metadata,
+            required_source_kinds=["domain_modules", "entrypoint"],
+        )
         model_targets = [
             "go.mod",
-            "models/entity.go",
-            "models/state.go",
         ]
         engine_targets = [
-            "engine/rules.go",
-            "engine/service.go",
-            "main.go",
+            "go.mod",
         ]
         verification_targets = [
             "main_test.go",
@@ -968,19 +947,19 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "title": f"实现 {domain_label} Go 模块与领域模型",
                     "goal": f"在工作区根交付 {domain_label} 的 go.mod 与项目级 Go 领域模型源码。",
                     "description": (
-                        f"创建 go.mod 与 models/ 下的 Go 源文件，定义 {domain_label} 的领域实体、状态和校验契约，"
+                        f"创建 go.mod；Go 包路径与领域模块由 Chief Engineer 决定，定义 {domain_label} 的领域实体、状态和校验契约，"
                         f"确保 .go 源码覆盖需求关键词：{keyword_summary}。"
                     ),
                     "scope": model_targets,
                     "target_files": model_targets,
                     "steps": [
                         "创建 go.mod，声明可被 `go test ./...` 加载的本地 Go module",
-                        "实现 models/entity.go 与 models/state.go，封装当前需求的领域数据、状态和校验规则",
+                        "按 CE 蓝图实现领域数据、状态和校验规则；禁止默认套用 models/ + engine/",
                         f"Go 源码中必须真实使用或保留验收关键词：{keyword_summary}",
                         "执行 `go test ./...` 或等价命令验证模块可编译",
                     ],
                     "acceptance": [
-                        "`go.mod` 与 `models/*.go` 存在且非空",
+                        "`go.mod` 存在，且 CE 声明的 Go 源码非空",
                         "`go test ./...` 返回成功并编译当前 Go module",
                         f"Go 源码包含需求关键词：{keyword_summary}",
                         f"确定性检查进入任务验收：{check_summary}",
@@ -988,34 +967,34 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "phase": "requirements",
                     "depends_on": [],
                     "assigned_to": "Director",
-                    "metadata": dict(source_metadata),
+                    "metadata": dict(topology_metadata),
                 },
                 {
                     "id": "TASK-2",
                     "title": f"实现 {domain_label} Go 规则引擎与 CLI 入口",
                     "goal": f"实现 {domain_label} 的核心规则、状态转换和可执行 Go 入口。",
                     "description": (
-                        "补齐 engine/ 下的核心规则与 main.go，"
-                        f"让 `go run .` 执行真实领域流程并输出覆盖需求关键词的结果：{keyword_summary}。"
+                        "按 CE 蓝图补齐核心规则与可执行入口，"
+                        f"让 `go run .` 或 CE 声明的等价命令执行真实领域流程并输出覆盖需求关键词的结果：{keyword_summary}。"
                     ),
-                    "scope": [*model_targets, *engine_targets],
-                    "target_files": [*model_targets, *engine_targets],
+                    "scope": engine_targets,
+                    "target_files": engine_targets,
                     "steps": [
-                        "实现 engine/rules.go，表达当前需求的正常、边界和无效输入规则",
-                        "实现 engine/service.go，组织领域模型、状态转换和可复用业务流程",
-                        "实现 main.go，调用 models/ 与 engine/ 的公开 API，提供可执行 CLI 或文本入口",
+                        "按 CE 蓝图实现正常、边界和无效输入规则",
+                        "按 CE 蓝图实现状态转换和可复用业务流程",
+                        "实现 CE 声明的 CLI 或文本入口，调用公开 API",
                         "入口必须运行真实核心规则，不能只打印静态占位文本",
                     ],
                     "acceptance": [
-                        "`engine/*.go` 与 `main.go` 存在且非空",
-                        "`go run .` 返回成功并执行真实核心规则",
+                        "CE 声明的 Go 入口与规则源码存在且非空",
+                        "`go run .` 或 CE 声明的等价入口返回成功并执行真实核心规则",
                         "`go test ./...` 返回成功",
                         f"源码或入口输出覆盖需求关键词：{keyword_summary}",
                     ],
                     "phase": "implementation",
                     "depends_on": ["TASK-1"],
                     "assigned_to": "Director",
-                    "metadata": dict(source_metadata),
+                    "metadata": dict(topology_metadata),
                 },
                 {
                     "id": "TASK-3",
@@ -1029,21 +1008,21 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "target_files": verification_targets,
                     "context_files": [*model_targets, *engine_targets],
                     "steps": [
-                        "实现 main_test.go，使用 Go testing 包覆盖领域模型、规则引擎、正常路径、边界路径和错误路径",
-                        "README 记录依赖要求、`go test ./...`、`go run .` 和原生验收步骤",
+                        "实现 main_test.go，使用 Go testing 包覆盖 CE 声明的领域模型、规则、正常路径、边界路径和错误路径",
+                        "README 记录依赖要求、`go test ./...`、CE 声明的启动命令和原生验收步骤",
                         f"验证脚本覆盖确定性检查：{check_summary}",
                     ],
                     "acceptance": [
                         "`main_test.go` 存在且由 Go testing 包执行真实领域用例",
                         "`go test ./...` 返回成功",
-                        "`go run .` 返回成功",
+                        "`go run .` 或 CE 声明的等价入口返回成功",
                         "`README.md` 包含编译、测试和启动步骤",
                         f"确定性检查进入任务验收：{check_summary}",
                     ],
                     "phase": "verification",
                     "depends_on": ["TASK-2"],
                     "assigned_to": "Director",
-                    "metadata": dict(source_metadata),
+                    "metadata": dict(topology_metadata),
                 },
             ],
             delivery_plan_document=delivery_plan_document,
@@ -1061,23 +1040,17 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
         content_keywords = _extract_content_any_keywords_from_directive(directive)
         if not content_keywords:
             content_keywords = self._extract_domain_keywords(directive, limit=6)
-        keyword_tokens = _contract_keyword_tokens(content_keywords)
         keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
         check_summary = "; ".join(deterministic_checks[:8]) if deterministic_checks else "rust_compile; cargo build"
-        model_files = [f"src/models/{token}.rs" for token in keyword_tokens]
+        topology_metadata = _ce_owned_topology_metadata(
+            source_metadata,
+            required_source_kinds=["domain_modules", "entrypoint"],
+        )
         model_targets = [
             "Cargo.toml",
-            "src/lib.rs",
-            "src/models/mod.rs",
-            *model_files,
         ]
-        rules_module = _domain_module_name(keyword_tokens, suffix="rules")
-        runner_module = _domain_module_name(keyword_tokens, suffix="runner")
         engine_targets = [
-            "src/engine/mod.rs",
-            f"src/engine/{rules_module}.rs",
-            f"src/engine/{runner_module}.rs",
-            "src/main.rs",
+            "Cargo.toml",
         ]
         verification_targets = [
             "tests/product.rs",
@@ -1104,52 +1077,50 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "title": f"实现 {domain_label} Rust crate 与领域模型",
                     "goal": f"在工作区根交付 {domain_label} 的 Cargo/Rust 项目骨架和领域模型源码。",
                     "description": (
-                        "创建 Cargo.toml、src/lib.rs 与 src/models/ 下的 Rust 源文件，"
+                        "创建 Cargo.toml；crate 布局与领域模块路径由 Chief Engineer 决定，"
                         f"确保源码覆盖需求关键词：{keyword_summary}。"
                     ),
                     "scope": model_targets,
                     "target_files": model_targets,
                     "steps": [
                         "创建 Cargo.toml，声明 package、edition 和可构建的 lib/bin 目标",
-                        "创建 src/lib.rs，公开 models 与 engine 模块入口",
-                        f"实现 src/models/ 下与 {keyword_summary} 对齐的领域数据结构",
+                        "按 CE 蓝图公开 crate 模块入口；禁止默认套用 src/models + src/engine",
+                        f"按 CE 蓝图实现与 {keyword_summary} 对齐的领域数据结构",
                         f"在 Rust 源码中保留验收关键词：{keyword_summary}",
                     ],
                     "acceptance": [
-                        "`Cargo.toml`、`src/lib.rs` 与 `src/models/` Rust 源文件存在且非空",
+                        "`Cargo.toml` 存在，且 CE 声明的 Rust 源码非空",
                         f"源码包含需求关键词：{keyword_summary}",
                         f"确定性检查进入任务验收：{check_summary}",
                     ],
                     "phase": "requirements",
                     "depends_on": [],
                     "assigned_to": "Director",
-                    "metadata": dict(source_metadata),
+                    "metadata": dict(topology_metadata),
                 },
                 {
                     "id": "TASK-2",
                     "title": f"实现 {domain_label} Rust 映射引擎与 CLI 入口",
                     "goal": f"实现 {domain_label} 的核心规则引擎和可执行入口。",
-                    "description": (
-                        "补齐 src/engine/ 下的领域规则和运行器，并创建 src/main.rs 调用公开 API 输出可验证结果。"
-                    ),
+                    "description": ("按 CE 蓝图补齐领域规则、运行器和可执行入口，调用公开 API 输出可验证结果。"),
                     "scope": engine_targets,
                     "target_files": engine_targets,
                     "steps": [
-                        f"实现 src/engine/{rules_module}.rs，将 {keyword_summary} 输入映射为可解释规则结果",
-                        f"实现 src/engine/{runner_module}.rs，组织样例数据、边界情况和错误路径",
-                        "实现 src/engine/mod.rs，导出 run_domain_rules 或等价公开 API",
-                        f"实现 src/main.rs，构造 {keyword_summary} 代表性样例并打印规则输出",
+                        f"按 CE 蓝图将 {keyword_summary} 输入映射为可解释规则结果",
+                        "按 CE 蓝图组织样例数据、边界情况和错误路径",
+                        "导出 CE 声明的公开 API",
+                        f"实现 CE 声明的入口，构造 {keyword_summary} 代表性样例并打印规则输出",
                         "执行 `cargo build` 或 `cargo check` 验证 Rust 编译通过",
                     ],
                     "acceptance": [
-                        "`src/main.rs` 可通过 `cargo run` 执行",
-                        f"`src/engine/` 源码实现与 {keyword_summary} 对齐的领域规则",
+                        "CE 声明的 Rust 入口可通过 `cargo run` 或等价命令执行",
+                        f"CE 声明的源码实现与 {keyword_summary} 对齐的领域规则",
                         "`cargo build` 或 `cargo check` 返回成功",
                     ],
                     "phase": "implementation",
                     "depends_on": ["TASK-1"],
                     "assigned_to": "Director",
-                    "metadata": dict(source_metadata),
+                    "metadata": dict(topology_metadata),
                 },
                 {
                     "id": "TASK-3",
@@ -1174,7 +1145,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "phase": "verification",
                     "depends_on": ["TASK-2"],
                     "assigned_to": "Director",
-                    "metadata": dict(source_metadata),
+                    "metadata": dict(topology_metadata),
                 },
             ],
             delivery_plan_document=delivery_plan_document,
@@ -1192,18 +1163,14 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
         content_keywords = _extract_content_any_keywords_from_directive(directive)
         if not content_keywords:
             content_keywords = self._extract_domain_keywords(directive, limit=6)
-        keyword_tokens = _contract_keyword_tokens(content_keywords)
         keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
         check_summary = "; ".join(deterministic_checks[:8]) if deterministic_checks else "cpp_compile; C++17"
-        model_targets = [
-            item for token in keyword_tokens for item in (f"src/models/{token}.hpp", f"src/models/{token}.cpp")
-        ]
+        topology_metadata = _ce_owned_topology_metadata(
+            source_metadata,
+            required_source_kinds=["domain_modules", "public_headers", "entrypoint"],
+        )
         delivery_targets = [
             "CMakeLists.txt",
-            *model_targets,
-            "src/engine/generator.hpp",
-            "src/engine/generator.cpp",
-            "src/main.cpp",
             "tests/test_product.py",
             "README.md",
         ]
@@ -1228,25 +1195,25 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "title": f"实现 {domain_label} C++17 CLI、领域模型与验收",
                     "goal": f"在工作区根交付 {domain_label} 的完整 CMake/C++17 CLI、领域模型、验证脚本和 README。",
                     "description": (
-                        "创建 CMakeLists.txt、src/models/、src/engine/、src/main.cpp、tests/test_product.py 与 README.md，"
+                        "创建 CMakeLists.txt、tests/test_product.py 与 README.md；"
+                        "include 根、领域头文件和入口路径由 Chief Engineer 决定，"
                         f"确保源码覆盖需求关键词和确定性检查：{keyword_summary}。"
                     ),
                     "scope": delivery_targets,
                     "target_files": delivery_targets,
                     "steps": [
-                        "创建 CMakeLists.txt，声明 C++17 标准、名为 polaris_app 的可执行目标和所有 src/**/*.cpp 源文件",
-                        f"实现 src/models/ 下与 {keyword_summary} 对齐的领域对象头文件和实现文件",
-                        "实现 src/engine/generator.hpp，声明领域规则生成公开 API",
-                        f"实现 src/engine/generator.cpp，将 {keyword_summary} 等需求元素组合为可解释输出",
-                        f"实现 src/main.cpp，构造示例输入并打印 {keyword_summary} 相关结果",
+                        "创建 CMakeLists.txt，声明 C++17 标准、可执行目标和 CE 选定的源码/include 根",
+                        f"按 CE 蓝图实现与 {keyword_summary} 对齐的领域对象头文件和实现文件；禁止默认套用 src/models + src/engine",
+                        "按 CE 蓝图声明领域规则公开 API 与生成实现",
+                        f"实现 CE 声明的 CLI 入口，构造示例输入并打印 {keyword_summary} 相关结果",
                         "创建 tests/test_product.py，使用 Python unittest 调用 CMake/g++ 或检查 C++ 产物结构",
                         "编写 README，说明 cmake build、直接 g++ 编译、运行和测试命令",
                         f"验证脚本覆盖确定性检查：{check_summary}",
                     ],
                     "acceptance": [
-                        "`CMakeLists.txt` 声明 polaris_app 可执行目标；`src/models/`、`src/engine/`、`src/main.cpp`、`tests/test_product.py` 与 `README.md` 存在且非空",
-                        "`src/main.cpp` 存在并可作为 C++17 CLI 入口编译运行",
-                        f"`src/engine/` 源码实现与 {keyword_summary} 对齐的领域规则",
+                        "`CMakeLists.txt` 声明可执行目标并匹配 CE 选定的 include 根；`tests/test_product.py` 与 `README.md` 存在且非空",
+                        "CE 声明的 C++17 CLI 入口可编译运行",
+                        f"CE 声明的源码实现与 {keyword_summary} 对齐的领域规则",
                         f"源码包含需求关键词：{keyword_summary}",
                         "`cmake --build build` 或 `g++ -std=c++17` 返回成功",
                         "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
@@ -1256,7 +1223,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "phase": "implementation",
                     "depends_on": [],
                     "assigned_to": "Director",
-                    "metadata": dict(source_metadata),
+                    "metadata": dict(topology_metadata),
                 },
             ],
             delivery_plan_document=delivery_plan_document,
@@ -1274,21 +1241,14 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
         content_keywords = _extract_content_any_keywords_from_directive(directive)
         if not content_keywords:
             content_keywords = self._extract_domain_keywords(directive, limit=6)
-        keyword_tokens = _contract_keyword_tokens(content_keywords)
         keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
         check_summary = "; ".join(deterministic_checks[:8]) if deterministic_checks else "java_compile; javac"
-        engine_class = f"{_pascal_case_token(keyword_tokens[0] if keyword_tokens else '', fallback='Domain')}Engine"
-        test_class = f"{engine_class}Test"
-        domain_targets = [
-            f"src/main/java/polaris/factory/domain/{_pascal_case_token(token, fallback=f'Domain{idx + 1}')}Model.java"
-            for idx, token in enumerate(keyword_tokens[:3])
-        ]
+        topology_metadata = _ce_owned_topology_metadata(
+            source_metadata,
+            required_source_kinds=["domain_modules", "entrypoint"],
+        )
         delivery_targets = [
             "pom.xml",
-            "src/main/java/polaris/factory/Main.java",
-            *domain_targets,
-            f"src/main/java/polaris/factory/engine/{engine_class}.java",
-            f"src/test/java/polaris/factory/{test_class}.java",
             "tests/test_product.py",
             "README.md",
         ]
@@ -1313,25 +1273,26 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "title": f"实现 {domain_label} Java CLI、领域模型与验收",
                     "goal": f"在工作区根交付 {domain_label} 的完整 Java CLI、领域模型、自包含验证和 README。",
                     "description": (
-                        "创建 src/main/java/、src/test/java/、tests/test_product.py 与 README.md，"
+                        "创建 pom.xml、tests/test_product.py 与 README.md；"
+                        "Java 包路径、领域类和入口由 Chief Engineer 决定，"
                         f"确保 Java 源码覆盖需求关键词和确定性检查：{keyword_summary}。"
                     ),
                     "scope": delivery_targets,
                     "target_files": delivery_targets,
                     "steps": [
                         "创建 pom.xml 或等价 Java 项目元数据，但 java_compile 必须不依赖 Maven/Gradle 才能通过 javac",
-                        "实现 src/main/java/polaris/factory/Main.java，作为可直接 java 运行的 CLI 入口",
-                        f"实现 src/main/java/polaris/factory/domain/ 下的领域模型，表达 {keyword_summary} 规则",
-                        f"实现 src/main/java/polaris/factory/engine/{engine_class}.java，计算 {keyword_summary} 相关状态、评分或匹配结果",
-                        f"实现 src/test/java/polaris/factory/{test_class}.java，使用 main/assert 或标准库自包含验证，禁止依赖未声明 JUnit",
+                        "按 CE 蓝图实现可直接 java 运行的 CLI 入口；禁止默认套用 polaris.factory 包路径",
+                        f"按 CE 蓝图实现领域模型，表达 {keyword_summary} 规则",
+                        f"按 CE 蓝图计算 {keyword_summary} 相关状态、评分或匹配结果",
+                        "按 CE 蓝图实现自包含 Java 验证，禁止依赖未声明 JUnit",
                         "创建 tests/test_product.py，使用 Python unittest 调用 javac/java 或检查 Java 产物结构",
                         "编写 README，说明 javac 编译、java 运行和测试命令",
                         f"验证脚本覆盖确定性检查：{check_summary}",
                     ],
                     "acceptance": [
-                        "`src/main/java/`、`src/test/java/`、`tests/test_product.py` 与 `README.md` 存在且非空",
-                        "`src/main/java/polaris/factory/Main.java` 存在并可作为 Java CLI 入口编译运行",
-                        f"`src/main/java/` 源码实现与 {keyword_summary} 对齐的领域规则",
+                        "`pom.xml`、`tests/test_product.py` 与 `README.md` 存在且非空",
+                        "CE 声明的 Java CLI 入口可编译运行",
+                        f"CE 声明的 Java 源码实现与 {keyword_summary} 对齐的领域规则",
                         f"源码包含需求关键词：{keyword_summary}",
                         "`javac -encoding UTF-8` 对所有 `.java` 文件返回成功",
                         "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
@@ -1341,7 +1302,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "phase": "implementation",
                     "depends_on": [],
                     "assigned_to": "Director",
-                    "metadata": dict(source_metadata),
+                    "metadata": dict(topology_metadata),
                 },
             ],
             delivery_plan_document=delivery_plan_document,

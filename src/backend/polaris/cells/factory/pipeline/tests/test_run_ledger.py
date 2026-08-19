@@ -187,9 +187,48 @@ def test_job_token_accepts_structured_pm_and_ce_authority() -> None:
         "pm_task_contracts",
         "target_files",
     ]
-    assert token.capability_audit["blueprint_sources"] == [
-        "chief_engineer_blueprint"
-    ]
+    assert token.capability_audit["blueprint_sources"] == ["chief_engineer_blueprint"]
+
+
+def test_job_token_unions_ce_named_source_topology() -> None:
+    record = {
+        "id": "L2-topology",
+        "target_files": ["CMakeLists.txt", "README.md"],
+        "scope_paths": ["CMakeLists.txt", "README.md"],
+        "pm_task_contracts": [
+            {
+                "id": "TASK-1",
+                "goal": "Deliver the C++ CLI",
+                "target_files": ["CMakeLists.txt", "README.md"],
+                "metadata": {"topology_authority": "chief_engineer"},
+            }
+        ],
+        "chief_engineer_blueprint": {
+            "factory_run_id": "factory-topology",
+            "blueprints": [
+                {
+                    "task_id": "TASK-1",
+                    "target_files": [
+                        "CMakeLists.txt",
+                        "README.md",
+                        "include/wind/entity.hpp",
+                        "src/translator.cpp",
+                    ],
+                }
+            ],
+        },
+    }
+
+    token = build_job_token_from_record(
+        record,
+        run_id="factory-topology",
+        project_id="L2-topology",
+        stage="workspace_validation",
+    )
+
+    assert "include/wind/entity.hpp" in token.target_files
+    assert "src/translator.cpp" in token.allowed_paths
+    assert "CMakeLists.txt" in token.target_files
 
 
 def test_run_ledger_appends_gate_evidence(tmp_path: Path) -> None:

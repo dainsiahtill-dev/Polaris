@@ -36,6 +36,86 @@ def _domain_module_name(tokens: list[str], *, suffix: str) -> str:
     return f"{head}_{suffix}"
 
 
+_CE_OWNED_TOPOLOGY_POLICY = (
+    "Chief Engineer owns directory topology. PM must not prescribe src/models + src/engine or any other single layout."
+)
+_CE_OWNED_TOPOLOGY_AUTHORITY = "chief_engineer"
+_TOOLCHAIN_BASENAMES = frozenset(
+    {
+        "package.json",
+        "tsconfig.json",
+        "go.mod",
+        "cargo.toml",
+        "cmakelists.txt",
+        "pom.xml",
+        "requirements.txt",
+        "readme.md",
+        "index.html",
+    }
+)
+_SOURCE_TOPOLOGY_SUFFIXES = frozenset(
+    {
+        ".ts",
+        ".tsx",
+        ".mts",
+        ".cts",
+        ".js",
+        ".mjs",
+        ".cjs",
+        ".py",
+        ".go",
+        ".rs",
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cxx",
+        ".h",
+        ".hh",
+        ".hpp",
+        ".hxx",
+        ".java",
+    }
+)
+
+
+def _ce_owned_topology_metadata(
+    source_metadata: dict[str, Any],
+    *,
+    required_source_kinds: list[str],
+) -> dict[str, Any]:
+    """Mark a synthesized PM task so Chief Engineer owns concrete paths."""
+
+    metadata = dict(source_metadata)
+    metadata["topology_authority"] = _CE_OWNED_TOPOLOGY_AUTHORITY
+    metadata["required_source_kinds"] = list(required_source_kinds)
+    metadata["topology_policy"] = _CE_OWNED_TOPOLOGY_POLICY
+    return metadata
+
+
+def _pm_task_declares_ce_owned_topology(task: Any) -> bool:
+    if not isinstance(task, dict):
+        return False
+    metadata = task.get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    return str(metadata.get("topology_authority") or "").strip() == _CE_OWNED_TOPOLOGY_AUTHORITY
+
+
+def _contracts_declare_ce_owned_topology(contracts: list[dict[str, Any]]) -> bool:
+    return any(_pm_task_declares_ce_owned_topology(item) for item in contracts)
+
+
+def _is_source_topology_path(path: str) -> bool:
+    normalized = str(path or "").strip().replace("\\", "/")
+    if not normalized or normalized.startswith("/"):
+        return False
+    basename = normalized.rsplit("/", 1)[-1].lower()
+    if basename in _TOOLCHAIN_BASENAMES:
+        return False
+    suffix = f".{basename.rsplit('.', 1)[-1]}" if "." in basename else ""
+    return suffix in _SOURCE_TOPOLOGY_SUFFIXES
+
+
 def _delivery_depth_contract(
     *,
     domain_label: str,

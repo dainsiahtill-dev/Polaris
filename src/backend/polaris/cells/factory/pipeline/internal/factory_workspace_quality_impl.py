@@ -387,6 +387,32 @@ def _workspace_quality_repair_errors(executor, results: list[dict[str, Any]]) ->
     return deduped
 
 
+def _workspace_quality_repair_path_key(path: str) -> str:
+    """Case-fold official CMakeLists.txt so leftover remint can claim docs owner."""
+
+    token = str(path or "").strip().replace("\\", "/")
+    if not token:
+        return ""
+    name = token.rsplit("/", 1)[-1]
+    if name.lower() == "cmakelists.txt":
+        parent = token[: -len(name)] if token.endswith(name) else ""
+        return f"{parent}cmakelists.txt"
+    return token
+
+
+def _workspace_quality_repair_path_overlaps(normalized_targets: set[str], candidate_paths: set[str]) -> set[str]:
+    """Intersect repair targets with owner paths, treating CMakeLists case aliases as one file."""
+
+    candidate_keys = {_workspace_quality_repair_path_key(path): path for path in candidate_paths}
+    overlaps: set[str] = set()
+    for target in normalized_targets:
+        key = _workspace_quality_repair_path_key(target)
+        owner_path = candidate_keys.get(key)
+        if owner_path is not None:
+            overlaps.add(owner_path)
+    return overlaps
+
+
 def _claim_workspace_quality_repair_attempt(
     executor,
     *,

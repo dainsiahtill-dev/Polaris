@@ -804,6 +804,119 @@ def _resolve_cpp_quoted_include(workspace: Path, importer: Path, include_path: s
     return None
 
 
+_CPP_ENUM_CLASS_RE = re.compile(
+    r"enum\s+class\s+(?P<name>[A-Za-z_]\w*)\b[^{]*\{(?P<body>[^}]*)\}",
+    re.DOTALL,
+)
+
+
+def _cpp_enumerator_remap_table(header_texts: list[str]) -> str:
+    """List existing enum-class members so remint remaps invented enumerators."""
+
+    rows: list[str] = []
+    seen: set[str] = set()
+    for text in header_texts:
+        for match in _CPP_ENUM_CLASS_RE.finditer(str(text or "")):
+            name = str(match.group("name") or "").strip()
+            members = list(dict.fromkeys(re.findall(r"\b([A-Z][A-Za-z0-9_]*)\b", str(match.group("body") or ""))))
+            if not name or not members or name in seen:
+                continue
+            seen.add(name)
+            rows.append(f"- {name} = {', '.join(members)}")
+    if not rows:
+        return ""
+    return (
+        "EXISTING ENUMERATORS (remap invented members; never add new ones to the header):\n" + "\n".join(rows) + "\n"
+        "If g++ says 'X' is not a member of 'NS::Enum', replace NS::Enum::X with one "
+        "of the members above. Do not invent Partial or extra enumerators.\n"
+    )
+
+
+_CPP_CONTROL_FUNCTION_NAMES = frozenset(
+    {"if", "for", "while", "switch", "catch", "else", "return", "sizeof", "static_assert"}
+)
+_CPP_DEFINED_FUNCTION_RE = re.compile(
+    r"^(?:template\s*<[^>]*>\s*)?(?:inline\s+)?(?:constexpr\s+)?(?:static\s+)?"
+    r"(?:[\w:<>,\s*&]+?)\s+(?P<name>[A-Za-z_]\w*)\s*\([^;{]*\)\s*"
+    r"(?:const\s*)?(?:noexcept(?:\s*\([^)]*\))?\s*)?\{",
+    re.MULTILINE,
+)
+_CPP_DECLARED_FUNCTION_RE = re.compile(
+    r"^\s*(?:\[\[nodiscard\]\]\s*)?(?:inline\s+)?(?:constexpr\s+)?"
+    r"(?:[\w:<>,\s*&]+?)\s+(?P<name>[A-Za-z_]\w*)\s*\([^;]*\)\s*"
+    r"(?:const\s*)?(?:noexcept(?:\s*\([^)]*\))?\s*)?;",
+    re.MULTILINE,
+)
+
+
+def _cpp_defined_function_names(text: str) -> list[str]:
+    """Namespace-scope function names that have a .cpp body."""
+
+    names: list[str] = []
+    for match in _CPP_DEFINED_FUNCTION_RE.finditer(str(text or "")):
+        name = str(match.group("name") or "").strip()
+        if not name or name in _CPP_CONTROL_FUNCTION_NAMES or name in names:
+            continue
+        names.append(name)
+    return names
+
+
+def _cpp_declared_function_names(text: str) -> list[str]:
+    """Header function names that end in ';' — may be declaration-only aliases."""
+
+    names: list[str] = []
+    for match in _CPP_DECLARED_FUNCTION_RE.finditer(str(text or "")):
+        name = str(match.group("name") or "").strip()
+        if not name or name in _CPP_CONTROL_FUNCTION_NAMES or name in names:
+            continue
+        names.append(name)
+    return names
+
+
+def _cpp_sibling_implementation_path(header: Path) -> Path | None:
+    for suffix in (".cpp", ".cc", ".cxx", ".c"):
+        sibling = header.with_suffix(suffix)
+        if sibling.is_file():
+            return sibling
+    return None
+
+
+def _cpp_defined_and_declaration_only_names(
+    *,
+    workspace: Path,
+    headers: list[Path],
+) -> tuple[list[str], list[str]]:
+    """Split included-header APIs into defined vs declaration-only aliases.
+
+    Live L2-20 leftover remint declared ``entity_kind_label`` in entity.hpp
+    without a body. g++ -fsyntax-only passed; cmake --build failed with
+    ``undefined reference to wind::entity_kind_label``.
+    """
+
+    defined: list[str] = []
+    declared: list[str] = []
+    for header in headers:
+        try:
+            header_text = header.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for name in _cpp_declared_function_names(header_text):
+            if name not in declared:
+                declared.append(name)
+        sibling = _cpp_sibling_implementation_path(header)
+        if sibling is None:
+            continue
+        try:
+            sibling_text = sibling.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for name in _cpp_defined_function_names(sibling_text):
+            if name not in defined:
+                defined.append(name)
+    declaration_only = [name for name in declared if name not in set(defined)]
+    return defined, declaration_only
+
+
 def _cpp_header_public_api_excerpt(text: str, *, budget: int = 1800) -> str:
     """Keep enum/class declarations and existing label/parser signatures."""
 
@@ -879,14 +992,17 @@ def _cpp_included_header_api_block(
     if not headers:
         return ""
     blocks: list[str] = []
+    header_texts: list[str] = []
     used = 0
     total_budget = 6000
     for header in headers[:8]:
         try:
             rel = header.relative_to(workspace).as_posix()
-            excerpt = _cpp_header_public_api_excerpt(header.read_text(encoding="utf-8"))
+            header_text = header.read_text(encoding="utf-8")
+            excerpt = _cpp_header_public_api_excerpt(header_text)
         except (OSError, UnicodeDecodeError, ValueError):
             continue
+        header_texts.append(header_text)
         if not excerpt:
             continue
         remaining = max(0, total_budget - used)
@@ -897,12 +1013,31 @@ def _cpp_included_header_api_block(
         blocks.append(f"--- {rel} (READ-ONLY EXISTING API) ---\n```text\n{excerpt}\n```")
     if not blocks:
         return ""
+    enumerator_table = _cpp_enumerator_remap_table(header_texts)
+    defined_names, declaration_only = _cpp_defined_and_declaration_only_names(
+        workspace=workspace,
+        headers=headers,
+    )
+    defined_table = ""
+    if defined_names:
+        defined_rows = "\n".join(f"- {name}" for name in defined_names[:24])
+        defined_table = (
+            "EXISTING DEFINED C++ FUNCTIONS (linker truth; .cpp bodies, not header aliases):\n"
+            f"{defined_rows}\n"
+            "If ld says undefined reference to NS::foo, remap the use-site to a defined "
+            "sibling above. Never add a declaration-only alias in a header. Never "
+            "implement an invented alias in .cpp.\n"
+        )
+    if declaration_only:
+        alias_rows = "\n".join(f"- {name}" for name in declaration_only[:16])
+        defined_table += f"DECLARED BUT NOT DEFINED (do not call these; remint to a defined sibling):\n{alias_rows}\n"
     return (
         "EXISTING C++ PUBLIC API FROM INCLUDED HEADERS (READ-ONLY; NEVER INVENT SIBLINGS):\n"
         "Use only these exact names. If g++ says X is not a member of NS, remap the "
         "use-site to an existing label/parser below. Never invent NS::to_string, "
         "*_to_string, extra enum enumerators, or extra struct fields. Assign enums "
-        "via existing try_parse_* helpers, not raw std::string.\n" + "\n".join(blocks) + "\n"
+        "via existing try_parse_* helpers, not raw std::string.\n"
+        f"{defined_table}{enumerator_table}" + "\n".join(blocks) + "\n"
     )
 
 
@@ -2269,6 +2404,49 @@ def _build_materialization_quality_repair_message(
         workspace_full=workspace_full,
         repair_target_files=prompt_repair_target_files,
     )
+    leftover_cmake_include_block = ""
+    leftover_cmake_blob = "\n".join(str(item or "") for item in artifact_quality_errors).lower()
+    if "target_include_directories covering" in leftover_cmake_blob or (
+        "official leftover cmake requires target_include_directories" in leftover_cmake_blob
+    ):
+        leftover_cmake_include_block = (
+            "LEFTOVER CMAKE INCLUDE ROOTS: official leftover cmake requires "
+            "`target_include_directories` covering the CE-declared include roots "
+            "named in the Quality errors (for example `src` or `include`). "
+            "Edit existing CMakeLists.txt only. Add "
+            "`target_include_directories(<existing_executable> PRIVATE <those roots>)` "
+            "for the already-declared add_executable target. Do not invent "
+            "src/models, src/engine, or a second CMakeLists.txt. Do not rewrite "
+            "source files to satisfy this residual.\n"
+        )
+    leftover_linker_block = ""
+    leftover_linker_blob = "\n".join(str(item or "") for item in artifact_quality_errors)
+    if "undefined reference" in leftover_linker_blob.lower():
+        leftover_linker_block = (
+            "LEFTOVER LINKER UNDEFINED REFERENCE: cmake --build / ld failed after "
+            "g++ -fsyntax-only passed. A header declaration without a matching .cpp "
+            "body is not a public API. Remint the use-site in the named .cpp.o TU "
+            "to an EXISTING DEFINED function. Never add a declaration-only alias "
+            "in a header. Never implement the invented name in the header owner.\n"
+        )
+    leftover_cmake_no_generate_block = ""
+    leftover_cmake_targets = any(
+        Path(str(path or "")).name.lower() == "cmakelists.txt" for path in prompt_repair_target_files
+    )
+    leftover_generate_blob = leftover_linker_blob.lower()
+    if (
+        leftover_cmake_targets
+        or leftover_cmake_include_block
+        or leftover_linker_block
+        or ("forbids generated linker-bridge" in leftover_generate_blob or "file(write)" in leftover_generate_blob)
+    ):
+        leftover_cmake_no_generate_block = (
+            "LEFTOVER CMAKE MUST NOT GENERATE TRANSLATION UNITS: never "
+            "`file(WRITE)` a generated .cpp, never `target_sources` a "
+            "`CMAKE_CURRENT_BINARY_DIR` path, never invent a linker bridge. "
+            "Delete any such generated-TU block from CMakeLists.txt. Remint "
+            "undefined references at the use-site to an existing defined function.\n"
+        )
     # C7-text W3 (2026-06-16 deliberation): cross-file coherence repair. An
     # unresolved relative import means the importer references a module that
     # does not exist yet; QA detects it, but the bare "MISSING TARGET FILES"
@@ -2558,6 +2736,9 @@ def _build_materialization_quality_repair_message(
         f"{verifier_source_context_block}"
         f"{referenced_definition_context_block}"
         f"{cpp_included_api_block}"
+        f"{leftover_cmake_include_block}"
+        f"{leftover_linker_block}"
+        f"{leftover_cmake_no_generate_block}"
         f"{coherence_block}"
         f"{symbol_repair_block}"
         f"{javascript_named_export_block}"

@@ -299,12 +299,20 @@ def _normalize_path(value: Any) -> str:
     return token.lower()
 
 
+_CANONICAL_CONTRACT_FILENAMES = {
+    "readme.md": "README.md",
+    "cmakelists.txt": "CMakeLists.txt",
+    "cargo.toml": "Cargo.toml",
+}
+
+
 def _canonical_pm_contract_output_path(value: str) -> str:
     parts = [part for part in str(value or "").split("/") if part]
     if not parts:
         return ""
-    if parts[-1].lower() == "readme.md":
-        parts[-1] = "README.md"
+    canonical = _CANONICAL_CONTRACT_FILENAMES.get(parts[-1].lower())
+    if canonical:
+        parts[-1] = canonical
     return "/".join(parts)
 
 

@@ -874,11 +874,11 @@ ts_syntax
         assert contracts[2]["depends_on"] == ["TASK-2"]
         assert "package.json" in targets
         assert "tsconfig.json" in targets
-        assert "src/index.ts" in targets
-        assert "src/models/MoonPhase.ts" in targets
-        assert "src/engine/renderer.ts" in targets
-        assert "src/web.ts" in targets
-        assert "src/verify.ts" in contracts[2]["target_files"]
+        assert all(not target.startswith("src/models/") for target in targets)
+        assert "src/engine/renderer.ts" not in targets
+        assert all(
+            str((item.get("metadata") or {}).get("topology_authority") or "") == "chief_engineer" for item in contracts
+        )
         assert "tests/verify.test.ts" in contracts[2]["target_files"]
         assert "index.html" in targets
         assert "README.md" in targets
@@ -992,11 +992,9 @@ ts_syntax
         assert "tsconfig.json" in targets
         assert "index.html" in targets
         assert "README.md" in targets
-        assert "src/index.ts" in targets
-        assert "src/engine/renderer.ts" in targets
-        assert "src/verify.ts" in contracts[2]["target_files"]
+        assert "src/engine/renderer.ts" not in targets
+        assert all(not target.startswith("src/models/") for target in targets)
         assert "tests/verify.test.ts" in contracts[2]["target_files"]
-        assert any(target.startswith("src/models/") and target.endswith(".ts") for target in targets)
         assert all(not target.endswith(".py") for target in targets)
         assert "placeholder_content_detected" not in serialized
         assert quality["ok"] is True
@@ -1043,14 +1041,11 @@ ts_syntax
 
         assert len(contracts) == 2
         assert "package.json" in targets
-        assert "src/index.js" in targets
-        assert "src/engine/rules.js" in targets
-        assert "src/engine/runner.js" in targets
+        assert "src/index.js" not in targets
+        assert "src/engine/rules.js" not in targets
         assert "tests/product.test.js" in targets
         assert "tests/test_product.py" in targets
         assert "README.md" in targets
-        assert "src/lost.js" in targets
-        assert "src/alien.js" in targets
         assert all(not target.startswith("src/models/") for target in targets)
         verification_task = next(item for item in contracts if item.get("id") == "TASK-2")
         verification_targets = set(verification_task.get("target_files") or [])
@@ -1060,9 +1055,8 @@ ts_syntax
         assert "src/index.js" not in verification_targets
         assert "src/engine/rules.js" not in verification_targets
         assert "src/lost.js" not in verification_targets
-        assert "src/index.js" in verification_context
-        assert "src/engine/rules.js" in verification_context
-        assert "src/lost.js" in verification_context
+        assert "src/index.js" not in verification_context
+        assert "src/engine/rules.js" not in verification_context
         assert all("src/main/java" not in target for target in targets)
         assert "RhythmMonster" not in serialized
         assert "BeatPattern" not in serialized
@@ -1121,24 +1115,22 @@ ts_syntax
 
         assert len(contracts) == 3
         assert "requirements.txt" in targets
-        assert "src/__init__.py" in targets
-        assert "src/models/mood.py" in targets
-        assert "src/models/weather.py" in targets
-        assert "src/engine/forecast.py" in targets
-        assert "src/radio.py" in targets
-        assert "src/main.py" in targets
+        assert "src/models/mood.py" not in targets
+        assert "src/engine/forecast.py" not in targets
+        assert "src/main.py" not in targets
         assert "tests/test_product.py" in targets
         assert "README.md" in targets
         assert "index.html" not in targets
         assert "styles.css" not in targets
         assert "py_compile" in serialized
         assert "source_target_coverage:src/**/*.py" in serialized
-        assert "python src/main.py" in serialized
-        assert "python -m src.main" in serialized
         assert "mood" in serialized
         assert "weather" in serialized
         assert "radio" in serialized
         assert "forecast" in serialized
+        assert all(
+            str((item.get("metadata") or {}).get("topology_authority") or "") == "chief_engineer" for item in contracts
+        )
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
 
@@ -1182,11 +1174,8 @@ ts_syntax
 
         assert len(contracts) == 3
         assert "go.mod" in targets
-        assert "main.go" in targets
-        assert "models/entity.go" in targets
-        assert "models/state.go" in targets
-        assert "engine/rules.go" in targets
-        assert "engine/service.go" in targets
+        assert "models/entity.go" not in targets
+        assert "engine/rules.go" not in targets
         assert "main_test.go" in targets
         assert "tests/test_product.py" not in targets
         assert "README.md" in targets
@@ -1195,11 +1184,9 @@ ts_syntax
         assert "go_compile" in serialized
         assert "source_target_coverage:**/*.go" in serialized
         assert "go test ./..." in serialized
-        assert "go run ." in serialized
         assert "python -m unittest" not in serialized
         assert contracts[2]["target_files"] == ["main_test.go", "README.md"]
-        assert "engine/service.go" in contracts[2]["context_files"]
-        assert "models/entity.go" in contracts[2]["context_files"]
+        assert "go.mod" in contracts[2]["context_files"]
         assert "capsule" in serialized
         assert "museum" in serialized
         assert "riddle" in serialized
@@ -1232,10 +1219,9 @@ ts_syntax
         serialized = json.dumps(contracts, ensure_ascii=False).lower()
         targets = [target for item in contracts for target in item.get("target_files", [])]
 
-        assert "models/entity.go" in targets
-        assert "models/state.go" in targets
-        assert "engine/rules.go" in targets
-        assert "engine/service.go" in targets
+        assert "go.mod" in targets
+        assert "models/entity.go" not in targets
+        assert "engine/rules.go" not in targets
         assert all(token in serialized for token in ("pet", "spell", "mood", "ascii"))
         assert all(token not in serialized for token in ("capsule", "museum", "riddle", "unlock"))
 
@@ -1295,10 +1281,8 @@ ts_syntax
         serialized = json.dumps(contracts, ensure_ascii=False)
 
         assert "Cargo.toml" in targets
-        assert "src/lib.rs" in targets
-        assert "src/main.rs" in targets
-        assert "src/engine/flavor_rules.rs" in targets
-        assert "src/models/flavor.rs" in targets
+        assert "src/models/flavor.rs" not in targets
+        assert "src/engine/flavor_rules.rs" not in targets
         assert "tests/product.rs" in targets
         assert "tests/test_product.py" not in targets
         assert "README.md" in targets
@@ -1313,8 +1297,6 @@ ts_syntax
         verification_task = next(item for item in contracts if item.get("id") == "TASK-3")
         assert verification_task["target_files"] == ["tests/product.rs", "README.md"]
         assert "Cargo.toml" in verification_task["context_files"]
-        assert "src/lib.rs" in verification_task["context_files"]
-        assert "src/engine/flavor_rules.rs" in verification_task["context_files"]
         assert set(verification_task["target_files"]).isdisjoint(verification_task["context_files"])
         assert all(
             set(item.get("target_files") or []).issubset(set(item.get("scope_paths") or [])) for item in contracts
@@ -1378,22 +1360,23 @@ ts_syntax
         cpp_targets = [target for item in cpp_contracts for target in item.get("target_files", [])]
         java_targets = [target for item in java_contracts for target in item.get("target_files", [])]
 
-        assert "src/models/treasure.rs" in rust_targets
-        assert "src/models/budget.rs" in rust_targets
-        assert "src/engine/treasure_rules.rs" in rust_targets
+        assert "Cargo.toml" in rust_targets
+        assert "src/models/treasure.rs" not in rust_targets
+        assert "src/engine/treasure_rules.rs" not in rust_targets
         assert "flavor" not in rust_serialized
         assert "palette" not in rust_serialized
         assert "recipe" not in rust_serialized
 
-        assert "src/models/robot.hpp" in cpp_targets
-        assert "src/models/patrol.cpp" in cpp_targets
+        assert "CMakeLists.txt" in cpp_targets
+        assert "src/models/robot.hpp" not in cpp_targets
+        assert "src/models/patrol.cpp" not in cpp_targets
         assert "robot, patrol, queue, energy" in cpp_serialized
         assert "postcard" not in cpp_serialized
         assert "stamp" not in cpp_serialized
         assert "poem" not in cpp_serialized
 
-        assert "src/main/java/polaris/factory/engine/PlantEngine.java" in java_targets
-        assert "src/test/java/polaris/factory/PlantEngineTest.java" in java_targets
+        assert "pom.xml" in java_targets
+        assert "src/main/java/polaris/factory/engine/PlantEngine.java" not in java_targets
         assert "plant, melody, season, growth" in java_serialized
         assert "RhythmEngine" not in java_serialized
         assert "RhythmMonster" not in java_serialized
@@ -1436,10 +1419,9 @@ ts_syntax
 
         assert len(contracts) == 1
         assert "CMakeLists.txt" in targets
-        assert "src/main.cpp" in targets
-        assert "src/engine/generator.cpp" in targets
-        assert "src/models/postcard.cpp" in targets
-        assert "src/models/stamp.hpp" in targets
+        assert "src/main.cpp" not in targets
+        assert "src/engine/generator.cpp" not in targets
+        assert "src/models/postcard.cpp" not in targets
         assert "tests/test_product.py" in targets
         assert "README.md" in targets
         assert "index.html" not in targets
@@ -1489,9 +1471,9 @@ ts_syntax
         serialized = json.dumps(contracts, ensure_ascii=False)
 
         assert len(contracts) == 1
-        assert "src/main/java/polaris/factory/Main.java" in targets
-        assert "src/main/java/polaris/factory/engine/RhythmEngine.java" in targets
-        assert "src/test/java/polaris/factory/RhythmEngineTest.java" in targets
+        assert "pom.xml" in targets
+        assert "src/main/java/polaris/factory/Main.java" not in targets
+        assert "src/main/java/polaris/factory/engine/RhythmEngine.java" not in targets
         assert "tests/test_product.py" in targets
         assert "README.md" in targets
         assert "package.json" not in targets

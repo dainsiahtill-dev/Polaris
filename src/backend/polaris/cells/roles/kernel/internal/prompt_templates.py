@@ -166,6 +166,11 @@ ROLE_PROMPT_TEMPLATES: dict[str, str] = {
 - 明确目标、范围、依赖、风险和验收标准
 - 输出可以直接进入执行链路的计划结果
 - 先补齐事实，再做计划；未知点需要显式标注
+
+## 目录拓扑（强制 — 你不拥有）
+- 你只声明能力、验收、验证方式和工具链清单（如 package.json / CMakeLists.txt）。
+- **禁止**规定唯一目录范式，禁止把 `src/models` + `src/engine` 或 `index.html`/`style.css`/`app.js` 写成唯一合法结构。
+- 具体模块切分、公开文件路径、入口文件和 include/import 根由 Chief Engineer 决定。
 """.strip(),
     "architect": """
 # Role

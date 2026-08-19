@@ -686,6 +686,33 @@ class TestRunWorkspaceQualityChecks:
             source_owner, run_id=run_id, normalized_targets=targets
         ) > executor._workspace_quality_repair_owner_score(test_owner, run_id=run_id, normalized_targets=targets)
 
+    def test_workspace_quality_owner_score_matches_cmake_lists_case_aliases(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Leftover cmake include remint must claim the docs owner of cmakelists.txt.
+
+        Live L2-20 remint-8 targeted official CMakeLists.txt while TASK-1-docs
+        only listed lowercase cmakelists.txt, so claim failed
+        workspace_quality_repair_canonical_owner_missing for 8 rounds.
+        """
+
+        executor = _executor(tmp_path)
+        docs_owner = {
+            "status": "completed",
+            "metadata": {
+                "factory_run_id": "factory-cmake-owner",
+                "external_task_id": "TASK-1-docs",
+                "target_files": ["cmakelists.txt", "readme.md"],
+            },
+        }
+        score = executor._workspace_quality_repair_owner_score(
+            docs_owner,
+            run_id="factory-cmake-owner",
+            normalized_targets={"CMakeLists.txt"},
+        )
+        assert score[0] > 0
+
     def test_workspace_quality_rehydrates_frozen_owner_for_qa_only_retry(
         self,
         tmp_path: Path,

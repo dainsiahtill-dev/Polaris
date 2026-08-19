@@ -127,7 +127,12 @@ def _pm_typescript_factory_contract_missing(contracts: list[dict[str, Any]], dir
     for required in ("package.json", "tsconfig.json", "index.html", "README.md"):
         if required.lower() not in lower_targets:
             missing.append(required)
-    if not any(target.endswith((".ts", ".tsx")) for target in targets):
+    ce_owns_topology = any(
+        str((item.get("metadata") or {}).get("topology_authority") or "").strip() == "chief_engineer"
+        for item in contracts
+        if isinstance(item, dict)
+    )
+    if not ce_owns_topology and not any(target.endswith((".ts", ".tsx")) for target in targets):
         missing.append("*.ts")
     if not any(target.endswith((".test.ts", ".spec.ts", ".test.tsx", ".spec.tsx")) for target in targets):
         missing.append("*.test.ts")

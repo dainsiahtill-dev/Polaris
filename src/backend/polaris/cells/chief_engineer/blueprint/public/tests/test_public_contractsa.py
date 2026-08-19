@@ -1559,7 +1559,9 @@ class TestChiefEngineerBlueprintPortfolio:
         assert len(main_rows) == 1
         assert main_rows[0].obligation_id == "A12-main-reaffirm"
         assert main_rows[0].owner_task_id == "TASK-B"
-        test_verifier = next(item for item in completion.obligations.verification if item.obligation_id == "verify-test")
+        test_verifier = next(
+            item for item in completion.obligations.verification if item.obligation_id == "verify-test"
+        )
         assert "A12-main-reaffirm" in test_verifier.covers_obligation_ids
         assert "artifact-main" not in test_verifier.covers_obligation_ids
 
@@ -2912,6 +2914,43 @@ class TestQueryBlueprintProvenanceV1:
             query_blueprint_provenance(_blueprint_provenance_query(payload))
 
         assert exc_info.value.code == "blueprint_provenance_target_files_mismatch"
+
+    def test_blueprint_target_files_may_add_ce_source_topology(self) -> None:
+        payload = _blueprint_provenance_payload()
+        payload["target_files"] = ["src/main.py", "tests/test_main.py", "include/wind/entity.hpp"]
+        payload["blueprint_hash"] = stable_hash(_producer_v1_hashable(payload))
+
+        snapshot = query_blueprint_provenance(_blueprint_provenance_query(payload))
+
+        assert snapshot.matches is True
+        assert list(snapshot.target_files) == [
+            "src/main.py",
+            "tests/test_main.py",
+            "include/wind/entity.hpp",
+        ]
+
+    def test_ce_owned_topology_requires_named_source_files(self) -> None:
+        pm_task = _pm_task_payload()
+        pm_task["target_files"] = ["CMakeLists.txt", "README.md"]
+        pm_task["metadata"] = {"topology_authority": "chief_engineer"}
+        payload = _blueprint_provenance_payload()
+        payload["pm_task"] = pm_task
+        payload["pm_contract_hash"] = stable_hash(_producer_v1_hashable(pm_task))
+        payload["target_files"] = ["CMakeLists.txt", "README.md"]
+        payload["blueprint_hash"] = stable_hash(_producer_v1_hashable(payload))
+        query = QueryBlueprintProvenanceV1(
+            blueprint=payload,
+            expected_pm_task=pm_task,
+            expected_factory_run_id="factory-run-1",
+            expected_task_id="TASK-1",
+            expected_blueprint_id="ce_TASK-1_20260718010101000000",
+            expected_logical_path="runtime/blueprints/ce_TASK-1_20260718010101000000.json",
+        )
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            query_blueprint_provenance(query)
+
+        assert exc_info.value.code == "blueprint_provenance_ce_topology_required"
 
     @pytest.mark.parametrize(
         "unsafe_path",

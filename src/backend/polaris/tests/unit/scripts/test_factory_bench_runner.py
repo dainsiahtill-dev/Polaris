@@ -1495,8 +1495,8 @@ def test_l1_01_requirements_doc_contains_source_tree_contract() -> None:
     doc = build_requirements_doc(project)
     assert "Source Tree Structure Contract" in doc
     assert "目录拓扑由 Chief Engineer 决定" in doc
-    assert "src/models/" not in doc
-    assert "src/engine/" not in doc
+    assert "不规定唯一目录范式" in doc
+    assert "写成唯一合法结构" in doc
     assert "Feature Keywords Contract" in doc
     assert "firefly" in doc
     assert "flower" in doc
@@ -1528,7 +1528,7 @@ def test_l1_01_requirements_doc_director_target_files_mandate() -> None:
         ],
     }
     doc = build_requirements_doc(project)
-    assert "target_files 必须覆盖 CE 蓝图声明的业务源码与入口" in doc
+    assert "必须覆盖 CE 蓝图声明的业务源码与入口" in doc
     assert "不能只包含配置/脚手架" in doc
 
 
@@ -1575,7 +1575,7 @@ def test_build_requirements_doc_python_includes_source_tree() -> None:
     doc = build_requirements_doc(project)
     assert "Source Tree Structure Contract" in doc
     assert "目录拓扑由 Chief Engineer 决定" in doc
-    assert "src/models/" not in doc
+    assert "不规定唯一目录范式" in doc
     assert "Feature Keywords Contract" in doc
     assert "planet" in doc
 

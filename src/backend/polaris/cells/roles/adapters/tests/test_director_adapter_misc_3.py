@@ -888,6 +888,37 @@ def test_cpp_cmake_lists_case_error_targets_existing_lowercase_manifest(tmp_path
     assert "cmakelists.txt" in targets
 
 
+def test_cpp_leftover_cmake_include_dirs_targets_official_cmakelists(tmp_path: Any) -> None:
+    """Leftover cmake include-root residual must remint CMakeLists.txt.
+
+    Live L2-20 remint-7 remapped ResultStatus::Partial so g++ went green, then
+    leftover cmake fail-closed on missing target_include_directories. The
+    basename-only cmake target helper ignored that residual, leftover remint
+    stayed on src/main.cpp, and repair_produced_no_effect fired.
+    """
+
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _explicit_artifact_quality_repair_target_files,
+    )
+
+    (tmp_path / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.16)\nproject(wind LANGUAGES CXX)\nadd_executable(wind src/main.cpp)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+    text = (
+        "CMakeLists.txt:1:1: error: official leftover cmake requires "
+        "target_include_directories covering CE-declared include roots (src)\n"
+    )
+    targets = _explicit_artifact_quality_repair_target_files(
+        artifact_quality_errors=[text],
+        changed_files=["src/main.cpp"],
+        workspace_full=str(tmp_path),
+    )
+    assert "CMakeLists.txt" in targets
+
+
 def test_docs_task_owning_lowercase_cmake_lists_keeps_official_basename_in_scope() -> None:
     """Linux official CMakeLists.txt must stay writable on the docs owner.
 

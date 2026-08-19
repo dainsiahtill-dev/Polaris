@@ -2146,7 +2146,7 @@ class _Mixin02:
             elif isinstance(value, list | tuple | set):
                 raw_paths.extend(value)
         candidate_paths = {str(path or "").strip().replace("\\", "/") for path in raw_paths if str(path or "").strip()}
-        overlaps = normalized_targets.intersection(candidate_paths)
+        overlaps = workspace_quality_impl._workspace_quality_repair_path_overlaps(normalized_targets, candidate_paths)
         source_overlap = sum(
             1
             for path in overlaps

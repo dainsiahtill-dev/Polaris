@@ -484,6 +484,19 @@ if inferred_roots and "target_include_directories" not in cmake_text:
         file=sys.stderr,
     )
     raise SystemExit(1)
+# Live L2-20 remint-9: leftover remint invented
+# CMAKE_CURRENT_BINARY_DIR/generated/wind_link_bridge.cpp via file(WRITE)
+# instead of reminting generator.cpp to kind_label. g++ -fsyntax-only
+# ignores build/; cmake --build compiled the generated TU and failed
+# with ambiguating declaration + invented enumerators.
+if re.search(r"file\\s*\\(\\s*WRITE", cmake_text, re.I) and (
+    "CMAKE_CURRENT_BINARY_DIR" in cmake_text or "generated/" in cmake_text.lower()
+):
+    print(
+        "CMakeLists.txt:1:1: error: official leftover cmake forbids generated linker-bridge translation units (file(WRITE)/target_sources BINARY_DIR). Remint the use-site to an existing defined function.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
 for command in (["cmake", "-S", ".", "-B", "build"], ["cmake", "--build", "build"]):
     completed = subprocess.run(
         command,

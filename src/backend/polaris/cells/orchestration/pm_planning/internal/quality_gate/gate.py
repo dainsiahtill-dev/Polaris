@@ -48,6 +48,7 @@ from polaris.cells.orchestration.pm_planning.internal.quality_gate.domain_contra
 from polaris.cells.orchestration.pm_planning.internal.quality_gate.primitives import (
     _PM_ACTION_TOKENS,
     _append_deterministic_scaffold_residue_cleanup_task,
+    _canonical_pm_contract_output_path,
     _collect_task_scope_paths,
     _contains_prompt_leakage,
     _dedupe_text_items,
@@ -105,6 +106,7 @@ _MANIFEST_OR_CONFIG_FILENAMES = frozenset(
         "settings.gradle",
         "makefile",
         "dockerfile",
+        "cmakelists.txt",
     }
 )
 _SOURCE_ENTRYPOINT_FILENAMES = frozenset(
@@ -118,6 +120,7 @@ _SOURCE_ENTRYPOINT_FILENAMES = frozenset(
         "index.html",
         "main.js",
         "main.ts",
+        "main.cpp",
         "server.js",
         "server.ts",
         "web.js",
@@ -193,6 +196,13 @@ def _file_scope_paths_missing_from_targets(task: dict[str, Any]) -> list[str]:
     return missing
 
 
+def _task_declares_ce_owned_topology(task: dict[str, Any]) -> bool:
+    metadata = task.get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    return str(metadata.get("topology_authority") or "").strip() == "chief_engineer"
+
+
 def _is_documentation_only_task_scope(task: dict[str, Any]) -> bool:
     paths = _collect_task_scope_paths(task)
     file_paths = [_normalize_path(path) for path in paths if _is_file_like_pm_scope_path(path)]
@@ -217,7 +227,7 @@ def _task_file_targets(task: dict[str, Any]) -> list[str]:
     paths: list[str] = []
     for key in ("target_files", "scope_paths"):
         for path in _normalize_path_list(task.get(key) or []):
-            normalized = _normalize_path(path)
+            normalized = _canonical_pm_contract_output_path(_normalize_path(path))
             if normalized and _is_file_like_pm_scope_path(normalized) and normalized not in paths:
                 paths.append(normalized)
     return paths
@@ -226,7 +236,7 @@ def _task_file_targets(task: dict[str, Any]) -> list[str]:
 def _task_write_file_targets(task: dict[str, Any]) -> list[str]:
     paths: list[str] = []
     for path in _normalize_path_list(task.get("target_files") or []):
-        normalized = _normalize_path(path)
+        normalized = _canonical_pm_contract_output_path(_normalize_path(path))
         if normalized and _is_file_like_pm_scope_path(normalized) and normalized not in paths:
             paths.append(normalized)
     return paths or _task_file_targets(task)
@@ -817,6 +827,7 @@ def evaluate_pm_task_quality(
                 and task_count >= 2
                 and not docs_enabled
                 and _is_documentation_only_task_scope(task)
+                and not _task_declares_ce_owned_topology(task)
             ):
                 critical_issues.append(f"{task_id}: first product-delivery Director task cannot be documentation-only")
             elif docs_enabled and active_doc:

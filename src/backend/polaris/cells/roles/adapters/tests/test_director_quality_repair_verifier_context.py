@@ -404,3 +404,106 @@ def test_quality_repair_projects_existing_cpp_enum_and_included_header_api(tmp_p
     assert "try_parse_kind" in message
     assert "Never invent NS::to_string" in message
     assert "READ-ONLY EXISTING API" in message
+    assert "EXISTING ENUMERATORS" in message
+    assert "ResultStatus = Ok, Warn, Fail, Empty, InvalidInput" in message
+    assert "Do not invent Partial" in message
+
+
+def test_quality_repair_prompt_names_leftover_cmake_include_roots(tmp_path: Path) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate._prompt_and_targets import (
+        _build_materialization_quality_repair_message,
+    )
+
+    (tmp_path / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.16)\nproject(wind LANGUAGES CXX)\nadd_executable(wind src/main.cpp)\n",
+        encoding="utf-8",
+    )
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair leftover cmake include roots.",
+        artifact_quality_errors=[
+            "CMakeLists.txt:1:1: error: official leftover cmake requires "
+            "target_include_directories covering CE-declared include roots (src)\n"
+        ],
+        changed_files=[],
+        repair_target_files=["CMakeLists.txt"],
+        workspace_full=str(tmp_path),
+    )
+    assert "LEFTOVER CMAKE INCLUDE ROOTS" in message
+    assert "target_include_directories(<existing_executable> PRIVATE <those roots>)" in message
+    assert "Do not invent src/models" in message
+
+
+def test_quality_repair_prompt_remaps_linker_undefined_ref_to_defined_sibling(tmp_path: Path) -> None:
+    """cmake --build linker residual must remint the use-site to a defined .cpp name.
+
+    Live L2-20: leftover remint added ``entity_kind_label`` as a declaration-only
+    alias in entity.hpp. g++ -fsyntax-only passed; cmake --build failed with
+    ``undefined reference to wind::entity_kind_label`` from generator.cpp.o.
+    entity.cpp only defines ``kind_label``. Polar is must not treat the header
+    alias as public API or tell leftover remint to implement it.
+    """
+
+    from polaris.cells.roles.adapters.internal.director.quality_gate._prompt_and_targets import (
+        _build_materialization_quality_repair_message,
+    )
+
+    src = tmp_path / "src"
+    models = src / "models"
+    engine = src / "engine"
+    models.mkdir(parents=True)
+    engine.mkdir(parents=True)
+    (models / "entity.hpp").write_text(
+        "#pragma once\n"
+        "#include <string_view>\n"
+        "namespace wind {\n"
+        "enum class EntityKind : std::uint8_t { Unknown = 0, Sensor = 1 };\n"
+        "[[nodiscard]] std::string_view kind_label(EntityKind kind) noexcept;\n"
+        "[[nodiscard]] std::string_view entity_kind_label(EntityKind kind) noexcept;\n"
+        "[[nodiscard]] bool try_parse_kind(std::string_view text, EntityKind& out) noexcept;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (models / "entity.cpp").write_text(
+        '#include "models/entity.hpp"\n'
+        "namespace wind {\n"
+        "std::string_view kind_label(EntityKind kind) noexcept {\n"
+        '    return kind == EntityKind::Sensor ? "sensor" : "unknown";\n'
+        "}\n"
+        "bool try_parse_kind(std::string_view text, EntityKind& out) noexcept {\n"
+        '    if (text == "sensor") { out = EntityKind::Sensor; return true; }\n'
+        "    return false;\n"
+        "}\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (engine / "generator.cpp").write_text(
+        '#include "models/entity.hpp"\n'
+        "namespace wind {\n"
+        "bool supported(Entity e) { return !entity_kind_label(e.kind).empty(); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair leftover cmake --build linker failure.",
+        artifact_quality_errors=[
+            "CMakeFiles/wind-translator.dir/src/engine/generator.cpp.o: in function "
+            "`wind::ValidateGenerator::process`:\n"
+            "generator.cpp:(.text+0x1205): undefined reference to "
+            "`wind::entity_kind_label(wind::EntityKind)'\n"
+        ],
+        changed_files=["src/engine/generator.cpp"],
+        repair_target_files=["src/engine/generator.cpp"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "EXISTING DEFINED C++ FUNCTIONS" in message
+    assert "kind_label" in message
+    assert "try_parse_kind" in message
+    assert "DECLARED BUT NOT DEFINED" in message
+    assert "entity_kind_label" in message
+    assert "LEFTOVER LINKER UNDEFINED REFERENCE" in message
+    assert "Never add a declaration-only alias" in message
+    assert "Remint the use-site" in message or "remap the use-site" in message.lower()
+    assert "LEFTOVER CMAKE MUST NOT GENERATE TRANSLATION UNITS" in message
+    assert "file(WRITE)" in message

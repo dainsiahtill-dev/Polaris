@@ -13,17 +13,6 @@ import pytest
 from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
     _CARD3D_PM_REQUIRED_DOMAINS,
     _card3d_domains_for_task,
-    _contains_prompt_leakage,
-    _has_executable_or_file_acceptance_anchor,
-    _has_measurable_acceptance_anchor,
-    _has_placeholder_or_manifest_only_acceptance,
-    _is_card3d_pm_contract,
-    _normalize_path,
-    _normalize_path_list,
-    _normalize_text,
-    _path_matches_card3d_domain,
-    _strip_wrapping_quotes,
-    _title_is_too_short,
     autofix_pm_contract_for_quality,
     check_quality_promote_candidate,
     evaluate_pm_task_quality,
@@ -33,8 +22,6 @@ from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
-
-
 
 
 class TestAutofixPmContractForQuality:
@@ -1616,6 +1603,49 @@ class TestAutofixPmContractForQuality:
         assert downstream["depends_on"] == ["TASK-1-tests"]
         post_report = evaluate_pm_task_quality(payload, workspace_full=str(tmp_path))
         assert not any("Director task boundary is too broad" in item for item in post_report["critical_issues"])
+
+    def test_autofix_keeps_cmake_as_foundation_not_docs(self, tmp_path: Any) -> None:
+        payload: dict[str, Any] = {
+            "workspace": str(tmp_path),
+            "overall_goal": "Build a C++17 CLI translator.",
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "title": "Implement C++17 CLI",
+                    "goal": "Deliver CMake, domain headers, engine, entry, tests, and README.",
+                    "acceptance_criteria": ["`cmake --build build` exits 0"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["Create files", "Build"],
+                    "target_files": [
+                        "CMakeLists.txt",
+                        "src/models/wind.hpp",
+                        "src/models/wind.cpp",
+                        "src/models/entity.hpp",
+                        "src/models/entity.cpp",
+                        "src/models/rule.hpp",
+                        "src/models/rule.cpp",
+                        "src/engine/generator.hpp",
+                        "src/engine/generator.cpp",
+                        "src/main.cpp",
+                        "tests/test_product.py",
+                        "README.md",
+                    ],
+                }
+            ],
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+        assert stats["oversized_director_tasks_split"] == 1
+        by_id = {str(task.get("id")): task for task in payload["tasks"]}
+        assert "TASK-1-foundation" in by_id
+        assert "TASK-1-docs" in by_id
+        assert "TASK-1-entrypoints" in by_id
+        assert by_id["TASK-1-foundation"]["target_files"] == ["CMakeLists.txt"]
+        assert by_id["TASK-1-docs"]["target_files"] == ["README.md"]
+        assert by_id["TASK-1-entrypoints"]["target_files"] == ["src/main.cpp"]
+        assert "cmakelists.txt" not in {path for task in payload["tasks"] for path in task.get("target_files") or []}
 
     def test_autofix_keeps_lightweight_l1_director_task_single_boundary(self, tmp_path: Any) -> None:
         payload: dict[str, Any] = {

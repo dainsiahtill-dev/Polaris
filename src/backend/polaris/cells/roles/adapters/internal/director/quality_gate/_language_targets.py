@@ -333,6 +333,10 @@ def _cpp_cmake_lists_repair_target_files(text: str, workspace_root: Path) -> lis
             "official cmakelists.txt basename required",
             "cmakelists.txt is missing",
             "basename required (found",
+            "target_include_directories covering",
+            "official leftover cmake requires target_include_directories",
+            "forbids generated linker-bridge",
+            "file(write)/target_sources binary_dir",
         )
     ):
         return []
@@ -1407,6 +1411,10 @@ _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS: tuple[str, ...] = (
     "candidate expects",
     "official cmakelists.txt basename required",
     "cmakelists.txt is missing",
+    "target_include_directories covering",
+    "official leftover cmake requires target_include_directories",
+    "forbids generated linker-bridge",
+    "file(write)/target_sources binary_dir",
     # javac diagnostics (L1-07 Java projects).
     "cannot find symbol",
 )

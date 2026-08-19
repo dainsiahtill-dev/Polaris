@@ -621,13 +621,11 @@ def _build_source_tree_contract(primary_language: str, project_type: str) -> str
         )
     elif lang == "go":
         sections.append(
-            "- 必须有 Go 业务源码（`.go` 包），路径由 CE 决定。\n"
-            "- 必须有 `main` 包或 `cmd/` 入口，以及 `*_test.go`。\n"
+            "- 必须有 Go 业务源码（`.go` 包），路径由 CE 决定。\n- 必须有 `main` 包或 `cmd/` 入口，以及 `*_test.go`。\n"
         )
     elif lang == "rust":
         sections.append(
-            "- 必须有 Rust 业务源码（`.rs`），crate 布局由 CE 决定。\n"
-            "- 必须有可构建入口（bin/lib）与测试。\n"
+            "- 必须有 Rust 业务源码（`.rs`），crate 布局由 CE 决定。\n- 必须有可构建入口（bin/lib）与测试。\n"
         )
     elif lang == "cpp":
         sections.append(
@@ -635,10 +633,7 @@ def _build_source_tree_contract(primary_language: str, project_type: str) -> str
             "- 必须有可构建入口与测试；CMake/构建文件必须匹配 CE 选定的 include 根。\n"
         )
     elif lang == "java":
-        sections.append(
-            "- 必须有 Java 业务源码（`.java`），包路径由 CE 决定。\n"
-            "- 必须有可运行入口与测试源码。\n"
-        )
+        sections.append("- 必须有 Java 业务源码（`.java`），包路径由 CE 决定。\n- 必须有可运行入口与测试源码。\n")
     else:
         sections.append(
             f"- primary_language={lang!r} — 必须有该语言的真实业务源码、入口与测试；"

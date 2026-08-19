@@ -376,6 +376,8 @@ def test_cpp_quality_cmake_requires_include_directories_for_models_headers(tmp_p
     cmake_script = commands[1][2]
     assert "target_include_directories covering CE-declared include roots" in cmake_script
     assert "src/models" not in cmake_script or "CE-declared include roots" in cmake_script
+    assert "forbids generated linker-bridge" in cmake_script
+    assert "file(WRITE)" in cmake_script or "file\\s*\\(\\s*WRITE" in cmake_script
 
 
 def test_cpp_quality_cmake_infers_include_root_outside_src(tmp_path: Path) -> None:
@@ -394,9 +396,7 @@ def test_cpp_quality_cmake_infers_include_root_outside_src(tmp_path: Path) -> No
     )
     (include / "entity.hpp").write_text("struct Entity {};\n", encoding="utf-8")
     (tmp_path / "CMakeLists.txt").write_text(
-        "cmake_minimum_required(VERSION 3.16)\n"
-        "project(wind LANGUAGES CXX)\n"
-        "add_executable(wind app/main.cpp)\n",
+        "cmake_minimum_required(VERSION 3.16)\nproject(wind LANGUAGES CXX)\nadd_executable(wind app/main.cpp)\n",
         encoding="utf-8",
     )
 
