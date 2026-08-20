@@ -1347,6 +1347,183 @@ class TestChiefEngineerBlueprintPortfolio:
         assert verifier.command_authority_hash == authority.authority_hash
         assert verifier.command == entrypoint.command
 
+        task = tasks[0]
+        context = {
+            "task_title": "Choose delegated Python package topology",
+            "target_files": list(task.target_files),
+            "scope_paths": list(task.scope_paths),
+            "acceptance_criteria": ["The delegated package entrypoint is runnable"],
+            "execution_checklist": ["Materialize the CE-owned package entrypoint"],
+            "delivery_plan_document": {
+                "schema_version": "polaris.delivery_plan_document.v1",
+                "title": "Delegated Python package topology",
+                "user_journey": ["Build package", "Run package entrypoint"],
+            },
+            "delivery_depth_contract": {
+                "schema_version": "polaris.delivery_depth_contract.v1",
+                "behavior_contract": {"rule_matrix": ["Package entrypoint starts deterministically"]},
+            },
+            "task": task.to_dict(),
+            **portfolio.to_task_blueprint_context(),
+        }
+        result = generate_task_blueprint(
+            GenerateTaskBlueprintCommandV1(
+                task_id=task.task_id,
+                workspace=str(tmp_path),
+                objective=task.objective,
+                run_id="run-delegated-python-entrypoint",
+                context=context,
+                llm_blueprint=project_chief_engineer_task_blueprint(portfolio, task.task_id),
+            )
+        )
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id or "")
+        assert isinstance(persisted, dict)
+        assert persisted["target_files"] == [
+            "requirements.txt",
+            "src/dream_subway/__main__.py",
+        ]
+        job_token = persisted["job_token"]
+        assert job_token["allowed_write_paths"] == [
+            "requirements.txt",
+            "src/dream_subway/__main__.py",
+        ]
+        assert "tests/test_main.py" not in job_token["allowed_write_paths"]
+        handoff = validate_director_handoff_from_payload(
+            str(tmp_path),
+            {"task_id": task.task_id, "blueprint_id": result.blueprint_id},
+            require_strict=True,
+        )
+        assert handoff["allowed"] is True, handoff["reason"]
+        assert {item["path"] for item in handoff["task_completion_projection"]["owned_artifacts"]} == {
+            "requirements.txt",
+            "src/dream_subway/__main__.py",
+        }
+        provenance = query_blueprint_provenance(
+            QueryBlueprintProvenanceV1(
+                blueprint=persisted,
+                expected_pm_task=persisted["pm_task"],
+                expected_factory_run_id="run-delegated-python-entrypoint",
+                expected_task_id=task.task_id,
+                expected_blueprint_id=result.blueprint_id or "",
+                expected_logical_path=result.blueprint_path or "",
+            )
+        )
+        assert provenance.matches is True
+        missing_completion_target = dict(persisted)
+        missing_completion_target["target_files"] = ["requirements.txt"]
+        missing_completion_target["blueprint_hash"] = stable_hash(_producer_v1_hashable(missing_completion_target))
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            query_blueprint_provenance(
+                QueryBlueprintProvenanceV1(
+                    blueprint=missing_completion_target,
+                    expected_pm_task=missing_completion_target["pm_task"],
+                    expected_factory_run_id="run-delegated-python-entrypoint",
+                    expected_task_id=task.task_id,
+                    expected_blueprint_id=result.blueprint_id or "",
+                    expected_logical_path=result.blueprint_path or "",
+                )
+            )
+        assert exc_info.value.code == "blueprint_provenance_completion_targets_mismatch"
+
+    def test_delegated_topology_support_task_uses_project_completion_source_authority(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A docs/test task need not invent a source path owned by another task."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Choose the Python package topology",
+                target_files=("requirements.txt",),
+                scope_paths=("requirements.txt",),
+                topology_authority="chief_engineer",
+                required_source_kinds=("domain_modules", "entrypoint"),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build tests and documentation",
+                target_files=("tests/test_main.py", "README.md"),
+                scope_paths=("tests/test_main.py", "README.md"),
+                dependencies=("TASK-A",),
+                topology_authority="chief_engineer",
+                required_source_kinds=("domain_modules", "entrypoint"),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        requirements["obligations"]["artifacts"][0].update(
+            {"path": "src/dream_subway/__main__.py", "owner_task_id": "TASK-A"}
+        )
+        requirements["obligations"]["entrypoints"][0].update(
+            {
+                "source_path": "src/dream_subway/__main__.py",
+                "runtime_path": "src/dream_subway/__main__.py",
+                "owner_task_id": "TASK-A",
+                "command": "python -m dream_subway",
+            }
+        )
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-delegated-support-task",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-delegated-support-task",
+                    entrypoint_owner_task_ids=("TASK-NOT-PRESENT",),
+                ),
+                llm_blueprint={
+                    "construction_plan": {"project_interface_contract": {}},
+                    "project_completion_contract": requirements,
+                    "risk_flags": [],
+                },
+            )
+        )
+        task = tasks[1]
+        context = {
+            "task_title": "Verify delegated Python package topology",
+            "target_files": list(task.target_files),
+            "scope_paths": list(task.scope_paths),
+            "acceptance_criteria": ["Tests and README verify the package"],
+            "execution_checklist": ["Run the package tests"],
+            "delivery_plan_document": {
+                "schema_version": "polaris.delivery_plan_document.v1",
+                "title": "Verify delegated Python package topology",
+                "user_journey": ["Run tests", "Read documentation"],
+            },
+            "delivery_depth_contract": {
+                "schema_version": "polaris.delivery_depth_contract.v1",
+                "behavior_contract": {"rule_matrix": ["Tests verify package behavior"]},
+            },
+            "task": task.to_dict(),
+            **portfolio.to_task_blueprint_context(),
+        }
+        result = generate_task_blueprint(
+            GenerateTaskBlueprintCommandV1(
+                task_id=task.task_id,
+                workspace=str(tmp_path),
+                objective=task.objective,
+                run_id="run-delegated-support-task",
+                context=context,
+                llm_blueprint=project_chief_engineer_task_blueprint(portfolio, task.task_id),
+            )
+        )
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id or "")
+        assert isinstance(persisted, dict)
+        assert persisted["target_files"] == ["tests/test_main.py", "README.md"]
+        provenance = query_blueprint_provenance(
+            QueryBlueprintProvenanceV1(
+                blueprint=persisted,
+                expected_pm_task=persisted["pm_task"],
+                expected_factory_run_id="run-delegated-support-task",
+                expected_task_id=task.task_id,
+                expected_blueprint_id=result.blueprint_id or "",
+                expected_logical_path=result.blueprint_path or "",
+            )
+        )
+        assert provenance.matches is True
+
     @pytest.mark.parametrize(
         ("source_path", "command"),
         [

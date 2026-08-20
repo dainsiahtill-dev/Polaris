@@ -26,6 +26,8 @@ Each instance owns:
 
 - `workspace`: the single project workspace managed by that backend.
 - `runtime_root`: isolated logs, contexts, receipts, and ledger artifacts.
+  Default: `<workspace>/.polaris/runtime`. External roots require explicit opt-in;
+  Instance Registry and backend process arguments must record the same resolved path.
 - `backend_port`: local HTTP/WebSocket endpoint.
 - `frontend_port`: optional Vite frontend for that instance.
 - `token`: local auth token for frontend/backend binding.

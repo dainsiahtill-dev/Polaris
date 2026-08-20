@@ -5,6 +5,7 @@ from typing import Any
 
 from polaris.kernelone.storage import workspace_key
 from scripts.factory_bench import run_factory_bench
+from scripts.factory_bench._bench_lib import session as bench_session
 from scripts.factory_bench.run_factory_bench import _bench_project_instance_id
 
 
@@ -65,3 +66,34 @@ def test_runtime_project_contamination_detects_foreign_workspace_key(tmp_path: P
     contamination = run_factory_bench._runtime_project_contamination(str(workspace))
 
     assert contamination == ["l1-02-foreign"]
+
+
+def test_isolated_launch_receipt_uses_target_polaris_runtime(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    bench_workspace = tmp_path / "factory-bench-l3-21"
+    workspace = bench_workspace / "workspaces" / "run" / "L3-21" / "nonce"
+    workspace.mkdir(parents=True)
+    stat_result = workspace.stat()
+    catalog = {
+        "run_id": "run-1",
+        "project_id": "L3-21",
+        "workspace_nonce": workspace.name,
+        "workspace_device": stat_result.st_dev,
+        "workspace_inode": stat_result.st_ino,
+    }
+    monkeypatch.setattr(bench_session, "_require_workspace_catalog_meta", lambda *_args: catalog)
+
+    receipt = run_factory_bench._new_isolated_bench_launch_receipt(
+        bench_session_id="",
+        run_id="run-1",
+        project_id="L3-21",
+        requested_project_id="L3-21",
+        canonical_project_id="L3-21",
+        bench_workspace=bench_workspace,
+        project_workspace=str(workspace),
+        workspace_catalog_meta=catalog,
+    )
+
+    assert Path(receipt["runtime_root"]).resolve() == (workspace / ".polaris" / "runtime").resolve()

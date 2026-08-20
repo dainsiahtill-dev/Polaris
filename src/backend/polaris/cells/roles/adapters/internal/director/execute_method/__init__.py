@@ -103,6 +103,7 @@ from ._claim import (
     _finalize_claimed_execution,
     _handle_claim_required,
     _job_token_from_director_context,
+    _project_completion_targets_into_task,
     _project_deferred_followup_receipts_as_tool_results,
     _project_dependency_artifact_tool_results,
     _project_preflight_execution_capability,

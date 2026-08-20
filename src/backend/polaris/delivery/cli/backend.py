@@ -7,6 +7,19 @@ import os
 from pathlib import Path
 
 
+def _runtime_root_for_args(args: argparse.Namespace) -> str:
+    """Resolve one backend process to its canonical runtime identity."""
+
+    workspace = Path(args.workspace).expanduser().resolve() if args.workspace else Path.cwd().resolve()
+    requested = Path(args.runtime_root).expanduser().resolve() if args.runtime_root else None
+    from polaris.cells.storage.layout.public import canonical_project_runtime_root
+
+    canonical = Path(canonical_project_runtime_root(str(workspace))).resolve()
+    if requested is None or requested == workspace / "runtime":
+        return str(canonical)
+    return str(requested)
+
+
 def _apply_env(args: argparse.Namespace) -> None:
     if args.workspace:
         workspace = str(Path(args.workspace).expanduser().resolve())
@@ -15,10 +28,10 @@ def _apply_env(args: argparse.Namespace) -> None:
         # an immutable binding separate from KERNELONE_WORKSPACE, which legacy
         # settings synchronization may still update at runtime.
         os.environ["KERNELONE_INSTANCE_WORKSPACE"] = workspace
-    if args.runtime_root:
-        runtime_root = str(Path(args.runtime_root).expanduser().resolve())
-        os.environ["KERNELONE_RUNTIME_ROOT"] = runtime_root
-        os.environ["KERNELONE_RUNTIME_CACHE_ROOT"] = runtime_root
+    runtime_root = _runtime_root_for_args(args)
+    os.environ["KERNELONE_RUNTIME_ROOT"] = runtime_root
+    # A resolved project runtime is not a shared cache base.
+    os.environ.pop("KERNELONE_RUNTIME_CACHE_ROOT", None)
     if args.token:
         os.environ["KERNELONE_TOKEN"] = args.token
     os.environ["KERNELONE_BACKEND_PORT"] = str(args.port)
@@ -49,7 +62,7 @@ def _register_instance(args: argparse.Namespace) -> None:
 
     workspace = str(Path(args.workspace).expanduser().resolve()) if args.workspace else str(Path.cwd())
     polaris_root = str(_find_polaris_root(Path.cwd()).resolve())
-    runtime_root = str(Path(args.runtime_root).expanduser().resolve()) if args.runtime_root else workspace
+    runtime_root = _runtime_root_for_args(args)
     instance_id = sanitize_instance_id(args.instance_id or args.instance_name or Path(workspace).name)
     frontend_port = int(args.frontend_port or 0)
     record = InstanceRecord(

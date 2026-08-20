@@ -37,6 +37,22 @@ logger = logging.getLogger("polaris.cells.factory.pipeline.internal.factory_stag
 class _Mixin04:
     """Method group extracted from OrchestrationStageExecutor (lossless)."""
 
+    @staticmethod
+    def _is_authoritative_terminal_probe(result: CommandResult | None) -> bool:
+        """Reject transient, explicitly non-authoritative read-model probes.
+
+        ``RunCompletionWaiter.canonical_terminal_result`` intentionally returns
+        a blocked diagnostic while TaskRuntime's fact projection is catching up
+        with an active session file.  That diagnostic is observability evidence,
+        not a terminal child-run verdict.  Treating it as terminal lets Factory
+        fail and drain a healthy Director task before its execution lease ends.
+        """
+
+        if result is None:
+            return False
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        return metadata.get("canonical_authoritative") is not False
+
     async def _settle_inflight_director_run_after_timeout(
         self,
         service: OrchestrationCommandService,
@@ -106,7 +122,8 @@ class _Mixin04:
                 run_id=normalized_run_id,
                 process_terminal=False,
             )
-            if canonical_probe is not None:
+            if self._is_authoritative_terminal_probe(canonical_probe):
+                assert canonical_probe is not None
                 return self._with_execution_barrier_progress(
                     canonical_probe,
                     progress_extensions=progress_extensions,
@@ -195,7 +212,8 @@ class _Mixin04:
                 run_id=normalized_run_id,
                 process_terminal=process_terminal,
             )
-            if canonical_probe is not None:
+            if self._is_authoritative_terminal_probe(canonical_probe):
+                assert canonical_probe is not None
                 return self._with_execution_barrier_progress(
                     canonical_probe,
                     progress_extensions=progress_extensions,

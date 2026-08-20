@@ -72,6 +72,12 @@ from polaris.cells.storage.layout import (
 **`history_root` workspace-anchoring**
 `history_root` is always `<workspace_abs>/.polaris/history`, never under `runtime_base`. This prevents Windows cross-drive `os.path.join()` from silently discarding the workspace path when `runtime_base` is on a different drive.
 
+**`runtime_root` project ownership**
+The default runtime root is `<workspace_abs>/.polaris/runtime`. Explicit external
+runtime/cache roots and RAM-disk remain opt-in and workspace-key namespaced. New
+callers must not construct `<workspace>/runtime`. Existing external namespaces may
+be discovered by read-only queries, but writers never copy or dual-write them.
+
 **Path escape guards**
 `normalize_logical_rel_path()` (KernelOne level) rejects:
 - `..` path traversal segments

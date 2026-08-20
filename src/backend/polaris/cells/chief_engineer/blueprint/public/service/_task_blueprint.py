@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 
@@ -20,6 +21,7 @@ from ...internal.ce_consumer import _control_plane_job_token
 from ..contracts import (
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
+    ProjectCompletionContractV1,
     TaskBlueprintResultV1,
 )
 from ._governance import (
@@ -51,6 +53,30 @@ from ._portfolio import (
 )
 
 
+def _job_token_target_files(
+    *,
+    task_id: str,
+    pm_target_files: list[str],
+    portfolio_projection: Mapping[str, Any],
+) -> list[str]:
+    """Bind one JobToken to PM paths plus immutable CE-owned artifacts.
+
+    PM may explicitly delegate source topology to Chief Engineer.  In that
+    case the signed project-completion contract, not raw model output, owns
+    the additional task-local artifact paths.  Sibling-owned obligations are
+    intentionally excluded so delegation cannot widen cross-task authority.
+    """
+
+    raw_contract = portfolio_projection.get("project_completion_contract")
+    if not isinstance(raw_contract, Mapping):
+        return list(pm_target_files)
+    contract = ProjectCompletionContractV1.from_dict(raw_contract)
+    owned_paths = [
+        obligation.path for obligation in contract.obligations.artifacts if obligation.owner_task_id == task_id
+    ]
+    return _merge_string_lists(pm_target_files, owned_paths)
+
+
 def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlueprintResultV1:
     """Generate and persist a task-level Chief Engineer blueprint."""
 
@@ -59,11 +85,21 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     context = dict(command.context)
     constraints = dict(command.constraints)
     contract_fields = _blueprint_contract_fields(context)
-    target_files = _target_files_from_context(context)
+    pm_target_files = _target_files_from_context(context)
     blueprint_portfolio_projection = _project_blueprint_portfolio_context(
         context,
         task_id=command.task_id,
-        target_files=target_files,
+        target_files=pm_target_files,
+    )
+    # PM owns the task contract, but an explicit topology delegation lets the
+    # immutable CE project-completion contract name additional task-owned
+    # source artifacts.  Project those signed paths into the authoritative
+    # blueprint target set; otherwise provenance, the Director profile, and
+    # the JobToken disagree about what this blueprint is allowed to deliver.
+    target_files = _job_token_target_files(
+        task_id=command.task_id,
+        pm_target_files=pm_target_files,
+        portfolio_projection=blueprint_portfolio_projection,
     )
     title = str(context.get("task_title") or context.get("title") or command.objective).strip()
     summary = f"Chief Engineer blueprint for {command.task_id}: {command.objective}"

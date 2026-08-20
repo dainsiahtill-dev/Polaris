@@ -517,6 +517,23 @@ def workspace_key(workspace: str) -> str:
     return f"{slug}-{digest}"
 
 
+def canonical_workspace_runtime_root(
+    workspace: str,
+    *,
+    metadata_dir_name: str | None = None,
+) -> str:
+    """Return the canonical project-local runtime root.
+
+    Runtime state belongs to the target project by default.  The logical
+    ``runtime/*`` domain therefore resolves below the workspace metadata tree,
+    not beside the project and not in a process-global cache.
+    """
+
+    workspace_abs = os.path.abspath(os.path.expanduser(workspace or os.getcwd()))
+    metadata_name = str(metadata_dir_name or get_workspace_metadata_dir_name() or "").strip() or ".polaris"
+    return os.path.join(workspace_abs, metadata_name, "runtime")
+
+
 def _is_within_path(parent: str, child: str) -> bool:
     try:
         parent_abs = os.path.abspath(parent)
@@ -565,10 +582,25 @@ def _is_runtime_base_writable(base: str) -> bool:
 
 
 def _runtime_base_and_mode(workspace_abs: str, ramdisk_root: str | None) -> tuple[str, str]:
+    metadata_dir_name = get_workspace_metadata_dir_name()
+    project_runtime_root = canonical_workspace_runtime_root(
+        workspace_abs,
+        metadata_dir_name=metadata_dir_name,
+    )
+    legacy_project_runtime_root = os.path.join(workspace_abs, "runtime")
     explicit_runtime_root = resolve_env_str("runtime_root")
     if explicit_runtime_root:
         base = os.path.abspath(os.path.expanduser(os.path.expandvars(explicit_runtime_root)))
-        if not _is_within_path(workspace_abs, base) and _is_runtime_base_writable(base):
+        if base == project_runtime_root and _is_runtime_base_writable(base):
+            return base, "project_local_explicit"
+        if base == legacy_project_runtime_root and _is_runtime_base_writable(base):
+            return base, "legacy_project_local_explicit"
+        if _is_within_path(workspace_abs, base):
+            raise RuntimeError(
+                "KERNELONE_RUNTIME_ROOT inside workspace must equal the canonical "
+                f"project runtime root: {project_runtime_root}"
+            )
+        if _is_runtime_base_writable(base):
             return base, "explicit_runtime_root"
 
     if state_to_ramdisk_enabled():
@@ -584,16 +616,17 @@ def _runtime_base_and_mode(workspace_abs: str, ramdisk_root: str | None) -> tupl
     explicit_cache_root = resolve_env_str("runtime_cache_root")
     if explicit_cache_root:
         base = os.path.abspath(os.path.expanduser(os.path.expandvars(explicit_cache_root)))
-        if not _is_within_path(workspace_abs, base) and _is_runtime_base_writable(base):
+        if _is_within_path(workspace_abs, base):
+            raise RuntimeError("KERNELONE_RUNTIME_CACHE_ROOT must be outside the workspace")
+        if _is_runtime_base_writable(base):
             return base, "explicit_runtime_cache"
 
-    system_cache_base = default_kernelone_cache_base()
-    if not _is_within_path(workspace_abs, system_cache_base) and _is_runtime_base_writable(system_cache_base):
-        return system_cache_base, "system_cache"
+    if _is_runtime_base_writable(project_runtime_root):
+        return project_runtime_root, "project_local"
 
     raise RuntimeError(
-        "No writable runtime base is available. Configure KERNELONE_RUNTIME_ROOT, "
-        "KERNELONE_RUNTIME_CACHE_ROOT, or a writable system cache location."
+        "The project-local runtime root is not writable. Fix workspace permissions "
+        "or explicitly configure KERNELONE_RUNTIME_ROOT/KERNELONE_RUNTIME_CACHE_ROOT."
     )
 
 
@@ -609,6 +642,7 @@ def resolve_project_runtime_paths(
     workspace_key_value: str,
     *,
     metadata_dir_name: str,
+    workspace_abs: str | None = None,
     projects_root_for_base: Callable[[str, str], str] | None = None,
 ) -> tuple[str, str]:
     """Return ``(runtime_projects_root, runtime_root)``.
@@ -619,6 +653,15 @@ def resolve_project_runtime_paths(
     makes Factory HTTP return ``RUN_NOT_FOUND`` for a durable run.
     """
     normalized = os.path.abspath(os.path.normpath(runtime_base))
+    if workspace_abs:
+        normalized_workspace = os.path.abspath(os.path.normpath(workspace_abs))
+        canonical_local = canonical_workspace_runtime_root(
+            normalized_workspace,
+            metadata_dir_name=metadata_dir_name,
+        )
+        legacy_local = os.path.join(normalized_workspace, "runtime")
+        if normalized in {canonical_local, legacy_local}:
+            return normalized, normalized
     posix = normalized.replace("\\", "/").rstrip("/")
     marker = f"/projects/{workspace_key_value}/runtime"
     if posix.endswith(marker):
@@ -643,6 +686,7 @@ def _build_generic_storage_roots(
         runtime_base,
         key,
         metadata_dir_name=metadata_dir_name,
+        workspace_abs=workspace_abs,
     )
     return StorageRoots(
         workspace_abs=workspace_abs,
@@ -671,11 +715,22 @@ def _existing_runtime_base_candidates(
     """Return configured runtime bases that already exist, without probing writes."""
     candidates: list[tuple[str, str]] = []
 
-    def add(base: str, mode: str) -> None:
-        if not base or _is_within_path(workspace_abs, base):
+    def add(base: str, mode: str, *, allow_project_local: bool = False) -> None:
+        if not base or (_is_within_path(workspace_abs, base) and not allow_project_local):
             return
-        if os.path.isdir(base):
+        if os.path.isdir(base) and (base, mode) not in candidates:
             candidates.append((base, mode))
+
+    add(
+        canonical_workspace_runtime_root(workspace_abs),
+        "project_local",
+        allow_project_local=True,
+    )
+    add(
+        os.path.join(workspace_abs, "runtime"),
+        "legacy_project_local",
+        allow_project_local=True,
+    )
 
     explicit_runtime_root = resolve_env_str("runtime_root")
     if explicit_runtime_root:

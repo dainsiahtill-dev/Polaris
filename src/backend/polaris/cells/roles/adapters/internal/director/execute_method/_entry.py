@@ -31,6 +31,7 @@ from ._claim import (
     _claim_task_with_retry,
     _finalize_claimed_execution,
     _handle_claim_required,
+    _project_completion_targets_into_task,
     _suspend_claimed_execution_for_cancellation,
     _task_completion_projection_from_context,
     _task_runtime_finalization_failed_result,
@@ -168,6 +169,12 @@ async def execute_director_task(
         requested_task_id,
         run_id,
         input_metadata,
+    )
+
+    task = _project_completion_targets_into_task(
+        task,
+        context,
+        target_task_id=requested_task_id or target_task_id,
     )
 
     selected_subject = str(task.get("subject") or task.get("title") or "").strip()

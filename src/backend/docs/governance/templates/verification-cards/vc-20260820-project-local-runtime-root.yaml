@@ -1,0 +1,79 @@
+card_id: "vc-20260820-project-local-runtime-root"
+bug_summary: >
+  Default runtime state is split between target .polaris, workspace/runtime launch claims,
+  and an external system-cache namespace, so runtime identity and evidence disagree.
+
+classification: structural
+
+bug_path:
+  file: "polaris/kernelone/storage/layout.py"
+  method: "_runtime_base_and_mode"
+  symptom: "A project-local backend argument is rejected and silently resolved to system cache."
+
+assumptions:
+  - id: "A1"
+    statement: "Runtime belongs to the target project by default."
+    status: verified
+    evidence: "Storage graph owns runtime/* and project metadata is already rooted at <workspace>/.polaris."
+  - id: "A2"
+    statement: "Launcher and Bench currently claim <workspace>/runtime."
+    status: verified
+    evidence: "Instance service and factory_bench session construct workspace/runtime directly."
+  - id: "A3"
+    statement: "The resolver rejects paths inside workspace and falls through to system cache."
+    status: verified
+    evidence: "_runtime_base_and_mode requires explicit root to be outside workspace, then defaults to default_kernelone_cache_base()."
+  - id: "A4"
+    statement: "Explicit external roots remain a valid deployment option."
+    status: verified
+    evidence: "Existing shared-cache and RAM-disk tests require workspace-key isolation."
+  - id: "A5"
+    statement: "Migration must not copy or dual-write live runtime state."
+    status: verified
+    evidence: "Runtime is mutable KFS-owned state with lock identity and append-only event evidence."
+
+pre_mortem:
+  failure_point: >
+    Treating a project-local runtime as an external base can append projects/<key>/runtime again;
+    treating every in-workspace path as valid can authorize arbitrary runtime locations.
+  risk_zone:
+    - "polaris/kernelone/storage/layout.py"
+    - "polaris/cells/storage/layout/internal/layout_business.py"
+    - "polaris/cells/instances/internal/service.py"
+    - "scripts/factory_bench/_bench_lib/session.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/kernelone/storage/tests/test_storage_layout.py"
+      description: "Default local root, explicit external root, direct local root, read-only fallback."
+      expected: "One authoritative runtime path per write-capable resolution."
+      status: new
+    - file: "polaris/cells/storage/layout/tests/test_storage_layout_cell.py"
+      description: "Public storage contract returns target .polaris/runtime by default."
+      expected: "Public result and KernelOne root agree."
+      status: new
+    - file: "polaris/cells/instances/tests/test_instance_service.py"
+      description: "New Instance records default to target .polaris/runtime."
+      expected: "Registry and backend launch argument agree."
+      status: new
+    - file: "scripts/factory_bench/test_run_factory_bench.py"
+      description: "Isolated launch receipt uses target .polaris/runtime."
+      expected: "Bench does not invent workspace/runtime."
+      status: new
+  integration_tests:
+    - description: "Launch a fresh isolated instance and compare registry, process and storage layout."
+      command: "python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L3-21 --launcher-instance-mode isolated --bench-session-reporting off"
+      status: pending
+  manual_check:
+    - "No writer creates <workspace>/runtime for a new project."
+    - "Legacy external runtime remains read-only discoverable."
+
+related_adrs:
+  - "ADR-0109"
+
+sign_off:
+  completed_by: "codex"
+  completed_at: ""
+  verified_by: ""
+  verified_at: ""
+

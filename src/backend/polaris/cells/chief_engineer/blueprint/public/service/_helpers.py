@@ -18,6 +18,7 @@ from ...internal.architecture_decisions import (
 from ...internal.blueprint_persistence import BlueprintPersistence
 from ..contracts import (
     ChiefEngineerBlueprintErrorV1,
+    ProjectCompletionContractV1,
     QueryBlueprintProvenanceV1,
     TaskBlueprintProvenanceSnapshotV1,
     _strict_provenance_target_paths,
@@ -374,9 +375,47 @@ def query_blueprint_provenance(
             },
         )
     extra_targets = [path for path in target_files if path not in set(expected_target_files)]
-    if _pm_task_declares_ce_owned_topology(pm_task) and not any(
-        _is_ce_source_topology_path(path) for path in extra_targets
-    ):
+    completion_contract: ProjectCompletionContractV1 | None = None
+    raw_completion_contract = payload.get("project_completion_contract")
+    if isinstance(raw_completion_contract, Mapping):
+        try:
+            completion_contract = ProjectCompletionContractV1.from_dict(raw_completion_contract)
+        except (TypeError, ValueError) as exc:
+            raise ChiefEngineerBlueprintErrorV1(
+                "blueprint provenance project completion contract is invalid",
+                code="blueprint_provenance_completion_contract_invalid",
+                details={"reason": str(exc)},
+            ) from exc
+
+    owned_completion_targets: tuple[str, ...] = ()
+    project_completion_source_targets: tuple[str, ...] = ()
+    if completion_contract is not None:
+        owned_completion_targets = tuple(
+            obligation.path
+            for obligation in completion_contract.obligations.artifacts
+            if obligation.owner_task_id == task_id
+        )
+        project_completion_source_targets = tuple(
+            obligation.path
+            for obligation in completion_contract.obligations.artifacts
+            if _is_ce_source_topology_path(obligation.path)
+        )
+    missing_owned_completion_targets = [path for path in owned_completion_targets if path not in set(target_files)]
+    if missing_owned_completion_targets:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance target_files dropped CE-owned completion artifacts",
+            code="blueprint_provenance_completion_targets_mismatch",
+            details={
+                "observed_target_files": list(target_files),
+                "owned_completion_targets": list(owned_completion_targets),
+                "missing_owned_completion_targets": missing_owned_completion_targets,
+            },
+        )
+
+    ce_source_topology_named = any(_is_ce_source_topology_path(path) for path in extra_targets) or bool(
+        project_completion_source_targets
+    )
+    if _pm_task_declares_ce_owned_topology(pm_task) and not ce_source_topology_named:
         raise ChiefEngineerBlueprintErrorV1(
             "blueprint provenance requires Chief Engineer to name source topology beyond PM toolchain artifacts",
             code="blueprint_provenance_ce_topology_required",
@@ -384,6 +423,7 @@ def query_blueprint_provenance(
                 "expected_target_files": list(expected_target_files),
                 "observed_target_files": list(target_files),
                 "extra_targets": extra_targets,
+                "project_completion_source_targets": list(project_completion_source_targets),
             },
         )
     try:

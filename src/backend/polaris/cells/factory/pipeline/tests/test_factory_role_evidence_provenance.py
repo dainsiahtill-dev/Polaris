@@ -382,6 +382,45 @@ def test_ce_binding_uses_exact_pm_event_public_query_and_manifest_order(
     assert FactoryStageArtifactBindingsV1.from_record(ce_binding.to_record()) == ce_binding
 
 
+def test_ce_binding_accepts_publicly_verified_delegated_target_expansion(tmp_path: Path) -> None:
+    """Factory freezes PM and expanded CE projections without forcing equality."""
+
+    runtime_root = tmp_path / "runtime"
+    run_id = "run-delegated-topology"
+    task = _pm_task("TASK-1", ["requirements.txt"])
+    task["metadata"] = {"topology_authority": "chief_engineer"}
+    _write_json(runtime_root, "tasks/plan.json", _pm_document([task]))
+    store = FactoryStore(runtime_root)
+    pm_binding = build_pm_stage_artifact_bindings(
+        factory_store=store,
+        source_root=runtime_root,
+        factory_run_id=run_id,
+    )
+    row = _review_row(task, "bp-delegated")
+    _write_json(
+        runtime_root,
+        f"runtime/state/blueprints/{run_id}.review.json",
+        _review_document(run_id, [row]),
+    )
+    blueprint = _blueprint(run_id, task, "bp-delegated")
+    blueprint["target_files"] = ["requirements.txt", "src/dream_subway/__main__.py"]
+    blueprint["blueprint_hash"] = stable_hash(
+        {key: value for key, value in blueprint.items() if key != "blueprint_hash"}
+    )
+    _write_json(runtime_root, "runtime/blueprints/bp-delegated.json", blueprint)
+
+    ce_binding = build_chief_engineer_stage_artifact_bindings(
+        factory_store=store,
+        source_root=runtime_root,
+        factory_run_id=run_id,
+        pm_stage_event=_pm_event(run_id, pm_binding),
+    )
+
+    item = ce_binding.items[2]
+    assert item.embedded_pm_task_projection_sha256 != item.target_files_projection_sha256
+    assert FactoryStageArtifactBindingsV1.from_record(ce_binding.to_record()) == ce_binding
+
+
 def test_ce_binding_requires_manifest_task_set_to_equal_committed_pm_tasks(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     run_id = "run-1"

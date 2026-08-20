@@ -27,6 +27,18 @@ assumptions:
     statement: "A bounded path-correlated delegated command can be represented by existing VerificationCommandAuthorityV1."
     status: verified
     evidence: "VerificationCommandAuthorityV1 hashes exact task/modality/argv/cwd and ProjectCompletionContractV1 revalidates it."
+  - id: "A5"
+    statement: "The task-local JobToken may widen only from immutable completion-contract artifacts owned by that task."
+    status: verified
+    evidence: "Same-run retry generated 3/3 blueprints but failed because PM-only allowed_write_paths omitted the signed CE-owned entrypoint."
+  - id: "A6"
+    statement: "Blueprint provenance must consume the same task-owned completion artifacts as the JobToken and Director profile."
+    status: verified
+    evidence: "The next same-run retry closed JobToken admission and deterministically failed 3/3 blueprints with blueprint_provenance_ce_topology_required because top-level target_files remained PM-only."
+  - id: "A7"
+    statement: "Factory binding must freeze PM baseline and CE expanded target hashes without requiring them to be equal."
+    status: verified
+    evidence: "After CE public provenance passed, the same run failed at factory_stage_artifact_ce_target_projection_mismatch; equality encoded the obsolete PM-only topology assumption."
 
 pre_mortem:
   failure_point: >
@@ -41,7 +53,7 @@ verification_plan:
   unit_tests:
     - file: "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contractsa.py"
       description: "Accept explicit CE-owned Python package entrypoint and reject non-delegated or unsafe variants."
-      expected: "Only bounded delegated topology produces exact artifact, entrypoint and verifier authority."
+      expected: "Only bounded delegated topology produces aligned artifact, entrypoint, verifier, provenance, Director profile, and owner-scoped JobToken authority."
       status: new
   integration_tests:
     - description: "Run focused CE blueprint and Factory stage tests, then same-run L3-21 CE retry."
@@ -58,4 +70,3 @@ sign_off:
   completed_at: ""
   verified_by: ""
   verified_at: ""
-

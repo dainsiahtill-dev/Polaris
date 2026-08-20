@@ -7,6 +7,7 @@ import logging
 from polaris.cells.storage.layout.internal.layout_business import (
     PolarisStorageLayout,
     PolarisStorageRoots,
+    canonical_project_runtime_root,
     default_polaris_cache_base,
     polaris_home,
     resolve_polaris_roots,
@@ -44,6 +45,7 @@ __all__ = [
     "StorageLayoutErrorV1",
     "StorageLayoutResolvedEventV1",
     "StorageLayoutResultV1",
+    "canonical_project_runtime_root",
     "default_polaris_cache_base",
     "get_polaris_root",
     "get_settings_path",

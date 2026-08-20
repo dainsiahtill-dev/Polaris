@@ -40,6 +40,16 @@ chief_engineer.blueprint validation
               v
 ProjectCompletionContractV1
   immutable artifact + entrypoint + verifier authority
+              |
+              v
+Task-local JobToken
+  PM exact paths + signed CE-owned artifact paths
+  sibling-owned paths excluded
+              |
+              v
+Blueprint provenance
+  top-level target_files == PM paths + task-owned completion artifacts
+  project-level CE topology satisfies support-task provenance
 ```
 
 ## Module responsibilities
@@ -62,13 +72,24 @@ ProjectCompletionContractV1
 5. The resolved command is materialized as an exact `VerificationCommandAuthorityV1`, included in
    the immutable completion-contract hash and reused by handoff/QA.
 6. Optional or uncorrelated CE entrypoint suggestions remain dropped.
+7. Director JobToken write scope is derived from the immutable completion contract's
+   task-owned artifacts. Raw CE suggestions and sibling-owned artifacts never widen it.
+8. The persisted blueprint, Director execution profile, ownership registry and JobToken use the
+   same expanded task-local target set. Provenance rejects any dropped task-owned completion
+   artifact, while a tests/docs support task may rely on source topology named elsewhere in the
+   same immutable project-completion contract.
+9. Factory stage binding freezes both the embedded PM baseline projection and the expanded CE
+   target projection. Their hashes may differ under delegated topology; exact immutable
+   revalidation, not hash equality, proves that neither projection drifted.
 
 ## Verification
 
 - DTO/carrier tests prove delegation survives hashing and identity checks.
 - Portfolio tests prove the L3-21 shape succeeds and produces exact entrypoint verifier authority.
 - Negative tests prove non-delegated, traversal, mismatched module and ambiguous-owner cases fail.
+- Handoff tests prove the JobToken covers the delegated owner while excluding sibling artifacts.
+- Provenance tests prove producer and consumer agree on expanded target authority and fail closed
+  when a signed task-owned artifact is removed.
 - Existing Chief Engineer portfolio suite, Ruff, Mypy and focused Factory tests stay green.
 - The isolated L3-21 instance is restarted to load current source, then the existing Factory run is
   retried only from `chief_engineer_review`; PM evidence is reused.
-

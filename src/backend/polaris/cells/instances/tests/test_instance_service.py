@@ -41,6 +41,43 @@ def _make_polaris_root(tmp_path: Path) -> Path:
     return root
 
 
+def test_new_instance_defaults_runtime_to_target_polaris_directory(tmp_path: Path) -> None:
+    root = _make_polaris_root(tmp_path)
+    workspace = tmp_path / "project"
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+
+    record = supervisor._build_record(
+        {
+            "instance_id": "project-local-runtime",
+            "polaris_root": str(root),
+            "workspace": str(workspace),
+            "start_frontend": False,
+        }
+    )
+
+    assert Path(record.runtime_root).resolve() == (workspace / ".polaris" / "runtime").resolve()
+
+
+def test_legacy_workspace_runtime_request_is_canonicalized(tmp_path: Path) -> None:
+    root = _make_polaris_root(tmp_path)
+    workspace = tmp_path / "project"
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+
+    record = supervisor._build_record(
+        {
+            "instance_id": "legacy-runtime-request",
+            "polaris_root": str(root),
+            "workspace": str(workspace),
+            "runtime_root": str(workspace / "runtime"),
+            "start_frontend": False,
+        }
+    )
+
+    assert Path(record.runtime_root).resolve() == (workspace / ".polaris" / "runtime").resolve()
+
+
 class _MultiprocessReservationSupervisor(InstanceSupervisor):
     def _start_backend(self, record: InstanceRecord, log_path: Path) -> int:
         del record, log_path

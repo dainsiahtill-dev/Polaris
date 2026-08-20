@@ -840,6 +840,70 @@ class TestDirectorDispatchLoop:
         assert fake_waiter.cancelled == []
 
     @pytest.mark.asyncio
+    async def test_director_timeout_settle_waits_through_non_authoritative_projection_gap(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A transient session/fact parity gap must not terminate a live child."""
+
+        class _CatchingUpWaiter:
+            def __init__(self) -> None:
+                self.probes: list[bool] = []
+                self.cancelled: list[tuple[str, str]] = []
+
+            def canonical_terminal_result(
+                self,
+                *,
+                run_id: str,
+                process_terminal: bool = False,
+            ) -> CommandResult | None:
+                self.probes.append(process_terminal)
+                if not process_terminal:
+                    return CommandResult(
+                        run_id=run_id,
+                        status="blocked",
+                        message="TaskRuntime fact-only observable projection is not ready",
+                        reason_code="task_runtime_fact_projection_not_ready",
+                        metadata={
+                            "canonical_authoritative": False,
+                            "inflight_run_continues": True,
+                        },
+                    )
+                return CommandResult(
+                    run_id=run_id,
+                    status="completed",
+                    message="canonical outcome committed after projection catch-up",
+                    metadata={
+                        "canonical_authoritative": True,
+                        "fact_event_seq": 41,
+                    },
+                )
+
+            async def cancel_active_run(self, run_id: str, *, reason: str) -> None:
+                self.cancelled.append((run_id, reason))
+
+        class _TerminalService:
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                return CommandResult(run_id=run_id, status="completed", message="done")
+
+        fake_waiter = _CatchingUpWaiter()
+        executor = OrchestrationStageExecutor(tmp_path)
+        executor._run_completion_waiter = fake_waiter  # type: ignore[assignment]
+
+        result = await executor._settle_inflight_director_run_after_timeout(
+            service=_TerminalService(),  # type: ignore[arg-type]
+            run_id="run-projection-catch-up",
+            grace_seconds=30,
+        )
+
+        assert result is not None
+        assert result.status == "completed"
+        assert result.metadata["canonical_authoritative"] is True
+        assert result.metadata["fact_event_seq"] == 41
+        assert fake_waiter.probes == [False, True]
+        assert fake_waiter.cancelled == []
+
+    @pytest.mark.asyncio
     async def test_director_timeout_settle_cancel_event_preserves_active_task_runtime_barrier(
         self,
         tmp_path: Path,

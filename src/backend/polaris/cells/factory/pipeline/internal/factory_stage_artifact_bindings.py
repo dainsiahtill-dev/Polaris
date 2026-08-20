@@ -543,11 +543,12 @@ class CEBlueprintArtifactBindingV1:
                 "factory_stage_artifact_ce_pm_task_hash_mismatch",
                 "Embedded and expected PM task canonical hashes differ",
             )
-        if hash_fields["embedded_pm_task_projection_sha256"] != hash_fields["target_files_projection_sha256"]:
-            raise _fail(
-                "factory_stage_artifact_ce_target_projection_mismatch",
-                "Embedded PM-task and producer target projections differ",
-            )
+        # These projections are intentionally not required to be equal.  PM
+        # target files are the contract baseline; when PM explicitly delegates
+        # topology, the CE public provenance query may authorize additional
+        # task-owned completion artifacts in blueprint.target_files.  Both
+        # hashes remain frozen evidence and immutable revalidation below
+        # recomputes them from the exact PM task and CE blueprint.
         return cls(
             kind="ce_blueprint",
             ordinal=_exact_int(row["ordinal"], field="ordinal", minimum=0, maximum=_MAX_TASKS - 1),

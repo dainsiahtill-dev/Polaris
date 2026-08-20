@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from polaris.cells.storage.layout.public import canonical_project_runtime_root
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.fs.jsonl.locking import file_lock
 
@@ -1055,7 +1056,11 @@ class InstanceSupervisor:
         raw_id = str(request.get("instance_id") or request.get("name") or workspace.name)
         instance_id = sanitize_instance_id(raw_id)
         instance_dir = self._instance_dir(instance_id)
-        runtime_root = ensure_absolute_dir(Path(str(request.get("runtime_root") or instance_dir / "runtime")))
+        requested_runtime_root = str(request.get("runtime_root") or "").strip()
+        legacy_workspace_runtime = (workspace / "runtime").resolve()
+        if not requested_runtime_root or Path(requested_runtime_root).expanduser().resolve() == legacy_workspace_runtime:
+            requested_runtime_root = canonical_project_runtime_root(str(workspace))
+        runtime_root = ensure_absolute_dir(Path(requested_runtime_root))
         kind = str(request.get("kind") or "project")
         metadata = request.get("metadata")
         metadata_payload: dict[str, Any] = dict(metadata) if isinstance(metadata, dict) else {}

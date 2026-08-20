@@ -331,6 +331,79 @@ def _run_test_materialization_quality_repair_schedule(
 
 
 class TestDirectorFailureClosureA:
+    def test_completion_projection_targets_drive_director_convergence(self) -> None:
+        task = {
+            "id": "5",
+            "target_files": ["requirements.txt"],
+            "metadata": {"target_files": ["requirements.txt"]},
+        }
+        owned_paths = [
+            "requirements.txt",
+            "src/dream_subway/domain/__init__.py",
+            "src/dream_subway/domain/line.py",
+        ]
+        context = {
+            "job_token": {
+                "token_id": "job-task-1",
+                "allowed_write_paths": owned_paths,
+            },
+            "metadata": {
+                "task_completion_projection": {
+                    "schema_version": "polaris.task_completion_projection.v1",
+                    "task_id": "TASK-1",
+                    "owned_artifacts": [
+                        {
+                            "obligation_id": f"artifact-{index}",
+                            "owner_task_id": "TASK-1",
+                            "path": path,
+                        }
+                        for index, path in enumerate(owned_paths)
+                    ],
+                }
+            },
+        }
+
+        projected = execute_method_module._project_completion_targets_into_task(
+            task,
+            context,
+            target_task_id="TASK-1",
+        )
+
+        assert projected["target_files"] == owned_paths
+        assert projected["metadata"]["target_files"] == owned_paths
+        assert projected["metadata"]["project_declared_target_files"] == owned_paths
+        assert projected["metadata"]["director_target_authority"] == (
+            "chief_engineer.task_completion_projection+job_token"
+        )
+
+    def test_completion_projection_cannot_widen_beyond_job_token(self) -> None:
+        task = {"id": "5", "target_files": ["requirements.txt"]}
+        projected = execute_method_module._project_completion_targets_into_task(
+            task,
+            {
+                "job_token": {
+                    "token_id": "job-task-1",
+                    "allowed_write_paths": ["requirements.txt"],
+                },
+                "metadata": {
+                    "task_completion_projection": {
+                        "schema_version": "polaris.task_completion_projection.v1",
+                        "task_id": "TASK-1",
+                        "owned_artifacts": [
+                            {
+                                "obligation_id": "artifact-forged",
+                                "owner_task_id": "TASK-1",
+                                "path": "src/forged.py",
+                            }
+                        ],
+                    }
+                },
+            },
+            target_task_id="TASK-1",
+        )
+
+        assert projected == task
+
     def test_completion_projection_accepts_runtime_numeric_alias_for_external_task(self) -> None:
         projection = execute_method_module._task_completion_projection_from_context(
             {

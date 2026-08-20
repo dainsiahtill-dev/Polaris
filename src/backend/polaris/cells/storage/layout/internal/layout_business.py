@@ -18,6 +18,7 @@ from pathlib import Path
 from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 from polaris.kernelone.storage.layout import (
     StorageLayout as _BaseStorageLayout,
+    canonical_workspace_runtime_root,
     resolve_project_runtime_paths,
 )
 
@@ -77,6 +78,15 @@ def default_polaris_cache_base() -> str:
     return os.path.abspath(os.path.expanduser("~/.cache/polaris"))
 
 
+def canonical_project_runtime_root(workspace: str) -> str:
+    """Return Polaris's canonical target-project runtime root."""
+
+    return canonical_workspace_runtime_root(
+        workspace,
+        metadata_dir_name=_polaris_metadata_dir_name(),
+    )
+
+
 def _runtime_projects_root(runtime_base: str, metadata_dir_name: str) -> str:
     """Return the projects root without double-nesting the metadata directory."""
     normalized_parts = os.path.normpath(runtime_base).replace("\\", "/").split("/")
@@ -125,6 +135,7 @@ def resolve_polaris_roots(workspace: str, ramdisk_root: str | None = None) -> Po
         runtime_base,
         key,
         metadata_dir_name=metadata_dir_name,
+        workspace_abs=workspace_abs,
         projects_root_for_base=_runtime_projects_root,
     )
     history_root = os.path.join(workspace_abs, metadata_dir_name, "history")
@@ -253,6 +264,7 @@ class PolarisStorageLayout(_BaseStorageLayout):
             str(self._runtime_base),
             self._key,
             metadata_dir_name=metadata_dir_name,
+            workspace_abs=str(self._workspace),
             projects_root_for_base=_runtime_projects_root,
         )
         self._runtime_root = Path(runtime_root)

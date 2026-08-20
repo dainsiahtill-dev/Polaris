@@ -72,3 +72,5 @@ def test_backend_cli_records_immutable_instance_workspace_binding(
     expected = str(workspace.resolve())
     assert backend.os.environ["KERNELONE_WORKSPACE"] == expected
     assert backend.os.environ["KERNELONE_INSTANCE_WORKSPACE"] == expected
+    assert backend.os.environ["KERNELONE_RUNTIME_ROOT"] == str((workspace / ".polaris" / "runtime").resolve())
+    assert "KERNELONE_RUNTIME_CACHE_ROOT" not in backend.os.environ

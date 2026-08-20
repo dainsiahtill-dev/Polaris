@@ -168,6 +168,25 @@ def test_read_only_layout_never_probes_default_ramdisk_or_mutates_probe_cache(
     assert kernel_layout._storage_roots_cache == before_roots_cache
 
 
+def test_read_only_layout_prefers_existing_project_local_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    runtime_root = workspace / ".polaris" / "runtime"
+    runtime_root.mkdir(parents=True)
+    monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
+    monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
+    clear_storage_roots_cache()
+
+    result = resolve_existing_runtime_root_read_only(
+        ResolveExistingRuntimeRootReadOnlyQueryV1(workspace=str(workspace)),
+    )
+
+    assert result is not None
+    assert Path(result.runtime_root).resolve() == runtime_root.resolve()
+
+
 def test_descriptor_advertises_read_only_runtime_root_contract() -> None:
     """The Cell descriptor must expose the only cross-Cell read-only boundary."""
     from pathlib import Path
@@ -663,9 +682,11 @@ class TestResolvePolarisRoots:
         # resolve_polaris_roots accepts "" and falls back to os.getcwd()
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
+        monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
         roots = resolve_polaris_roots("")
         assert roots.workspace_abs == os.path.abspath(os.getcwd())
+        assert Path(roots.runtime_root).resolve() == (tmp_path / ".polaris" / "runtime").resolve()
 
 
 # ─── resolve_storage_layout() ─────────────────────────────────────────────────

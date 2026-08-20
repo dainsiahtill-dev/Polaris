@@ -199,6 +199,7 @@ python scripts/run_factory_e2e_smoke.py --workspace .
 - TypeScript 保持 `strict`，公共接口禁止 `any`。
 - 变更 Loop / 角色内核时，优先修改 `src/backend/polaris/cells/roles` 与 `src/backend/polaris/kernelone`。
 - 不提交运行时产物: `.polaris/runtime/**`, `playwright-report/**`, `test-results/**`。
+- 默认 runtime 唯一物理根是目标项目 `<workspace>/.polaris/runtime`；Instance Registry、backend CLI、ContextOS、ReceiptStore、Run Ledger 与内部 Bench launch receipt 必须消费同一根。外部 cache/RAM-disk 仅允许显式 opt-in；禁止新建 `<workspace>/runtime` 或默认外置到 system cache，旧外部 namespace 只读兼容、禁止双写/自动搬迁。
 - 验证失败不得标记任务完成（fail-closed）。
 - 多项目并行观测必须用 Instance Registry + `/launcher` 启动或发现多个单-workspace 实例；不要把单个 backend/UI 临时改造成多 workspace 状态拼接层。
 - 从 Launcher 打开的实例工作台必须通过 URL query 或 `VITE_POLARIS_*` 显式绑定 `instance`、`backend`、`token`、`workspace`；前端 API 与 `/v2/ws/runtime` 必须使用该 workspace 绑定，禁止静默回退到默认 backend、默认 workspace 或主仓 runtime。
@@ -211,7 +212,7 @@ python scripts/run_factory_e2e_smoke.py --workspace .
 - Launcher 实时状态只走 runtime.v2 WebSocket `status.instances`；禁止用 HTTP polling、文件轮询或 Bench session 替代正式实时链路。
 - 当前承载 Launcher API 的实例不能通过自己的 `/v2/instances/{id}/stop|restart|delete` 自我停止、自我重启或删除自身记录；这类操作应返回 fail-closed，前端也必须禁用当前控制实例的危险操作。清理 stale bench 只能作用于 stopped、backend dead、`metadata.internal_test_only=true` 的内部测试实例。
 - Run Ledger 投影必须区分 `missing_required_modalities` 与 `failed_required_modalities`：前者是控制面/工具链没有记录证据，后者是证据存在但命令、browser smoke、用户脚本或其它 verifier 失败。不要把 failed evidence 写成 missing evidence；内部 bench 只能消费这个平台级语义，不能定义自己的成功/失败事实源。
-- LLM 事件里的 `context_snapshot_ref` 必须是同 workspace 下 `/v2/context/{hash}` 和 `/v2/context/{hash}/final-request` 都可读取的 24 位 hex key。ContextOS 读取候选链必须包含 active runtime root、Instance Registry 同 workspace 的 `runtime_root`、默认 KernelOne system cache；404 要返回 `context_hash`、`workspace`、`searched_paths`，前端不能把跨 workspace hash 送进完整上下文 modal。
+- LLM 事件里的 `context_snapshot_ref` 必须是同 workspace 下 `/v2/context/{hash}` 和 `/v2/context/{hash}/final-request` 都可读取的 24 位 hex key。ContextOS 读取候选链必须优先包含 `<workspace>/.polaris/runtime` 与 Instance Registry 同 workspace 的 `runtime_root`，并只把旧 KernelOne system cache 作为只读兼容候选；404 要返回 `context_hash`、`workspace`、`searched_paths`，前端不能把跨 workspace hash 送进完整上下文 modal。
 - `event.bench` 是内部测试态全局事件流；只有总控/主开发页在显式 `globalObserver` 模式下可以订阅。实例工作台、PM/CE/Director/QA/ContextOS 项目页默认只能消费调用方传入的 scoped bench 数据，`enabled` 本身不得触发 `useFactoryBench({autoSelect:"newest"})`。
 
 ## 6) 常用环境变量
@@ -351,7 +352,7 @@ board.create(subject="实现登录功能", priority="high")
 6. **tools** → 是否包含 write_file, read_file, execute_command 等必要工具
 7. **tool_choice** → 是否正确（auto vs forced）
 
-审计位置：通过 `resolve_storage_roots(workspace).runtime_root / "contexts" / <shard> / <hash>` 读取当前 canonical ContextOS 快照；开发环境通常位于 `~/.cache/kernelone/.polaris/projects/<workspace-key>/runtime/contexts/<shard>/<hash>`。旧 `~/.cache/polaris/...` 路径不得作为新链路依据。`context_snapshot_ref` 必须是 `/v2/context/{hash}` 可读取的 24 位 hex 快照 key；不得把 `request_hash`、`prompt_hash`、`call_id`、`turn_id`、文件路径或旧事件字符串当成完整上下文快照引用。
+审计位置：通过 `resolve_storage_roots(workspace).runtime_root / "contexts" / <shard> / <hash>` 读取当前 canonical ContextOS 快照；默认位于 `<workspace>/.polaris/runtime/contexts/<shard>/<hash>`。旧 `~/.cache/kernelone/.polaris/projects/<workspace-key>/runtime` 与 `~/.cache/polaris/...` 只能作为只读兼容候选，不得作为新写链路依据。`context_snapshot_ref` 必须是 `/v2/context/{hash}` 可读取的 24 位 hex 快照 key；不得把 `request_hash`、`prompt_hash`、`call_id`、`turn_id`、文件路径或旧事件字符串当成完整上下文快照引用。
 
 ### 9.3) CE Blueprint → Director 注入链路
 

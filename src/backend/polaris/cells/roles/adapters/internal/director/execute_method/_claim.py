@@ -528,6 +528,72 @@ def _task_completion_projection_from_context(
     return dict(projection)
 
 
+def _project_completion_targets_into_task(
+    task: Mapping[str, Any],
+    context: Mapping[str, Any] | None,
+    *,
+    target_task_id: str,
+) -> dict[str, Any]:
+    """Make Director convergence consume the same CE-owned targets as settlement.
+
+    PM target files are the planning baseline.  CE may add task-owned topology
+    files before minting the JobToken and completion projection.  Materializing
+    only the PM subset and validating the CE superset at settlement creates a
+    split authority: one successful write looks complete until receipt sealing
+    fails.  Project only CE-owned paths already authorized by the immutable
+    task-local JobToken; malformed or over-broad projections remain fail-closed.
+    """
+
+    projected_task = dict(task)
+    projection = _task_completion_projection_from_context(context, target_task_id=target_task_id)
+    if not isinstance(projection, Mapping):
+        return projected_task
+    if projection.get("schema_version") != "polaris.task_completion_projection.v1":
+        return projected_task
+    projected_owner = str(projection.get("task_id") or "").strip()
+    if not _task_owner_compatible(projected_owner, target_task_id):
+        return projected_task
+
+    token = _job_token_from_director_context(context)
+    allowed_paths = {
+        str(path or "").strip().replace("\\", "/")
+        for key in ("allowed_write_paths", "allowed_paths", "target_files")
+        for path in (token.get(key) or ())
+        if str(path or "").strip()
+    }
+    if not allowed_paths:
+        return projected_task
+
+    owned_paths: list[str] = []
+    for artifact in projection.get("owned_artifacts") or ():
+        if not isinstance(artifact, Mapping):
+            return projected_task
+        owner = str(artifact.get("owner_task_id") or "").strip()
+        path = str(artifact.get("path") or "").strip().replace("\\", "/")
+        if not path or not _task_owner_compatible(owner, projected_owner) or path not in allowed_paths:
+            return projected_task
+        if path not in owned_paths:
+            owned_paths.append(path)
+    if not owned_paths:
+        return projected_task
+
+    raw_metadata = projected_task.get("metadata")
+    metadata = dict(raw_metadata) if isinstance(raw_metadata, Mapping) else {}
+    existing_paths = [
+        str(path or "").strip().replace("\\", "/")
+        for source in (projected_task.get("target_files"), metadata.get("target_files"))
+        for path in (source or ())
+        if str(path or "").strip()
+    ]
+    effective_paths = list(dict.fromkeys((*existing_paths, *owned_paths)))
+    projected_task["target_files"] = effective_paths
+    metadata["target_files"] = list(effective_paths)
+    metadata["project_declared_target_files"] = list(effective_paths)
+    metadata["director_target_authority"] = "chief_engineer.task_completion_projection+job_token"
+    projected_task["metadata"] = metadata
+    return projected_task
+
+
 def _finalize_claimed_execution(
     adapter: Any,
     *,

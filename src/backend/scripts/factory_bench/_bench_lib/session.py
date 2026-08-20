@@ -674,13 +674,15 @@ def _register_bench_project_instance(
     instance_id = sanitize_instance_id(
         f"{bench_session_id}-{project_id}" if bench_session_id else f"factory-bench-{project_id}"
     )
+    from polaris.cells.storage.layout.public import canonical_project_runtime_root
+
     record = InstanceRecord(
         instance_id=instance_id,
         name=f"{project_id} {project_title}".strip(),
         kind="bench_project",
         polaris_root=str(default_polaris_root()),
         workspace=project_workspace,
-        runtime_root=str((Path(project_workspace) / "runtime").resolve()),
+        runtime_root=canonical_project_runtime_root(project_workspace),
         backend_port=backend_port,
         frontend_port=frontend_port,
         backend_url=backend_url,
@@ -800,6 +802,8 @@ def _new_isolated_bench_launch_receipt(
     workspace_source_run_id = str(persisted_catalog.get("run_id") or "").strip()
     if not workspace_source_run_id:
         raise RuntimeError("Bench workspace catalog source run id is missing")
+    from polaris.cells.storage.layout.public import canonical_project_runtime_root
+
     return {
         "schema_version": "factory_bench.isolated_launch_receipt.v1",
         "launch_nonce": nonce,
@@ -817,7 +821,7 @@ def _new_isolated_bench_launch_receipt(
         "workspace_device": workspace_device,
         "workspace_inode": workspace_inode,
         "workspace_catalog_hash": catalog_receipt_hash,
-        "runtime_root": str((workspace_path / "runtime").absolute()),
+        "runtime_root": canonical_project_runtime_root(workspace),
         "expected_backend_root": str(_BACKEND_ROOT),
         "expected_source_fingerprint": compute_source_fingerprint(_BACKEND_ROOT),
         "issued_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -1146,7 +1150,12 @@ def _start_isolated_bench_project_instance(
 
 
 def _runtime_project_contamination(project_workspace: str) -> list[str]:
-    """Return foreign workspace keys found under a bench project's local runtime base."""
+    """Return foreign keys found under the retired workspace/runtime cache shape.
+
+    Canonical ``.polaris/runtime`` is already project-scoped and cannot contain
+    another workspace namespace.  This check remains only to diagnose legacy
+    contaminated workspaces.
+    """
 
     try:
         from polaris.kernelone.storage import workspace_key

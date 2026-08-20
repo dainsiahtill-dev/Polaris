@@ -53,6 +53,6 @@ verification:
   - polaris/kernelone/storage/tests/test_storage_layout.py
   - tests/test_storage_layout_v4.py
   gaps:
-  - Initial business-cell declaration; implementation convergence is in progress.
+  - Some runtime path lookups still bypass storage.layout contracts.
   smoke_commands: []
 generated_artifacts: []

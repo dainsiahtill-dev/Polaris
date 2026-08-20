@@ -74,6 +74,41 @@ def test_storage_roots_taxonomy(tmp_path: Path) -> None:
     assert Path(roots.runtime_project_root).as_posix().endswith("/runtime")
 
 
+def test_default_runtime_root_is_inside_target_project(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
+    monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+    clear_storage_roots_cache()
+
+    roots = resolve_storage_roots(str(workspace))
+
+    assert Path(roots.runtime_root).resolve() == (workspace / ".polaris" / "runtime").resolve()
+    assert roots.runtime_mode == "project_local"
+
+
+def test_explicit_project_local_runtime_root_is_not_nested(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    local_runtime = workspace / ".polaris" / "runtime"
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(local_runtime))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+    clear_storage_roots_cache()
+
+    roots = resolve_storage_roots(str(workspace))
+
+    assert Path(roots.runtime_root).resolve() == local_runtime.resolve()
+    assert roots.runtime_mode == "project_local_explicit"
+    assert "/projects/" not in Path(roots.runtime_root).as_posix()
+
+
 def test_runtime_base_writable_probe_is_concurrency_safe(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
