@@ -231,19 +231,38 @@ class _Mixin03:
 
         workspace_root = self.workspace.resolve()
         candidates: list[str] = []
-        diagnostics = normalize_director_repair_diagnostics([str(item) for item in artifact_quality_errors or []])
-        for diagnostic in diagnostics:
-            path = str(diagnostic.path or "").strip().replace("\\", "/")
+
+        def append_workspace_path(raw_path: str) -> None:
+            path = str(raw_path or "").strip().replace("\\", "/")
             diagnostic_path = Path(path.removeprefix("file://"))
             if path and diagnostic_path.is_absolute():
                 try:
                     path = diagnostic_path.resolve().relative_to(workspace_root).as_posix()
                 except (OSError, ValueError):
-                    # A verifier may mention framework/toolchain files outside
-                    # the project. Never turn those into Director write scope.
-                    path = ""
+                    # Python tracebacks also name stdlib/site-package frames.
+                    # Never turn those external files into Director write scope.
+                    return
             if path and _is_workspace_quality_repair_path(path):
                 candidates.append(path)
+
+        diagnostics = normalize_director_repair_diagnostics([str(item) for item in artifact_quality_errors or []])
+        for diagnostic in diagnostics:
+            append_workspace_path(str(diagnostic.path or ""))
+
+        # ``normalize_director_repair_diagnostics`` recognizes compiler/test
+        # location formats, but a Python unittest import failure commonly
+        # exposes the causal paths only in traceback frames and the final
+        # ``ImportError (.../__init__.py)`` suffix.  Live L3-21 therefore
+        # yielded no diagnostic targets and Factory fell back to ``src/main.py``;
+        # the Director made a real, non-no-op edit to the wrong owner. Extract
+        # only quoted traceback paths and parenthesized paths, then apply the
+        # same workspace containment and repair-suffix policy above.
+        for raw_error in artifact_quality_errors or []:
+            error_text = str(raw_error or "")
+            for match in re.finditer(r"\bFile\s+[\"'](?P<path>[^\"']+)[\"']\s*,\s*line\s+\d+", error_text):
+                append_workspace_path(match.group("path"))
+            for match in re.finditer(r"\((?P<path>[^()]+)\)", error_text):
+                append_workspace_path(match.group("path"))
         joined_errors = "\n".join(str(item or "") for item in artifact_quality_errors).lower()
         for filename in _LANGUAGE_NEUTRAL_REPAIR_FILENAMES:
             if filename.lower() not in joined_errors:

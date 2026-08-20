@@ -1,0 +1,64 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "factory-python-traceback-repair-owner-routing-20260820",
+  "status": "fix_implemented_live_revalidation_running",
+  "severity": "P0",
+  "scope": "Polaris Factory workspace-quality repair routing",
+  "live_run": {
+    "factory_run_id": "factory_f11604129d5b",
+    "project_id": "L3-21",
+    "failed_stage": "quality_gate",
+    "retry_stage": "quality_gate",
+    "upstream_restarted": false
+  },
+  "symptom": "Python unittest import failure named tests/test_product.py and src/dream_subway/__init__.py, but Director repair was authorized only for src/main.py.",
+  "dynamic_debug_evidence": {
+    "final_request_snapshot_ref": "334a4736048b6a073127c6c3",
+    "provider_tools": [
+      "edit_file"
+    ],
+    "tool_choice": "required",
+    "physical_effect": {
+      "path": "src/main.py",
+      "operation": "modify",
+      "before_sha256": "070353f9d82a01dc132691130cabefec79ac61f89fac49505115702a7484e42c",
+      "after_sha256": "176086adbd015102dcc21a73db380d6af40a09cd5ff3065f817798885fc2a6e5",
+      "receipt_id": "fae353c3"
+    },
+    "pre_fix_runtime_probe": {
+      "method": "_workspace_quality_repair_diagnostic_target_files",
+      "result": []
+    },
+    "actual_authorized_target": "src/main.py",
+    "causal_source_target": "src/dream_subway/__init__.py"
+  },
+  "root_cause": [
+    "normalize_director_repair_diagnostics did not extract workspace-local Python traceback frames or the ImportError source suffix",
+    "LLM repair owner claiming truncated diagnostic targets to the first path, preventing the source-preference owner scorer from seeing the causal source path",
+    "owner scoring and repair-task projection ignored the run-bound CE/JobToken allowed_write_paths, so generic PM targets overrode concrete topology ownership"
+  ],
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_03.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py"
+    ],
+    "behavior": [
+      "Extract only workspace-contained Python traceback and parenthesized source paths; external stdlib paths remain rejected",
+      "Keep the complete diagnostic target set for LLM owner selection",
+      "Select and project the owner from the run-bound JobToken write scope; project that same scope into the local repair task consumed by roles/DEO"
+    ]
+  },
+  "verification": {
+    "targeted_tests": "4 passed",
+    "mypy": "3 source files clean",
+    "ruff": "changed source and focused test clean",
+    "broader_regression": "71 passed, 6 pre-existing/refactor-residual failures cataloged separately",
+    "same_run_revalidation": "running"
+  },
+  "constraints": {
+    "target_project_modified_manually": false,
+    "pm_restarted": false,
+    "chief_engineer_restarted": false,
+    "director_restarted": false
+  }
+}

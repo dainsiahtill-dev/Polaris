@@ -719,9 +719,11 @@ def test_canonical_projection_filters_task_rows_to_current_run(
             "factory_run_id": "factory-current",
             "status": "completed",
             "execution_state": "completed",
+            "claimed_by": "",
             "fact_event_seq": 11,
             "source": "task_runtime.execution_fact",
             "status_source": "task_runtime.execution_fact",
+            "metadata": {},
         }
     ]
 

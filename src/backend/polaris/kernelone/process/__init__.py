@@ -20,6 +20,7 @@ from .contracts import (
     ShellDisallowedError,
     SubprocessCommandExecutor,
 )
+from .process_tree import isolated_process_group_kwargs, run_process_tree_safe, signal_process_tree
 from .runtime_control import (
     clear_director_stop_flag,
     clear_stop_flag,
@@ -32,12 +33,9 @@ from .runtime_control import (
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "AsyncProcessHandle",
-    # AsyncProcessRunnerPort contract (async streaming)
     "AsyncProcessRunnerPort",
-    # CommandExecutorPort contract (sync)
     "CommandExecutorPort",
     "CommandResult",
-    # Process lifecycle
     "ProcessControlPort",
     "ProcessInfo",
     "ProcessStatus",
@@ -47,11 +45,13 @@ __all__ = [
     "StreamResult",
     "SubprocessAsyncRunner",
     "SubprocessCommandExecutor",
-    # Runtime control
     "clear_director_stop_flag",
     "clear_stop_flag",
     "director_stop_flag_path",
+    "isolated_process_group_kwargs",
     "list_external_loop_pm_pids",
+    "run_process_tree_safe",
+    "signal_process_tree",
     "terminate_external_loop_pm_processes",
     "terminate_pid",
 ]

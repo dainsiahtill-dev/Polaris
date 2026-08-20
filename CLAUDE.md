@@ -201,6 +201,7 @@ python scripts/run_factory_e2e_smoke.py --workspace .
 - 不提交运行时产物: `.polaris/runtime/**`, `playwright-report/**`, `test-results/**`。
 - 默认 runtime 唯一物理根是目标项目 `<workspace>/.polaris/runtime`；Instance Registry、backend CLI、ContextOS、ReceiptStore、Run Ledger 与内部 Bench launch receipt 必须消费同一根。外部 cache/RAM-disk 仅允许显式 opt-in；禁止新建 `<workspace>/runtime` 或默认外置到 system cache，旧外部 namespace 只读兼容、禁止双写/自动搬迁。
 - 验证失败不得标记任务完成（fail-closed）。
+- 任何 Bench、角色、工具、QA、runtime 或控制面失败都必须先对 exact run 做动态 DEBUG：最终 provider request/response、tool lifecycle、effect receipt、真实 verifier、TaskRuntime、Run Ledger 与 settlement；静态分析只能解释动态证据，不能替代动态复现。生成的目标项目只允许只读取证与执行 verifier，绝对禁止直接修改；修复必须落在 Polaris 元平台、具备通用性，并附回归测试、同运行验证与机器可读缺陷记录。
 - 多项目并行观测必须用 Instance Registry + `/launcher` 启动或发现多个单-workspace 实例；不要把单个 backend/UI 临时改造成多 workspace 状态拼接层。
 - 从 Launcher 打开的实例工作台必须通过 URL query 或 `VITE_POLARIS_*` 显式绑定 `instance`、`backend`、`token`、`workspace`；前端 API 与 `/v2/ws/runtime` 必须使用该 workspace 绑定，禁止静默回退到默认 backend、默认 workspace 或主仓 runtime。
 - 需要被总控观测的 Agent/CLI/内部压力测试启动项必须注册实例；Launcher 只读实例发现状态，不能成为 PM、Chief Engineer、Director、QA、ContextOS、ReceiptStore 或 Run Ledger 的事实源。

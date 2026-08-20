@@ -23,6 +23,26 @@ from polaris.cells.factory.pipeline.internal.factory_workspace_quality_evidence 
 )
 
 
+def test_unittest_discovery_rejects_recursive_test_before_spawn(tmp_path: Path) -> None:
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_product.py").write_text(
+        "import subprocess, sys\n"
+        "def test_recursive():\n"
+        "    subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests'])\n",
+        encoding="utf-8",
+    )
+
+    result = WorkspaceQualityRunner(tmp_path).run_command(
+        [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
+        timeout_seconds=2,
+    )
+
+    assert result["passed"] is False
+    assert result["error"] == "recursive_verifier_invocation_detected"
+    assert "tests/test_product.py:3:1" in str(result["diagnostic_excerpt"])
+
+
 def _write_src_package_cli(workspace: Path, *, engine_value: str) -> None:
     src = workspace / "src"
     src.mkdir(parents=True, exist_ok=True)

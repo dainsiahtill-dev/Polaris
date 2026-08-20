@@ -1,0 +1,39 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "P0-20260820-recursive-verifier-process-tree",
+  "status": "fixed_unit_and_live_probe_verified",
+  "severity": "P0",
+  "exact_run_id": "factory_f11604129d5b",
+  "instance_id": "factory-bench-l3-21-r01-l3-21-run-90eb6a2a05f8-5a673574c708fbdc",
+  "workspace": "/tmp/factory-bench-l3-21-r01/workspaces/90eb6a2a05f8-8afa5ef1d83b6e72/L3-21-1bff44c03e723ba6/238a89bd412894921ab10bd3",
+  "symptom": "python -m unittest discover did not return and recursively spawned about 499 identical descendant verifiers",
+  "dynamic_evidence": {
+    "direct_pid": 74201,
+    "process_state": "sleeping in do_sys_poll",
+    "stdin": "/dev/pts/6",
+    "descendant_depth_observed": 499,
+    "recursive_source": "tests/test_product.py:747",
+    "live_fixed_probe": "recursive_verifier_invocation_detected before process spawn"
+  },
+  "root_cause": [
+    "workspace verifier accepted a test that launched the same unittest discovery verifier",
+    "subprocess timeout terminated only the direct child rather than the descendant process group",
+    "KernelOne async TIMED_OUT status incorrectly made a still-live process appear non-terminable"
+  ],
+  "containment": "stopped only the exact isolated Launcher instance; verified recursive descendants were gone",
+  "meta_platform_fixes": [
+    "read-only AST preflight returns an actionable recursive_verifier_invocation_detected diagnostic",
+    "KernelOne run_process_tree_safe starts an isolated process group and terminates the full tree on timeout/cancel",
+    "KernelOne async runner now treats TIMED_OUT as a wait verdict and can terminate the still-live tree",
+    "Factory workspace quality and control-plane custom verifiers consume the tree-safe primitive"
+  ],
+  "target_project_modified": false,
+  "verification": {
+    "pytest": "32 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "real_process_tree_test": "parent and sleeping child terminated after timeout",
+    "exact_workspace_probe": "tests/test_product.py:747 identified before spawn"
+  },
+  "remaining": "restart exact isolated instance and retry only qa_gate; verify Director repairs the owning test task and reruns only the failed verifier"
+}

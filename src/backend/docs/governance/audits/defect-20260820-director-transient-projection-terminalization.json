@@ -1,0 +1,48 @@
+{
+  "schema_version": "polaris.defect.audit.v1",
+  "defect_id": "20260820-director-transient-projection-terminalization",
+  "status": "FIXED_UNIT_VERIFIED_LIVE_RETRY_PENDING",
+  "severity": "P0",
+  "factory_run_id": "factory_f11604129d5b",
+  "project_id": "L3-21",
+  "symptom": "Factory failed director_dispatch and force-failed an owned active Director task after a transient TaskRuntime session/fact parity gap.",
+  "runtime_evidence": {
+    "director_run_id": "director-c225e219d80d",
+    "task_id": "TASK-2",
+    "task_runtime_row_id": "10",
+    "task_boundary_verdict": "completed_verified",
+    "task_boundary_recorded_at": "2026-08-20T05:52:07.610308Z",
+    "projection_blocker": "projected_session_file_fallback_required",
+    "projection_missing_fact_task_ids": [
+      "10"
+    ],
+    "factory_failure_at": "2026-08-20T05:52:34.871461Z",
+    "terminal_drain_source": "factory_terminal_drain_force_active"
+  },
+  "final_request_evidence": {
+    "role_identity": "director",
+    "native_tool_calls": 6,
+    "effect_receipts": 4,
+    "tool_surface": [
+      "write_file"
+    ],
+    "provider_response_completed": true
+  },
+  "root_cause": "_settle_inflight_director_run_after_timeout treated an explicitly non-authoritative blocked projection probe as a terminal child-run verdict.",
+  "fix": {
+    "file": "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_04.py",
+    "rule": "A probe with metadata.canonical_authoritative=false is observability evidence only and must not terminate the settlement wait. Continue observing until an authoritative terminal fact or the existing hard lease deadline."
+  },
+  "tests": {
+    "focused": "3 passed",
+    "regression": "test_director_timeout_settle_waits_through_non_authoritative_projection_gap",
+    "source_ruff": "passed",
+    "source_mypy": "passed",
+    "known_test_refactor_debt": "Recent characterization-file splitting left pre-existing unused-import Ruff failures; these are not caused by this fix."
+  },
+  "remaining_work": [
+    "Restart only the isolated L3-21 instance so it loads the fix.",
+    "Retry director_dispatch on the same Factory run without rerunning PM or Chief Engineer.",
+    "Verify authoritative TaskRuntime completion, QA, and project entrypoint evidence."
+  ]
+}

@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from polaris.kernelone.benchmark.factory_audit import check_workspace_delivery_depth_contract
+from polaris.kernelone.process import run_process_tree_safe
 
 from . import factory_stage_helpers as helpers
 from .factory_run_models import _WORKSPACE_VALIDATION_TIMEOUT_SECONDS
@@ -78,6 +79,7 @@ _LONG_RUNNING_WEB_START_MARKERS = (
     "next start",
 )
 _NESTED_JAVAC_DIAGNOSTIC_TIMEOUT_SECONDS = 30.0
+_SUBPROCESS_CALL_NAMES = frozenset({"run", "call", "check_call", "check_output", "Popen"})
 
 
 def workspace_quality_subprocess_env(*, workspace: Path) -> dict[str, str]:
@@ -103,6 +105,64 @@ def _npm_start_runs_long_lived_web_server(script: str) -> bool:
     if any(marker in normalized for marker in _LONG_RUNNING_WEB_START_MARKERS):
         return True
     return bool(re.search(r"(?:^|\s)npx\s+(?:--yes\s+)?serve(?:\s|$)", normalized))
+
+
+def _is_python_unittest_discover_command(command: Sequence[str]) -> bool:
+    normalized = [str(part).strip().lower() for part in command]
+    return len(normalized) >= 4 and normalized[1:4] == ["-m", "unittest", "discover"]
+
+
+def _literal_command_tokens(node: ast.AST) -> list[str]:
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        return []
+    tokens: list[str] = []
+    for element in node.elts:
+        if isinstance(element, ast.Constant) and isinstance(element.value, str):
+            tokens.append(element.value.strip().lower())
+    return tokens
+
+
+def _recursive_unittest_discovery_diagnostic(workspace: Path, command: Sequence[str]) -> str:
+    """Detect a test that launches the same unittest discovery verifier.
+
+    The guard is intentionally structural and read-only.  Unknown/dynamic
+    subprocess construction is contained by the process-tree runner below.
+    """
+
+    if not _is_python_unittest_discover_command(command):
+        return ""
+    tests_root = workspace / "tests"
+    if not tests_root.is_dir():
+        return ""
+    try:
+        candidates = sorted(path for path in tests_root.rglob("test_*.py") if path.is_file())
+    except OSError:
+        return ""
+    for path in candidates:
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (OSError, SyntaxError, UnicodeError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            function = node.func
+            if not (
+                isinstance(function, ast.Attribute)
+                and isinstance(function.value, ast.Name)
+                and function.value.id == "subprocess"
+                and function.attr in _SUBPROCESS_CALL_NAMES
+            ):
+                continue
+            tokens = _literal_command_tokens(node.args[0])
+            if all(token in tokens for token in ("-m", "unittest", "discover")):
+                relative = path.relative_to(workspace).as_posix()
+                return (
+                    f"{relative}:{int(getattr(node, 'lineno', 1))}:1: error: "
+                    "recursive_verifier_invocation_detected: test subprocess launches "
+                    "the same python -m unittest discover verifier"
+                )
+    return ""
 
 
 class WorkspaceQualityRunner:
@@ -669,6 +729,19 @@ print(f"Java javac passed for {len(files)} source file(s)")
                 "stdout_tail": "",
                 "stderr_tail": "",
             }
+        recursive_diagnostic = _recursive_unittest_discovery_diagnostic(self.workspace, resolved_command)
+        if recursive_diagnostic:
+            return {
+                "command": command,
+                "started_at": started_at,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "exit_code": None,
+                "passed": False,
+                "error": "recursive_verifier_invocation_detected",
+                "stdout_tail": "",
+                "stderr_tail": recursive_diagnostic,
+                "diagnostic_excerpt": recursive_diagnostic,
+            }
         if is_cargo_test_command(resolved_command):
             try:
                 with sandboxed_cargo_test_command(
@@ -728,16 +801,13 @@ print(f"Java javac passed for {len(files)} source file(s)")
         cargo_test: bool,
     ) -> dict[str, Any]:
         try:
-            completed = subprocess.run(
+            completed = run_process_tree_safe(
                 resolved_command,
                 cwd=str(self.workspace),
-                capture_output=True,
-                text=True,
                 encoding="utf-8",
                 errors="replace",
                 timeout=max(1.0, float(timeout_seconds or _WORKSPACE_VALIDATION_TIMEOUT_SECONDS)),
                 env=workspace_quality_subprocess_env(workspace=self.workspace),
-                check=False,
             )
             stdout = helpers.trim_command_output(completed.stdout)
             stderr = helpers.trim_command_output(completed.stderr)
@@ -865,16 +935,13 @@ def _nested_javac_diagnostics_from_output(
     if not resolved:
         return ""
     try:
-        completed = subprocess.run(
+        completed = run_process_tree_safe(
             resolved,
             cwd=str(workspace),
-            capture_output=True,
-            text=True,
             encoding="utf-8",
             errors="replace",
             timeout=max(1.0, timeout_seconds),
             env=workspace_quality_subprocess_env(workspace=workspace),
-            check=False,
         )
     except (OSError, RuntimeError, subprocess.TimeoutExpired, TypeError, ValueError) as exc:
         return f"Nested javac diagnostics unavailable: {type(exc).__name__}: {exc}"

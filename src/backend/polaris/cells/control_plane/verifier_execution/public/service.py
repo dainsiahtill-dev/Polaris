@@ -19,6 +19,7 @@ from polaris.cells.control_plane.verifier_execution.public.contracts import (
     RunVerifierPolicyCommandV1,
     VerifierExecutionResultV1,
 )
+from polaris.kernelone.process import run_process_tree_safe
 
 STDOUT_TAIL_LIMIT = 4000
 
@@ -106,15 +107,12 @@ def _run_custom_script(workspace: Path, script: dict[str, Any], timeout_seconds:
     result["hash"] = _file_hash(path)
     command = _command_for_script(path)
     try:
-        completed = subprocess.run(
+        completed = run_process_tree_safe(
             command,
             cwd=str(workspace),
-            text=True,
             encoding="utf-8",
             errors="replace",
-            capture_output=True,
             timeout=timeout_seconds,
-            check=False,
         )
     except subprocess.TimeoutExpired as exc:
         result.update(

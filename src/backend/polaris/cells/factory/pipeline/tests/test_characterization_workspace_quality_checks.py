@@ -14,6 +14,10 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
+from polaris.cells.factory.pipeline.internal.factory_workspace_quality_impl import (
+    _workspace_quality_authoritative_owner_paths,
+    _workspace_quality_llm_claim_target_files,
+)
 from polaris.cells.factory.pipeline.tests._characterization_helpers import (
     _executor,
     _with_task_runtime_authority,
@@ -685,6 +689,74 @@ class TestRunWorkspaceQualityChecks:
         assert executor._workspace_quality_repair_owner_score(
             source_owner, run_id=run_id, normalized_targets=targets
         ) > executor._workspace_quality_repair_owner_score(test_owner, run_id=run_id, normalized_targets=targets)
+
+    def test_workspace_quality_llm_claim_keeps_test_and_causal_source_targets(self) -> None:
+        assert _workspace_quality_llm_claim_target_files(
+            owner_target_files=None,
+            diagnostic_target_files=["tests/test_product.py", "src/dream_subway/__init__.py"],
+            fallback_target_files=["src/main.py"],
+        ) == ["tests/test_product.py", "src/dream_subway/__init__.py"]
+
+    def test_workspace_quality_owner_uses_run_bound_job_token_topology(self) -> None:
+        metadata = {
+            "factory_run_id": "factory-python-owner",
+            "external_task_id": "TASK-1",
+            "target_files": ["requirements.txt"],
+            "scope_paths": ["requirements.txt"],
+            "control_plane_job_token": {
+                "factory_run_id": "factory-python-owner",
+                "allowed_write_paths": [
+                    "requirements.txt",
+                    "src/dream_subway/__init__.py",
+                    "src/dream_subway/domain/station.py",
+                ],
+            },
+        }
+
+        assert _workspace_quality_authoritative_owner_paths(
+            metadata,
+            run_id="factory-python-owner",
+        ) == [
+            "requirements.txt",
+            "src/dream_subway/__init__.py",
+            "src/dream_subway/domain/station.py",
+        ]
+        assert OrchestrationStageExecutor._workspace_quality_repair_owner_score(
+            {"status": "completed", "metadata": metadata},
+            run_id="factory-python-owner",
+            normalized_targets={"tests/test_product.py", "src/dream_subway/__init__.py"},
+        )[0] == 2
+
+    def test_workspace_quality_repair_extracts_python_traceback_project_paths(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Python traceback frames and ImportError suffixes retain both owners."""
+
+        tests = tmp_path / "tests"
+        package = tmp_path / "src" / "dream_subway"
+        tests.mkdir(parents=True)
+        package.mkdir(parents=True)
+        test_path = tests / "test_product.py"
+        package_init = package / "__init__.py"
+        test_path.write_text("from dream_subway import DreamSubwayEditor\n", encoding="utf-8")
+        package_init.write_text("\"\"\"Dream subway package.\"\"\"\n", encoding="utf-8")
+        executor = _executor(tmp_path)
+        diagnostic = "\n".join(
+            [
+                '  File "/usr/lib/python3.12/unittest/loader.py", line 419, in _find_test_path',
+                f'  File "{test_path}", line 3, in <module>',
+                "    from dream_subway import DreamSubwayEditor",
+                (
+                    "ImportError: cannot import name 'DreamSubwayEditor' from 'dream_subway' "
+                    f"({package_init})"
+                ),
+            ]
+        )
+
+        targets = executor._workspace_quality_repair_diagnostic_target_files([diagnostic])
+
+        assert targets == ["tests/test_product.py", "src/dream_subway/__init__.py"]
 
     def test_workspace_quality_owner_score_matches_cmake_lists_case_aliases(
         self,

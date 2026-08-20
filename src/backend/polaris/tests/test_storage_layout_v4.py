@@ -80,9 +80,8 @@ def test_runtime_base_rejects_workspace_scoped_explicit_root(monkeypatch: pytest
     monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
     monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
 
-    roots = resolve_storage_roots(str(workspace))
-    assert roots.runtime_mode != "explicit_runtime_root"
-    assert workspace.resolve() not in Path(roots.runtime_root).resolve().parents
+    with pytest.raises(RuntimeError, match="must equal the canonical project runtime root"):
+        resolve_storage_roots(str(workspace))
 
 
 def test_runtime_base_priority_ramdisk_then_cache_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -126,9 +125,8 @@ def test_runtime_base_rejects_workspace_scoped_cache_root(monkeypatch: pytest.Mo
     monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
     monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(cache_root))
 
-    roots = resolve_storage_roots(str(workspace))
-    assert roots.runtime_mode != "explicit_runtime_cache"
-    assert workspace.resolve() not in Path(roots.runtime_root).resolve().parents
+    with pytest.raises(RuntimeError, match="must be outside the workspace"):
+        resolve_storage_roots(str(workspace))
 
 
 def test_runtime_resolver_rejects_dot_polaris_prefix(tmp_path: Path) -> None:
@@ -176,7 +174,7 @@ def test_legacy_artifact_aliases_are_rejected(tmp_path: Path) -> None:
         assert UNSUPPORTED_PATH_PREFIX in str(exc_info.value)
 
 
-def test_workspace_persistent_and_runtime_paths_are_outside_workspace(tmp_path: Path) -> None:
+def test_workspace_persistent_and_runtime_paths_are_project_local(tmp_path: Path) -> None:
     workspace = tmp_path / "project"
     workspace.mkdir(parents=True, exist_ok=True)
 
@@ -184,7 +182,8 @@ def test_workspace_persistent_and_runtime_paths_are_outside_workspace(tmp_path: 
     persistent_file = Path(resolve_workspace_persistent_path(str(workspace), "workspace/brain/MEMORY.jsonl"))
 
     workspace_abs = workspace.resolve()
-    assert workspace_abs not in runtime_file.parents
+    assert workspace_abs in runtime_file.parents
+    assert runtime_file.as_posix().endswith("/.polaris/runtime/events/runtime.events.jsonl")
     assert workspace_abs in persistent_file.parents
     assert persistent_file.as_posix().endswith("/.polaris/brain/MEMORY.jsonl")
 

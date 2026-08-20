@@ -210,6 +210,7 @@ async def test_wait_with_custom_timeout() -> None:
     status = await handle.wait(timeout=0.1)
     # The inner wait times out; process may still be alive
     assert status in (ProcessStatus.TIMED_OUT, ProcessStatus.RUNNING)
+    await handle.terminate(timeout=1.0)
 
 
 @pytest.mark.asyncio
@@ -229,6 +230,29 @@ async def test_terminate_stops_running_process(tmp_path: Path) -> None:
     # After terminate(), the process must not be alive.
     assert await handle.is_alive() is False
     assert handle.status == ProcessStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_timed_out_handle_can_still_terminate_live_process_tree(tmp_path: Path) -> None:
+    """TIMED_OUT is a wait verdict, not proof that the OS process is dead."""
+
+    runner = SubprocessAsyncRunner()
+    child_pid_path = tmp_path / "async-child.pid"
+    script = (
+        "import pathlib, subprocess, sys, time; "
+        "child=subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+        "pathlib.Path(sys.argv[1]).write_text(str(child.pid), encoding='utf-8'); "
+        "time.sleep(60)"
+    )
+    handle = await runner.spawn([sys.executable, "-c", script, str(child_pid_path)], timeout=1, cwd=tmp_path)
+    assert await handle.wait(timeout=0.2) == ProcessStatus.TIMED_OUT
+    assert await handle.is_alive() is True
+
+    assert await handle.terminate(timeout=1.0) is True
+    assert await handle.is_alive() is False
+    child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+    if Path(f"/proc/{child_pid}/stat").is_file():
+        assert Path(f"/proc/{child_pid}/stat").read_text(encoding="utf-8").split()[2] == "Z"
 
 
 @pytest.mark.asyncio

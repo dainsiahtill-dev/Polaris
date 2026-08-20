@@ -2127,9 +2127,8 @@ class _Mixin02:
 
         ``project_declared_target_files`` is a project-wide inventory copied to
         every Director task.  Treating it as ownership makes unrelated tasks tie
-        for every project file; the failed/rework priority then selects the wrong
-        task and the Director correctly refuses the out-of-scope edit.  Ownership
-        is established only by the task-local ``target_files``/``scope_paths``.
+        for every project file. Ownership comes from task-local PM paths plus the
+        run-bound CE/JobToken write scope used by physical tools.
         """
 
         metadata = candidate.get("metadata")
@@ -2145,6 +2144,12 @@ class _Mixin02:
                 raw_paths.append(value)
             elif isinstance(value, list | tuple | set):
                 raw_paths.extend(value)
+        raw_paths.extend(
+            workspace_quality_impl._workspace_quality_authoritative_owner_paths(
+                metadata,
+                run_id=run_id,
+            )
+        )
         candidate_paths = {str(path or "").strip().replace("\\", "/") for path in raw_paths if str(path or "").strip()}
         overlaps = workspace_quality_impl._workspace_quality_repair_path_overlaps(normalized_targets, candidate_paths)
         source_overlap = sum(

@@ -46,6 +46,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
+from polaris.kernelone.process.process_tree import isolated_process_group_kwargs, signal_process_tree
 from polaris.kernelone.utils.time_utils import PROCESS_COMMAND_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
@@ -437,6 +438,7 @@ class SubprocessAsyncRunner:
             cwd=str(cwd) if cwd else None,
             env=resolved_env,
             limit=65536,  # pipe buffer limit per stream
+            **isolated_process_group_kwargs(),
         )
         return cast(
             "AsyncProcessHandle",
@@ -570,8 +572,6 @@ class _AsyncioProcessHandle:
         return self._status
 
     async def is_alive(self) -> bool:
-        if self._status not in (ProcessStatus.PENDING, ProcessStatus.RUNNING):
-            return False
         return self.proc.returncode is None
 
     async def write_stdin(self, data: str) -> None:
@@ -602,21 +602,14 @@ class _AsyncioProcessHandle:
                     self.proc.stdin.close()
 
     async def terminate(self, timeout: float = 5.0) -> bool:
-        if self._status in (
-            ProcessStatus.SUCCESS,
-            ProcessStatus.FAILED,
-            ProcessStatus.TIMED_OUT,
-            ProcessStatus.CANCELLED,
-        ):
+        if self.proc.returncode is not None:
             return True
         try:
-            self.proc.terminate()
+            signal_process_tree(self.proc.pid, force=False)
             try:
                 await asyncio.wait_for(self.proc.wait(), timeout=timeout)
             except asyncio.TimeoutError:
-                # proc.kill() returns None on all platforms (not Awaitable).
-                # Just call it and wait for the process to exit.
-                self.proc.kill()
+                signal_process_tree(self.proc.pid, force=True)
                 with contextlib.suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(self.proc.wait(), timeout=5.0)
                 self._status = ProcessStatus.CANCELLED
@@ -627,16 +620,10 @@ class _AsyncioProcessHandle:
         return True
 
     async def kill(self) -> None:
-        if self._status in (
-            ProcessStatus.SUCCESS,
-            ProcessStatus.FAILED,
-            ProcessStatus.TIMED_OUT,
-            ProcessStatus.CANCELLED,
-        ):
+        if self.proc.returncode is not None:
             return
         try:
-            # proc.kill() returns None on all platforms (not Awaitable).
-            self.proc.kill()
+            signal_process_tree(self.proc.pid, force=True)
             await self.proc.wait()
         except ProcessLookupError:
             pass

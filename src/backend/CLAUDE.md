@@ -73,6 +73,7 @@
 1. 跨 Cell 只能走公开契约，禁止直连 `internal/`
 2. 文件、数据库、网络、子进程、LLM、Descriptor、Embedding、Index 都是 effect，必须可审计
 3. 所有文本读写必须显式 UTF-8
+4. 任一 Bench/角色/工具/QA/runtime/控制面失败必须先动态调试 exact run；静态分析只解释动态证据。目标项目只读且禁止修改，修复只能落 Polaris 元平台，并补回归测试、同运行验证、机器可读缺陷记录。
 
 ### 3.3 归属与旧根冻结
 

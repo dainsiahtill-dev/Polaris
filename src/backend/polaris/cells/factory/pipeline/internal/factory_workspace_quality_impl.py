@@ -400,6 +400,35 @@ def _workspace_quality_repair_path_key(path: str) -> str:
     return token
 
 
+def _workspace_quality_authoritative_owner_paths(
+    metadata: Mapping[str, Any],
+    *,
+    run_id: str,
+) -> list[str]:
+    """Project CE/JobToken write scope into verifier-repair ownership.
+
+    PM target paths may intentionally remain generic while Chief Engineer
+    topology expands them into concrete package files.  The run-bound JobToken
+    is the capability authority consumed by physical tools; ignoring it makes
+    Factory lease a causal source repair to an unrelated PM row.
+    """
+
+    paths: list[str] = []
+    for key in ("control_plane_job_token", "capability_token"):
+        raw_token = metadata.get(key)
+        token = raw_token if isinstance(raw_token, Mapping) else {}
+        token_run_id = str(token.get("factory_run_id") or token.get("run_id") or "").strip()
+        if token_run_id and token_run_id != run_id:
+            continue
+        for path_key in ("allowed_write_paths", "target_files"):
+            raw_paths = token.get(path_key)
+            if isinstance(raw_paths, str):
+                paths.append(raw_paths)
+            elif isinstance(raw_paths, list | tuple | set):
+                paths.extend(str(item) for item in raw_paths)
+    return _dedupe_workspace_repair_paths(paths)
+
+
 def _workspace_quality_repair_path_overlaps(normalized_targets: set[str], candidate_paths: set[str]) -> set[str]:
     """Intersect repair targets with owner paths, treating CMakeLists case aliases as one file."""
 
@@ -621,7 +650,18 @@ def _claim_workspace_quality_repair_attempt(
     ):
         if not repair_task.get(key) and repair_task_metadata.get(key) is not None:
             repair_task[key] = repair_task_metadata[key]
-    if not repair_task.get("target_files"):
+    authoritative_owner_paths = _workspace_quality_authoritative_owner_paths(
+        repair_task_metadata,
+        run_id=run_id,
+    )
+    if authoritative_owner_paths:
+        # CE topology + run-bound JobToken is more specific than the PM's
+        # generic placeholder targets.  Reuse it for the local retry so the
+        # roles adapter and DEO authorize the same owner selected above.
+        repair_task["target_files"] = authoritative_owner_paths
+        repair_task["scope_paths"] = authoritative_owner_paths
+        repair_task_metadata["workspace_quality_repair_authoritative_owner_targets"] = authoritative_owner_paths
+    elif not repair_task.get("target_files"):
         repair_task["target_files"] = sorted(normalized_targets)
     repair_task_metadata.update(
         {
@@ -978,6 +1018,26 @@ async def _apply_workspace_quality_deterministic_repairs(
     return results, summary
 
 
+def _workspace_quality_llm_claim_target_files(
+    *,
+    owner_target_files: list[str] | None,
+    diagnostic_target_files: list[str],
+    fallback_target_files: list[str],
+) -> list[str]:
+    """Keep the complete causal path set for owner selection.
+
+    A verifier failure may name a test file first and its imported source file
+    later.  Truncating to the first path leases the test owner and makes the
+    causal source edit unauthorized.  The owner scorer already gives source
+    overlaps extra weight, while the claimed task's scope remains the final
+    write boundary.
+    """
+
+    if owner_target_files:
+        return _dedupe_workspace_repair_paths(owner_target_files)
+    return diagnostic_target_files or fallback_target_files
+
+
 async def _apply_workspace_quality_llm_repairs(
     executor,
     *,
@@ -1006,10 +1066,10 @@ async def _apply_workspace_quality_llm_repairs(
         if owner_target_files
         else diagnostic_target_files or materialized_declared_targets or changed_files
     )
-    claim_target_files = (
-        _dedupe_workspace_repair_paths(owner_target_files)
-        if owner_target_files
-        else list(diagnostic_target_files[:1]) or target_files
+    claim_target_files = _workspace_quality_llm_claim_target_files(
+        owner_target_files=owner_target_files,
+        diagnostic_target_files=diagnostic_target_files,
+        fallback_target_files=target_files,
     )
     repair_context: dict[str, Any] = {
         "delivery_mode": "materialize_changes",

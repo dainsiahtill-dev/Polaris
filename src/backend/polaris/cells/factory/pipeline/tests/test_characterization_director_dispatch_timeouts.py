@@ -105,6 +105,7 @@ class TestDirectorDispatchLoop:
     async def test_single_binding_materialization_failure_stops_before_no_claim_retry(
         self,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         class _SingleBindingQualityHandoffExecutor(OrchestrationStageExecutor):
             def __init__(self, workspace: Path) -> None:
@@ -206,6 +207,30 @@ class TestDirectorDispatchLoop:
         (tmp_path / "tests" / "verify.test.ts").write_text("import '../src/index';\n", encoding="utf-8")
 
         executor = _SingleBindingQualityHandoffExecutor(tmp_path)
+        monkeypatch.setattr(
+            TaskRuntimeService,
+            "query_observable_task_rows_projection",
+            lambda runtime: _authoritative_task_projection(
+                Path(runtime.workspace),
+                (
+                    {
+                        "id": 1,
+                        "status": "pending",
+                        "metadata": {"external_task_id": "TASK-1"},
+                    },
+                    {
+                        "id": 2,
+                        "status": "blocked",
+                        "metadata": {"external_task_id": "TASK-2"},
+                    },
+                    {
+                        "id": 3,
+                        "status": "blocked",
+                        "metadata": {"external_task_id": "TASK-3"},
+                    },
+                ),
+            ),
+        )
         tasks = [
             {"id": "TASK-1", "target_files": ["package.json", "src/index.ts"]},
             {"id": "TASK-2", "target_files": ["src/engine.ts"], "depends_on": ["TASK-1"]},
