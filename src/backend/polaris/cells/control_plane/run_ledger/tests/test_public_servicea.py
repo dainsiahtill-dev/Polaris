@@ -70,6 +70,32 @@ def _control_plane_facts(workspace: Path, *, run_id: str) -> list[dict[str, Any]
     )
 
 
+def _successful_tool_lifecycle_event(*, task_id: str = "TASK-1") -> dict[str, Any]:
+    """Return one complete lifecycle fact for projection-only tests."""
+
+    return {
+        "event_type": "tool_call_lifecycle",
+        "run_id": "run-1",
+        "task_id": task_id,
+        "turn_id": "turn-1",
+        "role": "director",
+        "tool_call_lifecycle_receipt": {
+            "schema_version": "tool_call_lifecycle_receipt.v1",
+            "run_id": "run-1",
+            "task_id": task_id,
+            "turn_id": "turn-1",
+            "role": "director",
+            "ok": True,
+            "dispatch_status": "dispatched",
+            "native_tool_calls_count": 1,
+            "decoded_tool_calls_count": 1,
+            "dispatched_tool_calls_count": 1,
+            "receipts": [{"ok": True}],
+            "dropped_tool_calls": [],
+        },
+    }
+
+
 def _append_control_plane_fact(
     workspace: Path,
     *,
@@ -2629,6 +2655,93 @@ def test_gate_revision_fork_fails_projection_integrity() -> None:
     assert projection["gate_revisions"]["issues"] == ["gate_revision_chain_fork_or_stale:2"]
     assert projection["integrity_ok"] is False
     assert projection["ok"] is False
+
+
+def test_explicit_successor_resolves_all_gate_revision_branch_heads() -> None:
+    base = {
+        "event_type": "gate_evaluated",
+        "stage": "workspace_validation",
+        "gate_obligation_id": "factory-1:workspace-validation",
+        "gate_subject_kind": "factory_run",
+        "gate_subject_id": "factory-1",
+        "job_token": {
+            "token_id": "token-1",
+            "run_id": "factory-1",
+            "factory_run_id": "factory-1",
+            "project_id": "P1",
+            "capability_audit": {"ok": True, "issues": []},
+            "gate_policy": {"required_evidence_modalities": ["command"]},
+        },
+    }
+    first_root = {
+        **base,
+        "gate_revision": 1,
+        "content_id": "a" * 64,
+        "gate": {"name": "workspace_validation", "ok": False, "summary": "first root"},
+        "physical_evidence": {
+            "modalities": {"command": {"present": True, "ok": False, "detail": "first root"}}
+        },
+    }
+    first_head = {
+        **first_root,
+        "gate_revision": 2,
+        "supersedes_content_id": "a" * 64,
+        "content_id": "b" * 64,
+        "gate": {"name": "workspace_validation", "ok": False, "summary": "first head"},
+    }
+    restarted_root = {
+        **first_root,
+        "content_id": "c" * 64,
+        "gate": {"name": "workspace_validation", "ok": False, "summary": "restarted root"},
+    }
+    restarted_head = {
+        **restarted_root,
+        "gate_revision": 2,
+        "supersedes_content_id": "c" * 64,
+        "content_id": "d" * 64,
+        "gate": {"name": "workspace_validation", "ok": True, "summary": "restarted head"},
+        "physical_evidence": {
+            "modalities": {"command": {"present": True, "ok": True, "detail": "passed"}}
+        },
+    }
+    resolver = {
+        **restarted_head,
+        "gate_revision": 3,
+        "supersedes_content_id": "b" * 64,
+        "resolves_gate_revision_branch_heads": ["d" * 64],
+        "content_id": "e" * 64,
+        "gate": {"name": "workspace_validation", "ok": True, "summary": "canonical repair passed"},
+    }
+
+    unresolved = build_run_ledger_projection(
+        [first_root, first_head, restarted_root, restarted_head, _successful_tool_lifecycle_event()]
+    )
+    resolved = build_run_ledger_projection(
+        [first_root, first_head, restarted_root, restarted_head, resolver, _successful_tool_lifecycle_event()]
+    )
+
+    assert unresolved["gate_revisions"]["integrity_ok"] is False
+    assert resolved["gate_revisions"]["integrity_ok"] is True
+    assert resolved["gate_revisions"]["issues"] == []
+    assert resolved["gate_revisions"]["resolved_forks"] == [
+        {
+            "gate_revision_key": [
+                "factory-1",
+                "P1",
+                "workspace_validation",
+                "workspace_validation",
+                "factory-1:workspace-validation",
+                "factory_run",
+                "factory-1",
+            ],
+            "resolver_content_id": "e" * 64,
+            "resolver_revision": 3,
+            "resolved_branch_heads": ["d" * 64],
+        }
+    ]
+    assert [gate["content_id"] for gate in resolved["effective_gates"]] == ["e" * 64]
+    assert resolved["outcome_ok"] is True
+    assert resolved["ok"] is True
 
 
 def test_projection_exposes_tool_dispatch_dropped() -> None:

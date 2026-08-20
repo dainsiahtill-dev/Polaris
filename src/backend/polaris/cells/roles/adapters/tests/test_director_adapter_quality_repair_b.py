@@ -2186,6 +2186,108 @@ class TestQualityRepairMissingTargetContractB:
         assert adapter._execution.allow_patch_fallback is False
 
     @pytest.mark.asyncio
+    async def test_mixed_existing_and_missing_test_repair_exposes_edit_and_write(
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A mixed test repair must support both mutation and creation.
+
+        Regression for L3-21: TASK-3 owned a truncated existing test and a
+        missing test file.  The quality-repair route collapsed that mixed
+        obligation to ``edit_file`` only, so the model could diagnose both
+        defects but had no physical tool capable of creating the missing file.
+        """
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        monkeypatch.delenv("KERNELONE_DIRECTOR_REPAIR_FORCE_EXISTING_WRITE", raising=False)
+
+        class _Execution:
+            def __init__(self) -> None:
+                self.allowed_tool_names: set[str] | None = None
+                self.allow_patch_fallback: bool | None = None
+
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                del result
+                return []
+
+            async def execute_tools(
+                self,
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **kwargs: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                self.allowed_tool_names = kwargs.get("allowed_tool_names")
+                self.allow_patch_fallback = kwargs.get("allow_patch_fallback")
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self._execution = _Execution()
+                self.repair_context: dict[str, Any] = {}
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, timeout_seconds, stage_label
+                self.repair_context = context
+                return {"content": ""}
+
+        existing = tmp_path / "tests" / "test_product.py"
+        existing.parent.mkdir(parents=True)
+        existing.write_text("from dream_subway import main\n", encoding="utf-8")
+        missing = "tests/test_behavior.py"
+        errors = [
+            "Artifact quality scan failed: python runtime smoke crashed for "
+            "'tests/test_product.py' (returncode=1); tail:\nRan 0 tests",
+            f"Artifact quality scan failed: declared target file missing '{missing}'",
+        ]
+
+        adapter = _Adapter()
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["tests/test_product.py", missing]},
+            target_task_id="TASK-3",
+            run_id="run-mixed-test-create-edit",
+            context={},
+            original_message="Restore the product tests and create behavior coverage.",
+            llm_call_timeout=10,
+            artifact_quality_errors=errors,
+            changed_files=["tests/test_product.py"],
+        )
+
+        assert summary["repair_target_files"] == [missing, "tests/test_product.py"]
+        forced_tools = {
+            item["function"]["name"]
+            for item in adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
+        }
+        assert forced_tools == {"edit_file", "write_file"}
+        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == "required"
+        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
+        tool_contract = adapter.repair_context["metadata"]["tool_contract"]
+        assert tool_contract["required_tools"] == ["edit_file", "write_file"]
+        assert tool_contract["mutation_required"] is True
+        assert tool_contract["mutation_reason"] == "mixed_create_modify_quality_repair"
+        quality_context = adapter.repair_context["director_quality_repair"]
+        assert quality_context["edit_preferred_target_files"] == ["tests/test_product.py"]
+        assert quality_context["write_required_target_files"] == [missing]
+        assert adapter._execution.allowed_tool_names == {"edit_file", "write_file"}
+        assert adapter._execution.allow_patch_fallback is False
+
+    @pytest.mark.asyncio
     async def test_go_test_failure_does_not_expand_task_write_scope(self, tmp_path) -> None:
         """A verifier path remains evidence-only for a task that does not own it."""
         from polaris.cells.roles.adapters.internal.director.execute_method import (

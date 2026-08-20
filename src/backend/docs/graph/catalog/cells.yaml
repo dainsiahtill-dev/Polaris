@@ -941,6 +941,7 @@ cells:
         - RunAuditDiagnosisCommandV1
       queries:
         - QueryAuditDiagnosisTrailV1
+        - QueryExactRunCausalAuditV1
       events:
         - AuditDiagnosisCompletedEventV1
       results:
@@ -949,6 +950,10 @@ cells:
         - AuditDiagnosisErrorV1
     depends_on:
       - audit.evidence
+      - context.engine
+      - control_plane.run_ledger
+      - factory.pipeline
+      - runtime.task_runtime
       - storage.layout
       - policy.workspace_guard
     subgraphs:
@@ -963,11 +968,12 @@ cells:
       - process.exec:git
     verification:
       tests:
+        - polaris/cells/audit/diagnosis/internal/tests/test_exact_run_causal_audit.py
         - tests/test_audit_llm_runtime.py
         - tests/test_command_security.py
       gaps:
         - Audit toolkit command surface still carries legacy envelope compatibility payloads.
-        - Event diagnosis query facades still need typed adapters for all consumers.
+        - Provider response payloads remain represented through their authoritative ContextOS snapshot refs rather than copied into the causal report.
 
   - id: audit.verdict
     title: Audit Verdict

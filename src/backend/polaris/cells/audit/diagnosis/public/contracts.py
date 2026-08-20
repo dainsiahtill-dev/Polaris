@@ -53,6 +53,28 @@ class QueryAuditDiagnosisTrailV1:
 
 
 @dataclass(frozen=True)
+class QueryExactRunCausalAuditV1:
+    """Read the authoritative causal diagnosis for one exact Factory run."""
+
+    workspace: str
+    factory_run_id: str
+    project_id: str = ""
+    audit_event_limit: int = 300
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(
+            self,
+            "factory_run_id",
+            _require_non_empty("factory_run_id", self.factory_run_id),
+        )
+        object.__setattr__(self, "project_id", str(self.project_id or "").strip())
+        if not 1 <= int(self.audit_event_limit) <= 2000:
+            raise ValueError("audit_event_limit must be between 1 and 2000")
+        object.__setattr__(self, "audit_event_limit", int(self.audit_event_limit))
+
+
+@dataclass(frozen=True)
 class AuditDiagnosisCompletedEventV1:
     event_id: str
     workspace: str
@@ -114,6 +136,12 @@ class IAuditDiagnosisService(Protocol):
     async def query_trail(self, query: QueryAuditDiagnosisTrailV1) -> AuditDiagnosisResultV1:
         """Query diagnosis events/trail."""
 
+    async def query_exact_run_causal_audit(
+        self,
+        query: QueryExactRunCausalAuditV1,
+    ) -> AuditDiagnosisResultV1:
+        """Query the current causal blocker for one exact Factory run."""
+
 
 __all__ = [
     "AuditDiagnosisCompletedEventV1",
@@ -121,5 +149,6 @@ __all__ = [
     "AuditDiagnosisResultV1",
     "IAuditDiagnosisService",
     "QueryAuditDiagnosisTrailV1",
+    "QueryExactRunCausalAuditV1",
     "RunAuditDiagnosisCommandV1",
 ]

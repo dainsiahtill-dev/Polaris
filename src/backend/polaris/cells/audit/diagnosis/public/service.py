@@ -10,6 +10,7 @@ from polaris.cells.audit.diagnosis.internal.connection_audit_service import (
     write_ws_connection_event_sync,
 )
 from polaris.cells.audit.diagnosis.internal.diagnosis_engine import AuditDiagnosisEngine
+from polaris.cells.audit.diagnosis.internal.exact_run_causal_audit import build_exact_run_causal_report
 from polaris.cells.audit.diagnosis.internal.toolkit import (
     build_failure_hops,
     build_triage_bundle,
@@ -34,6 +35,15 @@ from polaris.cells.audit.diagnosis.internal.usecases import AuditUseCaseFacade
 from polaris.cells.audit.diagnosis.public.contracts import (
     AuditDiagnosisResultV1,
     QueryAuditDiagnosisTrailV1,
+    QueryExactRunCausalAuditV1,
+)
+from polaris.cells.context.engine.public import QueryFinalProviderRequestAuditV1, query_final_provider_request_audit
+from polaris.cells.control_plane.run_ledger.public import ReadRunLedgerProjectionQueryV1, read_run_ledger_projection
+from polaris.cells.factory.pipeline.public import (
+    GetFactoryChainProjectionQueryV1,
+    GetFactoryTerminalTaskRuntimeProjectionQueryV1,
+    get_factory_chain_projection,
+    get_factory_terminal_task_runtime_projection,
 )
 from polaris.kernelone.audit.registry import has_audit_store_factory
 
@@ -139,6 +149,108 @@ def query_audit_diagnosis_trail(query: QueryAuditDiagnosisTrailV1) -> AuditDiagn
         )
 
 
+def _context_snapshot_refs(value: object, *, limit: int = 8) -> list[str]:
+    refs: list[str] = []
+
+    def visit(item: object) -> None:
+        if len(refs) >= limit:
+            return
+        if isinstance(item, dict):
+            for key, nested in item.items():
+                if key == "context_snapshot_ref":
+                    ref = str(nested or "").strip().lower()
+                    if len(ref) == 24 and all(char in "0123456789abcdef" for char in ref) and ref not in refs:
+                        refs.append(ref)
+                else:
+                    visit(nested)
+            return
+        if isinstance(item, list):
+            for nested in item:
+                visit(nested)
+
+    visit(value)
+    return refs
+
+
+async def query_exact_run_causal_audit(query: QueryExactRunCausalAuditV1) -> AuditDiagnosisResultV1:
+    """Diagnose one exact Factory run from authoritative public projections."""
+
+    try:
+        factory_projection = await get_factory_chain_projection(
+            GetFactoryChainProjectionQueryV1(workspace=query.workspace, run_id=query.factory_run_id)
+        )
+        ledger_projection = read_run_ledger_projection(
+            ReadRunLedgerProjectionQueryV1(
+                workspace=query.workspace,
+                run_id=query.factory_run_id,
+                factory_run_id=query.factory_run_id,
+                project_id=query.project_id,
+            )
+        ).projection
+        terminal_projection = get_factory_terminal_task_runtime_projection(
+            GetFactoryTerminalTaskRuntimeProjectionQueryV1(
+                workspace=query.workspace,
+                factory_run_id=query.factory_run_id,
+            )
+        )
+        trail = query_audit_diagnosis_trail(
+            QueryAuditDiagnosisTrailV1(
+                workspace=query.workspace,
+                run_id=query.factory_run_id,
+                limit=query.audit_event_limit,
+            )
+        )
+        trail_events = list(trail.payload.get("events") or []) if trail.ok else []
+        provider_audits = [
+            query_final_provider_request_audit(
+                QueryFinalProviderRequestAuditV1(
+                    workspace=query.workspace,
+                    context_snapshot_ref=context_ref,
+                )
+            )
+            for context_ref in _context_snapshot_refs(trail_events)
+        ]
+        report = build_exact_run_causal_report(
+            workspace=query.workspace,
+            factory_run_id=query.factory_run_id,
+            project_id=query.project_id,
+            factory_projection=factory_projection.to_dict(),
+            ledger_projection=ledger_projection,
+            terminal_task_runtime_projection=terminal_projection.to_dict() if terminal_projection else None,
+            provider_request_audits=[
+                {
+                    "ok": result.ok,
+                    "status": result.status,
+                    "context_snapshot_ref": result.context_snapshot_ref,
+                    "error_code": result.error_code or "",
+                }
+                for result in provider_audits
+            ],
+            audit_trail_total=int(trail.payload.get("total") or 0) if trail.ok else 0,
+        )
+        return AuditDiagnosisResultV1(
+            ok=not bool(report["root_cause_code"]),
+            status=str(report["current_status"]).lower(),
+            workspace=query.workspace,
+            payload=report,
+            error_code=str(report["root_cause_code"]) or None,
+            error_message=(
+                f"Exact run blocked by {report['root_cause_code']} in {report['responsible_cell']}"
+                if report["root_cause_code"]
+                else None
+            ),
+        )
+    except (RuntimeError, ValueError, OSError) as exc:
+        return AuditDiagnosisResultV1(
+            ok=False,
+            status="unavailable",
+            workspace=query.workspace,
+            payload={"factory_run_id": query.factory_run_id},
+            error_code="exact_run_causal_audit_failed",
+            error_message=str(exc),
+        )
+
+
 __all__ = [
     "AuditDiagnosisEngine",
     "AuditUseCaseFacade",
@@ -154,6 +266,7 @@ __all__ = [
     "discover_journal_run_dirs",
     "load_journal_events",
     "query_audit_diagnosis_trail",
+    "query_exact_run_causal_audit",
     "resolve_runtime_root",
     "run_audit_command",
     "to_script_projection",

@@ -61,6 +61,11 @@ _WORKSPACE_QUALITY_REPAIR_HEARTBEAT_INTERVAL_SECONDS = 30.0
 
 _UNITTEST_FAILED_SUMMARY_RE = re.compile(r"\bFAILED\s*\((?P<counts>[^)]*)\)", re.IGNORECASE)
 _UNITTEST_COUNT_RE = re.compile(r"\b(?P<kind>failures|errors)\s*=\s*(?P<count>\d+)\b", re.IGNORECASE)
+_UNITTEST_RAN_COUNT_RE = re.compile(r"\bRan\s+(?P<count>\d+)\s+tests?\b", re.IGNORECASE)
+_TEST_MODALITY_SHORTFALL_RE = re.compile(
+    r"(?:\bRan\s+0\s+tests?\b|test_source_files\s*=\s*\d+\s*<|test_assertion_count\s*=\s*\d+\s*<)",
+    re.IGNORECASE,
+)
 _PYTEST_COUNT_RE = re.compile(r"\b(?P<count>\d+)\s+(?P<kind>failed|error|errors)\b", re.IGNORECASE)
 _DIAGNOSTIC_LINE_LABEL_RE = re.compile(r"\bline\s+\d+\b", re.IGNORECASE)
 _DIAGNOSTIC_FILE_LOCATION_RE = re.compile(r"(?P<path>(?:[A-Za-z]:)?[^\s:\n]+\.[A-Za-z0-9_+-]+):\d+(?::\d+)?")
@@ -127,6 +132,21 @@ def _workspace_quality_test_failure_counts(result: Mapping[str, Any]) -> tuple[i
     return None
 
 
+def _workspace_quality_unittest_run_count(result: Mapping[str, Any]) -> int | None:
+    """Return unittest's authoritative discovered/executed test count."""
+
+    command = tuple(str(part or "").strip().casefold() for part in result.get("command") or ())
+    if "unittest" not in command:
+        return None
+    output = "\n".join(
+        str(result.get(key) or "")
+        for key in ("diagnostic_excerpt", "stdout_tail", "stderr_tail")
+        if str(result.get(key) or "").strip()
+    )
+    matches = list(_UNITTEST_RAN_COUNT_RE.finditer(output))
+    return int(matches[-1].group("count")) if matches else None
+
+
 def workspace_quality_verifier_regressed(
     before_results: Sequence[Mapping[str, Any]],
     after_results: Sequence[Mapping[str, Any]],
@@ -148,6 +168,14 @@ def workspace_quality_verifier_regressed(
         if after is None:
             continue
         if bool(before.get("passed")) and not bool(after.get("passed")):
+            return True
+        before_run_count = _workspace_quality_unittest_run_count(before)
+        after_run_count = _workspace_quality_unittest_run_count(after)
+        if (
+            before_run_count is not None
+            and after_run_count is not None
+            and after_run_count < before_run_count
+        ):
             return True
         before_counts = _workspace_quality_test_failure_counts(before)
         after_counts = _workspace_quality_test_failure_counts(after)
@@ -356,6 +384,32 @@ def _workspace_quality_round_owner_paths(round_summary: Mapping[str, Any] | None
     if isinstance(raw, list | tuple):
         return [str(item) for item in raw if str(item or "").strip()]
     return []
+
+
+def _workspace_quality_claimed_owner_diagnostic_targets(
+    round_summary: Mapping[str, Any] | None,
+) -> list[str]:
+    """Return verifier targets proven writable by this round's live claim.
+
+    A verifier blob can name several task boundaries.  The deterministic pass
+    already claims the owner of the current primary diagnostic and records the
+    exact in-scope subset.  LLM fallback must consume that evidence instead of
+    re-running broad path heuristics that prefer a later non-test traceback and
+    silently move repair from TASK-3 to TASK-2/TASK-1.
+    """
+
+    payload = dict(round_summary) if isinstance(round_summary, Mapping) else {}
+    evidence_raw = payload.get("task_boundary_owner_evidence")
+    evidence = dict(evidence_raw) if isinstance(evidence_raw, Mapping) else {}
+    if (
+        str(evidence.get("source") or "") != "task_runtime_execution_attempt"
+        or not bool(evidence.get("director_local_repair_allowed"))
+        or not str(evidence.get("task_id") or "").strip()
+    ):
+        return []
+    owner_targets = set(_dedupe_workspace_repair_paths(evidence.get("owner_target_files") or []))
+    in_scope_targets = _dedupe_workspace_repair_paths(evidence.get("in_scope_diagnostic_target_files") or [])
+    return [path for path in in_scope_targets if path in owner_targets]
 
 
 _CRATE_REWRITE_HOLD_MARKERS = (
@@ -676,6 +730,59 @@ def _workspace_quality_frozen_ce_owner_task(
         }
     )
     return restored
+
+
+def _workspace_quality_test_shortfall_owner_targets(
+    executor: Any,
+    *,
+    run_id: str,
+    artifact_quality_errors: list[str],
+) -> list[str]:
+    """Resolve pathless test-depth residuals to their CE/JobToken owner.
+
+    Test discovery/depth diagnostics often contain only counts (``Ran 0
+    tests``, ``test_source_files=1 < 2``) and therefore yield no file path.
+    Falling back to generic changed production files leases the wrong Director
+    task.  Rehydrate each exact same-run CE owner and return only declared test
+    artifacts; PM scope remains the fail-closed fallback when CE authority is
+    unavailable.
+    """
+
+    blob = "\n".join(str(item or "") for item in artifact_quality_errors)
+    if _TEST_MODALITY_SHORTFALL_RE.search(blob) is None:
+        return []
+
+    def is_test_target(path: str) -> bool:
+        normalized = str(path or "").strip().replace("\\", "/")
+        candidate = Path(normalized)
+        lowered_parts = {part.casefold() for part in candidate.parts[:-1]}
+        lowered_name = candidate.name.casefold()
+        return (
+            bool(lowered_parts.intersection({"test", "tests", "__tests__"}))
+            or lowered_name.startswith("test_")
+            or ".test." in lowered_name
+            or ".spec." in lowered_name
+        )
+
+    targets: list[str] = []
+    for canonical_task in executor._load_pm_plan_tasks("tasks/plan.json"):
+        if not isinstance(canonical_task, Mapping):
+            continue
+        task_id = str(canonical_task.get("id") or canonical_task.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        owner_task = _workspace_quality_frozen_ce_owner_task(
+            executor,
+            run_id=run_id,
+            task_id=task_id,
+            canonical_task=canonical_task,
+        )
+        raw_targets = owner_task.get("target_files") or owner_task.get("scope_paths") or ()
+        normalized_targets = _dedupe_workspace_repair_paths(
+            [raw_targets] if isinstance(raw_targets, str) else list(raw_targets)
+        )
+        targets.extend(path for path in normalized_targets if is_test_target(path))
+    return _dedupe_workspace_repair_paths(targets)
 
 
 def _workspace_quality_repair_path_overlaps(normalized_targets: set[str], candidate_paths: set[str]) -> set[str]:
@@ -1079,6 +1186,12 @@ async def _apply_workspace_quality_deterministic_repairs(
     # because TASK-1 owned more files.  That erased same-task locality and made
     # ordinary Director code repair look like a cross-task CE contract gap.
     diagnostic_target_files = executor._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors)
+    if not diagnostic_target_files:
+        diagnostic_target_files = _workspace_quality_test_shortfall_owner_targets(
+            executor,
+            run_id=run_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
     # One g++ blob lists every residual path. Scoring all of them reopened
     # TASK-1-source-models-2 (poem.hpp) while the leading error was
     # Moon.status on generator.cpp (live L1-06). Claim the first diagnostic
@@ -1282,17 +1395,28 @@ def _workspace_quality_llm_claim_target_files(
     diagnostic_target_files: list[str],
     fallback_target_files: list[str],
 ) -> list[str]:
-    """Choose current verifier cause before stale prior-round owner scope.
+    """Choose the current claimed owner before unrelated mixed diagnostics.
 
-    ``owner_target_files`` is useful only when diagnostic extraction produced
-    no path.  Once the verifier names a causal source, reusing the prior owner
-    can permanently route the repair to a task that cannot edit that source.
-    Tests/import wrappers also precede their implementation source in many
-    diagnostics, so prefer the first non-test path after causal ordering.
+    An owner path is authoritative only when the current verifier diagnostics
+    also name it.  This preserves a TaskRuntime claim such as TASK-3 owning a
+    discovered-test failure while still rejecting stale owner scope after the
+    causal diagnostic moves to another task.  Without an intersecting current
+    owner, prefer the first non-test path after causal ordering because test or
+    import wrappers commonly precede their implementation source.
     """
 
     normalized_diagnostics = _dedupe_workspace_repair_paths(diagnostic_target_files)
     if normalized_diagnostics:
+        normalized_owners = _dedupe_workspace_repair_paths(owner_target_files or [])
+        diagnostic_set = set(normalized_diagnostics)
+        # The deterministic TaskRuntime claim passes only its verified
+        # in-scope diagnostic targets.  A generic prior owner override often
+        # contains additional files that are absent from the current failure;
+        # treating that broader scope as authoritative would reintroduce stale
+        # owner routing.  Require the whole supplied owner set to be current.
+        if normalized_owners and set(normalized_owners).issubset(diagnostic_set):
+            owner_set = set(normalized_owners)
+            return [path for path in normalized_diagnostics if path in owner_set][:1]
         source_targets = [
             path
             for path in normalized_diagnostics
@@ -1916,6 +2040,8 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 deterministic_no_commit_signatures.add(deterministic_probe_signature)
             raw_round_summary_evidence = round_summary.get("evidence")
             llm_repair_attempted_in_round = False
+            claimed_round_owner_targets = _workspace_quality_claimed_owner_diagnostic_targets(round_summary)
+            round_llm_owner_targets = claimed_round_owner_targets or owner_override
             hold_llm_for_plannable_deterministic = _workspace_quality_hold_llm_for_plannable_deterministic(
                 round_plan_probe,
                 write_tool_evidence=round_write_tool_evidence,
@@ -1958,7 +2084,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                         artifact_quality_errors=repair_errors,
                         repair_attempt=round_index + 1,
                         interface_discrepancy_evidence=interface_discrepancy_evidence,
-                        owner_target_files=owner_override or claimed_owner_targets or None,
+                        owner_target_files=round_llm_owner_targets or claimed_owner_targets or None,
                     )
                     llm_repair_attempted_in_round = True
                     if not round_repair_results:
@@ -2006,7 +2132,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     context=context,
                     artifact_quality_errors=repair_errors,
                     repair_attempt=round_index + 1,
-                    owner_target_files=owner_override,
+                    owner_target_files=round_llm_owner_targets,
                 )
                 if not round_repair_results:
                     round_summary = dict(round_summary)
@@ -2035,7 +2161,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     context=context,
                     artifact_quality_errors=repair_errors,
                     repair_attempt=round_index + 1,
-                    owner_target_files=owner_override,
+                    owner_target_files=round_llm_owner_targets,
                 )
                 round_requires_task_boundary_triage = executor._workspace_quality_summary_requires_task_boundary_triage(
                     dict(round_summary)
@@ -2070,7 +2196,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     context=context,
                     artifact_quality_errors=repair_errors,
                     repair_attempt=round_index + 1,
-                    owner_target_files=owner_override,
+                    owner_target_files=round_llm_owner_targets,
                 )
                 llm_repair_attempted_in_round = True
                 round_requires_task_boundary_triage = executor._workspace_quality_summary_requires_task_boundary_triage(

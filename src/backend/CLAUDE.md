@@ -74,6 +74,7 @@
 2. 文件、数据库、网络、子进程、LLM、Descriptor、Embedding、Index 都是 effect，必须可审计
 3. 所有文本读写必须显式 UTF-8
 4. 任一 Bench/角色/工具/QA/runtime/控制面失败必须先动态调试 exact run；静态分析只解释动态证据。目标项目只读且禁止修改，修复只能落 Polaris 元平台，并补回归测试、同运行验证、机器可读缺陷记录。
+5. Exact-run 归因必须优先调用 `GET /v2/audit/runs/{factory_run_id}/causal` 或 `query_exact_run_causal_audit`，按 Factory → Run Ledger → TaskBoundary/TaskRuntime → tool/effect receipt → verifier → QA → final provider request 证据链输出唯一 `root_cause_code`、owner Cell 和最窄 retry boundary。历史错误只能统计，禁止覆盖当前终态；显式 workspace 必须本地解析，禁止先走 backend HTTP hint 或跨 workspace runtime。
 
 ### 3.3 归属与旧根冻结
 

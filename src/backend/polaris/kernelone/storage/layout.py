@@ -593,8 +593,13 @@ def _runtime_base_and_mode(workspace_abs: str, ramdisk_root: str | None) -> tupl
         base = os.path.abspath(os.path.expanduser(os.path.expandvars(explicit_runtime_root)))
         if base == project_runtime_root and _is_runtime_base_writable(base):
             return base, "project_local_explicit"
-        if base == legacy_project_runtime_root and _is_runtime_base_writable(base):
-            return base, "legacy_project_local_explicit"
+        if base == legacy_project_runtime_root and _is_runtime_base_writable(project_runtime_root):
+            # ``<workspace>/runtime`` was a short-lived legacy launch claim,
+            # never an external-storage opt-in.  Normalize at the lowest
+            # write-capable resolver as well as at Launcher/CLI boundaries so
+            # a stale parent environment or direct KernelOne caller cannot
+            # recreate the retired bare workspace root.
+            return project_runtime_root, "project_local_legacy_normalized"
         if _is_within_path(workspace_abs, base):
             raise RuntimeError(
                 "KERNELONE_RUNTIME_ROOT inside workspace must equal the canonical "
@@ -660,8 +665,13 @@ def resolve_project_runtime_paths(
             metadata_dir_name=metadata_dir_name,
         )
         legacy_local = os.path.join(normalized_workspace, "runtime")
-        if normalized in {canonical_local, legacy_local}:
+        if normalized == canonical_local:
             return normalized, normalized
+        if normalized == legacy_local:
+            # Legacy namespaces remain read-only discovery candidates.  Any
+            # write-capable layout constructed with the retired local path is
+            # rebound to the canonical project metadata tree.
+            return canonical_local, canonical_local
     posix = normalized.replace("\\", "/").rstrip("/")
     marker = f"/projects/{workspace_key_value}/runtime"
     if posix.endswith(marker):
@@ -1018,6 +1028,7 @@ class StorageLayout:
             str(self._runtime_base),
             self._key,
             metadata_dir_name=get_workspace_metadata_dir_name(),
+            workspace_abs=str(self._workspace),
         )
         self._runtime_root = Path(runtime_root)
         self._workspace_root = self._workspace / get_workspace_metadata_dir_name()

@@ -1359,3 +1359,67 @@ def test_persist_real_run_gate_ledger_builds_explicit_revision_chain(tmp_path: P
     assert projection["historical_failed_gate_count"] == 1
     assert projection["failed_gates"] == []
     assert projection["gate_revisions"]["integrity_ok"] is True
+
+
+def test_persist_gate_revision_uses_canonical_facts_after_local_projection_loss(tmp_path: Path) -> None:
+    record = {
+        "id": "P1",
+        "run_id": "bench_1",
+        "project_id": "P1",
+        "factory_run_id": "bench_1",
+        "target_files": ["src/index.ts"],
+        "scope_paths": ["src/index.ts"],
+        "chain": {"run_id": "bench_1", "audit_bundle": {"blueprint_id": "bp-1"}},
+        "chain_results": {"contract_goal": "run project"},
+    }
+    gate = {
+        "ok": False,
+        "summary": "npm test failed",
+        "gate_obligation_id": "factory:bench_1:workspace_validation",
+        "gate_subject_kind": "factory_run",
+        "gate_subject_id": "bench_1",
+        "requirements": {"workspace_validation": {"ok": False, "detail": "npm test failed"}},
+        "commands": [{"ok": False, "tool": "npm test"}],
+        "command_count_total": 1,
+    }
+    first = persist_real_run_gate_ledger(
+        tmp_path,
+        record,
+        gate,
+        run_id="bench_1",
+        project_id="P1",
+        stage="workspace_validation",
+        gate_name="workspace_validation",
+    )
+    second = persist_real_run_gate_ledger(
+        tmp_path,
+        record,
+        gate,
+        run_id="bench_1",
+        project_id="P1",
+        stage="workspace_validation",
+        gate_name="workspace_validation",
+    )
+    RunLedger(tmp_path, run_id="bench_1").path.unlink()
+
+    repaired = persist_real_run_gate_ledger(
+        tmp_path,
+        record,
+        {
+            **gate,
+            "ok": True,
+            "summary": "npm test passed",
+            "requirements": {"workspace_validation": {"ok": True, "detail": "npm test passed"}},
+            "commands": [{"ok": True, "tool": "npm test"}],
+        },
+        run_id="bench_1",
+        project_id="P1",
+        stage="workspace_validation",
+        gate_name="workspace_validation",
+    )
+
+    assert first["ledger_event"]["gate_revision"] == 1
+    assert second["ledger_event"]["gate_revision"] == 2
+    assert repaired["ledger_event"]["gate_revision"] == 3
+    assert repaired["ledger_event"]["supersedes_content_id"] == second["content_id"]
+    assert repaired["ledger_event"].get("resolves_gate_revision_branch_heads") in (None, [])

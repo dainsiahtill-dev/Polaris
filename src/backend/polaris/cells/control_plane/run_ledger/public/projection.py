@@ -1114,16 +1114,35 @@ def _latest_task_boundary_epochs(events: list[dict[str, Any]]) -> dict[str, dict
     return latest_by_task
 
 
-def _effective_gate_event_indexes(events: list[dict[str, Any]]) -> tuple[frozenset[int], tuple[str, ...]]:
-    """Select only explicitly chained revisions; keep legacy events independent."""
+def _gate_revision_resolution_heads(event: dict[str, Any]) -> list[str]:
+    raw_gate = event.get("gate")
+    gate = raw_gate if isinstance(raw_gate, dict) else {}
+    return _string_list(
+        event.get("resolves_gate_revision_branch_heads")
+        or gate.get("resolves_gate_revision_branch_heads")
+    )
+
+
+def _effective_gate_event_indexes(
+    events: list[dict[str, Any]],
+) -> tuple[frozenset[int], tuple[str, ...], tuple[dict[str, Any], ...]]:
+    """Select graph-valid gate heads and require explicit fork resolution.
+
+    Event arrival order is not revision authority. Runtime migration can replay
+    an older branch after a newer one, and concurrent writers can create two
+    children of one parent. Both cases remain fail-closed until a structurally
+    valid successor continues one head and names every discarded branch head by
+    immutable content id.
+    """
 
     effective_indexes = {
         index
         for index, event in enumerate(events)
         if isinstance(event, dict) and event.get("event_type") == "gate_evaluated"
     }
-    latest_by_obligation: dict[GateRevisionKey, tuple[int, int, str]] = {}
+    groups: dict[GateRevisionKey, list[dict[str, Any]]] = {}
     issues: list[str] = []
+    resolutions: list[dict[str, Any]] = []
     for index, event in enumerate(events):
         if not isinstance(event, dict) or event.get("event_type") != "gate_evaluated":
             continue
@@ -1132,27 +1151,94 @@ def _effective_gate_event_indexes(events: list[dict[str, Any]]) -> tuple[frozens
             continue
         raw_gate = event.get("gate")
         gate = raw_gate if isinstance(raw_gate, dict) else {}
-        try:
-            revision = int(event.get("gate_revision") or gate.get("revision") or 0)
-        except (TypeError, ValueError):
-            revision = 0
-        supersedes = _clean_string(event.get("supersedes_content_id") or gate.get("supersedes_content_id"))
-        content_id = _clean_string(event.get("content_id") or event.get("event_id"))
-        previous = latest_by_obligation.get(key)
-        if not content_id or revision < 1:
-            issues.append(f"invalid_gate_revision_metadata:{index}")
-            continue
-        if previous is None:
-            if revision != 1 or supersedes:
+        groups.setdefault(key, []).append(
+            {
+                "index": index,
+                "revision": _int_value(event.get("gate_revision") or gate.get("revision")),
+                "supersedes": _clean_string(
+                    event.get("supersedes_content_id") or gate.get("supersedes_content_id")
+                ),
+                "content_id": _clean_string(event.get("content_id") or event.get("event_id")),
+                "resolves": _gate_revision_resolution_heads(event),
+            }
+        )
+
+    for key, nodes in groups.items():
+        by_content: dict[str, dict[str, Any]] = {}
+        invalid_indexes: set[int] = set()
+        for node in nodes:
+            index = int(node["index"])
+            content_id = str(node["content_id"])
+            revision = int(node["revision"])
+            if not content_id or revision < 1 or content_id in by_content:
+                issues.append(f"invalid_gate_revision_metadata:{index}")
+                invalid_indexes.add(index)
+                continue
+            by_content[content_id] = node
+
+        parent_content_ids: set[str] = set()
+        valid_by_content: dict[str, dict[str, Any]] = {}
+        for node in sorted(nodes, key=lambda item: (int(item["revision"]), int(item["index"]))):
+            index = int(node["index"])
+            if index in invalid_indexes:
+                continue
+            revision = int(node["revision"])
+            supersedes = str(node["supersedes"])
+            if revision == 1:
+                if supersedes:
+                    issues.append(f"gate_revision_chain_missing_parent:{index}")
+                    invalid_indexes.add(index)
+                    continue
+                valid_by_content[str(node["content_id"])] = node
+                continue
+            parent = valid_by_content.get(supersedes)
+            if parent is None or int(parent["revision"]) != revision - 1:
                 issues.append(f"gate_revision_chain_missing_parent:{index}")
+                invalid_indexes.add(index)
                 continue
-        else:
-            previous_index, previous_revision, previous_content_id = previous
-            if revision != previous_revision + 1 or supersedes != previous_content_id:
-                issues.append(f"gate_revision_chain_fork_or_stale:{index}")
+            parent_content_ids.add(supersedes)
+            valid_by_content[str(node["content_id"])] = node
+
+        valid_nodes = [node for node in nodes if int(node["index"]) not in invalid_indexes]
+        leaves = [node for node in valid_nodes if str(node["content_id"]) not in parent_content_ids]
+        for node in valid_nodes:
+            if node not in leaves:
+                effective_indexes.discard(int(node["index"]))
+
+        if len(leaves) <= 1:
+            continue
+        leaf_ids = {str(node["content_id"]) for node in leaves}
+        resolvers = [
+            node
+            for node in leaves
+            if set(node["resolves"]) == leaf_ids.difference({str(node["content_id"])})
+            and bool(node["resolves"])
+        ]
+        if len(resolvers) == 1:
+            resolver = resolvers[0]
+            resolver_index = int(resolver["index"])
+            resolved_heads = sorted(leaf_ids.difference({str(resolver["content_id"])}))
+            for node in leaves:
+                if int(node["index"]) != resolver_index:
+                    effective_indexes.discard(int(node["index"]))
+            resolutions.append(
+                {
+                    "gate_revision_key": list(key),
+                    "resolver_content_id": str(resolver["content_id"]),
+                    "resolver_revision": int(resolver["revision"]),
+                    "resolved_branch_heads": resolved_heads,
+                }
+            )
+            continue
+
+        # Keep every unresolved head effective so no branch can be silently
+        # hidden. Pick only a deterministic reference head for concise issue
+        # reporting; every additional head is one unresolved fork.
+        reference = max(leaves, key=lambda node: (int(node["revision"]), -int(node["index"])))
+        for node in leaves:
+            if node is reference:
                 continue
-            effective_indexes.discard(previous_index)
-        latest_by_obligation[key] = (index, revision, content_id)
+            issues.append(f"gate_revision_chain_fork_or_stale:{int(node['index'])}")
 
     # QA authority is delivery-epoch scoped.  Keep historical verdict facts in
     # ``gates`` but exclude a verdict when the same task now has a newer
@@ -1200,7 +1286,65 @@ def _effective_gate_event_indexes(events: list[dict[str, Any]]) -> tuple[frozens
             and _clean_string((latest_boundary or {}).get("status")).lower() == "completed_verified"
         ):
             effective_indexes.discard(index)
-    return frozenset(effective_indexes), tuple(issues)
+    return frozenset(effective_indexes), tuple(issues), tuple(resolutions)
+
+
+def allocate_gate_revision_metadata(
+    events: list[dict[str, Any]],
+    proposed_event: dict[str, Any],
+) -> dict[str, Any]:
+    """Allocate one revision from canonical branch heads.
+
+    The caller must pass canonical FactStream events for the same run. A
+    restarted local projection is never revision authority. Existing forks are
+    recoverable only by explicitly resolving every non-selected branch head.
+    """
+
+    key = _gate_revision_key(proposed_event)
+    if key is None:
+        return {}
+    effective_indexes, issues, _resolutions = _effective_gate_event_indexes(events)
+    severe_issues: list[str] = []
+    for issue in issues:
+        prefix, _, raw_index = issue.rpartition(":")
+        try:
+            issue_index = int(raw_index)
+        except ValueError:
+            continue
+        if issue_index >= len(events) or _gate_revision_key(events[issue_index]) != key:
+            continue
+        if prefix != "gate_revision_chain_fork_or_stale":
+            severe_issues.append(issue)
+    if severe_issues:
+        raise ValueError(f"canonical gate revision chain is structurally invalid: {severe_issues}")
+
+    heads: list[dict[str, Any]] = []
+    for index in effective_indexes:
+        event = events[index]
+        if _gate_revision_key(event) != key:
+            continue
+        raw_gate = event.get("gate")
+        gate = raw_gate if isinstance(raw_gate, dict) else {}
+        content_id = _clean_string(event.get("content_id") or event.get("event_id"))
+        revision = _int_value(event.get("gate_revision") or gate.get("revision"))
+        if content_id and revision > 0:
+            heads.append({"index": index, "revision": revision, "content_id": content_id})
+    if not heads:
+        return {"gate_revision": 1}
+
+    selected = max(heads, key=lambda node: (int(node["revision"]), -int(node["index"])))
+    metadata: dict[str, Any] = {
+        "gate_revision": int(selected["revision"]) + 1,
+        "supersedes_content_id": str(selected["content_id"]),
+    }
+    orphan_heads = sorted(
+        str(node["content_id"])
+        for node in heads
+        if str(node["content_id"]) != str(selected["content_id"])
+    )
+    if orphan_heads:
+        metadata["resolves_gate_revision_branch_heads"] = orphan_heads
+    return metadata
 
 
 def _required_modalities_by_gate_obligation(
@@ -1299,7 +1443,9 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     task_boundary_verdicts: list[dict[str, Any]] = []
     tool_lifecycle_events: list[dict[str, Any]] = []
     tool_lifecycle_requirement_events: list[dict[str, Any]] = []
-    effective_gate_event_indexes, gate_revision_issues = _effective_gate_event_indexes(events)
+    effective_gate_event_indexes, gate_revision_issues, gate_revision_resolutions = (
+        _effective_gate_event_indexes(events)
+    )
     latest_task_boundaries = _latest_task_boundary_epochs(events)
     required_modalities_by_obligation = _required_modalities_by_gate_obligation(events)
     for event_index, event in enumerate(events):
@@ -1484,6 +1630,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "supersedes_content_id": _clean_string(
                     event.get("supersedes_content_id") or gate.get("supersedes_content_id")
                 ),
+                "resolves_gate_revision_branch_heads": _gate_revision_resolution_heads(event),
             }
         )
     effective_gates = [gate for gate in gates if gate["effective"]]
@@ -1567,6 +1714,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         "gate_revisions": {
             "integrity_ok": gate_revision_integrity_ok,
             "issues": list(gate_revision_issues),
+            "resolved_forks": [dict(item) for item in gate_revision_resolutions],
         },
         "capability": {
             "ok": capability_ok,

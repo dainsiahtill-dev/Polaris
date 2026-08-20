@@ -118,6 +118,29 @@ def test_python_modulenotfound_leftover_prefers_src_importer(tmp_path: Path) -> 
     assert "tests/test_product.py" not in leftover[:2]
 
 
+def test_test_only_delivery_depth_does_not_lease_production_sources(tmp_path: Path) -> None:
+    """The generic delivery-depth envelope is not a production diagnostic.
+
+    Live L3-21 had only test file/assertion shortfalls after its import repair,
+    but source fallback leased TASK-2 and exposed only production edit paths.
+    """
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "main.py").write_text("def main():\n    return 0\n", encoding="utf-8")
+    leftover = workspace_quality_unclaimed_failing_tu_targets(
+        [
+            "delivery_depth_contract_failed: implementation depth metrics: "
+            "prod_files=8, prod_lines=1100, test_files=1, test_assertions=1; "
+            "failures: test_source_files=1 < 2; test_assertion_count=1 < 10"
+        ],
+        claimed_targets=[],
+        workspace=tmp_path,
+    )
+
+    assert "src/main.py" not in leftover
+
+
 def test_compact_go_stack_overflow_keeps_repeating_owner_frames() -> None:
     dump = "\n".join(
         [

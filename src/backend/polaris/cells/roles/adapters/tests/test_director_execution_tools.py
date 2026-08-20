@@ -423,6 +423,42 @@ def test_edit_file_rejects_changed_but_still_invalid_go_candidate(tmp_path) -> N
     assert target.read_text(encoding="utf-8") == original
 
 
+def test_edit_file_rejects_destructive_full_file_search_replace_before_commit(tmp_path) -> None:
+    """L3-21: edit_file must not bypass write_file's destructive-shrink guard.
+
+    The live quality-repair turn copied the complete 15KB Python test file into
+    ``search`` but returned only its imports in ``replace``.  The candidate was
+    valid Python, so the syntax-only guard committed it and unittest discovery
+    collapsed from 34 tests to 0.  Large destructive replacement must be
+    rejected before disk mutation just like an equivalent write_file call.
+    """
+
+    target = tmp_path / "tests" / "test_product.py"
+    target.parent.mkdir(parents=True)
+    original = "".join(
+        f"def test_case_{index}():\n    assert {index} == {index}\n\n"
+        for index in range(80)
+    )
+    target.write_text(original, encoding="utf-8")
+    executor = _create_director_tool_executor(str(tmp_path))
+    shortened = '"""Product tests."""\n\nfrom unittest import TestCase\n'
+
+    result = executor.execute_tool(
+        "edit_file",
+        {
+            "file": "tests/test_product.py",
+            "search": original,
+            "replace": shortened,
+            "target_files": ["tests/test_product.py"],
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["error_type"] == "destructive_shrink"
+    assert result["retryable"] is True
+    assert target.read_text(encoding="utf-8") == original
+
+
 def test_r195_compound_command_block_is_non_fatal_no_op(tmp_path) -> None:
     """Layer 2 / R195-pattern: a blocked compound/restricted command must not break
     canonical_execution.

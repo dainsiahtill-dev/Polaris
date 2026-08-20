@@ -32,6 +32,7 @@ from polaris.cells.control_plane.run_ledger.public.contracts import (
 )
 from polaris.cells.control_plane.run_ledger.public.ledger import RunLedger
 from polaris.cells.control_plane.run_ledger.public.projection import (
+    allocate_gate_revision_metadata,
     build_run_ledger_projection,
     summarize_run_ledger_projection,
 )
@@ -1400,7 +1401,26 @@ def append_run_ledger_event(command: AppendRunLedgerEventCommandV1) -> RunLedger
 
     workspace = Path(command.workspace).expanduser().resolve()
     ledger = RunLedger(workspace, run_id=command.run_id)
-    prepared_event = ledger.prepare_idempotent_event(dict(command.event))
+    event_input = dict(command.event)
+    raw_gate = event_input.get("gate")
+    gate = raw_gate if isinstance(raw_gate, dict) else {}
+    explicit_revision = event_input.get("gate_revision") or gate.get("revision")
+    has_revision_identity = bool(
+        event_input.get("gate_obligation_id")
+        and event_input.get("gate_subject_kind")
+        and event_input.get("gate_subject_id")
+    )
+    if has_revision_identity and not explicit_revision:
+        canonical_events = _read_execution_control_plane_facts(
+            workspace=workspace,
+            run_id=command.run_id,
+        )
+        event_input.update(allocate_gate_revision_metadata(canonical_events, event_input))
+        # Factory may have hashed the pre-allocation event. Revision metadata is
+        # semantic content, so the owner must recompute every identity hash.
+        for identity_key in ("content_id", "event_id", "append_id", "recorded_at"):
+            event_input.pop(identity_key, None)
+    prepared_event = ledger.prepare_idempotent_event(event_input)
     event_type = str(prepared_event.get("event_type") or "control_plane_event").strip()
     if event_type == MANAGED_PROCESS_LIFECYCLE_EVENT_TYPE and not managed_process_append_is_authorized():
         raise ControlPlaneRunLedgerV1Error(

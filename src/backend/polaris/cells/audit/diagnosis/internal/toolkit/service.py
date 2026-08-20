@@ -178,11 +178,16 @@ def _resolve_runtime_root_from_backend(base_url: str) -> Path | None:
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        resp = requests.get(
-            f"{base_url}/v2/runtime/storage/layout",
-            headers=headers,
-            timeout=3,
-        )
+        # Local platform control traffic must never inherit HTTP(S)_PROXY.
+        # Besides adding latency, proxy routing can send a loopback request to
+        # another workspace/process and corrupt audit attribution.
+        with requests.Session() as session:
+            session.trust_env = False
+            resp = session.get(
+                f"{base_url}/v2/runtime/storage/layout",
+                headers=headers,
+                timeout=3,
+            )
         if resp.status_code != 200:
             return None
         payload = resp.json()
@@ -190,7 +195,7 @@ def _resolve_runtime_root_from_backend(base_url: str) -> Path | None:
         if not runtime_root:
             return None
         return Path(runtime_root).resolve()
-    except (RuntimeError, ValueError) as exc:
+    except (requests.RequestException, RuntimeError, ValueError) as exc:
         logger.debug("Failed to resolve runtime_root from backend storage layout endpoint: %s", exc)
         return None
 
@@ -205,6 +210,18 @@ def resolve_runtime_root(
     if runtime_root:
         return Path(runtime_root).resolve()
 
+    # An explicit workspace is stronger authority than environment or an HTTP
+    # backend hint. Resolve it locally so an audit request cannot silently read
+    # the main backend's runtime or deadlock by calling its own HTTP endpoint.
+    workspace_path = str(workspace or "").strip()
+    if workspace_path:
+        try:
+            roots = resolve_storage_roots(workspace_path)
+            return Path(roots.runtime_root).resolve()
+        except (RuntimeError, ValueError) as exc:
+            logger.debug("Failed to resolve runtime_root for explicit workspace=%s: %s", workspace_path, exc)
+            return None
+
     env_root = str(os.environ.get("KERNELONE_RUNTIME_BASE") or "").strip()
     if env_root:
         return Path(env_root).resolve()
@@ -214,7 +231,7 @@ def resolve_runtime_root(
     if from_backend:
         return from_backend
 
-    workspace_path = str(workspace or os.environ.get("KERNELONE_WORKSPACE") or os.getcwd())
+    workspace_path = str(os.environ.get("KERNELONE_WORKSPACE") or os.getcwd())
     try:
         roots = resolve_storage_roots(workspace_path)
         return Path(roots.runtime_root).resolve()

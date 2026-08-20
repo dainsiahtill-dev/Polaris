@@ -1,0 +1,81 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: polaris.audit.exact-run-causal-report.v1
+title: Exact Run Causal Audit Report
+type: object
+additionalProperties: false
+required:
+  - schema_version
+  - workspace
+  - factory_run_id
+  - project_id
+  - current_status
+  - root_cause_code
+  - responsible_cell
+  - retry_boundary
+  - pm_ce_restart_allowed
+  - target_project_defect
+  - authority_contradiction_detected
+  - historical_error_count
+  - historical_counts
+  - evidence_gaps
+  - evidence_chain
+properties:
+  schema_version:
+    const: audit.exact-run-causal-report.v1
+  workspace:
+    type: string
+    minLength: 1
+  factory_run_id:
+    type: string
+    minLength: 1
+  project_id:
+    type: string
+  current_status:
+    enum: [DELIVERY_VERIFIED, CHAIN_INCOMPLETE, QA_FAILED, CONTROL_PLANE_FAIL]
+  root_cause_code:
+    type: string
+  responsible_cell:
+    type: string
+  retry_boundary:
+    type: string
+    minLength: 1
+  pm_ce_restart_allowed:
+    type: boolean
+  target_project_defect:
+    type: boolean
+  authority_contradiction_detected:
+    type: boolean
+  historical_error_count:
+    type: integer
+    minimum: 0
+  historical_counts:
+    type: object
+    additionalProperties:
+      type: integer
+      minimum: 0
+  evidence_gaps:
+    type: array
+    items:
+      type: string
+  evidence_chain:
+    type: object
+    required:
+      - factory_terminal
+      - run_ledger
+      - task_boundary
+      - task_runtime
+      - tool_lifecycle
+      - verifier
+      - qa_verdict
+      - final_provider_request
+    additionalProperties:
+      type: object
+      required: [status, source, details]
+      properties:
+        status:
+          enum: [proven, missing, failed, contradictory, not_applicable]
+        source:
+          type: string
+          minLength: 1
+        details:
+          type: object

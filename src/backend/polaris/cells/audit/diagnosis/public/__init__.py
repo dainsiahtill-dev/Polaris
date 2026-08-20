@@ -6,6 +6,7 @@ from polaris.cells.audit.diagnosis.public.contracts import (
     AuditDiagnosisResultV1,
     IAuditDiagnosisService,
     QueryAuditDiagnosisTrailV1,
+    QueryExactRunCausalAuditV1,
     RunAuditDiagnosisCommandV1,
 )
 from polaris.cells.audit.diagnosis.public.service import (
@@ -15,6 +16,7 @@ from polaris.cells.audit.diagnosis.public.service import (
     ErrorChainLink,
     ErrorChainSearcher,
     query_audit_diagnosis_trail,
+    query_exact_run_causal_audit,
     resolve_runtime_root,
     run_audit_command,
     to_script_projection,
@@ -33,8 +35,10 @@ __all__ = [
     "ErrorChainSearcher",
     "IAuditDiagnosisService",
     "QueryAuditDiagnosisTrailV1",
+    "QueryExactRunCausalAuditV1",
     "RunAuditDiagnosisCommandV1",
     "query_audit_diagnosis_trail",
+    "query_exact_run_causal_audit",
     "resolve_runtime_root",
     "run_audit_command",
     "to_script_projection",

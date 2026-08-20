@@ -998,6 +998,24 @@ class DirectorToolExecutor:
             final_content = str(
                 json_config_result.get("content") if json_config_result.get("content") is not None else new_content
             )
+            old_lines = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
+            new_lines = final_content.count("\n") + (
+                1 if final_content and not final_content.endswith("\n") else 0
+            )
+            if (
+                old_lines >= _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES
+                and new_lines <= old_lines * _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO
+            ):
+                return _destructive_shrink_error(
+                    file_path,
+                    old_lines,
+                    new_lines,
+                    tool_hint=(
+                        "edit_file cannot replace a large existing body with a short fragment. "
+                        "Use a narrow search string that changes only the failing span and preserves "
+                        "unrelated code. If a complete rewrite is required, emit the complete file body."
+                    ),
+                )
             syntax_guard = _precommit_source_syntax_guard(
                 rel_path=rel_path,
                 before_content=content,

@@ -7,6 +7,7 @@ Provides endpoints for:
 - GET /v2/audit/stats - Get audit statistics
 - POST /v2/audit/cleanup - Clean up old logs
 - POST /v2/audit/triage - Generate triage bundle
+- GET /v2/audit/runs/{run_id}/causal - Diagnose one exact Factory run
 - GET /v2/audit/failures/{run_id}/hops - Get failure hops
 - GET /v2/audit/corruption - Get corruption log
 """
@@ -24,6 +25,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Path as FastApiPath, Query
 from fastapi.responses import Response
 from polaris.bootstrap.config import Settings, get_settings
+from polaris.cells.audit.diagnosis.public import (
+    QueryExactRunCausalAuditV1,
+    query_exact_run_causal_audit,
+)
 from polaris.cells.audit.diagnosis.public.service import (
     AuditDiagnosisEngine,
     AuditUseCaseFacade,
@@ -451,6 +456,55 @@ async def get_audit_trace(
     if int(payload.get("event_count") or 0) == 0:
         raise HTTPException(status_code=404, detail=f"No events found for trace {trace_id}")
     return AuditTraceResponse(**payload)
+
+
+@router.get("/runs/{run_id}/causal", dependencies=[Depends(require_auth)])
+async def get_exact_run_causal_audit(
+    run_id: str = FastApiPath(..., description="Factory run ID"),
+    project_id: str = Query("", description="Optional project ID"),
+    audit_event_limit: int = Query(300, ge=1, le=2000),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Return one evidence-backed root cause for the bound workspace/run.
+
+    Historical failures remain visible in the report but cannot override the
+    current Factory, Run Ledger, verifier, QA, or delivery authorities.  The
+    workspace comes only from this backend instance binding; callers cannot
+    audit a different project by injecting a workspace query parameter.
+    """
+    if not validate_run_id(run_id):
+        raise HTTPException(status_code=400, detail=f"Invalid run_id format: {run_id}")
+
+    workspace = str(getattr(settings, "workspace", "") or "").strip()
+    if not workspace:
+        raise HTTPException(status_code=503, detail="Backend workspace binding unavailable")
+
+    result = await query_exact_run_causal_audit(
+        QueryExactRunCausalAuditV1(
+            workspace=workspace,
+            factory_run_id=run_id,
+            project_id=project_id,
+            audit_event_limit=audit_event_limit,
+        )
+    )
+    if result.status == "unavailable":
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error_code": result.error_code,
+                "error_message": result.error_message,
+                "workspace": result.workspace,
+                "factory_run_id": run_id,
+            },
+        )
+    return {
+        "ok": result.ok,
+        "status": result.status,
+        "workspace": result.workspace,
+        "error_code": result.error_code,
+        "error_message": result.error_message,
+        "report": dict(result.payload),
+    }
 
 
 @router.get("/failures/{run_id}/hops", response_model=FailureHopsResponse, dependencies=[Depends(require_auth)])

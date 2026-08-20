@@ -18,6 +18,7 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
 from polaris.cells.factory.pipeline.internal.factory_workspace_quality_impl import (
     _workspace_quality_authoritative_owner_paths,
     _workspace_quality_llm_claim_target_files,
+    _workspace_quality_test_shortfall_owner_targets,
 )
 from polaris.cells.factory.pipeline.tests._characterization_helpers import (
     _executor,
@@ -719,6 +720,86 @@ class TestRunWorkspaceQualityChecks:
             ],
             fallback_target_files=["src/main.py"],
         ) == ["src/dream_subway/line_editor.py"]
+
+    def test_workspace_quality_pathless_test_shortfall_uses_frozen_ce_test_owner(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """L3-21 test counts must not fall back to a production task.
+
+        The verifier residual has no file location, but the same-run CE
+        JobToken already delegates both required test artifacts to TASK-3.
+        """
+
+        executor = _executor(tmp_path)
+        blueprint_hash = "b" * 64
+        canonical_task = {
+            "id": "TASK-3",
+            "target_files": ["tests/test_product.py", "README.md"],
+        }
+        blueprint = {
+            "task_id": "TASK-3",
+            "blueprint_id": "ce-task-3",
+            "blueprint_hash": blueprint_hash,
+            "status": "generated",
+            "handoff_ready": True,
+            "target_files": [
+                "requirements.txt",
+                "tests/test_product.py",
+                "README.md",
+                "tests/test_behavior.py",
+            ],
+            "job_token": {
+                "factory_run_id": "factory-test-depth-owner",
+                "token_id": "token-task-3",
+                "blueprint_hash": blueprint_hash,
+                "target_files": [
+                    "requirements.txt",
+                    "tests/test_product.py",
+                    "README.md",
+                    "tests/test_behavior.py",
+                ],
+                "allowed_write_paths": [
+                    "requirements.txt",
+                    "tests/test_product.py",
+                    "README.md",
+                    "tests/test_behavior.py",
+                ],
+            },
+            "capability_token": {
+                "factory_run_id": "factory-test-depth-owner",
+                "token_id": "token-task-3",
+                "blueprint_hash": blueprint_hash,
+            },
+        }
+        monkeypatch.setattr(executor, "_load_pm_plan_tasks", lambda _path: [canonical_task])
+        monkeypatch.setattr(
+            executor,
+            "_load_chief_engineer_review_payload",
+            lambda **_kwargs: {
+                "blueprints": [
+                    {
+                        "task_id": "TASK-3",
+                        "status": "generated",
+                        "handoff_ready": True,
+                        "blueprint_id": "ce-task-3",
+                        "blueprint_path": "runtime/blueprints/ce-task-3.json",
+                    }
+                ]
+            },
+        )
+        monkeypatch.setattr(executor, "_read_json_artifact_payload", lambda _path: blueprint)
+
+        assert _workspace_quality_test_shortfall_owner_targets(
+            executor,
+            run_id="factory-test-depth-owner",
+            artifact_quality_errors=[
+                "delivery_depth_contract_failed: test_source_files=1 < 2; "
+                "test_assertion_count=1 < 10",
+                "Ran 0 tests in 0.000s",
+            ],
+        ) == ["tests/test_product.py", "tests/test_behavior.py"]
 
     def test_workspace_quality_owner_uses_run_bound_job_token_topology(self) -> None:
         metadata = {
@@ -1481,6 +1562,42 @@ class TestRunWorkspaceQualityChecks:
             == "progress"
         )
 
+    def test_workspace_quality_repair_effect_rejects_test_discovery_collapse(self) -> None:
+        """A syntactically valid edit cannot erase every discovered test.
+
+        Live L3-21 changed ``Ran 34 tests`` into ``Ran 0 tests`` without a
+        unittest FAILED summary.  The old parser returned ``None`` for the
+        post-edit count and let diagnostic-cardinality heuristics call the
+        destructive edit progress.
+        """
+
+        classify = OrchestrationStageExecutor._workspace_quality_repair_effect
+        command = ["python", "-m", "unittest", "discover", "-s", "tests"]
+
+        assert (
+            classify(
+                before_signature=("failure:a", "failure:b"),
+                after_signature=("unittest ran zero tests",),
+                verifier_passed=False,
+                write_tool_evidence=True,
+                before_results=(
+                    {
+                        "command": command,
+                        "passed": False,
+                        "stderr_tail": "Ran 34 tests\n\nFAILED (failures=2)",
+                    },
+                ),
+                after_results=(
+                    {
+                        "command": command,
+                        "passed": False,
+                        "stderr_tail": "Ran 0 tests\n\nNO TESTS RAN",
+                    },
+                ),
+            )
+            == "regression"
+        )
+
     def test_workspace_quality_repair_effect_forward_unmask_rules(self) -> None:
         """Sequentially revealed compiler diagnostics are forward progress.
 
@@ -1770,6 +1887,114 @@ class TestRunWorkspaceQualityChecks:
 
         assert passed is True
         assert timeline == ["verifier:1", "mutation", "verifier:2", "settle:success"]
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_llm_fallback_preserves_current_claimed_test_owner(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A mixed verifier blob must not move a TASK-3 test repair to TASK-2.
+
+        Live L3-21 emitted ``Ran 0 tests`` plus a later ``src/main.py`` import
+        traceback.  The deterministic pass correctly claimed TASK-3, but the
+        LLM fallback discarded that current claim and preferred the first
+        non-test diagnostic path.  Three TASK-3 no-commit settlements then
+        rotated the repair across TASK-2/TASK-1, where unrelated edits created
+        fresh regressions.  Same-round fallback must consume the exact claimed
+        owner's in-scope diagnostic path.
+        """
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-preserve-test-owner",
+            config=FactoryConfig(name="quality-preserve-test-owner"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-21T00:00:00+00:00",
+        )
+        state = {"repaired": False}
+        owner_targets_seen: list[list[str] | None] = []
+
+        def run_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            return {
+                "command": command,
+                "exit_code": 0 if state["repaired"] else 5,
+                "passed": state["repaired"],
+                "stdout_tail": (
+                    "ok"
+                    if state["repaired"]
+                    else (
+                        "tests/test_product.py: Ran 0 tests\n"
+                        "src/main.py:16: ImportError: cannot import name 'main'"
+                    )
+                ),
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def deterministic_no_commit(**_kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            return (
+                [],
+                {
+                    "attempted": True,
+                    "success": False,
+                    "task_id": "TASK-3",
+                    "write_tool_evidence": False,
+                    "task_boundary_owner_evidence": {
+                        "schema_version": "factory.workspace_quality_task_owner.v1",
+                        "source": "task_runtime_execution_attempt",
+                        "task_id": "TASK-3",
+                        "owner_target_files": ["tests/test_product.py", "README.md"],
+                        "diagnostic_target_files": ["tests/test_product.py", "src/main.py"],
+                        "in_scope_diagnostic_target_files": ["tests/test_product.py"],
+                        "out_of_scope_diagnostic_target_files": ["src/main.py"],
+                        "director_local_repair_allowed": True,
+                    },
+                },
+            )
+
+        async def llm_repair(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            owner_targets = kwargs.get("owner_target_files")
+            owner_targets_seen.append(list(owner_targets) if isinstance(owner_targets, list) else None)
+            state["repaired"] = True
+            return (
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {
+                            "file": "tests/test_product.py",
+                            "operation": "modify",
+                            "before_sha256": "a" * 64,
+                            "after_sha256": "b" * 64,
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "task_id": "TASK-3",
+                    "repair_target_files": ["tests/test_product.py"],
+                    "write_tool_evidence": True,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["python", "-m", "unittest"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", run_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_deterministic_repairs", deterministic_no_commit)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", llm_repair)
+
+        passed, _artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 1},
+        )
+
+        assert passed is True
+        assert owner_targets_seen == [["tests/test_product.py"]]
 
     @pytest.mark.asyncio
     async def test_workspace_quality_no_mutation_retries_director_without_rerunning_verifier(

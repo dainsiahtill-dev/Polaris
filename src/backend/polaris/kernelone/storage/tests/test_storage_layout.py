@@ -109,6 +109,29 @@ def test_explicit_project_local_runtime_root_is_not_nested(
     assert "/projects/" not in Path(roots.runtime_root).as_posix()
 
 
+def test_explicit_legacy_workspace_runtime_is_normalized_without_creating_bare_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A stale parent env cannot revive the retired ``<workspace>/runtime`` writer."""
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    legacy_runtime = workspace / "runtime"
+    canonical_runtime = workspace / ".polaris" / "runtime"
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(legacy_runtime))
+    monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+    clear_storage_roots_cache()
+
+    roots = resolve_storage_roots(str(workspace))
+
+    assert Path(roots.runtime_root).resolve() == canonical_runtime.resolve()
+    assert roots.runtime_mode == "project_local_legacy_normalized"
+    assert canonical_runtime.is_dir()
+    assert not legacy_runtime.exists()
+
+
 def test_runtime_base_writable_probe_is_concurrency_safe(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

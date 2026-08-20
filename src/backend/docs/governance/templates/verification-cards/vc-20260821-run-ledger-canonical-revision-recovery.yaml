@@ -1,0 +1,61 @@
+card_id: "vc-20260821-run-ledger-canonical-revision-recovery"
+bug_summary: >
+  Same-run QA re-entry allocated gate revisions from a restarted local NDJSON
+  ledger instead of canonical execution.control_plane facts. This created two
+  independent workspace_validation revision roots and permanently blocked an
+  otherwise verified project.
+classification: structural
+bug_path:
+  file: "polaris/cells/factory/pipeline/internal/run_ledger.py"
+  method: "persist_real_run_gate_ledger"
+  symptom: "QA PASS was revision 4 while canonical FactStream head was revision 7; Run Ledger integrity reported four fork_or_stale issues"
+assumptions:
+  - id: A1
+    statement: "FactStream is canonical and local RunLedger NDJSON is only a projection/compatibility artifact."
+    status: verified_true
+    evidence: "read_run_ledger_projection reads execution.control_plane facts first and falls back to NDJSON only when canonical facts are empty."
+  - id: A2
+    statement: "The target project is physically healthy and current failure is control-plane reconciliation."
+    status: verified_true
+    evidence: "31 unittest cases pass; workspace-validation.json passed=true with five passing commands; all three latest TaskBoundary rows are completed_verified."
+  - id: A3
+    statement: "A fork cannot be silently ignored without weakening integrity."
+    status: verified_true
+    evidence: "Existing test_gate_revision_fork_fails_projection_integrity pins fail-closed behavior for an unresolved same-parent fork."
+  - id: A4
+    statement: "Explicitly naming every discarded immutable branch head allows safe recovery without deleting history."
+    status: verified_true
+    evidence: "Graph-based tests pass and live exact-run recovery produced integrity_ok=true while preserving 47 historical errors."
+pre_mortem:
+  failure_point: >
+    Fixing only Factory allocation leaves existing forked runs permanently red;
+    weakening all fork checks hides real concurrent writer corruption.
+  risk_zone:
+    - "polaris/cells/control_plane/run_ledger/public/projection.py"
+    - "polaris/cells/control_plane/run_ledger/public/service.py"
+    - "polaris/cells/factory/pipeline/internal/run_ledger.py"
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/control_plane/run_ledger/tests/test_public_servicea.py"
+      description: "Unresolved fork fails; explicit complete branch-head resolution heals only the selected chain."
+      expected: "integrity false before resolver, true after resolver; latest PASS is effective."
+      status: passed
+    - file: "polaris/cells/factory/pipeline/tests/test_run_ledger.py"
+      description: "Factory gate persistence obtains revision metadata from canonical public append authority."
+      expected: "stale/missing local projection cannot reset revision numbering."
+      status: passed
+  integration_tests:
+    - description: "Exact-run QA-only recovery"
+      command: "retry quality_gate for factory_ec5697b14a71 on its isolated instance"
+      status: passed
+  manual_check:
+    - "Confirm historical errors remain auditable but current Receipt/Factory status is no longer blocked."
+related_adrs:
+  - "ADR-0097"
+  - "ADR-0102"
+  - "ADR-0111"
+sign_off:
+  completed_by: "Codex"
+  completed_at: "2026-08-21T03:15:00+08:00"
+  verified_by: "exact-run causal API + focused pytest/ruff/mypy"
+  verified_at: "2026-08-21T03:15:00+08:00"

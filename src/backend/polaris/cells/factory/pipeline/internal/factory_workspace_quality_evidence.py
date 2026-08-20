@@ -429,7 +429,10 @@ _CPP_RUNTIME_CTOR_THROW_RE = re.compile(
 )
 
 
-_DELIVERY_DEPTH_FAILED_RE = re.compile(r"delivery_depth_contract_failed|production_source_lines\s*=\s*\d+\s*<")
+_DELIVERY_DEPTH_PROD_SHORTFALL_RE = re.compile(
+    r"(?:production_source_(?:files|lines)|behavior_symbol_count|branch_count)\s*=\s*\d+\s*<",
+    re.IGNORECASE,
+)
 _PROD_SOURCE_SUFFIXES = {
     ".java",
     ".kt",
@@ -456,7 +459,12 @@ def _delivery_depth_prod_shortfall_targets(blob: str, workspace: Path) -> list[s
     Depth shortfalls are implementation size, not test rewrites.
     """
 
-    if _DELIVERY_DEPTH_FAILED_RE.search(blob) is None or not workspace.is_dir():
+    # ``delivery_depth_contract_failed`` is a container error.  It may contain
+    # only test_source_files/test_assertion_count failures.  Treating the
+    # container marker itself as a production shortfall leased a source task
+    # for L3-21 even though the final provider request correctly identified a
+    # test-only residual.  Require an actual production-depth metric.
+    if _DELIVERY_DEPTH_PROD_SHORTFALL_RE.search(blob) is None or not workspace.is_dir():
         return []
     search_roots = [path for path in (workspace / "src" / "main" / "java", workspace / "src") if path.is_dir()]
     if not search_roots:

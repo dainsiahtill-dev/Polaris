@@ -1153,6 +1153,9 @@ async def _run_materialization_quality_repair_retry(
         and not missing_repair_target_files
         and _contains_verifier_test_failure(prompt_artifact_quality_errors)
     )
+    mixed_create_modify_quality_repair = bool(
+        existing_repair_target_files and missing_repair_target_files
+    )
     if repair_target_files:
         if (
             official_cmake_missing
@@ -1171,6 +1174,31 @@ async def _run_materialization_quality_repair_retry(
                 _quality_repair_write_file_tool_definition()
             ]
             repair_context["_transaction_kernel_force_exact_tools"] = True
+        elif mixed_create_modify_quality_repair:
+            # One quality boundary can require two distinct physical effects:
+            # mutate a damaged existing artifact and create a missing sibling.
+            # Collapsing that mixed obligation to ``edit_file`` leaves the LLM
+            # able to diagnose the missing file but physically unable to create
+            # it.  Expose only the two mutation tools, require a tool call, and
+            # keep the per-path intent explicit in the final provider context.
+            repair_context["_transaction_kernel_forced_tool_definitions"] = [
+                _quality_repair_edit_file_tool_definition(),
+                _quality_repair_write_file_tool_definition(),
+            ]
+            repair_context["_transaction_kernel_forced_tool_choice"] = "required"
+            repair_context["_transaction_kernel_force_exact_tools"] = True
+            repair_metadata["tool_contract"] = {
+                **dict(repair_metadata.get("tool_contract") or {}),
+                "required_tools": ["edit_file", "write_file"],
+                "mutation_required": True,
+                "mutation_reason": "mixed_create_modify_quality_repair",
+            }
+            repair_context["director_quality_repair"]["edit_preferred_target_files"] = (
+                existing_repair_target_files[:12]
+            )
+            repair_context["director_quality_repair"]["write_required_target_files"] = (
+                missing_repair_target_files[:12]
+            )
         elif verifier_test_failure_requires_edit:
             # A verifier assertion against existing code is a mutation task,
             # not another exploration turn.  r46 exposed the full TAP failure
@@ -1301,6 +1329,9 @@ async def _run_materialization_quality_repair_retry(
         allow_patch_fallback = True
         if repair_target_files and not existing_repair_target_files:
             allowed_tool_names = {"write_file"}
+            allow_patch_fallback = False
+        elif mixed_create_modify_quality_repair:
+            allowed_tool_names = {"edit_file", "write_file"}
             allow_patch_fallback = False
         elif verifier_test_failure_requires_edit or (
             repair_target_files and _director_repair_force_existing_write_enabled()

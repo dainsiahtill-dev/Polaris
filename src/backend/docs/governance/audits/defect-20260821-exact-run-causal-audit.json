@@ -1,0 +1,88 @@
+{
+  "schema_version": "polaris.defect-manifest.v1",
+  "defect_id": "DEFECT-20260821-EXACT-RUN-CAUSAL-AUDIT",
+  "status": "CLOSED_LIVE_VERIFIED",
+  "severity": "P0",
+  "head_at_diagnosis": "ce4d9f1a2c15",
+  "exact_run": {
+    "factory_run_id": "factory_ec5697b14a71",
+    "project_id": "L3-21",
+    "workspace": "/tmp/factory-bench-l3-21-r02/workspaces/cf93b743c36c-74379a72d8477421/L3-21-1bff44c03e723ba6/aa5cef8623dc7c1ca7e01190"
+  },
+  "symptom": {
+    "before": "Physical tests and QA were green while Factory remained blocked by canonical_quality_authority_not_verified.",
+    "historical_error_count": 47,
+    "dynamic_api_failure": "HTTPConnectionPool(host='127.0.0.1', port=7897): Read timed out. (read timeout=3)"
+  },
+  "root_causes": [
+    {
+      "code": "control_plane.run_ledger.gate_revision_fork_after_runtime_reentry",
+      "owner": "control_plane.run_ledger",
+      "cause": "Factory allocated gate revisions from a restarted local NDJSON projection instead of canonical FactStream, creating independent revision heads.",
+      "fix": "Run Ledger public append owns canonical revision allocation and explicit orphan-head resolution."
+    },
+    {
+      "code": "audit.diagnosis.workspace_authority_bypassed_by_backend_hint",
+      "owner": "audit.diagnosis",
+      "cause": "Explicit workspace audit resolution called a backend storage-layout HTTP hint first; requests inherited proxy configuration and could select another instance runtime.",
+      "fix": "Explicit workspace resolves locally first; backend hint is used only without workspace, disables environment proxy, and catches RequestException."
+    }
+  ],
+  "evidence_chain": {
+    "before": {
+      "status": "CONTROL_PLANE_FAIL",
+      "responsible_cell": "control_plane.run_ledger",
+      "retry_boundary": "same_run_quality_gate_only",
+      "pm_ce_restart_allowed": false,
+      "target_project_defect": false,
+      "authority_contradiction_detected": true
+    },
+    "after": {
+      "factory_status": "completed",
+      "quality_gate_score": 100,
+      "audit_status": "DELIVERY_VERIFIED",
+      "run_ledger_integrity_ok": true,
+      "run_ledger_outcome_ok": true,
+      "failed_required_modalities": [],
+      "missing_required_modalities": [],
+      "qa_verdict": "PASS",
+      "effect_receipt_count": 62,
+      "historical_errors_preserved": 47
+    }
+  },
+  "files": {
+    "implementation": [
+      "src/backend/polaris/cells/control_plane/run_ledger/public/projection.py",
+      "src/backend/polaris/cells/control_plane/run_ledger/public/service.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/run_ledger.py",
+      "src/backend/polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py",
+      "src/backend/polaris/cells/audit/diagnosis/public/contracts.py",
+      "src/backend/polaris/cells/audit/diagnosis/public/service.py",
+      "src/backend/polaris/cells/audit/diagnosis/internal/toolkit/service.py",
+      "src/backend/polaris/delivery/http/audit_router.py"
+    ],
+    "tests": [
+      "src/backend/polaris/cells/control_plane/run_ledger/tests/test_public_servicea.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_run_ledger.py",
+      "src/backend/polaris/cells/audit/diagnosis/internal/tests/test_exact_run_causal_audit.py",
+      "src/backend/polaris/cells/audit/diagnosis/internal/tests/test_audit_runtime_root_resolution.py",
+      "src/backend/polaris/tests/unit/delivery/http/test_audit_router_exact_run_causal.py"
+    ]
+  },
+  "validation": {
+    "causal_and_http_tests": "11 passed",
+    "focused_run_ledger_tests": "8 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "live_endpoint": "GET /v2/audit/runs/factory_ec5697b14a71/causal returned DELIVERY_VERIFIED"
+  },
+  "non_goals": [
+    "The audit report is not a new execution source of truth.",
+    "The audit report is not a Bench success condition.",
+    "No target project file was modified."
+  ],
+  "residual_risks": [
+    "Cold TaskRuntime projection may still perform a large FactStream full scan; startup cache warming reduced the live endpoint request to about 0.5 seconds, but index performance remains a separate optimization target.",
+    "final_provider_request can be absent on a successful terminal audit when no role failure requires provider-level attribution; role/tool failure paths remain fail-closed on this evidence gap."
+  ]
+}

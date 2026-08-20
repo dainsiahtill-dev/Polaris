@@ -22,6 +22,7 @@ import json
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -260,7 +261,12 @@ class TestPersistedSettings:
             workspace=workspace,
             runtime=RuntimeConfig(root=runtime_root, use_ramdisk=False),
         )
-        save_persisted_settings(settings)
+        # ``save_persisted_settings`` intentionally synchronizes several
+        # process-wide identity variables.  Keep this unit test hermetic so its
+        # temporary external runtime cannot become the authority for later
+        # storage-layout tests in the same pytest process.
+        with patch.dict(os.environ, {}, clear=False):
+            save_persisted_settings(settings)
 
         assert not (home / "config" / "settings.json").exists()
 

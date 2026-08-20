@@ -941,29 +941,12 @@ def persist_real_run_gate_ledger(
     if obligation_id or subject_kind or subject_id:
         if not obligation_id or not subject_kind or not subject_id:
             raise ValueError("gate revision identity requires obligation_id, subject_kind, and subject_id")
-        previous_events = RunLedger(workspace, run_id=ledger_run_id).read_events()
-        previous = next(
-            (
-                event
-                for event in reversed(previous_events)
-                if isinstance(event, dict)
-                and event.get("event_type") == "gate_evaluated"
-                and _clean_string(event.get("gate_obligation_id")) == obligation_id
-                and _clean_string(event.get("gate_subject_kind")) == subject_kind
-                and _clean_string(event.get("gate_subject_id")) == subject_id
-            ),
-            None,
-        )
-        if previous is None:
-            revision_gate["gate_revision"] = 1
-            revision_gate.pop("supersedes_content_id", None)
-        else:
-            previous_revision = int(previous.get("gate_revision") or 0)
-            previous_content_id = _clean_string(previous.get("content_id") or previous.get("event_id"))
-            if previous_revision < 1 or not previous_content_id:
-                raise ValueError("previous gate revision metadata is invalid")
-            revision_gate["gate_revision"] = previous_revision + 1
-            revision_gate["supersedes_content_id"] = previous_content_id
+        # Revision allocation belongs to control_plane.run_ledger. Local NDJSON
+        # can be a restarted/migrated suffix and must never become canonical
+        # revision authority.
+        revision_gate.pop("gate_revision", None)
+        revision_gate.pop("supersedes_content_id", None)
+        revision_gate.pop("resolves_gate_revision_branch_heads", None)
     event = build_gate_ledger_event(token, revision_gate, gate_name=gate_name)
     persisted = append_run_ledger_event(
         AppendRunLedgerEventCommandV1(
