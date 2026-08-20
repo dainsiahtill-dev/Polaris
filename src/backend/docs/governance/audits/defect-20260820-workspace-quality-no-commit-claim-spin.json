@@ -1,0 +1,114 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "workspace-quality-no-commit-claim-spin-20260820",
+  "severity": "P0",
+  "status": "IMPLEMENTED_UNIT_VERIFIED_LIVE_RELOAD_REQUIRED",
+  "scope": "factory.pipeline.workspace_quality_repair",
+  "target_project_mutated_by_debugger": false,
+  "symptom": {
+    "factory_run_id": "factory_ec5697b14a71",
+    "project_id": "L3-21",
+    "stage": "quality_gate",
+    "task_id": "TASK-2",
+    "first_observed_attempt_range": [31, 45],
+    "post_first_fix_attempt_range": [46, 66],
+    "provider_snapshot_advanced_during_post_fix_spin": false,
+    "post_fix_round_count": 10,
+    "post_fix_nonprogress_round_count": 10,
+    "frozen_ce_owner_live_retry_attempt_range": [
+      1,
+      9
+    ],
+    "signature": "terminal TaskRuntime row repeatedly reopened, claimed, then failed with no authoritative mutation"
+  },
+  "dynamic_evidence": {
+    "instance_id": "factory-bench-l3-21-r02-l3-21-run-cf93b743c36c-f6069b66507b731e",
+    "backend_log": "/home/dains/.polaris/instances/factory-bench-l3-21-r02-l3-21-run-cf93b743c36c-f6069b66507b731e/logs/backend.log",
+    "workspace": "/tmp/factory-bench-l3-21-r02/workspaces/cf93b743c36c-74379a72d8477421/L3-21-1bff44c03e723ba6/aa5cef8623dc7c1ca7e01190",
+    "runtime_root": "/tmp/factory-bench-l3-21-r02/workspaces/cf93b743c36c-74379a72d8477421/L3-21-1bff44c03e723ba6/aa5cef8623dc7c1ca7e01190/.polaris/runtime",
+    "event_sequence": [
+      "attempt 46: workspace_quality_deterministic_repair_no_commit",
+      "attempts 47-66: workspace_quality_repair_no_mutation",
+      "repair artifact: max_rounds=8, round_count=10, nonprogress_rounds_since_last_progress=10",
+      "each round deferred src/main.py as owner_unknown despite a TASK-2 authoritative creation receipt",
+      "same-run retry attempts 67-68: TASK-2 deterministic no-commit then authoritative src/main.py edit",
+      "same-run retry attempts 11-12: TASK-1 deterministic no-commit then authoritative requirements.txt edit",
+      "same-run retry TASK-3 test edit changed 4 failures to 4 failures + 1 error and was rejected as regression",
+      "same-run retry TASK-1 domain edit changed 4 failures to 1 failure + 21 errors but old process misclassified the deduplicated diagnostic set as progress",
+      "same-run retry stopped at TASK-1 attempt 25 and factory quality_gate failed without PM/CE restart",
+      "2026-08-20 live reload restored TASK-1 from the exact same-run CE blueprint ce_TASK-1_20260820082437844695 and JobToken job-582588f726a85603aa60e5da; canonical_owner_missing disappeared",
+      "the reloaded retry then alternated deterministic no-commit and LLM equal-count-swap attempts; traceback line shifts bypassed the exact-signature no-commit cache",
+      "mutation rounds discovered leftover paths and continued before the global nonprogress fuse, reaching attempt 9 until the debugger cancelled the runaway QA retry"
+    ],
+    "authoritative_effect": {
+      "task_id": "TASK-2",
+      "path": "src/main.py",
+      "tool": "write_file",
+      "status": "success",
+      "receipt_authoritative": true,
+      "receipt_outcome": "succeeded",
+      "before_sha256": "file_absent",
+      "after_sha256": "822a0346577e6559fca87639d91b903e5dff84d0710e55eceb2a5bb629a6e567"
+    }
+  },
+  "root_causes": [
+    {
+      "classification": "platform_scheduler_nonprogress",
+      "detail": "Owner rotation continued before the global nonprogress hard cap. It reset local stagnation even though no verifier-backed progress occurred, allowing all ten rounds to run."
+    },
+    {
+      "classification": "platform_effect_ownership_projection_gap",
+      "detail": "Verifier owner resolution considered PM/CE/JobToken paths but ignored successful durable TaskRuntime effect receipts. A file physically created by TASK-2 was therefore projected as owner_unknown and repeatedly deferred."
+    },
+    {
+      "classification": "platform_verifier_progress_projection_gap",
+      "detail": "The repair classifier compared deduplicated diagnostic signatures. One newly introduced common exception collapsed 21 unittest errors into one normalized signature, so a severe 4 failures -> 1 failure + 21 errors regression was incorrectly accepted as progress."
+    },
+    {
+      "classification": "platform_deterministic_probe_identity_instability",
+      "detail": "The deterministic no-commit cache used the full verifier signature including volatile traceback/source line numbers. A physical LLM edit that only shifted lines made the same diagnostic look new and reopened the same no-effect deterministic schedule."
+    },
+    {
+      "classification": "platform_mutation_owner_rotation_fuse_bypass",
+      "detail": "The no-mutation branch checked the global nonprogress fuse before owner rotation, but the physical-mutation branch checked it afterward. Equal-count-swap edits therefore continued through owner-rotation before the hard cap could stop the retry."
+    }
+  ],
+  "fix": {
+    "files": [
+      "polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py",
+      "polaris/cells/factory/pipeline/tests/test_characterization_quality_gate_deadline.py"
+    ],
+    "behavior": [
+      "admit deadline before any repair-round claim/reopen",
+      "allow one materialization-schedule probe per exact verifier diagnostic signature",
+      "cache deterministic no-commit signatures",
+      "enforce global three-round nonprogress cap before any owner-rotation continue",
+      "project successful non-no-op authoritative effect receipt paths into same-task repair ownership",
+      "do not authorize no-op, failed, or non-authoritative receipt paths",
+      "compare Python test-runner failure/error counts before and after each physical edit before diagnostic-signature cardinality",
+      "classify a newly failing command, increased Python test errors, or increased total failures plus errors as regression",
+      "mask volatile traceback and file-location line numbers only for the deterministic no-commit probe cache while preserving the full verifier signature for effect classification",
+      "enforce the global three-round nonprogress fuse before every mutation-path owner-rotation continue",
+      "preserve PM and Chief Engineer state"
+    ]
+  },
+  "verification": {
+    "focused_tests": "3 passed",
+    "factory_workspace_quality_and_deadline_tests": "81 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "live_second_retry": {
+      "completed": true,
+      "run_id": "factory_ec5697b14a71",
+      "target_phase": "qa_gate",
+      "loaded_source_state": "pre verifier-fanout fix",
+      "observed": "owner routing and deterministic no-commit cache worked; test fanout regression was misclassified by the old process; run failed at quality_gate",
+      "next_required": "restart the same isolated instance to load the verifier-fanout fix, then issue another same-run qa_gate retry"
+    }
+  },
+  "residual_risk": [
+    "The generated workspace still has real requirements, domain-test, entrypoint, and delivery-depth failures; they must converge through same-run Director repair, never manual target edits.",
+    "Provider overload remains an external retryable condition and must be distinguished from ownership/scheduler nonprogress."
+  ]
+}

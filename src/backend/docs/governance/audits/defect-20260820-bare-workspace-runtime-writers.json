@@ -1,0 +1,33 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "bare-workspace-runtime-writers-20260820",
+  "status": "FIXED_UNIT_AND_LIVE_VERIFIED",
+  "severity": "P0",
+  "scope": "polaris_meta_platform_only",
+  "target_project_modified": false,
+  "symptom": "A target project contained both .polaris/runtime and a bare runtime directory; the bare Run Ledger file continued changing during the exact L3-21 run.",
+  "dynamic_evidence": {
+    "factory_run_id": "factory_ec5697b14a71",
+    "instance_id": "factory-bench-l3-21-r02-l3-21-run-cf93b743c36c-f6069b66507b731e",
+    "legacy_ledger_size_before_and_after": 1209217,
+    "legacy_ledger_mtime_ns_before_and_after": 1787239653026103749,
+    "canonical_ledger_size_after_cutover": 145221,
+    "pre_fix_process_environment": "KERNELONE_RUNTIME_ROOT=/home/dains/Documents/polaris/.polaris/runtime",
+    "post_fix_process_environment": "KERNELONE_RUNTIME_ROOT=<target>/.polaris/runtime"
+  },
+  "root_causes": [
+    "RunLedger and several runtime-path helpers directly constructed <workspace>/runtime instead of consuming storage.layout authority.",
+    "InstanceSupervisor copied the Launcher's environment into the child without overwriting workspace/runtime identity before Python imports, so bootstrap cached the parent authority despite correct child CLI args and registry metadata."
+  ],
+  "fixes": [
+    "Route Run Ledger, KernelOne storage helpers, QA signals, ContextOS metrics, receipt lookup, PM contract readers, and backend CLI defaults through canonical runtime resolution.",
+    "Route log enrichment, PM run-once traceability, and PM iteration snapshots through the same canonical runtime resolver.",
+    "Overwrite KERNELONE_WORKSPACE, KERNELONE_INSTANCE_WORKSPACE, KERNELONE_CONTEXT_ROOT, and KERNELONE_RUNTIME_ROOT in the child Popen environment; remove inherited KERNELONE_RUNTIME_CACHE_ROOT.",
+    "Keep legacy bare-runtime readers read-only; never dual-write or auto-delete an active runtime."
+  ],
+  "verification": {
+    "unit": "14 focused path/reader tests passed; 3 Instance Supervisor runtime-env tests passed; 8 log-pipeline storage-layout tests passed; ruff and mypy passed for changed runtime-path sources.",
+    "live": "Fresh isolated PID 68890 exposed the target workspace in /v2/runtime/fingerprint and all four target identity variables in /proc; after a QA-only retry the canonical ledger grew to 145221 bytes while the legacy ledger remained unchanged."
+  },
+  "residual_risk": "The physical legacy directory remains until explicit offline retention/cleanup. Its presence is not a writer or authority signal."
+}

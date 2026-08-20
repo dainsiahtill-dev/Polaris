@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 from polaris.kernelone.constants import DEFAULT_SHORT_TIMEOUT_SECONDS
 from polaris.kernelone.llm.toolkit.contracts import ServiceLocator
+from polaris.kernelone.storage import resolve_runtime_path
 
 from .canonical_event import (
     CanonicalLogEventV2,
@@ -90,9 +91,9 @@ class LLMEnrichmentWorker:
 
         # Runtime paths
         if run_id:
-            self.run_dir = os.path.join(self.workspace, "runtime", "runs", run_id, "logs")
+            self.run_dir = resolve_runtime_path(self.workspace, f"runtime/runs/{run_id}/logs")
         else:
-            self.run_dir = os.path.join(self.workspace, "runtime", "logs")
+            self.run_dir = resolve_runtime_path(self.workspace, "runtime/logs")
 
         self.norm_path = os.path.join(self.run_dir, "journal.norm.jsonl")
         self.enriched_path = os.path.join(self.run_dir, "journal.enriched.jsonl")

@@ -14,6 +14,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
+from polaris.kernelone.storage.layout import resolve_runtime_path as resolve_logical_runtime_path
+
 WORKSPACE_SIGNALS: Final[str] = "runtime/signals"
 WORKSPACE_ARTIFACTS: Final[str] = "runtime/artifacts"
 WORKSPACE_SESSIONS: Final[str] = "runtime/sessions"
@@ -35,7 +37,7 @@ def resolve_signal_path(
     Returns:
         signal文件完整路径: runtime/signals/{stage}.{role}.signals.json
     """
-    return Path(workspace) / WORKSPACE_SIGNALS / f"{stage}.{role}.signals.json"
+    return Path(resolve_logical_runtime_path(workspace, f"{WORKSPACE_SIGNALS}/{stage}.{role}.signals.json"))
 
 
 def resolve_artifact_path(
@@ -51,7 +53,7 @@ def resolve_artifact_path(
     Returns:
         artifact文件完整路径: runtime/artifacts/{artifact_id}
     """
-    return Path(workspace) / WORKSPACE_ARTIFACTS / artifact_id
+    return Path(resolve_logical_runtime_path(workspace, f"{WORKSPACE_ARTIFACTS}/{artifact_id}"))
 
 
 def resolve_session_path(
@@ -67,7 +69,7 @@ def resolve_session_path(
     Returns:
         session目录完整路径: runtime/sessions/{session_id}
     """
-    return Path(workspace) / WORKSPACE_SESSIONS / session_id
+    return Path(resolve_logical_runtime_path(workspace, f"{WORKSPACE_SESSIONS}/{session_id}"))
 
 
 def resolve_taskboard_path(
@@ -81,7 +83,7 @@ def resolve_taskboard_path(
     Returns:
         taskboard完整路径: runtime/tasks/taskboard.json
     """
-    return Path(workspace) / WORKSPACE_TASKS / "taskboard.json"
+    return Path(resolve_logical_runtime_path(workspace, f"{WORKSPACE_TASKS}/taskboard.json"))
 
 
 def resolve_runtime_path(
@@ -97,7 +99,9 @@ def resolve_runtime_path(
     Returns:
         完整的runtime路径
     """
-    return Path(workspace) / "runtime" / relative_path
+    normalized = str(relative_path or "").replace("\\", "/").strip("/")
+    logical_path = normalized if normalized == "runtime" or normalized.startswith("runtime/") else f"runtime/{normalized}"
+    return Path(resolve_logical_runtime_path(workspace, logical_path))
 
 
 def resolve_preferred_logical_prefix(

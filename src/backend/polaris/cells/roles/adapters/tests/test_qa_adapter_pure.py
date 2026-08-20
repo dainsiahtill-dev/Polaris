@@ -593,7 +593,7 @@ class TestResolveReworkRetryBudget:
 class TestRuntimeStageSignals:
     def test_filters_stale_run_signals(self, tmp_path: Any, monkeypatch: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        signal_dir = tmp_path / "runtime" / "signals"
+        signal_dir = tmp_path / ".polaris" / "runtime" / "signals"
         signal_dir.mkdir(parents=True)
         (signal_dir / "director_dispatch.signals.json").write_text(
             json.dumps(

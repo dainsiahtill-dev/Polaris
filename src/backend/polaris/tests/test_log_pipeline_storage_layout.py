@@ -7,6 +7,7 @@ from pathlib import Path
 
 import polaris.infrastructure.log_pipeline.writer as writer_module
 from polaris.delivery.http.routers.logs import v2_log_user_action
+from polaris.infrastructure.log_pipeline.enrichment import LLMEnrichmentWorker
 from polaris.infrastructure.log_pipeline.query import LogQuery, LogQueryService
 from polaris.infrastructure.log_pipeline.writer import LogEventWriter
 from polaris.kernelone.storage import (
@@ -39,6 +40,21 @@ def test_log_writer_and_query_use_unified_runtime_root(tmp_path, monkeypatch):
     result = service.query(LogQuery(run_id="RUN-001", limit=10))
     assert len(result.events) == 1
     assert result.events[0].message == "pipeline-check"
+
+
+def test_enrichment_worker_uses_project_local_runtime_root(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
+    monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+
+    worker = LLMEnrichmentWorker(workspace=str(workspace), run_id="RUN-ENRICH-001")
+
+    expected = workspace / ".polaris" / "runtime" / "runs" / "RUN-ENRICH-001" / "logs"
+    assert Path(worker.run_dir).resolve() == expected.resolve()
+    assert not (workspace / "runtime").exists()
 
 
 def test_log_writer_recovers_sequence_only_once_per_process_run(tmp_path, monkeypatch):

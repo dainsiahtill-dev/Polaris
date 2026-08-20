@@ -1,0 +1,44 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "python-import-barrier-forward-unmask-20260820",
+  "status": "FIXED_UNIT_VERIFIED_LIVE_REVALIDATION_ACTIVE",
+  "severity": "P0",
+  "scope": "polaris_meta_platform_only",
+  "target_project_mutated_by_agent": false,
+  "symptom": "A valid Director edit removed a Python test import/collection barrier and exposed 34 runnable tests, but count-only quality comparison classified the result as workspace_quality_repair_regression and failed the owner task.",
+  "dynamic_evidence": {
+    "factory_run_id": "factory_ec5697b14a71",
+    "project_id": "L3-21",
+    "stage": "quality_gate",
+    "before": "unittest.loader._FailedTest caused by NameError: name 'dataclass' is not defined",
+    "after": "Ran 34 tests with downstream functional failures/errors",
+    "before_runnable_test_count": 0,
+    "after_runnable_test_count": 34,
+    "platform_misclassification": "workspace_quality_repair_regression",
+    "correct_effect": "forward_unmask"
+  },
+  "root_cause": [
+    "The effect classifier compared raw error counts across different diagnostic surfaces.",
+    "Removing an import barrier legitimately expands verifier coverage and may increase the visible residual count.",
+    "The classifier lacked a positive proof that previously unreachable tests actually executed."
+  ],
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ],
+    "behavior": [
+      "Classify Python import-barrier removal as forward_unmask only when the before evidence contains unittest.loader._FailedTest or failed-to-import-test-module.",
+      "Require the barrier to disappear and the after evidence to prove that at least one test ran.",
+      "Keep exception churn without real test execution classified as regression."
+    ]
+  },
+  "verification": {
+    "focused_regression": "1 passed",
+    "workspace_quality_suite": "37 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "same_run_live_retry": "active after Launcher restart; PM/CE/Director materialization preserved"
+  },
+  "residual_risk": "A later canonical TaskRuntime settlement may still need reconciliation if forward_unmask is recorded as a failed terminal task even though subsequent QA repair converges. This must be proven dynamically before changing settlement semantics."
+}

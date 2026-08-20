@@ -61,7 +61,7 @@ from polaris.cells.runtime.task_runtime.public.contracts import (
     TASK_RUNTIME_EXECUTION_STREAM_V1,
 )
 from polaris.infrastructure.log_pipeline.jetstream_publisher import get_log_jetstream_publisher
-from polaris.kernelone.storage import resolve_storage_roots
+from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_roots
 
 logger = logging.getLogger(__name__)
 _JETSTREAM_PUBLISH_FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
@@ -358,7 +358,7 @@ def _empty_projection(
         "available": False,
         "ok": False,
         "status": status,
-        "audit_path": str(workspace / "runtime" / "control_plane" / "ledger"),
+        "audit_path": str(_canonical_ledger_dir(workspace)),
         "migration_ledgers_included": bool(include_migration_ledgers),
         "query_scope": dict(query_scope or {}),
         "consumed_run_ids": list(_unique_run_ids(consumed_run_ids)),
@@ -389,11 +389,22 @@ def _empty_projection(
     }
 
 
+def _canonical_ledger_dir(workspace: Path) -> Path:
+    return Path(resolve_runtime_path(str(workspace), "runtime/control_plane/ledger"))
+
+
 def _ledger_dirs(workspace: Path, *, include_migration_ledgers: bool = False) -> list[Path]:
-    runtime_root = workspace / "runtime"
-    dirs = [runtime_root / "control_plane" / "ledger"]
+    canonical_runtime_root = Path(resolve_runtime_path(str(workspace), "runtime"))
+    legacy_runtime_root = (workspace / "runtime").resolve()
+    runtime_roots = [canonical_runtime_root]
+    # Project-local runtime migration is write-once/read-many: all new events
+    # land under ``.polaris/runtime`` while legacy workspace-adjacent ledgers
+    # remain readable until their retention window expires.
+    if legacy_runtime_root != canonical_runtime_root:
+        runtime_roots.append(legacy_runtime_root)
+    dirs = [runtime_root / "control_plane" / "ledger" for runtime_root in runtime_roots]
     if include_migration_ledgers:
-        dirs.append(runtime_root / "factory" / "ledger")
+        dirs.extend(runtime_root / "factory" / "ledger" for runtime_root in runtime_roots)
     return dirs
 
 
@@ -1069,7 +1080,7 @@ def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedg
             "available": True,
             "ok": ok,
             "status": "ready" if ok else "failed",
-            "audit_path": str(workspace / "runtime" / "control_plane" / "ledger"),
+            "audit_path": str(_canonical_ledger_dir(workspace)),
             "migration_ledgers_included": query.include_migration_ledgers,
             "query_scope": query_scope,
             "consumed_run_ids": list(consumed_run_ids),

@@ -312,7 +312,7 @@ def test_run_ledger_writer_uses_platform_control_plane_namespace(tmp_path: Path)
     )
 
     ledger_path = Path(str(persisted["ledger_path"]))
-    assert ledger_path.parent == tmp_path / "runtime" / "control_plane" / "ledger"
+    assert ledger_path.parent == tmp_path / ".polaris" / "runtime" / "control_plane" / "ledger"
     assert RunLedger(tmp_path, run_id="run-1").read_events()[0]["event_type"] == "gate_evaluated"
 
 
@@ -359,7 +359,7 @@ def test_append_run_ledger_event_public_service_projects_event(tmp_path: Path) -
         ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-1")
     ).projection
 
-    assert ledger_path.parent == tmp_path / "runtime" / "control_plane" / "ledger"
+    assert ledger_path.parent == tmp_path / ".polaris" / "runtime" / "control_plane" / "ledger"
     assert result.receipt["event"]["append_id"]
     assert projection["ok"] is True
     assert projection["projects"][0]["project_id"] == "P1"
@@ -2139,7 +2139,7 @@ def test_append_tool_call_lifecycle_event_public_service_projects_event(tmp_path
         ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-1")
     ).projection
 
-    assert ledger_path.parent == tmp_path / "runtime" / "control_plane" / "ledger"
+    assert ledger_path.parent == tmp_path / ".polaris" / "runtime" / "control_plane" / "ledger"
     assert result.receipt["event"]["event_type"] == "tool_call_lifecycle"
     assert result.receipt["event"]["tool_call_lifecycle_receipt"]["failure_class"] == "TOOL_DISPATCH_DROPPED"
     assert projection["ok"] is False

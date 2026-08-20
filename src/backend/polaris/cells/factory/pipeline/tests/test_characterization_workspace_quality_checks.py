@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from polaris.cells.factory.pipeline.internal import factory_workspace_quality_impl as workspace_quality_impl
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryConfig,
     FactoryRun,
@@ -240,7 +241,7 @@ class TestRunWorkspaceQualityChecks:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         executor = _executor(tmp_path)
-        (tmp_path / ".polaris").mkdir(parents=True)
+        (tmp_path / ".polaris").mkdir(parents=True, exist_ok=True)
         (tmp_path / ".polaris" / "catalog_contract.json").write_text(
             json.dumps(
                 {
@@ -314,6 +315,7 @@ class TestRunWorkspaceQualityChecks:
             context: dict[str, Any],
             artifact_quality_errors: list[str],
             repair_attempt: int,
+            owner_target_files: list[str] | None = None,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
             del context
             assert run.id == "factory-quality-depth-contract"
@@ -452,11 +454,13 @@ class TestRunWorkspaceQualityChecks:
             context: dict[str, Any],
             artifact_quality_errors: list[str],
             repair_attempt: int,
+            owner_target_files: list[str] | None = None,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
             assert run.id == "factory-quality-llm-repair"
             assert context["workspace_quality_repair_max_rounds"] == 1
             assert artifact_quality_errors
             assert repair_attempt == 1
+            assert owner_target_files is None
             state["repaired"] = True
             return (
                 [
@@ -468,6 +472,8 @@ class TestRunWorkspaceQualityChecks:
                             "source_tool": "director_materialization_quality_repair",
                             "file": "src/index.ts",
                             "operation": "modify",
+                            "before_sha256": "a" * 64,
+                            "after_sha256": "b" * 64,
                         },
                     }
                 ],
@@ -690,12 +696,29 @@ class TestRunWorkspaceQualityChecks:
             source_owner, run_id=run_id, normalized_targets=targets
         ) > executor._workspace_quality_repair_owner_score(test_owner, run_id=run_id, normalized_targets=targets)
 
-    def test_workspace_quality_llm_claim_keeps_test_and_causal_source_targets(self) -> None:
+    def test_workspace_quality_llm_claim_prefers_causal_source_over_test_wrapper(self) -> None:
         assert _workspace_quality_llm_claim_target_files(
             owner_target_files=None,
             diagnostic_target_files=["tests/test_product.py", "src/dream_subway/__init__.py"],
             fallback_target_files=["src/main.py"],
-        ) == ["tests/test_product.py", "src/dream_subway/__init__.py"]
+        ) == ["src/dream_subway/__init__.py"]
+
+    def test_workspace_quality_llm_claim_rejects_stale_owner_when_current_cause_moved(self) -> None:
+        """Prior TASK-1 scope cannot hide a new TASK-2 verifier failure."""
+
+        assert _workspace_quality_llm_claim_target_files(
+            owner_target_files=[
+                "requirements.txt",
+                "src/dream_subway/domain.py",
+                "src/dream_subway/__init__.py",
+            ],
+            diagnostic_target_files=[
+                "src/dream_subway/line_editor.py",
+                "src/dream_subway/__init__.py",
+                "tests/test_product.py",
+            ],
+            fallback_target_files=["src/main.py"],
+        ) == ["src/dream_subway/line_editor.py"]
 
     def test_workspace_quality_owner_uses_run_bound_job_token_topology(self) -> None:
         metadata = {
@@ -721,11 +744,78 @@ class TestRunWorkspaceQualityChecks:
             "src/dream_subway/__init__.py",
             "src/dream_subway/domain/station.py",
         ]
-        assert OrchestrationStageExecutor._workspace_quality_repair_owner_score(
-            {"status": "completed", "metadata": metadata},
-            run_id="factory-python-owner",
-            normalized_targets={"tests/test_product.py", "src/dream_subway/__init__.py"},
-        )[0] == 2
+        assert (
+            OrchestrationStageExecutor._workspace_quality_repair_owner_score(
+                {"status": "completed", "metadata": metadata},
+                run_id="factory-python-owner",
+                normalized_targets={"tests/test_product.py", "src/dream_subway/__init__.py"},
+            )[0]
+            == 2
+        )
+
+    def test_workspace_quality_owner_includes_authoritative_materialized_effect(self) -> None:
+        """A task may repair a file it physically created with a durable receipt."""
+
+        metadata = {
+            "factory_run_id": "factory-effect-owner",
+            "external_task_id": "TASK-2",
+            "target_files": ["src/package/__main__.py"],
+            "adapter_result": {
+                "batch_receipt": {
+                    "raw_results": [
+                        {
+                            "status": "success",
+                            "result": {
+                                "file": "src/main.py",
+                                "before_sha256": "file_absent",
+                                "after_sha256": "a" * 64,
+                            },
+                            "effect_receipt": {
+                                "authoritative": True,
+                                "receipt_outcome": "succeeded",
+                            },
+                        },
+                        {
+                            "status": "success",
+                            "result": {
+                                "file": "requirements.txt",
+                                "before_sha256": "b" * 64,
+                                "after_sha256": "b" * 64,
+                            },
+                            "effect_receipt": {
+                                "authoritative": True,
+                                "receipt_outcome": "succeeded",
+                            },
+                        },
+                        {
+                            "status": "success",
+                            "result": {
+                                "file": "src/untrusted.py",
+                                "before_sha256": "file_absent",
+                                "after_sha256": "c" * 64,
+                            },
+                            "effect_receipt": {
+                                "authoritative": False,
+                                "receipt_outcome": "succeeded",
+                            },
+                        },
+                    ]
+                }
+            },
+        }
+
+        assert _workspace_quality_authoritative_owner_paths(
+            metadata,
+            run_id="factory-effect-owner",
+        ) == ["src/main.py"]
+        assert (
+            OrchestrationStageExecutor._workspace_quality_repair_owner_score(
+                {"status": "failed", "metadata": metadata},
+                run_id="factory-effect-owner",
+                normalized_targets={"src/main.py"},
+            )[0]
+            == 2
+        )
 
     def test_workspace_quality_repair_extracts_python_traceback_project_paths(
         self,
@@ -740,23 +830,139 @@ class TestRunWorkspaceQualityChecks:
         test_path = tests / "test_product.py"
         package_init = package / "__init__.py"
         test_path.write_text("from dream_subway import DreamSubwayEditor\n", encoding="utf-8")
-        package_init.write_text("\"\"\"Dream subway package.\"\"\"\n", encoding="utf-8")
+        package_init.write_text('"""Dream subway package."""\n', encoding="utf-8")
         executor = _executor(tmp_path)
         diagnostic = "\n".join(
             [
                 '  File "/usr/lib/python3.12/unittest/loader.py", line 419, in _find_test_path',
                 f'  File "{test_path}", line 3, in <module>',
                 "    from dream_subway import DreamSubwayEditor",
-                (
-                    "ImportError: cannot import name 'DreamSubwayEditor' from 'dream_subway' "
-                    f"({package_init})"
-                ),
+                (f"ImportError: cannot import name 'DreamSubwayEditor' from 'dream_subway' ({package_init})"),
             ]
         )
 
         targets = executor._workspace_quality_repair_diagnostic_target_files([diagnostic])
 
-        assert targets == ["tests/test_product.py", "src/dream_subway/__init__.py"]
+        assert targets == ["src/dream_subway/__init__.py", "tests/test_product.py"]
+
+    def test_workspace_quality_repair_ranks_deepest_python_traceback_frame_first(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Exact L3-21 shape routes dataclass NameError to TASK-2 source."""
+
+        package = tmp_path / "src" / "dream_subway"
+        tests = tmp_path / "tests"
+        package.mkdir(parents=True)
+        tests.mkdir(parents=True)
+        test_path = tests / "test_product.py"
+        package_init = package / "__init__.py"
+        failing_source = package / "line_editor.py"
+        test_path.write_text("from dream_subway import SubwayEditor\n", encoding="utf-8")
+        package_init.write_text("from .line_editor import SubwayEditor\n", encoding="utf-8")
+        failing_source.write_text("@dataclass(frozen=True)\nclass SubwayEditor: ...\n", encoding="utf-8")
+        executor = _executor(tmp_path)
+        diagnostic = "\n".join(
+            [
+                f'  File "{test_path}", line 3, in <module>',
+                f'  File "{package_init}", line 1, in <module>',
+                f'  File "{failing_source}", line 50, in <module>',
+                "NameError: name 'dataclass' is not defined",
+            ]
+        )
+
+        targets = executor._workspace_quality_repair_diagnostic_target_files([diagnostic])
+        claim_targets = _workspace_quality_llm_claim_target_files(
+            owner_target_files=["src/dream_subway/domain.py", "src/dream_subway/__init__.py"],
+            diagnostic_target_files=targets,
+            fallback_target_files=["src/main.py"],
+        )
+
+        assert targets[:3] == [
+            "src/dream_subway/line_editor.py",
+            "src/dream_subway/__init__.py",
+            "tests/test_product.py",
+        ]
+        assert claim_targets == ["src/dream_subway/line_editor.py"]
+
+    def test_workspace_quality_claims_exact_owner_of_current_causal_source(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """L3-21 regression: stale TASK-1 scope must rebind to TASK-2."""
+
+        from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-python-causal-owner",
+            config=FactoryConfig(name="python-causal-owner"),
+            status=FactoryRunStatus.RECOVERING,
+            created_at="2026-08-20T00:00:00+00:00",
+        )
+        runtime = TaskRuntimeService(str(tmp_path))
+        runtime.ensure_task_row(
+            external_task_id="TASK-1",
+            subject="Domain owner",
+            description="Own package domain and exports",
+            metadata={
+                "external_task_id": "TASK-1",
+                "factory_run_id": run.id,
+                "target_files": ["requirements.txt"],
+                "control_plane_job_token": {
+                    "factory_run_id": run.id,
+                    "allowed_write_paths": [
+                        "requirements.txt",
+                        "src/dream_subway/domain.py",
+                        "src/dream_subway/__init__.py",
+                    ],
+                },
+            },
+        )
+        runtime.ensure_task_row(
+            external_task_id="TASK-2",
+            subject="Editor owner",
+            description="Own line editor and CLI",
+            metadata={
+                "external_task_id": "TASK-2",
+                "factory_run_id": run.id,
+                "target_files": ["requirements.txt", "src/main.py"],
+                "control_plane_job_token": {
+                    "factory_run_id": run.id,
+                    "allowed_write_paths": [
+                        "requirements.txt",
+                        "src/dream_subway/line_editor.py",
+                        "src/dream_subway/memory.py",
+                        "src/dream_subway/seed.py",
+                        "src/dream_subway/__main__.py",
+                    ],
+                },
+            },
+        )
+        claim_targets = _workspace_quality_llm_claim_target_files(
+            owner_target_files=[
+                "requirements.txt",
+                "src/dream_subway/domain.py",
+                "src/dream_subway/__init__.py",
+            ],
+            diagnostic_target_files=[
+                "src/dream_subway/line_editor.py",
+                "src/dream_subway/__init__.py",
+                "tests/test_product.py",
+            ],
+            fallback_target_files=["src/main.py"],
+        )
+
+        external_id, _task_row_id, attempt, repair_task = executor._claim_workspace_quality_repair_attempt(
+            run=run,
+            repair_attempt=1,
+            target_files=claim_targets,
+        )
+
+        assert external_id == "TASK-2"
+        assert attempt.run_id == run.id
+        assert "src/dream_subway/line_editor.py" in repair_task["target_files"]
+        assert "src/dream_subway/domain.py" not in repair_task["target_files"]
 
     def test_workspace_quality_owner_score_matches_cmake_lists_case_aliases(
         self,
@@ -880,6 +1086,239 @@ class TestRunWorkspaceQualityChecks:
         assert restored["metadata"]["external_task_id"] == "TASK-1"
         assert restored["metadata"]["factory_stage"] == "quality_gate"
 
+    def test_workspace_quality_rehydrates_frozen_owner_from_same_run_ce_job_token(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Coarse PM targets must not erase CE topology after terminal drain."""
+
+        from polaris.cells.factory.pipeline.public.contracts import (
+            FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
+            FactoryTerminalTaskRuntimeProjectionV1,
+        )
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-frozen-ce-owner",
+            config=FactoryConfig(name="frozen-ce-owner", stages=["director_dispatch", "quality_gate"]),
+            status=FactoryRunStatus.RECOVERING,
+            created_at="2026-08-20T00:00:00+00:00",
+        )
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {"id": "TASK-1", "goal": "Foundation", "target_files": ["requirements.txt"]},
+                    {"id": "TASK-2", "goal": "Editor", "target_files": ["requirements.txt"]},
+                ]
+            },
+        )
+        blueprint_rows: list[dict[str, Any]] = []
+        for task_id, suffix, target in (
+            ("TASK-1", "one", "src/dream_subway/domain.py"),
+            ("TASK-2", "two", "src/dream_subway/line_editor.py"),
+        ):
+            blueprint_id = f"ce_{task_id}_{suffix}"
+            blueprint_path = f"runtime/blueprints/{blueprint_id}.json"
+            blueprint_hash = ("1" if task_id == "TASK-1" else "2") * 64
+            token = {
+                "token_id": f"job-{suffix}",
+                "run_id": run.id,
+                "factory_run_id": run.id,
+                "blueprint_hash": blueprint_hash,
+                "target_files": ["requirements.txt", target],
+                "allowed_write_paths": ["requirements.txt", target],
+            }
+            executor._write_json_artifact(
+                blueprint_path,
+                {
+                    "schema_version": "chief_engineer.blueprint.v1",
+                    "task_id": task_id,
+                    "blueprint_id": blueprint_id,
+                    "blueprint_hash": blueprint_hash,
+                    "status": "generated",
+                    "handoff_ready": True,
+                    "target_files": ["requirements.txt", target],
+                    "job_token": token,
+                    "capability_token": token,
+                },
+            )
+            blueprint_rows.append(
+                {
+                    "task_id": task_id,
+                    "status": "generated",
+                    "handoff_ready": True,
+                    "blueprint_id": blueprint_id,
+                    "blueprint_path": blueprint_path,
+                }
+            )
+        executor._write_json_artifact(
+            f"runtime/state/blueprints/{run.id}.review.json",
+            {
+                "schema_version": "factory.chief_engineer_review.v2",
+                "factory_run_id": run.id,
+                "blueprints": blueprint_rows,
+            },
+        )
+        run.metadata[FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY] = FactoryTerminalTaskRuntimeProjectionV1(
+            workspace=str(tmp_path),
+            factory_run_id=run.id,
+            captured_at="2026-08-20T00:05:00+00:00",
+            projection={
+                "schema_version": "task_runtime.observable_task_rows_authority.v1",
+                "source": "task_runtime.execution_fact",
+                "workspace": str(tmp_path),
+                "requested_factory_run_id": run.id,
+                "authoritative": True,
+                "degraded": False,
+                "row_count": 2,
+                "total_row_count": 2,
+                "rows": [
+                    {
+                        "task_id": "8",
+                        "external_task_id": "TASK-1",
+                        "workflow_run_id": run.id,
+                        "factory_run_id": run.id,
+                        "status": "failed",
+                        "execution_state": "failed",
+                        "source": "task_runtime.execution_fact",
+                        "status_source": "task_runtime.execution_fact",
+                        "fact_event_seq": 18,
+                    },
+                    {
+                        "task_id": "9",
+                        "external_task_id": "TASK-2",
+                        "workflow_run_id": run.id,
+                        "factory_run_id": run.id,
+                        "status": "completed",
+                        "execution_state": "completed",
+                        "source": "task_runtime.execution_fact",
+                        "status_source": "task_runtime.execution_fact",
+                        "fact_event_seq": 19,
+                    },
+                ],
+                "readiness": {"ready": True, "blocking_reasons": []},
+            },
+        ).to_dict()
+
+        external_id, _task_row_id, attempt, repair_task = executor._claim_workspace_quality_repair_attempt(
+            run=run,
+            repair_attempt=1,
+            target_files=["src/dream_subway/line_editor.py"],
+        )
+
+        assert external_id == "TASK-2"
+        assert attempt.run_id == run.id
+        assert repair_task["target_files"] == ["requirements.txt", "src/dream_subway/line_editor.py"]
+        assert repair_task["metadata"]["control_plane_job_token"]["token_id"] == "job-two"
+        authority = repair_task["metadata"]["workspace_quality_frozen_owner_authority"]
+        assert authority["task_id"] == "TASK-2"
+        assert authority["factory_run_id"] == run.id
+
+    @pytest.mark.parametrize(
+        ("handoff_ready", "token_run_id"),
+        [(False, "factory-frozen-ce-owner-invalid"), (True, "another-factory-run")],
+    )
+    def test_workspace_quality_frozen_ce_owner_rejects_invalid_authority(
+        self,
+        tmp_path: Path,
+        handoff_ready: bool,
+        token_run_id: str,
+    ) -> None:
+        """Unready or cross-run CE evidence cannot mint a repair claim."""
+
+        from polaris.cells.factory.pipeline.public.contracts import (
+            FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
+            FactoryTerminalTaskRuntimeProjectionV1,
+        )
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-frozen-ce-owner-invalid",
+            config=FactoryConfig(name="invalid-frozen-ce-owner", stages=["quality_gate"]),
+            status=FactoryRunStatus.RECOVERING,
+            created_at="2026-08-20T00:00:00+00:00",
+        )
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {"tasks": [{"id": "TASK-1", "goal": "Foundation", "target_files": ["requirements.txt"]}]},
+        )
+        blueprint_id = "ce_TASK-1_invalid"
+        blueprint_path = f"runtime/blueprints/{blueprint_id}.json"
+        blueprint_hash = "3" * 64
+        token = {
+            "token_id": "job-invalid",
+            "run_id": token_run_id,
+            "factory_run_id": token_run_id,
+            "blueprint_hash": blueprint_hash,
+            "target_files": ["requirements.txt", "src/dream_subway/domain.py"],
+            "allowed_write_paths": ["requirements.txt", "src/dream_subway/domain.py"],
+        }
+        executor._write_json_artifact(
+            blueprint_path,
+            {
+                "task_id": "TASK-1",
+                "blueprint_id": blueprint_id,
+                "blueprint_hash": blueprint_hash,
+                "status": "generated",
+                "handoff_ready": handoff_ready,
+                "target_files": ["requirements.txt", "src/dream_subway/domain.py"],
+                "job_token": token,
+                "capability_token": token,
+            },
+        )
+        executor._write_json_artifact(
+            f"runtime/state/blueprints/{run.id}.review.json",
+            {
+                "factory_run_id": run.id,
+                "blueprints": [
+                    {
+                        "task_id": "TASK-1",
+                        "status": "generated",
+                        "handoff_ready": handoff_ready,
+                        "blueprint_id": blueprint_id,
+                        "blueprint_path": blueprint_path,
+                    }
+                ],
+            },
+        )
+        run.metadata[FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY] = FactoryTerminalTaskRuntimeProjectionV1(
+            workspace=str(tmp_path),
+            factory_run_id=run.id,
+            captured_at="2026-08-20T00:05:00+00:00",
+            projection={
+                "schema_version": "task_runtime.observable_task_rows_authority.v1",
+                "source": "task_runtime.execution_fact",
+                "workspace": str(tmp_path),
+                "requested_factory_run_id": run.id,
+                "authoritative": True,
+                "degraded": False,
+                "row_count": 1,
+                "total_row_count": 1,
+                "rows": [
+                    {
+                        "task_id": "8",
+                        "external_task_id": "TASK-1",
+                        "workflow_run_id": run.id,
+                        "factory_run_id": run.id,
+                        "status": "failed",
+                        "execution_state": "failed",
+                        "source": "task_runtime.execution_fact",
+                        "status_source": "task_runtime.execution_fact",
+                        "fact_event_seq": 18,
+                    }
+                ],
+                "readiness": {"ready": True, "blocking_reasons": []},
+            },
+        ).to_dict()
+
+        with pytest.raises(RuntimeError, match="workspace_quality_repair_canonical_owner_missing"):
+            executor._claim_workspace_quality_repair_attempt(
+                run=run,
+                repair_attempt=1,
+                target_files=["src/dream_subway/domain.py"],
+            )
+
     def test_workspace_quality_reopens_blocked_restart_fence_owner(
         self,
         tmp_path: Path,
@@ -989,6 +1428,57 @@ class TestRunWorkspaceQualityChecks:
                 write_tool_evidence=False,
             )
             == "no_op"
+        )
+
+    def test_workspace_quality_repair_effect_rejects_test_failure_fanout_compression(self) -> None:
+        """One common exception cannot masquerade as fewer diagnostics.
+
+        Live L3-21 changed ``4 failures`` into ``1 failure + 21 errors``.
+        Deduped traceback signatures shrank, but unittest's own authoritative
+        summary proved a severe regression.
+        """
+
+        classify = OrchestrationStageExecutor._workspace_quality_repair_effect
+        command = ["python", "-m", "unittest", "discover", "-s", "tests"]
+
+        assert (
+            classify(
+                before_signature=("failure:a", "failure:b", "failure:c", "failure:d"),
+                after_signature=("nameerror: total is not defined",),
+                verifier_passed=False,
+                write_tool_evidence=True,
+                before_results=(
+                    {
+                        "command": command,
+                        "passed": False,
+                        "stderr_tail": "Ran 34 tests\n\nFAILED (failures=4)",
+                    },
+                ),
+                after_results=(
+                    {
+                        "command": command,
+                        "passed": False,
+                        "stderr_tail": "Ran 34 tests\n\nFAILED (failures=1, errors=21)",
+                    },
+                ),
+            )
+            == "regression"
+        )
+
+    def test_workspace_quality_repair_effect_accepts_real_test_failure_reduction(self) -> None:
+        classify = OrchestrationStageExecutor._workspace_quality_repair_effect
+        command = ["python", "-m", "unittest", "discover", "-s", "tests"]
+
+        assert (
+            classify(
+                before_signature=("failure:a", "failure:b", "failure:c", "failure:d"),
+                after_signature=("failure:a", "failure:b", "failure:c"),
+                verifier_passed=False,
+                write_tool_evidence=True,
+                before_results=({"command": command, "passed": False, "stderr_tail": "FAILED (failures=4)"},),
+                after_results=({"command": command, "passed": False, "stderr_tail": "FAILED (failures=3)"},),
+            )
+            == "progress"
         )
 
     def test_workspace_quality_repair_effect_forward_unmask_rules(self) -> None:
@@ -1119,6 +1609,46 @@ class TestRunWorkspaceQualityChecks:
                 write_tool_evidence=True,
             )
             == "forward_unmask"
+        )
+        # Live L3-21: fixing a missing dataclass import moved unittest from a
+        # module-level _FailedTest/NameError into 34 executed tests.  The newly
+        # visible assertion failures increased the residual count, but the
+        # import barrier was gone; that is forward-unmasking, not regression.
+        assert (
+            classify(
+                before_signature=(
+                    "ERROR: test_product (unittest.loader._FailedTest.test_product)\n"
+                    "ImportError: Failed to import test module: test_product\n"
+                    "NameError: name 'dataclass' is not defined",
+                    "delivery_depth_contract_failed: test_source_files=1 < 2",
+                ),
+                after_signature=(
+                    "FAIL: test_rule4_preview_journey_returns_serializable_report\n"
+                    "AssertionError: 0.0 not greater than 0.0\n"
+                    "Ran 34 tests in 0.184s",
+                    "ERROR: test_lucid_loop_seed_is_closed\n"
+                    "InvalidLineError: duplicate station\n"
+                    "Ran 34 tests in 0.184s",
+                    "delivery_depth_contract_failed: test_source_files=1 < 2",
+                ),
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "forward_unmask"
+        )
+        # A new Python exception without proof that collection became a real
+        # test run remains a regression.
+        assert (
+            classify(
+                before_signature=(
+                    "ImportError: Failed to import test module: test_product\n"
+                    "NameError: name 'dataclass' is not defined",
+                ),
+                after_signature=("TypeError: main() takes 0 positional arguments", "ValueError: invalid seed"),
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "regression"
         )
         # A read-only turn never earns forward progress regardless of codes.
         assert (
@@ -1316,7 +1846,11 @@ class TestRunWorkspaceQualityChecks:
 
         assert passed is False
         assert command_calls == 1
-        assert deterministic_calls == 2
+        # The first unchanged signature may probe the materialization
+        # callback schedule once.  After that probe returns no authoritative
+        # commit, the second round must go directly to the same-owner LLM
+        # repair instead of reopening/settling another deterministic attempt.
+        assert deterministic_calls == 1
         assert llm_calls == 2
         payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
         repair = payload["repair"]
@@ -1325,6 +1859,187 @@ class TestRunWorkspaceQualityChecks:
         assert repair["convergence_stop_reason"] == "two_consecutive_no_mutation_repairs"
         assert [item["verifier_effect"] for item in repair["rounds"]] == ["no_op", "no_op"]
         assert all(item["write_tool_evidence"] is False for item in repair["rounds"])
+        assert "deterministic_no_commit_signature_cache_hit" in repair["rounds"][1]["evidence"]
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_global_nonprogress_cap_precedes_owner_rotation(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-owner-rotation-cap",
+            config=FactoryConfig(name="quality-owner-rotation-cap"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-20T00:00:00+00:00",
+        )
+        deterministic_calls = 0
+        llm_calls = 0
+
+        def failed_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            return {
+                "command": command,
+                "exit_code": 1,
+                "passed": False,
+                "stdout_tail": "src/main.py: repair still required",
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def no_deterministic_effect(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal deterministic_calls
+            del kwargs
+            deterministic_calls += 1
+            return [], {"attempted": True, "success": False, "write_tool_evidence": False}
+
+        async def no_llm_effect(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal llm_calls
+            del kwargs
+            llm_calls += 1
+            return [], {
+                "attempted": True,
+                "success": False,
+                "task_id": "TASK-2",
+                "repair_target_files": ["src/main.py"],
+                "write_tool_evidence": False,
+            }
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["python", "src/main.py"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", failed_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_deterministic_repairs", no_deterministic_effect)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", no_llm_effect)
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "workspace_quality_unclaimed_residual_targets",
+            lambda *_args, **_kwargs: ["tests/test_product.py"],
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "leftover_targets_should_force_owner_rotate",
+            lambda *_args, **_kwargs: True,
+        )
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 8},
+        )
+
+        assert passed is False
+        assert deterministic_calls == 1
+        assert llm_calls == 3
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        repair = payload["repair"]
+        assert repair["nonprogress_rounds_since_last_progress"] == 3
+        assert repair["convergence_stop_reason"] == "three_nonprogress_repairs_without_verified_progress"
+        assert len(repair["rounds"]) == 3
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_mutation_nonprogress_cap_masks_volatile_lines_before_owner_rotation(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Line-number churn cannot buy more probes or bypass the global fuse."""
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-mutation-owner-rotation-cap",
+            config=FactoryConfig(name="quality-mutation-owner-rotation-cap"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-20T00:00:00+00:00",
+        )
+        command_calls = 0
+        deterministic_calls = 0
+        llm_calls = 0
+
+        def failed_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            nonlocal command_calls
+            del timeout_seconds
+            command_calls += 1
+            # The diagnostic meaning is unchanged; edits only move traceback
+            # locations, matching the live L3-21 failure shape.
+            line = 100 + command_calls * 2
+            return {
+                "command": command,
+                "exit_code": 1,
+                "passed": False,
+                "stdout_tail": f'File "src/main.py", line {line}, in run\nAssertionError: still red',
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def no_deterministic_effect(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal deterministic_calls
+            del kwargs
+            deterministic_calls += 1
+            return [], {"attempted": True, "success": False, "write_tool_evidence": False}
+
+        async def mutating_llm_effect(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal llm_calls
+            del kwargs
+            llm_calls += 1
+            return (
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {
+                            "file": "src/main.py",
+                            "operation": "modify",
+                            "before_hash": f"before-{llm_calls}",
+                            "after_hash": f"after-{llm_calls}",
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "task_id": "TASK-2",
+                    "repair_target_files": ["src/main.py"],
+                    "write_tool_evidence": True,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["python", "src/main.py"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", failed_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_deterministic_repairs", no_deterministic_effect)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", mutating_llm_effect)
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "workspace_quality_unclaimed_residual_targets",
+            lambda *_args, **_kwargs: ["tests/test_product.py"],
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "leftover_targets_should_force_owner_rotate",
+            lambda *_args, **_kwargs: True,
+        )
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 8},
+        )
+
+        assert passed is False
+        assert command_calls == 4
+        assert deterministic_calls == 1
+        assert llm_calls == 3
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        repair = payload["repair"]
+        assert repair["nonprogress_rounds_since_last_progress"] == 3
+        assert repair["convergence_stop_reason"] == "three_nonprogress_repairs_without_verified_progress"
+        assert len(repair["rounds"]) == 3
+        assert all(item["verifier_effect"] == "equal_count_swap" for item in repair["rounds"])
+        assert "deterministic_no_commit_signature_cache_hit" in repair["rounds"][1]["evidence"]
+        assert "deterministic_no_commit_signature_cache_hit" in repair["rounds"][2]["evidence"]
 
     @pytest.mark.asyncio
     async def test_workspace_quality_stops_after_two_equal_count_diagnostic_swaps(
@@ -1483,6 +2198,7 @@ class TestRunWorkspaceQualityChecks:
             assert run.id == "factory-quality-rust-unmask"
             assert artifact_quality_errors
             repair_calls += 1
+            repaired_file = "src/lib.rs" if "src/lib.rs" in artifact_quality_errors[0] else "src/engine/flavor_rules.rs"
             return (
                 [
                     {
@@ -1490,8 +2206,10 @@ class TestRunWorkspaceQualityChecks:
                         "success": True,
                         "result": {
                             "source_tool": "deterministic_rust_post_repair",
-                            "file": "src/lib.rs",
+                            "file": repaired_file,
                             "operation": "modify",
+                            "before_sha256": "a" * 64,
+                            "after_sha256": "b" * 64,
                         },
                     }
                 ],
@@ -1595,6 +2313,8 @@ class TestRunWorkspaceQualityChecks:
                             "source_tool": "deterministic_rust_post_repair",
                             "file": "src/engine/flavor_rules.rs",
                             "operation": "modify",
+                            "before_sha256": "a" * 64,
+                            "after_sha256": "b" * 64,
                         },
                     }
                 ],
@@ -1629,19 +2349,22 @@ class TestRunWorkspaceQualityChecks:
         repair = payload["repair"]
         assert repair["convergence_stop_reason"] == "two_consecutive_stagnant_repairs"
         assert repair["consecutive_stagnant_rounds"] == 2
-        assert len(repair["rounds"]) == 3
+        # Round 1 exposes a novel diagnostic. The owner-aware residual guard
+        # preserves one extra local round before the repeated A/B signature
+        # trips the same-owner stagnation breaker.
+        assert len(repair["rounds"]) == 4
 
     @pytest.mark.asyncio
-    async def test_workspace_quality_mixed_nonprogress_classes_get_next_bounded_round(
+    async def test_workspace_quality_new_diagnostic_signature_reenables_deterministic_probe(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Different non-progress classes must not masquerade as one repeated stall.
 
-        The regressing edit produces new structured diagnostics that the same
-        Director task can repair.  Keep the three-round hard ceiling, while
-        stopping only when the same non-progress class repeats consecutively.
+        A real LLM mutation may expose a different verifier signature.  The
+        no-commit cache is scoped to the old signature, so the new diagnostic
+        still gets one deterministic materialization-schedule probe.
         """
 
         executor = _executor(tmp_path)
@@ -1714,13 +2437,19 @@ class TestRunWorkspaceQualityChecks:
             del kwargs
             llm_calls += 1
             return (
-                [{"tool": "edit_file", "success": False, "result": {"error_code": "deo_path_scope_denied"}}],
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {"file": "main_test.go", "operation": "modify"},
+                    }
+                ],
                 {
                     "attempted": True,
-                    "success": False,
+                    "success": True,
                     "source_tools": ["director_materialization_quality_repair"],
                     "tool_results": 1,
-                    "write_tool_evidence": False,
+                    "write_tool_evidence": True,
                 },
             )
 
@@ -1739,7 +2468,7 @@ class TestRunWorkspaceQualityChecks:
 
         assert passed is True
         assert command_calls == 3
-        assert deterministic_calls == 3
+        assert deterministic_calls == 2
         assert llm_calls == 1
         payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
         repair = payload["repair"]
@@ -1747,10 +2476,108 @@ class TestRunWorkspaceQualityChecks:
         assert repair["consecutive_stagnant_rounds"] == 0
         assert repair["convergence_stop_reason"] == "verifier_passed"
         assert [item["verifier_effect"] for item in repair["rounds"]] == [
-            "no_op",
             "equal_count_swap",
             "resolved",
         ]
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_same_signature_no_commit_stops_without_reclaiming_deterministic(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An unchanged signature cannot reopen deterministic TaskRuntime attempts."""
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-mixed-nonprogress-cap",
+            config=FactoryConfig(name="quality-mixed-nonprogress-cap"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-20T00:00:00+00:00",
+        )
+        command_calls = 0
+        deterministic_calls = 0
+        llm_calls = 0
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            nonlocal command_calls
+            del timeout_seconds
+            command_calls += 1
+            diagnostic = (
+                "tests/test_product.py:10: assertion failed"
+                if command_calls == 1
+                else "src/product.py:20: ValueError not raised"
+            )
+            return {
+                "command": command,
+                "exit_code": 1,
+                "passed": False,
+                "stdout_tail": diagnostic,
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def fake_deterministic_repairs(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal deterministic_calls
+            del kwargs
+            deterministic_calls += 1
+            if deterministic_calls == 2:
+                return (
+                    [{"tool": "edit_file", "success": True, "result": {"file": "src/product.py"}}],
+                    {
+                        "attempted": True,
+                        "success": True,
+                        "task_id": "TASK-2",
+                        "write_tool_evidence": True,
+                    },
+                )
+            return [], {
+                "attempted": True,
+                "success": False,
+                "task_id": "TASK-2",
+                "write_tool_evidence": False,
+            }
+
+        async def fake_llm_repairs(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal llm_calls
+            del kwargs
+            llm_calls += 1
+            return (
+                [{"tool": "edit_file", "success": False, "result": {"error_code": "stale_edit"}}],
+                {
+                    "attempted": True,
+                    "success": False,
+                    "task_id": "TASK-2",
+                    "write_tool_evidence": False,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["python", "-m", "unittest"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_deterministic_repairs", fake_deterministic_repairs)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", fake_llm_repairs)
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 8},
+        )
+
+        assert passed is False
+        assert command_calls == 1
+        assert deterministic_calls == 1
+        assert llm_calls == 2
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        repair = payload["repair"]
+        assert repair["nonprogress_rounds_since_last_progress"] == 2
+        assert repair["convergence_stop_reason"] == "two_consecutive_no_mutation_repairs"
+        assert [item["verifier_effect"] for item in repair["rounds"]] == [
+            "no_op",
+            "no_op",
+        ]
+        assert "deterministic_no_commit_signature_cache_hit" in repair["rounds"][1]["evidence"]
 
     @pytest.mark.asyncio
     async def test_workspace_quality_llm_repair_context_includes_ce_blueprint_and_catalog(
@@ -2072,12 +2899,14 @@ class TestRunWorkspaceQualityChecks:
             context: dict[str, Any],
             artifact_quality_errors: list[str],
             repair_attempt: int,
+            owner_target_files: list[str] | None = None,
         ) -> tuple[list[dict[str, object]], dict[str, object]]:
             nonlocal llm_repair_calls
             assert run.id == "factory-quality-deterministic-no-write"
             assert context["workspace_quality_repair_max_rounds"] == 1
             assert artifact_quality_errors
             assert repair_attempt == 1
+            assert owner_target_files is None
             llm_repair_calls += 1
             state["repaired"] = True
             return (
@@ -2090,6 +2919,8 @@ class TestRunWorkspaceQualityChecks:
                             "source_tool": "director_materialization_quality_repair",
                             "file": "tests/run-tests.js",
                             "operation": "create",
+                            "before_sha256": "file_absent",
+                            "after_sha256": "b" * 64,
                         },
                     }
                 ],
@@ -2128,7 +2959,8 @@ class TestRunWorkspaceQualityChecks:
         assert payload["repair"]["success"] is True
         assert payload["repair"]["write_tool_evidence"] is True
         assert payload["repair"]["rounds"][0]["evidence"] == [
-            "repair_write:tool=director_materialization_quality_repair;file=tests/run-tests.js;operation=create"
+            "repair_write:tool=director_materialization_quality_repair;file=tests/run-tests.js;operation=create",
+            "repair_hash:file=tests/run-tests.js;before=file_absent;after=bbbbbbbbbbbbbbbb",
         ]
 
     @pytest.mark.asyncio

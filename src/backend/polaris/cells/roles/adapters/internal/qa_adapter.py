@@ -1379,7 +1379,7 @@ class QAAdapter(BaseRoleAdapter):
     def _load_runtime_stage_signals(self, *, run_id: str = "") -> list[dict[str, Any]]:
         signals: list[dict[str, Any]] = []
         current_run_id = str(run_id or "").strip()
-        signal_dir = Path(self.workspace).resolve() / "runtime" / "signals"
+        signal_dir = Path(resolve_runtime_path(self.workspace, "runtime/signals"))
         if not signal_dir.exists() or not signal_dir.is_dir():
             return signals
         for file_path in sorted(signal_dir.glob("*.json")):

@@ -105,7 +105,7 @@ async def test_full_traceability_contract_smoke() -> None:
 
         # 6. Persist matrix
         matrix = trace_service.build_matrix(run_id, iteration=1)
-        matrix_path = Path(workspace) / "runtime" / "traceability" / f"{run_id}.1.matrix.json"
+        matrix_path = Path(workspace) / ".polaris" / "runtime" / "traceability" / f"{run_id}.1.matrix.json"
         trace_service.persist(matrix, str(matrix_path))
 
         # 7. Run traceability gate

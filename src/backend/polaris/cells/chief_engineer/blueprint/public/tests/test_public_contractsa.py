@@ -866,7 +866,10 @@ class TestChiefEngineerBlueprintPortfolio:
         )
         requirements = _application_completion_requirements()
         obligations = requirements["obligations"]
-        obligations["artifacts"][1]["owner_task_id"] = "TASK-C"
+        # Live L3-21: CE assigned the PM-declared test path to TASK-A even
+        # though TASK-C was its sole committed PM owner. Unique PM authority
+        # must repair this model owner drift before verifier binding.
+        obligations["artifacts"][1]["owner_task_id"] = "TASK-A"
         obligations["artifacts"].append(
             {
                 "obligation_id": "artifact-web",
@@ -925,6 +928,10 @@ class TestChiefEngineerBlueprintPortfolio:
 
         completion = portfolio.project_completion_contract
         assert completion is not None
+        test_artifact = next(
+            item for item in completion.obligations.artifacts if item.path == "tests/test_main.py"
+        )
+        assert test_artifact.owner_task_id == "TASK-C"
         assert [item.obligation_id for item in completion.obligations.entrypoints] == ["entrypoint-cli"]
         build_verifier = next(item for item in completion.obligations.verification if item.modality == "build")
         assert "entrypoint-web-advisory-only" not in build_verifier.covers_obligation_ids
@@ -1424,6 +1431,77 @@ class TestChiefEngineerBlueprintPortfolio:
                 )
             )
         assert exc_info.value.code == "blueprint_provenance_completion_targets_mismatch"
+
+    def test_completion_contract_normalizes_split_delegated_python_entrypoint(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A delegated ``cli.py`` + ``__main__.py`` pair becomes one executable artifact."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Choose and implement the Python package topology and CLI",
+                target_files=("requirements.txt",),
+                scope_paths=("requirements.txt",),
+                topology_authority="chief_engineer",
+                required_source_kinds=("domain_modules", "entrypoint"),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build the application tests",
+                target_files=("tests/test_main.py",),
+                scope_paths=("tests/test_main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        requirements["obligations"]["artifacts"][0].update(
+            {
+                "path": "src/dream_subway/line_editor.py",
+                "owner_task_id": "TASK-A",
+            }
+        )
+        requirements["obligations"]["entrypoints"][0].update(
+            {
+                "source_path": "src/dream_subway/cli.py",
+                "runtime_path": "src/dream_subway/__main__.py",
+                "owner_task_id": "TASK-A",
+                "command": "python -m dream_subway",
+            }
+        )
+
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-delegated-python-split-entrypoint",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-delegated-python-split-entrypoint",
+                    entrypoint_owner_task_ids=("TASK-NOT-PRESENT",),
+                ),
+                llm_blueprint={
+                    "construction_plan": {"project_interface_contract": {}},
+                    "project_completion_contract": requirements,
+                    "risk_flags": [],
+                },
+            )
+        )
+
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        entrypoint = next(item for item in completion.obligations.entrypoints if item.applicability == "required")
+        assert entrypoint.source_path == "src/dream_subway/__main__.py"
+        assert entrypoint.runtime_path == "src/dream_subway/__main__.py"
+        assert entrypoint.command == "python -m dream_subway"
+        assert any(
+            item.path == "src/dream_subway/__main__.py"
+            and item.semantic_role == "entrypoint"
+            and item.owner_task_id == "TASK-A"
+            for item in completion.obligations.artifacts
+        )
 
     def test_delegated_topology_support_task_uses_project_completion_source_authority(
         self,

@@ -1,0 +1,39 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "CE-DELEGATED-PYTHON-ENTRYPOINT-SPLIT-20260820",
+  "status": "CLOSED_LIVE_VERIFIED",
+  "severity": "P0",
+  "scope": "chief_engineer.blueprint",
+  "exact_run": {
+    "factory_run_id": "factory_ec5697b14a71",
+    "project_id": "L3-21",
+    "workspace": "/tmp/factory-bench-l3-21-r02/workspaces/cf93b743c36c-74379a72d8477421/L3-21-1bff44c03e723ba6/aa5cef8623dc7c1ca7e01190",
+    "stage": "chief_engineer_review",
+    "retry_epoch": 2
+  },
+  "symptom": "Same-run CE retry passed test-owner normalization but still generated zero blueprints because completion-contract normalization removed every application entrypoint.",
+  "error_code": "chief_engineer.portfolio_generation_failed",
+  "physical_error": "invalid project completion contract: application project requires a required entrypoint",
+  "dynamic_evidence": {
+    "pm_authority": "TASK-2 explicitly delegated required_source_kinds including entrypoint while committing no concrete entrypoint target or command.",
+    "ce_candidate": "Required CLI used command='python -m dream_subway', source_path='src/dream_subway/cli.py', runtime_path='src/dream_subway/__main__.py', owner_task_id='TASK-2'.",
+    "normalization_result_before_fix": "resolve_delegated_entrypoint_authority accepted only source_path itself shaped as src/<module>/__main__.py, so the common split CLI row was deleted.",
+    "director_reached": false,
+    "target_project_modified": false
+  },
+  "root_cause": "CE topology delegation supported only a single-path Python package entrypoint. It did not deterministically normalize the common implementation/shim split where source_path is cli.py and runtime_path is __main__.py, leaving command authority without a declared executable artifact.",
+  "fix": {
+    "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py",
+    "rule": "For an owner that explicitly delegates entrypoint topology, accept only same-package Python source/runtime pairs whose runtime path is src/<valid module>/__main__.py and whose exact POSIX argv is python -m <module>. Canonicalize source_path to the runtime shim and project that shim as a required entrypoint artifact. Cross-package paths, malformed paths, command mismatches, and non-delegated tasks remain fail-closed."
+  },
+  "regression_test": "test_completion_contract_normalizes_split_delegated_python_entrypoint",
+  "verification": {
+    "focused": "4 passed",
+    "chief_engineer_full": "198 passed",
+    "mypy": "clean",
+    "ruff": "clean",
+    "same_run_retry": "factory_ec5697b14a71 retry epoch 3 reused completed PM, generated 3/3 blueprints with llm_calls=0, and advanced to director_dispatch"
+  },
+  "target_project_modified": false,
+  "next_action": "Audit Director physical effects, project artifact receipts, verifier execution, and TaskRuntime settlement on the same run."
+}

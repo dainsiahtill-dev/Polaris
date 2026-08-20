@@ -1,0 +1,71 @@
+card_id: "vc-20260820-terminal-repair-owner-authority"
+bug_summary: >
+  QA-only retry after terminal TaskRuntime drain cannot reclaim a source owner
+  when PM targets are coarse and CE topology holds the concrete paths.
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py"
+  method: "_claim_workspace_quality_repair_attempt"
+  symptom: "workspace_quality_repair_canonical_owner_missing before provider/tool dispatch"
+
+assumptions:
+  - id: "A1"
+    statement: "PM targets may be less specific than CE topology."
+    status: verified
+    evidence: "factory_ec5697b14a71 PM TASK-1/2 only own requirements.txt; CE JobTokens own src/dream_subway source files."
+  - id: "A2"
+    statement: "Terminal drain intentionally removes live TaskRuntime rows."
+    status: verified
+    evidence: "Exact-run runtime_reset_removed facts follow the frozen terminal projection."
+  - id: "A3"
+    statement: "Same-run CE blueprint and JobToken remain readable after drain."
+    status: verified
+    evidence: "runtime/blueprints/ce_TASK-*.json retains exact factory_run_id, target_files and allowed_write_paths."
+  - id: "A4"
+    statement: "Disk existence alone is not ownership authority."
+    status: verified
+    evidence: "JobToken and authoritative effect receipts are the existing physical-tool capability evidence."
+
+pre_mortem:
+  failure_point: >
+    Accepting a blueprint from another run or an unapproved handoff would mint
+    write authority; using diagnostics alone would assign arbitrary ownership.
+  risk_zone:
+    - "polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py"
+    - "polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+      description: "Restore exact CE owner from frozen terminal epoch when PM targets are coarse."
+      expected: "TASK-2 owns line_editor.py; TASK-1 is not selected."
+      status: new
+    - file: "polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+      description: "Reject mismatched run, unready handoff, and missing JobToken."
+      expected: "Repair remains fail-closed without a claim."
+      status: new
+  integration_tests:
+    - description: "Retry quality_gate on factory_ec5697b14a71 after backend restart."
+      command: "POST /v2/factory/runs/factory_ec5697b14a71/control action=retry_phase target_phase=qa_gate"
+      status: passed_owner_boundary
+      evidence: >
+        TaskRuntime seq 670-674 restored and claimed TASK-1 with exact same-run
+        blueprint ce_TASK-1_20260820082437844695 and JobToken
+        job-582588f726a85603aa60e5da; canonical_owner_missing disappeared and
+        Director reached native edit_file dispatch. QA still exposed a separate
+        nonprogress-fuse defect, tracked by defect-20260820-workspace-quality-no-commit-claim-spin.json.
+  manual_check:
+    - "No generated target file is modified by the main Agent."
+    - "Provider/tool dispatch occurs only after exact TaskRuntime owner claim."
+
+related_adrs:
+  - "ADR-0108"
+  - "ADR-0110"
+
+sign_off:
+  completed_by: "codex"
+  completed_at: "2026-08-20T23:00:00+08:00"
+  verified_by: "codex-live-exact-run"
+  verified_at: "2026-08-20T23:00:00+08:00"

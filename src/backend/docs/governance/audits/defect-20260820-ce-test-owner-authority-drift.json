@@ -1,0 +1,37 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "CE-TEST-OWNER-AUTHORITY-DRIFT-20260820",
+  "status": "CLOSED_UNIT_VERIFIED_LIVE_RERUN_PENDING",
+  "severity": "P0",
+  "scope": "chief_engineer.blueprint",
+  "exact_run": {
+    "factory_run_id": "factory_ec5697b14a71",
+    "project_id": "L3-21",
+    "workspace": "/tmp/factory-bench-l3-21-r02/workspaces/cf93b743c36c-74379a72d8477421/L3-21-1bff44c03e723ba6/aa5cef8623dc7c1ca7e01190",
+    "stage": "chief_engineer_review"
+  },
+  "symptom": "Chief Engineer produced a schema-valid portfolio candidate but deterministic completion-contract composition failed before Director dispatch.",
+  "error_code": "chief_engineer.portfolio_generation_failed",
+  "physical_error": "required test artifact owner must have exactly one committed PM test authority; owner_task_id='TASK-2'; matches=0",
+  "dynamic_evidence": {
+    "pm_authority": "tests/test_product.py was committed only under TASK-3 with the sole test command authority",
+    "ce_candidate": "tests/test_product.py was assigned to TASK-2; a second advisory tests/test_engine.py was also assigned to TASK-2",
+    "provider_request": "role identity, PM contract, target files, structured-output tool schema, and final request coverage all passed",
+    "director_reached": false,
+    "source_files_materialized": 0
+  },
+  "root_cause": "Completion owner normalization repaired only multi-owner dependency-terminal drift. It did not repair a required test artifact whose model owner differed from one unique PM path owner and one unique committed test command authority.",
+  "fix": {
+    "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py",
+    "rule": "Normalize test owner drift only when semantic_role=test, path authority has exactly one PM owner, and that owner has exactly one committed test command authority. Source and entrypoint owner drift remains fail-closed."
+  },
+  "regression_test": "test_completion_contract_composer_repairs_cross_owner_rows_and_drops_unexecutable_entrypoints",
+  "verification": {
+    "focused": "4 passed",
+    "chief_engineer_full": "197 passed",
+    "mypy": "clean before the narrowed edit; rerun required in final gate",
+    "ruff": "clean before the narrowed edit; rerun required in final gate"
+  },
+  "target_project_modified": false,
+  "next_action": "Restart only the isolated instance with current source and run a fresh L3-21 attempt; verify CE portfolio succeeds and Director is reached."
+}

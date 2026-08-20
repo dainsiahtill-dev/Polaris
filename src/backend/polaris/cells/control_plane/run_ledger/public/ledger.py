@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.storage import resolve_runtime_path
+
 _LOWER_HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_EVENT_ID_LENGTH = 256
 _MAX_RECORDED_AT_LENGTH = 64
@@ -131,7 +133,12 @@ class RunLedger:
         self._canonical_run_id_input = run_id
         self.run_id = str(run_id or "unknown").strip() or "unknown"
         safe_run_id = _safe_token(self.run_id)
-        self.path = self.workspace / "runtime" / "control_plane" / "ledger" / f"{safe_run_id}.ndjson"
+        self.path = Path(
+            resolve_runtime_path(
+                str(self.workspace),
+                f"runtime/control_plane/ledger/{safe_run_id}.ndjson",
+            )
+        )
 
     def _validate_canonical_run_id(self) -> str:
         raw_run_id = self._canonical_run_id_input

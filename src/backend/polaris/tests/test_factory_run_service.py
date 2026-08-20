@@ -649,6 +649,39 @@ class TestFactoryRunService:
         assert retried.stages_completed == ["pm_planning", "director_dispatch"]
 
     @pytest.mark.asyncio
+    async def test_retry_run_from_stage_reopens_cancelled_quality_gate_only(self, temp_workspace):
+        """An explicit QA retry may revalidate a settled cancelled run only.
+
+        This preserves completed PM/CE/Director authority while letting an
+        operator resume the exact run after dynamically stopping a runaway QA
+        repair loop.  Cancellation must remain terminal for upstream replay.
+        """
+
+        service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())
+        config = FactoryConfig(name="test-run", stages=["pm_planning", "director_dispatch", "quality_gate"])
+        run = await service.create_run(config)
+        await service.start_run(run.id)
+        run = await service.get_run(run.id)
+        run.status = FactoryRunStatus.CANCELLED
+        run.completed_at = "2026-08-20T15:11:26+00:00"
+        run.stages_completed = ["pm_planning", "director_dispatch"]
+        run.metadata["last_successful_stage"] = "director_dispatch"
+        run.metadata["cancel_reason"] = "dynamic_debug_stalled_workspace_quality_repair"
+        await service.store.save_run(run)
+
+        ignored = await service.retry_run_from_stage(run.id, "director_dispatch", "must not rewind")
+        assert ignored.status == FactoryRunStatus.CANCELLED
+
+        retried = await service.retry_run_from_stage(run.id, "quality_gate", "revalidate repaired QA loop")
+        assert retried.status == FactoryRunStatus.RECOVERING
+        assert retried.recovery_point == "quality_gate"
+        assert retried.completed_at is None
+        assert retried.metadata["retry_from_status"] == "cancelled"
+        assert retried.metadata["retry_requested_stage"] == "quality_gate"
+        assert retried.metadata["retry_execution_stage"] == "quality_gate"
+        assert retried.stages_completed == ["pm_planning", "director_dispatch"]
+
+    @pytest.mark.asyncio
     async def test_all_stage_handlers(self, temp_workspace):
         """Test all stage handlers return proper StageResult"""
         service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())

@@ -860,10 +860,16 @@ class TestQualityGateDeadlineHandling:
                 "stderr_tail": "",
             },
         )
+
+        async def fail_if_deterministic_repair_started(
+            **_kwargs: Any,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            raise AssertionError("workspace quality deterministic repair must not claim after deadline admission fails")
+
         monkeypatch.setattr(
             executor,
-            "_apply_workspace_quality_repairs",
-            lambda **_kwargs: ([], {"attempted": True, "source_tools": [], "tool_results": 0}),
+            "_apply_workspace_quality_deterministic_repairs",
+            fail_if_deterministic_repair_started,
         )
         monkeypatch.setattr(
             executor,

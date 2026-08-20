@@ -726,6 +726,84 @@ def _build_portfolio_completion_contract(
             task = delegated_topology_tasks.get(task_id)
             return task is not None and source_kind in task.required_source_kinds
 
+        def canonical_delegated_python_entrypoint(
+            row: Mapping[str, Any],
+        ) -> tuple[str, str, tuple[str, ...]] | None:
+            """Resolve a bounded ``python -m`` package entrypoint.
+
+            Providers commonly describe a package CLI with the implementation
+            file in ``source_path`` (for example ``cli.py``) and the executable
+            module shim in ``runtime_path`` (``__main__.py``).  PM topology
+            delegation authorizes CE to choose that shim, but only when path,
+            package, owner, and exact argv all agree deterministically.
+            """
+
+            if row["applicability"] != "required":
+                return None
+            owner_task_id = str(row.get("owner_task_id") or "")
+            if not task_delegates(owner_task_id, "entrypoint"):
+                return None
+            runtime_path = str(row.get("runtime_path") or "")
+            runtime_parts = PurePosixPath(runtime_path).parts
+            if len(runtime_parts) < 3 or runtime_parts[0] != "src" or runtime_parts[-1] != "__main__.py":
+                return None
+            module_parts = runtime_parts[1:-1]
+            if not module_parts or any(not part.isidentifier() for part in module_parts):
+                return None
+            source_path = str(row.get("source_path") or "")
+            source_parts = PurePosixPath(source_path).parts
+            if (
+                len(source_parts) < 3
+                or source_parts[0] != "src"
+                or tuple(source_parts[1:-1]) != module_parts
+                or source_parts[-1] in {"", ".", ".."}
+                or not source_parts[-1].endswith(".py")
+            ):
+                return None
+            expected_argv = ("python", "-m", ".".join(module_parts))
+            try:
+                candidate_argv = tuple(shlex.split(str(row.get("command") or ""), posix=True))
+            except ValueError:
+                return None
+            if candidate_argv != expected_argv:
+                return None
+            return owner_task_id, runtime_path, expected_argv
+
+        # Normalize the common split CLI description before path authority is
+        # projected.  The executable ``__main__.py`` is a real delivery
+        # artifact; without this row the completion contract has an entrypoint
+        # command but no owned artifact and deletes the otherwise valid CE
+        # suggestion.  This projection is bounded by explicit PM topology
+        # delegation plus exact path/package/argv agreement above.
+        normalized_pre_authority_entrypoints: list[dict[str, Any]] = []
+        projected_entrypoint_paths = {
+            str(row.get("path") or "")
+            for row in artifact_rows
+            if row["applicability"] != "not_applicable"
+        }
+        projected_entrypoint_index = 1
+        for row in entrypoint_rows:
+            normalized_row = dict(row)
+            delegated_entrypoint = canonical_delegated_python_entrypoint(row)
+            if delegated_entrypoint is not None:
+                owner_task_id, canonical_path, _expected_argv = delegated_entrypoint
+                normalized_row["source_path"] = canonical_path
+                if canonical_path not in projected_entrypoint_paths:
+                    artifact_rows = (
+                        *artifact_rows,
+                        {
+                            "obligation_id": f"artifact-delegated-entrypoint-{projected_entrypoint_index:03d}",
+                            "path": canonical_path,
+                            "semantic_role": "entrypoint",
+                            "applicability": "required",
+                            "owner_task_id": owner_task_id,
+                        },
+                    )
+                    projected_entrypoint_paths.add(canonical_path)
+                    projected_entrypoint_index += 1
+            normalized_pre_authority_entrypoints.append(normalized_row)
+        entrypoint_rows = tuple(normalized_pre_authority_entrypoints)
+
         # CE-created source paths become authority only when the committed PM
         # task explicitly delegated topology.  The owner comes from the same
         # strict structured row; safe-source filtering prevents this mapping
@@ -861,10 +939,29 @@ def _build_portfolio_completion_contract(
                     path_value = row.get(path_field)
                     path = str(path_value) if path_value is not None else ""
                     authorized = owners_for_path(path) if path else set()
+                    terminal_owner: str | None = None
                     if len(authorized) > 1 and row["owner_task_id"] not in authorized:
                         terminal_owner = unique_terminal_owner(path) if path else None
-                        if terminal_owner is not None:
-                            normalized_row["owner_task_id"] = terminal_owner
+                    elif (
+                        len(authorized) == 1
+                        and row["owner_task_id"] not in authorized
+                        and row.get("semantic_role") == "test"
+                    ):
+                        candidate_owner = next(iter(authorized))
+                        candidate_test_authorities = tuple(
+                            item
+                            for item in command_authorities
+                            if item.modality == "test" and item.task_id == candidate_owner
+                        )
+                        if len(candidate_test_authorities) == 1:
+                            # Live L3-21: provider assigned the sole PM-owned
+                            # test path to a source task. Test ownership can be
+                            # repaired only when both path authority and the
+                            # executable test command resolve uniquely. Source
+                            # and entrypoint owner drift remains fail-closed.
+                            terminal_owner = candidate_owner
+                    if terminal_owner is not None:
+                        normalized_row["owner_task_id"] = terminal_owner
                 normalized.append(normalized_row)
             return tuple(normalized)
 
@@ -977,26 +1074,11 @@ def _build_portfolio_completion_contract(
             gain their own deterministic resolver and tests.
             """
 
-            if row["applicability"] != "required":
+            delegated_entrypoint = canonical_delegated_python_entrypoint(row)
+            if delegated_entrypoint is None:
                 return None
-            delegated_owner_task_id = str(row.get("owner_task_id") or "")
-            source_path = str(row.get("source_path") or "")
-            if not task_delegates(delegated_owner_task_id, "entrypoint"):
-                return None
+            delegated_owner_task_id, source_path, expected_argv = delegated_entrypoint
             if delegated_owner_task_id not in delegated_path_owners.get(source_path, set()):
-                return None
-            parts = PurePosixPath(source_path).parts
-            if len(parts) < 3 or parts[0] != "src" or parts[-1] != "__main__.py":
-                return None
-            module_parts = parts[1:-1]
-            if not module_parts or any(not part.isidentifier() for part in module_parts):
-                return None
-            expected_argv = ("python", "-m", ".".join(module_parts))
-            try:
-                candidate_argv = tuple(shlex.split(str(row.get("command") or ""), posix=True))
-            except ValueError:
-                return None
-            if candidate_argv != expected_argv:
                 return None
             authority = VerificationCommandAuthorityV1(
                 task_id=delegated_owner_task_id,

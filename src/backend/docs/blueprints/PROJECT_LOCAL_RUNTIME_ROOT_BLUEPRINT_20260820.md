@@ -1,6 +1,6 @@
 # Project-local runtime root blueprint
 
-Status: Implementation active  
+Status: Implemented and live-verified
 Date: 2026-08-20  
 Encoding: UTF-8
 
@@ -66,6 +66,21 @@ workspace
   create two authorities. Compatibility is read-only discovery only.
 - Existing explicit `<workspace>/runtime` records must remain readable during
   restart, but new records must never emit that path.
+- A long-lived Launcher can retain pre-migration path-selection code after the
+  source tree changes. A child process must normalize legacy `<workspace>` and
+  `<workspace>/runtime` arguments itself; a launch receipt that claims a local
+  runtime must also override a stale external registry record. This prevents a
+  stale parent from reviving split authority while preserving genuine explicit
+  external opt-ins whose request and receipt agree.
+- The child environment must be bound before Python imports Polaris. Copying a
+  Launcher environment without overwriting `KERNELONE_WORKSPACE`,
+  `KERNELONE_INSTANCE_WORKSPACE`, `KERNELONE_CONTEXT_ROOT`, and
+  `KERNELONE_RUNTIME_ROOT` lets bootstrap cache the Launcher's authority even
+  when the child command line and Instance Registry are correct.
+- A pre-migration `<workspace>/runtime` directory may remain physically present
+  as read-only evidence until retention or explicit offline cleanup. Presence is
+  not authority; an unchanged mtime/size plus canonical-root growth proves the
+  writer cutover. Active runs are never auto-deleted or copied.
 
 ## Verification
 
@@ -75,4 +90,9 @@ workspace
 3. Factory Bench tests prove launch receipts and observed records use the same root.
 4. Fresh isolated backend proves Instance Registry, process argument and
    `/v2/runtime/fingerprint` workspace binding remain consistent.
-
+5. Restart migration proves legacy main records rooted at `<workspace>` and
+   stale bench records whose receipt claims local runtime converge to
+   `<workspace>/.polaris/runtime` before spawn.
+6. Live L3-21 restart proves `/proc/<pid>/environ`, Instance Registry, process
+   fingerprint workspace, and physical runtime writes all bind the same target
+   `.polaris/runtime`; the old bare ledger remains unchanged.

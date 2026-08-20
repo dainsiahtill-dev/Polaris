@@ -1452,6 +1452,23 @@ def _default_delivery_depth_test_target(language: str) -> str:
     return "tests/behavior.test"
 
 
+def _delivery_depth_test_target_candidates(language: str, minimum_count: int) -> tuple[str, ...]:
+    """Return deterministic, distinct test targets for a project depth contract.
+
+    The delivery-depth verifier counts physical test files.  A CE handoff must
+    therefore authorize at least ``min_test_files`` distinct targets; merely
+    mentioning the numeric requirement in acceptance text creates an
+    impossible Director contract.  Candidate generation stays generic and
+    language-shaped: it does not prescribe product source topology.
+    """
+    primary = _default_delivery_depth_test_target(language)
+    path = Path(primary)
+    candidates = [primary]
+    for index in range(2, max(1, minimum_count) + 1):
+        candidates.append(str(path.with_name(f"{path.stem}_{index}{path.suffix}")))
+    return tuple(candidates)
+
+
 def _apply_delivery_depth_test_targets(
     *,
     target_files: list[str],
@@ -1477,16 +1494,22 @@ def _apply_delivery_depth_test_targets(
     project_declared_test_targets = [
         path for path in _string_list(context.get("project_declared_target_files")) if _path_looks_like_test(path)
     ]
-    promote_default_test_target = (
-        min_test_files > 0
-        and not any(_path_looks_like_test(path) for path in target_files)
-        and not project_declared_test_targets
-        and not _is_semantic_support_boundary(original_target_files, original_scope_paths)
+    current_task_test_targets = [path for path in target_files if _path_looks_like_test(path)]
+    support_boundary = _is_semantic_support_boundary(original_target_files, original_scope_paths)
+    owns_delivery_test_boundary = bool(current_task_test_targets) or (
+        not project_declared_test_targets and not support_boundary
     )
-    if promote_default_test_target:
-        test_target = _default_delivery_depth_test_target(language)
-        if test_target not in target_files:
-            target_files.append(test_target)
+    declared_test_targets = list(dict.fromkeys([*project_declared_test_targets, *current_task_test_targets]))
+    missing_test_targets = max(0, min_test_files - len(declared_test_targets))
+    if owns_delivery_test_boundary and missing_test_targets > 0:
+        for candidate in _delivery_depth_test_target_candidates(language, min_test_files):
+            if candidate in declared_test_targets:
+                continue
+            target_files.append(candidate)
+            declared_test_targets.append(candidate)
+            missing_test_targets -= 1
+            if missing_test_targets <= 0:
+                break
     if min_test_files > 0:
         for test_target in [path for path in target_files if _path_looks_like_test(path)]:
             if test_target not in scope_paths:

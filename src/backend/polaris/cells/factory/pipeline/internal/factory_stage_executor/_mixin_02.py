@@ -1849,6 +1849,33 @@ class _Mixin02:
             return False
         return "--- fail:" in after_folded
 
+    @staticmethod
+    def _python_import_barrier_unmasked_runnable_tests(
+        before_signature: Iterable[str],
+        after_signature: Iterable[str],
+    ) -> bool:
+        """True when Python test collection advances into runnable tests.
+
+        A missing import/symbol can collapse an entire unittest module into
+        ``unittest.loader._FailedTest``.  Fixing that single barrier commonly
+        reveals many independent assertion failures, so the diagnostic count
+        increases even though execution advanced from zero collected tests to
+        a real test run.  Treat only that evidenced phase transition as
+        forward-unmasking; ordinary Python exception churn remains regression.
+        """
+
+        before_text = "\n".join(str(item or "") for item in before_signature).casefold()
+        after_text = "\n".join(str(item or "") for item in after_signature).casefold()
+        collection_barriers = (
+            "unittest.loader._failedtest",
+            "failed to import test module",
+        )
+        if not any(marker in before_text for marker in collection_barriers):
+            return False
+        if any(marker in after_text for marker in collection_barriers):
+            return False
+        return bool(re.search(r"\bran\s+[1-9][0-9]*\s+tests?\b", after_text))
+
     @classmethod
     def _workspace_quality_repair_effect(
         cls,
@@ -1857,6 +1884,8 @@ class _Mixin02:
         after_signature: tuple[str, ...],
         verifier_passed: bool,
         write_tool_evidence: bool,
+        before_results: Iterable[Mapping[str, Any]] = (),
+        after_results: Iterable[Mapping[str, Any]] = (),
     ) -> str:
         """Classify one local repair by verifier effect, never by model claim."""
 
@@ -1864,11 +1893,18 @@ class _Mixin02:
             return "resolved"
         if not write_tool_evidence:
             return "no_op"
+        if workspace_quality_impl.workspace_quality_verifier_regressed(
+            tuple(before_results),
+            tuple(after_results),
+        ):
+            return "regression"
         before = set(before_signature)
         after = set(after_signature)
         if after == before:
             return "stagnant"
         if cls._go_crash_unmasked_runnable_tests(before_signature, after_signature):
+            return "forward_unmask"
+        if cls._python_import_barrier_unmasked_runnable_tests(before_signature, after_signature):
             return "forward_unmask"
         # A smaller authoritative diagnostic set is measurable progress even
         # when the remaining diagnostic text is not a strict subset.  Real

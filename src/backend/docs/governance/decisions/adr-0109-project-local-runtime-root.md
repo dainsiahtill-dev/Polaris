@@ -19,6 +19,11 @@ only selection authority. Explicit external roots and RAM-disk deployments remai
 supported and are workspace-key namespaced. New callers must consume the resolved
 or canonical project-local root; they may not construct `<workspace>/runtime`.
 
+Instance Supervisor must overwrite all workspace/runtime identity variables in
+the child `Popen` environment before process import. CLI arguments alone are not
+sufficient because bootstrap configuration can be imported and cached from the
+parent environment before CLI rebinding runs.
+
 Legacy external namespaces remain read-only discoverable. Polaris will not
 automatically copy, move or dual-write active runtime state. A new process starts
 on one selected root and records that root in Instance Registry and launch evidence.
@@ -31,4 +36,6 @@ on one selected root and records that root in Instance Registry and launch evide
 - External high-performance storage remains an explicit operational choice.
 - Existing processes keep their selected root until restart; no live root switch is
   attempted.
-
+- Legacy `<workspace>/runtime` may remain as read-only retained evidence; it is
+  never proof of current authority and is removed only by explicit offline
+  retention/cleanup after all instances stop.

@@ -29,6 +29,7 @@ from polaris.kernelone.llm.toolkit.original_payload_cache import (
     try_strip_ref_marker,
     workspace_scoped_ref,
 )
+from polaris.kernelone.storage import resolve_runtime_path
 
 if TYPE_CHECKING:
     from polaris.kernelone.llm.toolkit.executor.core import AgentAccelToolExecutor
@@ -152,17 +153,21 @@ def _extract_ref(kwargs: dict[str, Any]) -> str:
 def _resolve_receipt_db_path(workspace: str) -> Path | None:
     """Locate the canonical receipt sqlite DB for ``workspace`` if it exists.
 
-    Resolves directly against ``<workspace>/runtime`` to match the on-disk layout
-    used elsewhere (project_stats), independent of ramdisk/storage-root config.
+    Resolves the canonical project-local runtime first.  The old
+    ``<workspace>/runtime`` location is read-only compatibility and is never a
+    write target.
     """
-    runtime_root = Path(workspace) / "runtime"
-    for relative in _RECEIPT_DB_CANDIDATES:
-        candidate = runtime_root.joinpath(*relative)
-        try:
-            if candidate.exists():
-                return candidate
-        except OSError:
-            continue
+    canonical_root = Path(resolve_runtime_path(workspace, "runtime"))
+    legacy_root = (Path(workspace).expanduser().resolve() / "runtime").resolve()
+    roots = (canonical_root,) if canonical_root == legacy_root else (canonical_root, legacy_root)
+    for runtime_root in roots:
+        for relative in _RECEIPT_DB_CANDIDATES:
+            candidate = runtime_root.joinpath(*relative)
+            try:
+                if candidate.exists():
+                    return candidate
+            except OSError:
+                continue
     return None
 
 

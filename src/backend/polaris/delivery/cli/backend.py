@@ -15,7 +15,11 @@ def _runtime_root_for_args(args: argparse.Namespace) -> str:
     from polaris.cells.storage.layout.public import canonical_project_runtime_root
 
     canonical = Path(canonical_project_runtime_root(str(workspace))).resolve()
-    if requested is None or requested == workspace / "runtime":
+    # ``--runtime-root=<workspace>`` and ``<workspace>/runtime`` are legacy
+    # launcher claims, never explicit external-storage opt-ins.  Normalize
+    # both to the project-local authority so an old long-lived Launcher cannot
+    # make a fresh child process revive a split runtime identity.
+    if requested is None or requested in {workspace, workspace / "runtime"}:
         return str(canonical)
     return str(requested)
 

@@ -31,6 +31,7 @@ from datetime import datetime
 from typing import Any
 
 from polaris.application.traceability_admin import TraceabilityAdminService
+from polaris.kernelone.storage import resolve_runtime_path
 
 __all__ = ["run_once_impl"]
 
@@ -1025,7 +1026,7 @@ def run_once_impl(args: argparse.Namespace, iteration: int = 1) -> int:
     }
 
     # Persist traceability matrix before finalizing (bypass failure)
-    traceability_dir = os.path.join(workspace_full, "runtime", "traceability")
+    traceability_dir = resolve_runtime_path(workspace_full, "runtime/traceability")
     traceability_path = os.path.join(traceability_dir, f"{run_id}.{iteration}.matrix.json")
     if trace_service is not None:
         matrix = trace_service.build_matrix(run_id, iteration)

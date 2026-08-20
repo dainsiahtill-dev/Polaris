@@ -29,6 +29,7 @@ from typing import Any, Iterator
 from polaris.cells.storage.layout.public import canonical_project_runtime_root
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.fs.jsonl.locking import file_lock
+from polaris.kernelone.process import signal_process_tree
 
 SCHEMA_VERSION = 1
 DEFAULT_BACKEND_PORT = 49977
@@ -1055,15 +1056,34 @@ class InstanceSupervisor:
 
         raw_id = str(request.get("instance_id") or request.get("name") or workspace.name)
         instance_id = sanitize_instance_id(raw_id)
-        instance_dir = self._instance_dir(instance_id)
-        requested_runtime_root = str(request.get("runtime_root") or "").strip()
-        legacy_workspace_runtime = (workspace / "runtime").resolve()
-        if not requested_runtime_root or Path(requested_runtime_root).expanduser().resolve() == legacy_workspace_runtime:
-            requested_runtime_root = canonical_project_runtime_root(str(workspace))
-        runtime_root = ensure_absolute_dir(Path(requested_runtime_root))
-        kind = str(request.get("kind") or "project")
         metadata = request.get("metadata")
         metadata_payload: dict[str, Any] = dict(metadata) if isinstance(metadata, dict) else {}
+        requested_runtime_root = str(request.get("runtime_root") or "").strip()
+        canonical_runtime_root = Path(canonical_project_runtime_root(str(workspace))).resolve()
+        legacy_workspace_runtime = (workspace / "runtime").resolve()
+        legacy_workspace_root = workspace.resolve()
+        launch_receipt_raw = metadata_payload.get("instance_launch_receipt")
+        launch_receipt = launch_receipt_raw if isinstance(launch_receipt_raw, dict) else {}
+        receipt_runtime_value = str(launch_receipt.get("runtime_root") or "").strip()
+        receipt_runtime_root = Path(receipt_runtime_value).expanduser().resolve() if receipt_runtime_value else None
+        requested_runtime_path = Path(requested_runtime_root).expanduser().resolve() if requested_runtime_root else None
+        receipt_claims_project_local = receipt_runtime_root in {
+            canonical_runtime_root,
+            legacy_workspace_runtime,
+            legacy_workspace_root,
+        }
+        if (
+            requested_runtime_path is None
+            or requested_runtime_path in {legacy_workspace_runtime, legacy_workspace_root}
+            or receipt_claims_project_local
+        ):
+            requested_runtime_root = str(canonical_runtime_root)
+            if receipt_claims_project_local:
+                normalized_launch_receipt = dict(launch_receipt)
+                normalized_launch_receipt["runtime_root"] = str(canonical_runtime_root)
+                metadata_payload["instance_launch_receipt"] = normalized_launch_receipt
+        runtime_root = ensure_absolute_dir(Path(requested_runtime_root))
+        kind = str(request.get("kind") or "project")
         requested_backend_port = request.get("backend_port")
         requested_frontend_port = request.get("frontend_port")
         is_bench_project = kind == "bench_project"
@@ -1160,6 +1180,18 @@ class InstanceSupervisor:
             command.append("--reload")
         env = os.environ.copy()
         env["PYTHONPATH"] = str(backend_root) + os.pathsep + env.get("PYTHONPATH", "")
+        # Instance identity must be true before Python imports Polaris.  The
+        # launcher process is itself bound to another workspace, so copying
+        # its environment without overwriting these values lets bootstrap
+        # cache the launcher's workspace/runtime and later undo the CLI args.
+        # That produced a split fact: Registry advertised the target
+        # ``.polaris/runtime`` while /proc and physical writes still pointed at
+        # the main repository runtime.
+        env["KERNELONE_WORKSPACE"] = record.workspace
+        env["KERNELONE_INSTANCE_WORKSPACE"] = record.workspace
+        env["KERNELONE_CONTEXT_ROOT"] = record.workspace
+        env["KERNELONE_RUNTIME_ROOT"] = record.runtime_root
+        env.pop("KERNELONE_RUNTIME_CACHE_ROOT", None)
         env["KERNELONE_INSTANCE_ID"] = record.instance_id
         env["KERNELONE_INSTANCE_KIND"] = record.kind
         if record.instance_id != "main":
@@ -1507,10 +1539,13 @@ class InstanceSupervisor:
 
     @staticmethod
     def _signal_pid(pid: int, sig: signal.Signals) -> None:
-        if os.name == "posix":
-            os.killpg(pid, sig)
-        else:
-            os.kill(pid, sig)
+        force = sig == signal.SIGKILL
+        if signal_process_tree(pid, force=force):
+            return
+        # Defensive last resort for a non-isolated process.  The shared
+        # KernelOne helper resolves the real PGID first, so wrapper-launched
+        # children (PID != PGID) are still terminated as one tree.
+        os.kill(pid, sig)
 
     @staticmethod
     def _wait_for_pid_exit(pid: int, *, timeout_seconds: float = PROCESS_TERMINATE_TIMEOUT_SECONDS) -> bool:

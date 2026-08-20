@@ -1,0 +1,45 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "workspace-quality-mixed-nonprogress-budget-20260820",
+  "status": "FIXED_FOCUSED_TESTS_PASS_LIVE_RELOAD_PENDING",
+  "severity": "P0",
+  "scope": "Polaris meta-platform only",
+  "target_project_modified_by_main_agent": false,
+  "exact_run": {
+    "run_id": "factory_f11604129d5b",
+    "project_id": "L3-21",
+    "workspace": "/tmp/factory-bench-l3-21-r01/workspaces/90eb6a2a05f8-8afa5ef1d83b6e72/L3-21-1bff44c03e723ba6/238a89bd412894921ab10bd3"
+  },
+  "dynamic_evidence": {
+    "task_runtime_task_id": 14,
+    "attempt_range": [2, 17],
+    "repeated_failure_signatures": {
+      "workspace_quality_repair_equal_count_swap": 9,
+      "workspace_quality_deterministic_repair_no_commit": 2,
+      "stale_edit_or_no_effect": 1,
+      "provider_timeout": 1
+    },
+    "observed_behavior": "Different non-progress classes reset the consecutive class-specific breaker, allowing the same Director owner to be reopened repeatedly without verified diagnostic reduction."
+  },
+  "root_cause": {
+    "owner": "factory.workspace_quality",
+    "file": "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+    "mechanism": "Only repeated identical non-progress classes were counted. Alternating no-op/equal-count/stale-edit classes evaded the breaker until the eight-round hard cap plus owner-rotation extra rounds."
+  },
+  "fix": {
+    "policy": "Allow two mixed non-progress rounds; require verified progress by the third round.",
+    "new_stop_reason": "three_nonprogress_repairs_without_verified_progress",
+    "progress_resets_budget": ["resolved", "progress", "novel_forward_unmask"],
+    "pm_ce_restart_allowed": false
+  },
+  "verification": {
+    "focused_pytest": "4 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "live_exact_run": "pending isolated instance restart so staged source loads"
+  },
+  "residual_risks": [
+    "Current exact run was executing pre-fix source and failed after consuming the old repair budget.",
+    "PM contract authorizes one test file while L3 delivery-depth requires two; separate generic contract-feasibility defect remains."
+  ]
+}

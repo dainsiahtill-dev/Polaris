@@ -23,6 +23,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.storage import resolve_runtime_path
+
 logger = logging.getLogger(__name__)
 
 
@@ -127,7 +129,12 @@ class CognitiveRuntimeMetricsCollector:
         import sqlite3
         import time
 
-        db_path = self._workspace / "runtime" / "cognitive_runtime" / "cognitive_runtime.sqlite"
+        db_path = Path(
+            resolve_runtime_path(
+                str(self._workspace),
+                "runtime/cognitive_runtime/cognitive_runtime.sqlite",
+            )
+        )
         metrics = CognitiveRuntimeMetrics()
 
         if not db_path.exists():

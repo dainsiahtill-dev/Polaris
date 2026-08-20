@@ -259,7 +259,9 @@ def test_run_ledger_appends_gate_evidence(tmp_path: Path) -> None:
     events = RunLedger(tmp_path, run_id="bench_1").read_events()
 
     assert Path(persisted["ledger_path"]).is_file()
-    assert Path(persisted["ledger_path"]).parent == tmp_path / "runtime" / "control_plane" / "ledger"
+    assert Path(persisted["ledger_path"]).parent == (
+        tmp_path / ".polaris" / "runtime" / "control_plane" / "ledger"
+    )
     assert len(events) == 1
     assert events[0]["event_type"] == "gate_evaluated"
     assert events[0]["content_id"] == event["content_id"]

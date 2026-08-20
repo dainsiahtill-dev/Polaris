@@ -697,13 +697,22 @@ class _FactoryRunServiceLifecycleMixin:
             # quality_gate passed after skipping rust (lowercase cargo.toml).
             # Same-run owner repair must be allowed to re-run only quality_gate
             # without opening a new Factory run or rolling back PM/CE.
-            if run.status == FactoryRunStatus.CANCELLED:
+            # Operator cancellation remains terminal for PM/CE/Director.  A
+            # later, explicit QA-only retry is different: it revalidates the
+            # already-delivered workspace without reopening upstream authority
+            # or regenerating project artifacts.  Returning the unchanged
+            # CANCELLED run here made the HTTP control endpoint report 200 while
+            # silently doing nothing, which prevented exact-run validation after
+            # a debugger stopped a runaway QA repair loop.
+            if run.status == FactoryRunStatus.CANCELLED and requested_stage != "quality_gate":
                 return run
             if run.status == FactoryRunStatus.COMPLETED and requested_stage != "quality_gate":
                 return run
-            if run.status != FactoryRunStatus.FAILED and not (
-                run.status == FactoryRunStatus.COMPLETED and requested_stage == "quality_gate"
-            ):
+            qa_only_terminal_retry = requested_stage == "quality_gate" and run.status in {
+                FactoryRunStatus.CANCELLED,
+                FactoryRunStatus.COMPLETED,
+            }
+            if run.status != FactoryRunStatus.FAILED and not qa_only_terminal_retry:
                 raise ValueError(f"Run {run_id} cannot be retried in status {run.status.value}")
 
             # Launcher-restart can leave an orphaned settle_terminal_run claim.

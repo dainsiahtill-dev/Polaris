@@ -881,6 +881,74 @@ class TestChiefEngineerBlueprintPublicService:
         assert persisted["context"]["target_files"] == persisted["target_files"]
         assert persisted["context"]["scope_paths"] == persisted["scope_paths"]
 
+    def test_generate_task_blueprint_fills_project_test_depth_contract(self, tmp_path) -> None:
+        """A CE-owned test boundary must make the QA file-count contract feasible."""
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-PY-TESTS",
+            workspace=str(tmp_path),
+            objective="Verify dream subway editor behavior",
+            context={
+                "language": "python",
+                "target_files": ["requirements.txt", "tests/test_product.py", "README.md"],
+                "scope_paths": ["requirements.txt", "tests/test_product.py", "README.md"],
+                "project_declared_target_files": [
+                    "requirements.txt",
+                    "src/main.py",
+                    "tests/test_product.py",
+                    "README.md",
+                ],
+                "acceptance_criteria": ["python -m unittest discover -s tests passes"],
+                "execution_checklist": ["Implement executable project tests"],
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "language": "python",
+                    "minimums": {
+                        "min_test_files": 2,
+                        "min_test_assertions": 8,
+                    },
+                },
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        assert "tests/test_product.py" in result.target_files
+        assert "tests/test_behavior.py" in result.target_files
+        assert len({path for path in result.target_files if "test" in path.lower()}) >= 2
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert "tests/test_behavior.py" in persisted["scope_paths"]
+
+    def test_generate_task_blueprint_does_not_fill_test_depth_on_manifest_boundary(self, tmp_path) -> None:
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-PY-MANIFEST",
+            workspace=str(tmp_path),
+            objective="Define Python dependencies only",
+            context={
+                "language": "python",
+                "target_files": ["requirements.txt"],
+                "scope_paths": ["requirements.txt"],
+                "project_declared_target_files": [
+                    "requirements.txt",
+                    "src/main.py",
+                    "tests/test_product.py",
+                ],
+                "acceptance_criteria": ["dependencies are declared"],
+                "execution_checklist": ["Materialize only the dependency manifest"],
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "language": "python",
+                    "minimums": {"min_test_files": 2, "min_test_assertions": 8},
+                },
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        assert result.target_files == ("requirements.txt",)
+
     def test_generate_task_blueprint_does_not_block_path_only_domain_mismatch(self, tmp_path) -> None:
         cmd = GenerateTaskBlueprintCommandV1(
             task_id="TASK-L2-RUST",

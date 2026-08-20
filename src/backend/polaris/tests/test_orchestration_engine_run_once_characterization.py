@@ -180,7 +180,7 @@ def test_run_once_dispatch_unpack_traceability_and_final_status(_planning_env: P
     # The dispatch pipeline was invoked with the iteration's normalized contract.
     assert captured["kwargs"]["normalized"]["tasks"][0]["id"] == "PM-CHAR-1"
     # Traceability matrix written for the iteration (blueprint + commit + verdict).
-    matrix_path = workspace / "runtime" / "traceability" / "pm-00001.1.matrix.json"
+    matrix_path = workspace / ".polaris" / "runtime" / "traceability" / "pm-00001.1.matrix.json"
     assert matrix_path.is_file()
     matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
     node_kinds = {node.get("kind") for node in matrix.get("nodes", [])}

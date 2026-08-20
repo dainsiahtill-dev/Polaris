@@ -30,6 +30,7 @@ from polaris.cells.runtime.state_owner.public.service import (
 from polaris.kernelone.events import emit_dialogue, emit_event, emit_llm_event
 from polaris.kernelone.fs.control_flags import pause_flag_path
 from polaris.kernelone.fs.jsonl.ops import append_jsonl
+from polaris.kernelone.storage import resolve_runtime_path
 
 __all__ = [
     "clear_manual_intervention",
@@ -231,7 +232,7 @@ def _finalize_iteration(
     try:
         snapshot_timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         snapshot_id = f"pm-{iteration:05d}-{snapshot_timestamp}"
-        tasks_dir = os.path.join(workspace_full, "runtime", "tasks")
+        tasks_dir = resolve_runtime_path(workspace_full, "runtime/tasks")
         plan_path = os.path.join(tasks_dir, "plan.json")
 
         # Only trigger archive if tasks directory exists

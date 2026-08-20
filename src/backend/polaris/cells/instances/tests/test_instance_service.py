@@ -4,11 +4,13 @@ import json
 import multiprocessing
 import os
 import queue
+import signal
 import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -76,6 +78,113 @@ def test_legacy_workspace_runtime_request_is_canonicalized(tmp_path: Path) -> No
     )
 
     assert Path(record.runtime_root).resolve() == (workspace / ".polaris" / "runtime").resolve()
+
+
+def test_legacy_workspace_root_request_is_canonicalized(tmp_path: Path) -> None:
+    root = _make_polaris_root(tmp_path)
+    workspace = tmp_path / "project"
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+
+    record = supervisor._build_record(
+        {
+            "instance_id": "legacy-workspace-root-request",
+            "polaris_root": str(root),
+            "workspace": str(workspace),
+            "runtime_root": str(workspace),
+            "start_frontend": False,
+        }
+    )
+
+    assert Path(record.runtime_root).resolve() == (workspace / ".polaris" / "runtime").resolve()
+
+
+def test_launch_receipt_project_local_claim_overrides_stale_external_record(tmp_path: Path) -> None:
+    root = _make_polaris_root(tmp_path)
+    workspace = tmp_path / "project"
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+
+    record = supervisor._build_record(
+        {
+            "instance_id": "stale-launcher-runtime",
+            "kind": "bench_project",
+            "polaris_root": str(root),
+            "workspace": str(workspace),
+            "runtime_root": str(tmp_path / "external-cache" / "projects" / "project" / "runtime"),
+            "start_frontend": False,
+            "metadata": {
+                "instance_launch_receipt": {
+                    "runtime_root": str(workspace / "runtime"),
+                }
+            },
+        }
+    )
+
+    assert Path(record.runtime_root).resolve() == (workspace / ".polaris" / "runtime").resolve()
+    assert record.metadata["instance_launch_receipt"]["runtime_root"] == str(
+        (workspace / ".polaris" / "runtime").resolve()
+    )
+
+
+def test_backend_spawn_overwrites_launcher_workspace_runtime_environment(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    workspace = tmp_path / "project"
+    runtime_root = workspace / ".polaris" / "runtime"
+    record = InstanceSupervisor(InstanceRegistry(tmp_path / "instances", publish_events=False))._build_record(
+        {
+            "instance_id": "child-runtime-authority",
+            "polaris_root": str(root),
+            "workspace": str(workspace),
+            "runtime_root": str(runtime_root),
+            "start_frontend": False,
+        }
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_popen(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        captured["command"] = command
+        captured.update(kwargs)
+        return SimpleNamespace(pid=4321)
+
+    monkeypatch.setenv("KERNELONE_WORKSPACE", "/launcher/workspace")
+    monkeypatch.setenv("KERNELONE_INSTANCE_WORKSPACE", "/launcher/workspace")
+    monkeypatch.setenv("KERNELONE_CONTEXT_ROOT", "/launcher/workspace")
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", "/launcher/.polaris/runtime")
+    monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", "/launcher/cache")
+    monkeypatch.setattr(instance_service.subprocess, "Popen", fake_popen)
+    log_path = tmp_path / "logs" / "backend.log"
+    log_path.parent.mkdir(parents=True)
+
+    pid = InstanceSupervisor(InstanceRegistry(tmp_path / "instances-2", publish_events=False))._start_backend(
+        record,
+        log_path,
+    )
+
+    env = captured["env"]
+    assert pid == 4321
+    assert env["KERNELONE_WORKSPACE"] == str(workspace.resolve())
+    assert env["KERNELONE_INSTANCE_WORKSPACE"] == str(workspace.resolve())
+    assert env["KERNELONE_CONTEXT_ROOT"] == str(workspace.resolve())
+    assert env["KERNELONE_RUNTIME_ROOT"] == str(runtime_root.resolve())
+    assert "KERNELONE_RUNTIME_CACHE_ROOT" not in env
+
+
+def test_instance_signal_resolves_real_process_group_through_kernelone(monkeypatch: Any) -> None:
+    calls: list[tuple[int, bool]] = []
+    monkeypatch.setattr(
+        instance_service,
+        "signal_process_tree",
+        lambda pid, *, force: calls.append((pid, force)) or True,
+    )
+
+    InstanceSupervisor._signal_pid(4321, signal.SIGTERM)
+    InstanceSupervisor._signal_pid(4321, signal.SIGKILL)
+
+    assert calls == [(4321, False), (4321, True)]
 
 
 class _MultiprocessReservationSupervisor(InstanceSupervisor):

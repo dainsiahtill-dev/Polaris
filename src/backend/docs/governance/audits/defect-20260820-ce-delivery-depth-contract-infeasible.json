@@ -1,0 +1,42 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "ce-delivery-depth-contract-infeasible-20260820",
+  "status": "FIX_STAGED_UNIT_VERIFIED_LIVE_REVALIDATION_PENDING",
+  "severity": "P0",
+  "scope": "polaris_meta_platform_only",
+  "target_project_modified": false,
+  "exact_run": {
+    "factory_run_id": "factory_f11604129d5b",
+    "project_id": "L3-21",
+    "workspace": "/tmp/factory-bench-l3-21-r01/workspaces/90eb6a2a05f8-8afa5ef1d83b6e72/L3-21-1bff44c03e723ba6/238a89bd412894921ab10bd3"
+  },
+  "symptom": "QA delivery_depth required two physical test files while the authoritative PM/CE handoff authorized only tests/test_product.py.",
+  "dynamic_evidence": {
+    "pm_plan": ".polaris/roles/pm/factory_f11604129d5b/plan.json",
+    "qa_validation": ".polaris/roles/qa/factory_f11604129d5b/workspace-validation.json",
+    "declared_test_targets": [
+      "tests/test_product.py"
+    ],
+    "required_min_test_files": 2,
+    "latest_delivery_depth_result": "failed"
+  },
+  "root_cause": "Chief Engineer delivery-depth projection copied the numeric min_test_files contract into acceptance text but only synthesized a default test target when the project declared zero tests. A project declaring one test under a min_test_files=2 contract therefore produced an impossible Director authorization boundary.",
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_helpers.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_public_contractsb.py"
+    ],
+    "behavior": "The CE-owned test boundary now adds deterministic, language-shaped test targets until the project-level minimum is feasible; semantic support and manifest-only boundaries remain unchanged."
+  },
+  "verification": {
+    "pytest": "30 passed",
+    "mypy": "Success: no issues found",
+    "ruff_changed_source": "All checks passed",
+    "ruff_test_file_note": "The full split test file has pre-existing F401 imports unrelated to this change; all non-F401 checks passed."
+  },
+  "remaining_work": [
+    "Restart the exact isolated instance through Launcher so staged source is loaded.",
+    "Re-project the CE boundary without restarting PM, then retry only the blocked downstream Director/QA path.",
+    "Require same-run receipt plus real verifier evidence before closure."
+  ]
+}

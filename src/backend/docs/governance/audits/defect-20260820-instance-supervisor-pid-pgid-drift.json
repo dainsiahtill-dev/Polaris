@@ -1,0 +1,26 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "instance-supervisor-pid-pgid-drift-20260820",
+  "status": "FIX_STAGED_UNIT_VERIFIED_LIVE_REVALIDATION_PENDING",
+  "severity": "P0",
+  "scope": "polaris_meta_platform_only",
+  "target_project_modified": false,
+  "symptom": "A controlled main-instance restart timed out because port 49977 remained occupied after Supervisor termination.",
+  "dynamic_evidence": {
+    "registry_backend_pid": 16333,
+    "backend_pid": 16333,
+    "backend_pgid": 16332,
+    "wrapper_pid": 16332,
+    "wrapper_pgid": 16332,
+    "failure": "backend/frontend port did not become free after stop: 49977"
+  },
+  "root_cause": "InstanceSupervisor._signal_pid called os.killpg(pid, signal), assuming the registered backend PID was also the process-group leader. RTK and other wrappers can make the backend a child whose PGID differs from its PID, so the signal targeted a nonexistent group and termination became a no-op.",
+  "fix": {
+    "file": "src/backend/polaris/cells/instances/internal/service.py",
+    "behavior": "Reuse KernelOne signal_process_tree, which resolves os.getpgid(pid) and terminates the actual group; retain direct-PID signal only as a defensive fallback."
+  },
+  "verification": {
+    "unit": "Instance Supervisor delegates TERM and KILL semantics to KernelOne process-tree authority.",
+    "live_pending": "Repeat controlled restart and prove 49977 changes PID/source fingerprint without touching 5173."
+  }
+}

@@ -231,8 +231,9 @@ class _Mixin03:
 
         workspace_root = self.workspace.resolve()
         candidates: list[str] = []
+        causal_traceback_candidates: list[str] = []
 
-        def append_workspace_path(raw_path: str) -> None:
+        def append_workspace_path(raw_path: str, *, target: list[str] | None = None) -> None:
             path = str(raw_path or "").strip().replace("\\", "/")
             diagnostic_path = Path(path.removeprefix("file://"))
             if path and diagnostic_path.is_absolute():
@@ -243,26 +244,30 @@ class _Mixin03:
                     # Never turn those external files into Director write scope.
                     return
             if path and _is_workspace_quality_repair_path(path):
-                candidates.append(path)
+                (target if target is not None else candidates).append(path)
 
         diagnostics = normalize_director_repair_diagnostics([str(item) for item in artifact_quality_errors or []])
         for diagnostic in diagnostics:
             append_workspace_path(str(diagnostic.path or ""))
 
-        # ``normalize_director_repair_diagnostics`` recognizes compiler/test
-        # location formats, but a Python unittest import failure commonly
-        # exposes the causal paths only in traceback frames and the final
-        # ``ImportError (.../__init__.py)`` suffix.  Live L3-21 therefore
-        # yielded no diagnostic targets and Factory fell back to ``src/main.py``;
-        # the Director made a real, non-no-op edit to the wrong owner. Extract
-        # only quoted traceback paths and parenthesized paths, then apply the
-        # same workspace containment and repair-suffix policy above.
+        # Python tracebacks are ordered outermost -> innermost.  Owner routing
+        # must therefore rank the deepest workspace frame before the importing
+        # test/package frames.  Live L3-21 exposed ``NameError: dataclass`` in
+        # ``line_editor.py`` but the old append order leased TASK-1 through its
+        # outer ``__init__.py`` frame; the final provider request then excluded
+        # the failing file even though its exact body and traceback were present.
+        # A parenthesized ImportError source (``(.../__init__.py)``) is equally
+        # causal and ranks before the traceback frames.
         for raw_error in artifact_quality_errors or []:
             error_text = str(raw_error or "")
-            for match in re.finditer(r"\bFile\s+[\"'](?P<path>[^\"']+)[\"']\s*,\s*line\s+\d+", error_text):
-                append_workspace_path(match.group("path"))
             for match in re.finditer(r"\((?P<path>[^()]+)\)", error_text):
-                append_workspace_path(match.group("path"))
+                append_workspace_path(match.group("path"), target=causal_traceback_candidates)
+            traceback_matches = list(
+                re.finditer(r"\bFile\s+[\"'](?P<path>[^\"']+)[\"']\s*,\s*line\s+\d+", error_text)
+            )
+            for match in reversed(traceback_matches):
+                append_workspace_path(match.group("path"), target=causal_traceback_candidates)
+        candidates = [*causal_traceback_candidates, *candidates]
         joined_errors = "\n".join(str(item or "") for item in artifact_quality_errors).lower()
         for filename in _LANGUAGE_NEUTRAL_REPAIR_FILENAMES:
             if filename.lower() not in joined_errors:

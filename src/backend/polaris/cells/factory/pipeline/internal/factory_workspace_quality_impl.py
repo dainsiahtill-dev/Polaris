@@ -50,9 +50,114 @@ _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS = 5.0
 # back to 5 CLI abort) then the hard cap stopped the loop. C++ syntax ->
 # cmake -> unittest unmask needs more than 5 same-run rounds.
 _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 8
+# Non-progress classes can alternate (for example equal-count swap, no-op,
+# stale edit) and thereby evade the per-class consecutive-stagnation breaker.
+# Permit two such rounds so newly structured diagnostics still get one local
+# repair opportunity, but require verified progress by the third round.
+_WORKSPACE_QUALITY_REPAIR_NONPROGRESS_HARD_CAP = 3
 _WORKSPACE_QUALITY_REPAIR_MIN_LLM_START_BUDGET_SECONDS = FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
 _WORKSPACE_QUALITY_REPAIR_LEASE_TTL_SECONDS = 300
 _WORKSPACE_QUALITY_REPAIR_HEARTBEAT_INTERVAL_SECONDS = 30.0
+
+_UNITTEST_FAILED_SUMMARY_RE = re.compile(r"\bFAILED\s*\((?P<counts>[^)]*)\)", re.IGNORECASE)
+_UNITTEST_COUNT_RE = re.compile(r"\b(?P<kind>failures|errors)\s*=\s*(?P<count>\d+)\b", re.IGNORECASE)
+_PYTEST_COUNT_RE = re.compile(r"\b(?P<count>\d+)\s+(?P<kind>failed|error|errors)\b", re.IGNORECASE)
+_DIAGNOSTIC_LINE_LABEL_RE = re.compile(r"\bline\s+\d+\b", re.IGNORECASE)
+_DIAGNOSTIC_FILE_LOCATION_RE = re.compile(r"(?P<path>(?:[A-Za-z]:)?[^\s:\n]+\.[A-Za-z0-9_+-]+):\d+(?::\d+)?")
+
+
+def _workspace_quality_deterministic_probe_signature(errors: Sequence[str]) -> tuple[str, ...]:
+    """Stable identity for deciding whether to repeat a no-effect deterministic probe.
+
+    The normal verifier signature intentionally preserves paths, symbols, and
+    source locations for effect classification.  It is too precise for the
+    no-commit cache: a later LLM edit can shift traceback line numbers without
+    changing the failing diagnostic, causing the same deterministic schedule
+    to reopen and fail another TaskRuntime attempt.  Mask only volatile source
+    locations here; keep filenames and diagnostic text so a real failure-class
+    change still earns one deterministic probe.
+    """
+
+    normalized: set[str] = set()
+    for error in errors:
+        text = " ".join(str(error or "").split()).casefold()
+        if not text:
+            continue
+        text = _DIAGNOSTIC_LINE_LABEL_RE.sub("line #", text)
+        text = _DIAGNOSTIC_FILE_LOCATION_RE.sub(lambda match: f"{match.group('path')}:#", text)
+        normalized.add(text)
+    return tuple(sorted(normalized))
+
+
+def _workspace_quality_test_failure_counts(result: Mapping[str, Any]) -> tuple[int, int] | None:
+    """Return ``(failures, errors)`` from a Python test verifier result.
+
+    Diagnostic-set cardinality is not a safe monotonic-progress metric for
+    test runners: one newly introduced exception can collapse many distinct
+    assertion failures into one deduplicated traceback signature.  Live L3-21
+    changed 4 failures into 1 failure + 21 errors, yet the smaller normalized
+    signature was accepted as ``progress``.  Parse the runner's own terminal
+    summary so that common-exception fanout remains visible to convergence.
+    """
+
+    command = tuple(str(part or "").strip().casefold() for part in result.get("command") or ())
+    is_unittest = "unittest" in command
+    is_pytest = any(Path(part).name.casefold() in {"pytest", "py.test"} for part in command)
+    if not is_unittest and not is_pytest:
+        return None
+    output = "\n".join(
+        str(result.get(key) or "")
+        for key in ("diagnostic_excerpt", "stdout_tail", "stderr_tail")
+        if str(result.get(key) or "").strip()
+    )
+    if is_unittest:
+        summaries = list(_UNITTEST_FAILED_SUMMARY_RE.finditer(output))
+        if not summaries:
+            return (0, 0) if bool(result.get("passed")) else None
+        counts = {"failures": 0, "errors": 0}
+        for match in _UNITTEST_COUNT_RE.finditer(summaries[-1].group("counts")):
+            counts[match.group("kind").casefold()] = int(match.group("count"))
+        return counts["failures"], counts["errors"]
+    counts = {"failed": 0, "errors": 0}
+    for match in _PYTEST_COUNT_RE.finditer(output):
+        kind = match.group("kind").casefold()
+        counts["errors" if kind in {"error", "errors"} else "failed"] = int(match.group("count"))
+    if counts["failed"] or counts["errors"] or bool(result.get("passed")):
+        return counts["failed"], counts["errors"]
+    return None
+
+
+def workspace_quality_verifier_regressed(
+    before_results: Sequence[Mapping[str, Any]],
+    after_results: Sequence[Mapping[str, Any]],
+) -> bool:
+    """True when post-edit verifier evidence is strictly worse.
+
+    This is intentionally narrow: a previously passing command becoming red,
+    or a Python test runner reporting more failures/errors, is regression.
+    Compiler phase changes remain governed by diagnostic signatures.
+    """
+
+    def command_key(result: Mapping[str, Any]) -> tuple[str, ...]:
+        return tuple(str(part or "").strip() for part in result.get("command") or () if str(part or "").strip())
+
+    before_by_command = {command_key(result): result for result in before_results if command_key(result)}
+    after_by_command = {command_key(result): result for result in after_results if command_key(result)}
+    for command, before in before_by_command.items():
+        after = after_by_command.get(command)
+        if after is None:
+            continue
+        if bool(before.get("passed")) and not bool(after.get("passed")):
+            return True
+        before_counts = _workspace_quality_test_failure_counts(before)
+        after_counts = _workspace_quality_test_failure_counts(after)
+        if before_counts is None or after_counts is None:
+            continue
+        before_failures, before_errors = before_counts
+        after_failures, after_errors = after_counts
+        if after_errors > before_errors or after_failures + after_errors > before_failures + before_errors:
+            return True
+    return False
 
 
 async def _run_workspace_quality_repair_heartbeat(
@@ -405,12 +510,19 @@ def _workspace_quality_authoritative_owner_paths(
     *,
     run_id: str,
 ) -> list[str]:
-    """Project CE/JobToken write scope into verifier-repair ownership.
+    """Project declared scope and committed effects into repair ownership.
 
     PM target paths may intentionally remain generic while Chief Engineer
     topology expands them into concrete package files.  The run-bound JobToken
     is the capability authority consumed by physical tools; ignoring it makes
     Factory lease a causal source repair to an unrelated PM row.
+
+    A Director may also materialize a file through a durable, authoritative
+    effect receipt that was not present in the original CE topology (for
+    example a language entrypoint selected during execution).  That committed
+    effect is stronger ownership evidence than a later disk scan.  Reuse only
+    successful, non-no-op receipt paths from the same run-bound TaskRuntime row;
+    never infer authority from an arbitrary file merely because it exists.
     """
 
     paths: list[str] = []
@@ -426,7 +538,144 @@ def _workspace_quality_authoritative_owner_paths(
                 paths.append(raw_paths)
             elif isinstance(raw_paths, list | tuple | set):
                 paths.extend(str(item) for item in raw_paths)
+    adapter_result_raw = metadata.get("adapter_result")
+    adapter_result = adapter_result_raw if isinstance(adapter_result_raw, Mapping) else {}
+    batch_receipt_raw = adapter_result.get("batch_receipt")
+    batch_receipt = batch_receipt_raw if isinstance(batch_receipt_raw, Mapping) else {}
+    raw_results = batch_receipt.get("raw_results")
+    for raw_result in raw_results if isinstance(raw_results, list | tuple) else ():
+        if not isinstance(raw_result, Mapping) or str(raw_result.get("status") or "").strip() != "success":
+            continue
+        result_raw = raw_result.get("result")
+        result = result_raw if isinstance(result_raw, Mapping) else {}
+        receipt_raw = raw_result.get("effect_receipt")
+        if not isinstance(receipt_raw, Mapping):
+            receipt_raw = result.get("effect_receipt")
+        receipt = receipt_raw if isinstance(receipt_raw, Mapping) else {}
+        if receipt.get("authoritative") is not True or str(receipt.get("receipt_outcome") or "") != "succeeded":
+            continue
+        before_hash = str(result.get("before_sha256") or "").strip()
+        after_hash = str(result.get("after_sha256") or "").strip()
+        if not before_hash or not after_hash or before_hash == after_hash:
+            continue
+        effect_path = str(result.get("file") or result.get("path") or "").strip()
+        if effect_path:
+            paths.append(effect_path)
     return _dedupe_workspace_repair_paths(paths)
+
+
+def _workspace_quality_frozen_ce_owner_task(
+    executor: Any,
+    *,
+    run_id: str,
+    task_id: str,
+    canonical_task: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Rehydrate one drained owner from its immutable same-run CE handoff.
+
+    PM tasks can deliberately name only a manifest while CE expands the
+    concrete package topology. After terminal TaskRuntime drain, rebuilding a
+    repair owner from PM paths alone loses the JobToken authority used by the
+    original Director effects. Reuse only an exact, generated, handoff-ready
+    CE row whose blueprint and JobToken are bound to this run and task.
+
+    Invalid or incomplete evidence returns the untouched PM task. The caller
+    will therefore remain fail-closed unless the PM task itself owns the
+    diagnostic target.
+    """
+
+    review = executor._load_chief_engineer_review_payload(run_id=run_id)
+    review_rows = review.get("blueprints")
+    matching_rows = [
+        row
+        for row in (review_rows if isinstance(review_rows, list) else ())
+        if isinstance(row, Mapping) and str(row.get("task_id") or "").strip() == task_id
+    ]
+    if len(matching_rows) != 1:
+        return dict(canonical_task)
+    review_row = matching_rows[0]
+    if str(review_row.get("status") or "").strip() != "generated" or review_row.get("handoff_ready") is not True:
+        return dict(canonical_task)
+    blueprint_id = str(review_row.get("blueprint_id") or "").strip()
+    blueprint_path = str(review_row.get("blueprint_path") or "").strip().replace("\\", "/")
+    if not blueprint_id or not blueprint_path.startswith("runtime/blueprints/"):
+        return dict(canonical_task)
+    blueprint = executor._read_json_artifact_payload(blueprint_path)
+    if (
+        str(blueprint.get("task_id") or "").strip() != task_id
+        or str(blueprint.get("blueprint_id") or "").strip() != blueprint_id
+        or str(blueprint.get("status") or "").strip() != "generated"
+        or blueprint.get("handoff_ready") is not True
+    ):
+        return dict(canonical_task)
+
+    job_token_raw = blueprint.get("job_token")
+    job_token = dict(job_token_raw) if isinstance(job_token_raw, Mapping) else {}
+    token_run_id = str(job_token.get("factory_run_id") or job_token.get("run_id") or "").strip()
+    token_id = str(job_token.get("token_id") or "").strip()
+    blueprint_hash = str(blueprint.get("blueprint_hash") or "").strip()
+    if (
+        token_run_id != run_id
+        or not token_id
+        or len(blueprint_hash) != 64
+        or str(job_token.get("blueprint_hash") or "").strip() != blueprint_hash
+    ):
+        return dict(canonical_task)
+
+    blueprint_targets = _dedupe_workspace_repair_paths(list(blueprint.get("target_files") or ()))
+    token_targets = _dedupe_workspace_repair_paths(list(job_token.get("target_files") or ()))
+    allowed_write_paths = _dedupe_workspace_repair_paths(list(job_token.get("allowed_write_paths") or ()))
+    if (
+        not blueprint_targets
+        or not set(blueprint_targets).issubset(token_targets)
+        or not set(blueprint_targets).issubset(allowed_write_paths)
+    ):
+        return dict(canonical_task)
+
+    capability_raw = blueprint.get("capability_token")
+    capability = dict(capability_raw) if isinstance(capability_raw, Mapping) else dict(job_token)
+    capability_run_id = str(capability.get("factory_run_id") or capability.get("run_id") or "").strip()
+    if (
+        capability_run_id != run_id
+        or str(capability.get("token_id") or "").strip() != token_id
+        or str(capability.get("blueprint_hash") or "").strip() != blueprint_hash
+    ):
+        return dict(canonical_task)
+
+    restored = dict(canonical_task)
+    metadata_raw = restored.get("metadata")
+    metadata = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
+    metadata.update(
+        {
+            "blueprint_id": blueprint_id,
+            "blueprint_path": blueprint_path,
+            "runtime_blueprint_path": blueprint_path,
+            "control_plane_job_token": job_token,
+            "capability_token": capability,
+            "project_completion_contract": blueprint.get("project_completion_contract"),
+            "project_completion_contract_hash": blueprint.get("project_completion_contract_hash"),
+            "workspace_quality_frozen_owner_authority": {
+                "schema_version": "factory.workspace-quality-frozen-owner-authority.v1",
+                "factory_run_id": run_id,
+                "task_id": task_id,
+                "blueprint_id": blueprint_id,
+                "blueprint_path": blueprint_path,
+                "blueprint_hash": blueprint_hash,
+                "job_token_id": token_id,
+            },
+        }
+    )
+    restored.update(
+        {
+            "target_files": blueprint_targets,
+            "scope_paths": blueprint_targets,
+            "blueprint_id": blueprint_id,
+            "blueprint_path": blueprint_path,
+            "runtime_blueprint_path": blueprint_path,
+            "metadata": metadata,
+        }
+    )
+    return restored
 
 
 def _workspace_quality_repair_path_overlaps(normalized_targets: set[str], candidate_paths: set[str]) -> set[str]:
@@ -534,7 +783,12 @@ def _claim_workspace_quality_repair_attempt(
             task_id = executor._task_id(task, index)
             if not task_id or task_id not in frozen_task_statuses:
                 continue
-            canonical_task = dict(task)
+            canonical_task = _workspace_quality_frozen_ce_owner_task(
+                executor,
+                run_id=run_id,
+                task_id=task_id,
+                canonical_task=task,
+            )
             canonical_tasks[task_id] = canonical_task
             metadata_raw = canonical_task.get("metadata")
             metadata = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
@@ -829,7 +1083,11 @@ async def _apply_workspace_quality_deterministic_repairs(
     # TASK-1-source-models-2 (poem.hpp) while the leading error was
     # Moon.status on generator.cpp (live L1-06). Claim the first diagnostic
     # path's owner; later residuals select the next owner after revalidation.
-    primary_diagnostic_targets = list(diagnostic_target_files[:1])
+    primary_diagnostic_targets = _workspace_quality_llm_claim_target_files(
+        owner_target_files=None,
+        diagnostic_target_files=diagnostic_target_files,
+        fallback_target_files=[],
+    )
     claim_target_files = (
         primary_diagnostic_targets
         or diagnostic_target_files
@@ -1024,18 +1282,28 @@ def _workspace_quality_llm_claim_target_files(
     diagnostic_target_files: list[str],
     fallback_target_files: list[str],
 ) -> list[str]:
-    """Keep the complete causal path set for owner selection.
+    """Choose current verifier cause before stale prior-round owner scope.
 
-    A verifier failure may name a test file first and its imported source file
-    later.  Truncating to the first path leases the test owner and makes the
-    causal source edit unauthorized.  The owner scorer already gives source
-    overlaps extra weight, while the claimed task's scope remains the final
-    write boundary.
+    ``owner_target_files`` is useful only when diagnostic extraction produced
+    no path.  Once the verifier names a causal source, reusing the prior owner
+    can permanently route the repair to a task that cannot edit that source.
+    Tests/import wrappers also precede their implementation source in many
+    diagnostics, so prefer the first non-test path after causal ordering.
     """
 
+    normalized_diagnostics = _dedupe_workspace_repair_paths(diagnostic_target_files)
+    if normalized_diagnostics:
+        source_targets = [
+            path
+            for path in normalized_diagnostics
+            if not path.startswith(("tests/", "test/", "__tests__/"))
+            and "/__tests__/" not in path
+            and not path.endswith((".test.js", ".test.ts", ".test.tsx", ".spec.js", ".spec.ts", ".spec.tsx"))
+        ]
+        return (source_targets or normalized_diagnostics)[:1]
     if owner_target_files:
         return _dedupe_workspace_repair_paths(owner_target_files)
-    return diagnostic_target_files or fallback_target_files
+    return _dedupe_workspace_repair_paths(fallback_target_files)
 
 
 async def _apply_workspace_quality_llm_repairs(
@@ -1061,16 +1329,16 @@ async def _apply_workspace_quality_llm_repairs(
     declared_target_files = executor._workspace_quality_repair_target_files()
     diagnostic_target_files = executor._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors)
     materialized_declared_targets = [path for path in declared_target_files if path in set(changed_files)]
-    target_files = (
-        _dedupe_workspace_repair_paths(owner_target_files)
-        if owner_target_files
-        else diagnostic_target_files or materialized_declared_targets or changed_files
-    )
     claim_target_files = _workspace_quality_llm_claim_target_files(
         owner_target_files=owner_target_files,
         diagnostic_target_files=diagnostic_target_files,
-        fallback_target_files=target_files,
+        fallback_target_files=materialized_declared_targets or changed_files,
     )
+    # Provider mutation intent follows the exact current diagnostic target.
+    # The claimed task/JobToken below remains the full authorization boundary;
+    # this narrow list prevents an obsolete owner override from hiding the
+    # file the verifier actually proved faulty.
+    target_files = claim_target_files or materialized_declared_targets or changed_files
     repair_context: dict[str, Any] = {
         "delivery_mode": "materialize_changes",
         "run_id": run_id,
@@ -1504,10 +1772,22 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
         task_boundary_triage_required = False
         task_boundary_triage_summary: dict[str, Any] = {}
         consecutive_stagnant_rounds = 0
+        nonprogress_rounds_since_last_progress = 0
         last_nonprogress_effect = ""
         last_nonprogress_task_id = ""
         convergence_stop_reason = ""
         seen_diagnostic_error_codes: set[str] = set()
+        # One diagnostic signature gets at most one materialization-schedule
+        # probe that reaches the canonical TaskRuntime claim boundary.  The
+        # materialization schedule contains callback labels which are not
+        # represented by ``plannable_source_tools``, so the read-only plan
+        # probe alone cannot safely prove that the schedule is a no-op.  Once
+        # a live attempt returns without an authoritative mutation receipt,
+        # however, repeating that same deterministic schedule against the
+        # unchanged verifier signature only reopens/settles the same task and
+        # burns CPU/attempt epochs.  Route subsequent identical diagnostics
+        # directly to the same-owner LLM edit path instead.
+        deterministic_no_commit_signatures: set[tuple[str, ...]] = set()
 
         def current_workspace_repair_summary(
             *,
@@ -1532,6 +1812,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 "max_rounds": max_rounds,
                 "rounds": repair_rounds,
                 "consecutive_stagnant_rounds": consecutive_stagnant_rounds,
+                "nonprogress_rounds_since_last_progress": nonprogress_rounds_since_last_progress,
                 "convergence_stop_reason": convergence_stop_reason,
             }
             if deadline_detail:
@@ -1569,6 +1850,17 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             repair_errors = executor._workspace_quality_repair_errors(latest_check_results or results)
             if not repair_errors:
                 break
+            before_check_results = [dict(item) for item in (latest_check_results or results)]
+            deadline_detail = workspace_repair_deadline_blocker(f"before_repair_round_{round_index + 1}")
+            if deadline_detail:
+                return write_workspace_validation_failure(
+                    "factory_quality_gate_workspace_repair_deadline_insufficient",
+                    deadline_detail,
+                    repair_override=current_workspace_repair_summary(
+                        residual_errors=repair_errors,
+                        deadline_detail=deadline_detail,
+                    ),
+                )
             if owner_override is None and round_index == 0:
                 # Live L2-15 remint-11/12: leftover only ran AFTER a TU
                 # stagnated, so the first four rounds never leased the
@@ -1583,16 +1875,36 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 if seeded:
                     owner_override = seeded
             before_signature = executor._workspace_quality_diagnostic_signature(repair_errors)
+            deterministic_probe_signature = _workspace_quality_deterministic_probe_signature(repair_errors)
+            round_plan_probe = executor._workspace_quality_repair_plan_probe_report(repair_errors)
             # Oscillation uses AFTER codes from completed rounds only.
             # Seeding `seen` with this round's before-set made C++
             # forward_unmask (undeclared -> missing-member, kinds still
             # overlapping) look like a return to an already-seen code and
             # tripped the breaker after two real unmasks (live L1-06).
-            round_repair_results, round_summary = await executor._apply_workspace_quality_deterministic_repairs(
-                run=run,
-                artifact_quality_errors=repair_errors,
-                repair_attempt=round_index + 1,
+            deterministic_skipped_repeated_no_commit = (
+                deterministic_probe_signature in deterministic_no_commit_signatures
             )
+            round_repair_results: list[dict[str, Any]]
+            round_summary: dict[str, Any]
+            if deterministic_skipped_repeated_no_commit:
+                round_repair_results = []
+                round_summary = {
+                    "attempted": False,
+                    "success": False,
+                    "repair_mode": "director_deterministic",
+                    "skipped_reason": "same_diagnostic_signature_previously_produced_no_commit",
+                    "source_tools": [],
+                    "tool_results": 0,
+                    "write_tool_evidence": False,
+                    "evidence": ["deterministic_no_commit_signature_cache_hit"],
+                }
+            else:
+                round_repair_results, round_summary = await executor._apply_workspace_quality_deterministic_repairs(
+                    run=run,
+                    artifact_quality_errors=repair_errors,
+                    repair_attempt=round_index + 1,
+                )
             round_requires_task_boundary_triage = executor._workspace_quality_summary_requires_task_boundary_triage(
                 dict(round_summary)
             )
@@ -1600,10 +1912,12 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             round_write_tool_evidence = any(
                 executor._workspace_quality_repair_result_has_mutation(item) for item in round_repair_results
             ) or bool(round_summary.get("write_tool_evidence"))
+            if not deterministic_skipped_repeated_no_commit and not round_write_tool_evidence:
+                deterministic_no_commit_signatures.add(deterministic_probe_signature)
             raw_round_summary_evidence = round_summary.get("evidence")
             llm_repair_attempted_in_round = False
             hold_llm_for_plannable_deterministic = _workspace_quality_hold_llm_for_plannable_deterministic(
-                executor._workspace_quality_repair_plan_probe_report(repair_errors),
+                round_plan_probe,
                 write_tool_evidence=round_write_tool_evidence,
                 residual_errors=repair_errors,
             )
@@ -1805,6 +2119,18 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 round_requires_task_boundary_triage = executor._workspace_quality_summary_requires_task_boundary_triage(
                     dict(round_summary)
                 )
+            if deterministic_skipped_repeated_no_commit:
+                round_summary = dict(round_summary)
+                repeated_no_commit_evidence = [
+                    str(item) for item in (round_summary.get("evidence") or ()) if str(item or "").strip()
+                ]
+                if "deterministic_no_commit_signature_cache_hit" not in repeated_no_commit_evidence:
+                    repeated_no_commit_evidence.append("deterministic_no_commit_signature_cache_hit")
+                round_summary["evidence"] = repeated_no_commit_evidence
+                round_summary["deterministic_repair_skipped"] = {
+                    "reason": "same_diagnostic_signature_previously_produced_no_commit",
+                    "task_runtime_claimed": False,
+                }
             cpp_post_repair_results: list[dict[str, Any]] = []
             if not round_requires_task_boundary_triage:
                 cpp_post_repair_results = await asyncio.to_thread(executor._apply_workspace_quality_cpp_post_repairs)
@@ -1845,7 +2171,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 "attempted": True,
                 "artifact_quality_errors": repair_errors[:10],
                 "director_runtime_repair_coverage": executor._workspace_quality_repair_coverage_report(repair_errors),
-                "plan_probe_preaudit": executor._workspace_quality_repair_plan_probe_report(repair_errors),
+                "plan_probe_preaudit": round_plan_probe,
                 "tool_results": len(round_repair_results),
                 "source_tools": round_source_tools,
                 "write_tool_evidence": round_write_tool_evidence,
@@ -1917,7 +2243,11 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 )
                 if settled_attempt is not None and isinstance(projected_summary_raw, dict):
                     projected_summary_raw["task_runtime_repair_attempt"] = settled_attempt
-                if last_nonprogress_effect == "no_op":
+                nonprogress_rounds_since_last_progress += 1
+                current_nonprogress_task_id = str(round_summary.get("task_id") or "").strip() or "__unknown_owner__"
+                if last_nonprogress_effect == "no_op" and (
+                    not current_nonprogress_task_id or current_nonprogress_task_id == last_nonprogress_task_id
+                ):
                     consecutive_stagnant_rounds += 1
                 else:
                     # Different non-progress classes are different evidence.
@@ -1928,6 +2258,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     # structured verifier feedback on the next bounded round.
                     consecutive_stagnant_rounds = 1
                     last_nonprogress_effect = "no_op"
+                    last_nonprogress_task_id = current_nonprogress_task_id
                 claimed_noop_targets = (
                     owned_round_targets
                     or [
@@ -1942,6 +2273,16 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     claimed_targets=claimed_noop_targets,
                     workspace=Path(executor.workspace),
                 )
+                # This is the global progress fuse, so it must run BEFORE an
+                # owner rotation can ``continue``.  Live L3-21 reached ten
+                # no-op rounds (and ~20 TaskRuntime claim/settle transitions):
+                # every round found another leftover target, reset the local
+                # owner-stagnation counter, and skipped this hard cap.  Owner
+                # rotation may change who repairs next, but it is not verified
+                # project progress and must not grant an unbounded retry budget.
+                if nonprogress_rounds_since_last_progress >= _WORKSPACE_QUALITY_REPAIR_NONPROGRESS_HARD_CAP:
+                    convergence_stop_reason = "three_nonprogress_repairs_without_verified_progress"
+                    break
                 if leftover_targets_should_force_owner_rotate(leftover_after_noop, claimed_noop_targets):
                     # Live L2-15: generator.cpp went syntax-green so the
                     # engine owner no-op'd while ### src/main.cpp still
@@ -2030,6 +2371,8 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 after_signature=after_signature,
                 verifier_passed=verifier_passed,
                 write_tool_evidence=round_write_tool_evidence,
+                before_results=before_check_results,
+                after_results=latest_check_results,
             )
             settled_attempt = await _settle_pending_workspace_quality_repair_attempt(
                 executor,
@@ -2067,8 +2410,11 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             projected_for_task = round_payload.get("repair_summary")
             if isinstance(projected_for_task, Mapping):
                 round_task_id = str(projected_for_task.get("task_id") or "").strip()
+            if not round_task_id:
+                round_task_id = "__unknown_owner__"
             if repair_effect in {"resolved", "progress"} or forward_unmask_advances:
                 consecutive_stagnant_rounds = 0
+                nonprogress_rounds_since_last_progress = 0
                 last_nonprogress_effect = ""
                 last_nonprogress_task_id = ""
             elif (
@@ -2082,12 +2428,23 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 consecutive_stagnant_rounds = 1
                 last_nonprogress_effect = repair_effect
                 last_nonprogress_task_id = round_task_id
+            if repair_effect not in {"resolved", "progress"} and not forward_unmask_advances:
+                nonprogress_rounds_since_last_progress += 1
             seen_diagnostic_error_codes.update(after_codes)
             if verifier_passed:
                 convergence_stop_reason = "verifier_passed"
                 break
             if round_prepare_failed:
                 convergence_stop_reason = "prepare_after_repair_failed"
+                break
+            # Global fuse must precede every owner-rotation ``continue``.
+            # A real edit with no verifier reduction is still non-progress.
+            # Live L3-21 repeatedly produced equal-count swaps, discovered a
+            # leftover path, reset the owner-local counter, and bypassed the
+            # only hard cap below.  One QA retry consumed eight rounds / sixteen
+            # TaskRuntime claims without reducing the same five test failures.
+            if nonprogress_rounds_since_last_progress >= _WORKSPACE_QUALITY_REPAIR_NONPROGRESS_HARD_CAP:
+                convergence_stop_reason = "three_nonprogress_repairs_without_verified_progress"
                 break
             claimed_round_targets = (
                 owned_round_targets
@@ -2156,6 +2513,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             "max_rounds": max_rounds,
             "rounds": repair_rounds,
             "consecutive_stagnant_rounds": consecutive_stagnant_rounds,
+            "nonprogress_rounds_since_last_progress": nonprogress_rounds_since_last_progress,
             "convergence_stop_reason": convergence_stop_reason,
         }
         scope_filter = workspace_quality_latest_task_boundary_scope_filter(repair_summary)

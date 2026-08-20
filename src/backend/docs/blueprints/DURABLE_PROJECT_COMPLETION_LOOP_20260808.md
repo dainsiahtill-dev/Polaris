@@ -175,6 +175,15 @@ defers drain only for failed CE/Director/QA stages while their synchronous,
 bounded local-rework decision is pending. Exhausted retries resume normal
 fail-closed terminalization.
 
+Terminal QA-only retry can also begin after the bounded drain has already
+completed. Its restoration authority is the frozen TaskRuntime epoch plus the
+same-run immutable CE handoff and JobToken. PM targets alone are insufficient:
+PM may name a manifest while CE legitimately expands concrete source topology.
+Restoration must require exact run/task identity, a generated handoff-ready CE
+row, and a run-bound JobToken, then materialize that authority through
+`runtime.task_runtime` before claiming repair. It must never infer owner from
+disk existence or a verifier path. See ADR-0110.
+
 Verification plan: unit tests prove PM executes once while CE retries; PM/CE
 execute once while Director retries; completed Director rows survive; failure
 feedback appears in CE retry context; automatic mutation families remain

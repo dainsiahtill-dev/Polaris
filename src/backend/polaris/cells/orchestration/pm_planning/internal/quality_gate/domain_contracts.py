@@ -1236,7 +1236,14 @@ def _read_workspace_planning_hint_text(workspace_full: str) -> str:
     workspace = Path(str(workspace_full or "").strip())
     if not workspace:
         return ""
+    from polaris.kernelone.storage import resolve_runtime_path
+
+    canonical_contracts = Path(resolve_runtime_path(str(workspace), "runtime/contracts"))
     candidates = (
+        canonical_contracts / "plan.md",
+        canonical_contracts / "requirements.md",
+        # Read-only compatibility for pre-migration workspaces.  New writers
+        # must never recreate this workspace-adjacent runtime root.
         workspace / "runtime" / "contracts" / "plan.md",
         workspace / "runtime" / "contracts" / "requirements.md",
         workspace / ".polaris" / "docs" / "30_backlog.md",

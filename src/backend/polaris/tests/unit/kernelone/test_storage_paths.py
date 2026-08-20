@@ -26,30 +26,40 @@ class TestStoragePathConstants:
 
 
 class TestResolveSignalPath:
-    def test_basic(self) -> None:
-        path = resolve_signal_path("/ws", "pm", "plan")
-        assert path == Path("/ws") / "runtime/signals" / "plan.pm.signals.json"
+    def test_basic(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "project"
+        path = resolve_signal_path(str(workspace), "pm", "plan")
+        assert path == workspace / ".polaris/runtime/signals" / "plan.pm.signals.json"
 
 
 class TestResolveArtifactPath:
-    def test_basic(self) -> None:
-        path = resolve_artifact_path("/ws", "artifact1")
-        assert path == Path("/ws") / "runtime/artifacts" / "artifact1"
+    def test_basic(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "project"
+        path = resolve_artifact_path(str(workspace), "artifact1")
+        assert path == workspace / ".polaris/runtime/artifacts" / "artifact1"
 
 
 class TestResolveSessionPath:
-    def test_basic(self) -> None:
-        path = resolve_session_path("/ws", "sess-123")
-        assert path == Path("/ws") / "runtime/sessions" / "sess-123"
+    def test_basic(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "project"
+        path = resolve_session_path(str(workspace), "sess-123")
+        assert path == workspace / ".polaris/runtime/sessions" / "sess-123"
 
 
 class TestResolveTaskboardPath:
-    def test_basic(self) -> None:
-        path = resolve_taskboard_path("/ws")
-        assert path == Path("/ws") / "runtime/tasks" / "taskboard.json"
+    def test_basic(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "project"
+        path = resolve_taskboard_path(str(workspace))
+        assert path == workspace / ".polaris/runtime/tasks" / "taskboard.json"
 
 
 class TestResolveRuntimePath:
-    def test_basic(self) -> None:
-        path = resolve_runtime_path("/ws", "foo/bar.txt")
-        assert path == Path("/ws") / "runtime" / "foo/bar.txt"
+    def test_basic(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "project"
+        path = resolve_runtime_path(str(workspace), "foo/bar.txt")
+        assert path == workspace / ".polaris/runtime" / "foo/bar.txt"
+
+    def test_accepts_legacy_runtime_logical_prefix_without_nesting(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "project"
+        path = resolve_runtime_path(str(workspace), "runtime/signals/pm.json")
+        assert path == workspace / ".polaris/runtime/signals/pm.json"

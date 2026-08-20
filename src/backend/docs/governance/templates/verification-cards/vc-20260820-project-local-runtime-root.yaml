@@ -31,6 +31,14 @@ assumptions:
     statement: "Migration must not copy or dual-write live runtime state."
     status: verified
     evidence: "Runtime is mutable KFS-owned state with lock identity and append-only event evidence."
+  - id: "A6"
+    statement: "A stale Launcher can pass an old external runtime to a child even after the source migration."
+    status: verified
+    evidence: "Live PID 85203 was spawned with ~/.cache/kernelone/.../runtime while its persisted launch receipt claimed <workspace>/runtime; main PID 16333 reported stale_since_startup=true."
+  - id: "A7"
+    statement: "Correct child CLI arguments do not by themselves prevent inherited Launcher authority."
+    status: verified
+    evidence: "Live PID 64914 command line named the target .polaris/runtime while /proc/64914/environ still named the main repository workspace/runtime."
 
 pre_mortem:
   failure_point: >
@@ -53,8 +61,16 @@ verification_plan:
       expected: "Public result and KernelOne root agree."
       status: new
     - file: "polaris/cells/instances/tests/test_instance_service.py"
-      description: "New Instance records default to target .polaris/runtime."
-      expected: "Registry and backend launch argument agree."
+      description: "New records, stale local claims, and child Popen environment converge to target .polaris/runtime."
+      expected: "Registry, launch argument, and pre-import child environment agree."
+      status: new
+    - file: "polaris/cells/control_plane/run_ledger/tests/test_project_local_runtime_root.py"
+      description: "New ledger writes use canonical runtime while legacy bare-runtime ledgers remain read-only discoverable."
+      expected: "No new writer creates <workspace>/runtime."
+      status: passed
+    - file: "polaris/delivery/cli/tests/test_backend_runtime_root.py"
+      description: "Backend independently normalizes legacy workspace-root claims while preserving explicit external opt-in."
+      expected: "A stale parent cannot force a split runtime identity into a fresh child."
       status: new
     - file: "scripts/factory_bench/test_run_factory_bench.py"
       description: "Isolated launch receipt uses target .polaris/runtime."
@@ -63,7 +79,7 @@ verification_plan:
   integration_tests:
     - description: "Launch a fresh isolated instance and compare registry, process and storage layout."
       command: "python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L3-21 --launcher-instance-mode isolated --bench-session-reporting off"
-      status: pending
+      status: passed
   manual_check:
     - "No writer creates <workspace>/runtime for a new project."
     - "Legacy external runtime remains read-only discoverable."
@@ -73,7 +89,6 @@ related_adrs:
 
 sign_off:
   completed_by: "codex"
-  completed_at: ""
-  verified_by: ""
-  verified_at: ""
-
+  completed_at: "2026-08-20T15:49:07+00:00"
+  verified_by: "codex"
+  verified_at: "2026-08-20T15:49:07+00:00"

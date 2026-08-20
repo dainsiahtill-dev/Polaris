@@ -1,0 +1,75 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "workspace-quality-causal-owner-routing-20260820",
+  "status": "FIXED_LIVE_VERIFIED",
+  "severity": "P0",
+  "scope": "polaris_meta_platform_only",
+  "target_project_mutated_by_agent": false,
+  "symptom": "QA local repair repeatedly leased TASK-1 while the exact failing source src/dream_subway/line_editor.py belonged to TASK-2.",
+  "dynamic_evidence": {
+    "factory_run_id": "factory_ec5697b14a71",
+    "project_id": "L3-21",
+    "stage": "quality_gate",
+    "verifier_error": "NameError: name 'dataclass' is not defined",
+    "failing_path": "src/dream_subway/line_editor.py",
+    "failing_path_owner": "TASK-2",
+    "wrong_claimed_owner": "TASK-1",
+    "final_request_context_snapshot_ref": "165ac0194b6dce04d850c5f2",
+    "final_request_call_id": "20cd2a5572954cbc969cb30e6016b78a",
+    "final_request_had_exact_error": true,
+    "final_request_had_failing_file_body": true,
+    "final_request_allowed_write_paths": [
+      "requirements.txt",
+      "src/dream_subway/domain.py",
+      "src/dream_subway/__init__.py"
+    ],
+    "task_2_authoritative_paths": [
+      "requirements.txt",
+      "src/dream_subway/line_editor.py",
+      "src/dream_subway/memory.py",
+      "src/dream_subway/seed.py",
+      "src/dream_subway/__main__.py"
+    ]
+  },
+  "root_cause": [
+    "Python traceback workspace frames were appended outermost-first, so importer/test frames outranked the deepest causal frame.",
+    "A prior-round owner_target_files override replaced current verifier diagnostic targets before the next LLM repair claim.",
+    "The provider could understand the defect but could not legally edit its failing file."
+  ],
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_03.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ],
+    "behavior": [
+      "Rank deepest Python workspace traceback frame first.",
+      "Prefer non-test causal sources over test wrappers.",
+      "Use current verifier diagnostic target before stale owner scope.",
+      "Keep full claimed TaskRuntime/JobToken owner authority while narrowing provider mutation intent to the causal file."
+    ]
+  },
+  "verification": {
+    "focused_regressions": "6 passed",
+    "stage_executor_related": "5 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "full_workspace_quality_suite": "37 passed",
+    "same_run_live_retry": "passed",
+    "live_claimed_owner": "TASK-2",
+    "live_mutation_target": "src/dream_subway/line_editor.py",
+    "live_effect_call_ids": [
+      "call_a7a87db65bfcb9fb",
+      "call_8ad1a8ded30a51e8"
+    ],
+    "live_before_after_hashes_unequal": true,
+    "live_verifier_progress": "Python test collection unblocked; 34 tests executed instead of unittest.loader._FailedTest"
+  },
+  "required_live_acceptance": [
+    "Satisfied: retry remained in quality_gate for factory_ec5697b14a71.",
+    "Satisfied: final provider request claimed TASK-2 and named src/dream_subway/line_editor.py as mutation target.",
+    "Satisfied: edit_file receipts have unequal before/after hashes for line_editor.py.",
+    "Satisfied: the NameError disappeared and 34 tests executed.",
+    "Satisfied: PM, Chief Engineer, and Director materialization stages did not restart."
+  ]
+}
