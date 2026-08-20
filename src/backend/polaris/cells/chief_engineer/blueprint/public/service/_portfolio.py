@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -25,6 +26,7 @@ from ..contracts import (
     ProjectCompletionObligationsV1,
     ProjectKindAuthorityV1,
     QueryProjectCompletionContractV1,
+    VerificationCommandAuthorityV1,
     VerificationObligationV1,
     _ChiefEngineerPortfolioAuthorityCarrierV1,
     _portfolio_authority_receipt_hash,
@@ -37,6 +39,7 @@ from ._helpers import (
     _PROJECT_COMPLETION_PREDICATE_VERSION,
     _blueprint_path,
     _compact_llm_blueprint_value,
+    _is_ce_source_topology_path,
     _mapping,
     _portfolio_hash,
     _string_list,
@@ -712,8 +715,31 @@ def _build_portfolio_completion_contract(
         },
     )
     try:
-        command_authorities = tuple(carrier.verification_command_authority)
+        command_authorities = list(carrier.verification_command_authority)
         command_authority_by_hash = {item.authority_hash: item for item in command_authorities}
+
+        delegated_topology_tasks = {
+            task.task_id: task for task in command.tasks if task.topology_authority == "chief_engineer"
+        }
+
+        def task_delegates(task_id: str, source_kind: str) -> bool:
+            task = delegated_topology_tasks.get(task_id)
+            return task is not None and source_kind in task.required_source_kinds
+
+        # CE-created source paths become authority only when the committed PM
+        # task explicitly delegated topology.  The owner comes from the same
+        # strict structured row; safe-source filtering prevents this mapping
+        # from widening to manifests, tests, docs, or arbitrary workspace paths.
+        delegated_path_owners: dict[str, set[str]] = {}
+        for row in artifact_rows:
+            if row["applicability"] == "not_applicable":
+                continue
+            path = str(row.get("path") or "")
+            owner_task_id = str(row.get("owner_task_id") or "")
+            task = delegated_topology_tasks.get(owner_task_id)
+            if task is None or not task.required_source_kinds or not _is_ce_source_topology_path(path):
+                continue
+            delegated_path_owners.setdefault(path, set()).add(owner_task_id)
 
         pm_target_owners: dict[str, set[str]] = {}
         pm_scope_owners: list[tuple[str, str]] = []
@@ -730,6 +756,7 @@ def _build_portfolio_completion_contract(
                 for scope_path, task_id in pm_scope_owners
                 if _completion_path_is_within_scope(path=path, scope_path=scope_path)
             )
+            owners.update(delegated_path_owners.get(path, set()))
             return owners
 
         def transitively_depends_on(task_id: str, possible_ancestor: str) -> bool:
@@ -938,6 +965,50 @@ def _build_portfolio_completion_contract(
                 if item.modality == modality and (owner_task_id is None or item.task_id == owner_task_id)
             )
 
+        def resolve_delegated_entrypoint_authority(
+            row: Mapping[str, Any],
+        ) -> VerificationCommandAuthorityV1 | None:
+            """Resolve one explicitly delegated Python package entrypoint.
+
+            This is deliberately not a shell escape hatch.  The exact argv is
+            derived from a normalized ``src/<module>/__main__.py`` path and
+            must equal the CE candidate command byte-for-byte after POSIX argv
+            parsing.  Unsupported languages/shapes stay fail-closed until they
+            gain their own deterministic resolver and tests.
+            """
+
+            if row["applicability"] != "required":
+                return None
+            delegated_owner_task_id = str(row.get("owner_task_id") or "")
+            source_path = str(row.get("source_path") or "")
+            if not task_delegates(delegated_owner_task_id, "entrypoint"):
+                return None
+            if delegated_owner_task_id not in delegated_path_owners.get(source_path, set()):
+                return None
+            parts = PurePosixPath(source_path).parts
+            if len(parts) < 3 or parts[0] != "src" or parts[-1] != "__main__.py":
+                return None
+            module_parts = parts[1:-1]
+            if not module_parts or any(not part.isidentifier() for part in module_parts):
+                return None
+            expected_argv = ("python", "-m", ".".join(module_parts))
+            try:
+                candidate_argv = tuple(shlex.split(str(row.get("command") or ""), posix=True))
+            except ValueError:
+                return None
+            if candidate_argv != expected_argv:
+                return None
+            authority = VerificationCommandAuthorityV1(
+                task_id=delegated_owner_task_id,
+                modality="entrypoint",
+                argv=expected_argv,
+                cwd=".",
+            )
+            if authority.authority_hash not in command_authority_by_hash:
+                command_authorities.append(authority)
+                command_authority_by_hash[authority.authority_hash] = authority
+            return authority
+
         if not entrypoint_rows:
             # Entrypoint paths and executable commands are already exact PM
             # authority. An empty CE advisory list must not erase them.
@@ -947,15 +1018,17 @@ def _build_portfolio_completion_contract(
             projected_entrypoints: list[dict[str, Any]] = []
             for index, path in enumerate(ordered_entrypoints, start=1):
                 authorized = owners_for_path(path)
-                owner_task_id = next(iter(authorized)) if len(authorized) == 1 else unique_terminal_owner(path)
-                if owner_task_id is None:
+                projected_owner_task_id = (
+                    next(iter(authorized)) if len(authorized) == 1 else unique_terminal_owner(path)
+                )
+                if projected_owner_task_id is None:
                     raise ValueError(
                         "PM entrypoint has no unique authorized terminal owner; "
                         f"path={path!r}; owners={sorted(authorized)!r}"
                     )
                 matching = authorities_for(
                     modality="entrypoint",
-                    owner_task_id=owner_task_id,
+                    owner_task_id=projected_owner_task_id,
                 )
                 if len(matching) != 1:
                     raise ValueError(
@@ -973,7 +1046,7 @@ def _build_portfolio_completion_contract(
                             catalog_snapshot=carrier.catalog_snapshot,
                         ),
                         "applicability": "required",
-                        "owner_task_id": owner_task_id,
+                        "owner_task_id": projected_owner_task_id,
                         "source_path": path,
                         "runtime_path": None,
                         "command": command_authority.command,
@@ -1125,13 +1198,17 @@ def _build_portfolio_completion_contract(
                 normalized_entrypoint_rows.append(row)
                 continue
             source_path = str(row["source_path"]) if row["source_path"] is not None else None
-            owner_task_id = str(row["owner_task_id"]) if row["owner_task_id"] is not None else None
+            row_owner_task_id = str(row["owner_task_id"]) if row["owner_task_id"] is not None else None
             matching = authorities_for(
                 modality="entrypoint",
-                owner_task_id=owner_task_id,
+                owner_task_id=row_owner_task_id,
             )
             exact_matches = tuple(item for item in matching if item.command == row["command"])
             if len(exact_matches) == 1:
+                normalized_entrypoint_rows.append(normalize_advisory_runtime_path(row))
+                continue
+            delegated_authority = resolve_delegated_entrypoint_authority(row)
+            if delegated_authority is not None:
                 normalized_entrypoint_rows.append(normalize_advisory_runtime_path(row))
                 continue
             if source_path is not None:
@@ -1154,10 +1231,10 @@ def _build_portfolio_completion_contract(
                 len(matching) == 1
                 and source_path is not None
                 and (
-                    owner_task_id in pm_entrypoint_owners_by_path.get(source_path, set())
+                    row_owner_task_id in pm_entrypoint_owners_by_path.get(source_path, set())
                     or (
-                        owner_task_id not in explicit_pm_entrypoint_owners
-                        and entrypoint_artifact_owner_by_path.get(source_path) == owner_task_id
+                        row_owner_task_id not in explicit_pm_entrypoint_owners
+                        and entrypoint_artifact_owner_by_path.get(source_path) == row_owner_task_id
                     )
                 )
             ):
@@ -1467,7 +1544,7 @@ def _build_portfolio_completion_contract(
             completion_predicate_version=_PROJECT_COMPLETION_PREDICATE_VERSION,
             verifier_policy_hash=carrier.verifier_policy_hash,
             verifier_policy_snapshot_hash=carrier.verifier_policy_snapshot_hash,
-            verification_command_authority=carrier.verification_command_authority,
+            verification_command_authority=tuple(command_authorities),
         )
     except (TypeError, ValueError) as exc:
         raise _portfolio_contract_error(

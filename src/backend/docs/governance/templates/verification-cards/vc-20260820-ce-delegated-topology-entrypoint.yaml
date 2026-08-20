@@ -1,0 +1,61 @@
+card_id: "vc-20260820-ce-delegated-topology-entrypoint"
+bug_summary: >
+  CE-owned topology metadata is dropped before completion-contract assembly, so a valid CE entrypoint is
+  removed and every delegated-topology application fails Chief Engineer review.
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+  method: "_build_portfolio_completion_contract"
+  symptom: "L3-21 factory_f11604129d5b raises application project requires a required entrypoint"
+
+assumptions:
+  - id: "A1"
+    statement: "The committed PM contract explicitly delegates topology and requires an entrypoint."
+    status: verified
+    evidence: "L3-21 PM tasks metadata contains topology_authority=chief_engineer and required_source_kinds includes entrypoint."
+  - id: "A2"
+    statement: "The final CE request and structured candidate contain a correlated source artifact and executable entrypoint."
+    status: verified
+    evidence: "context snapshot 4086b7ae7ed39ce8a0afd245 and factory_f11604129d5b.ce-structured-candidate.json"
+  - id: "A3"
+    statement: "Factory currently drops delegation when constructing ChiefEngineerPortfolioTaskV1."
+    status: verified
+    evidence: "factory_stage_executor/_mixin_01.py::_chief_engineer_portfolio_tasks projects paths/dependencies only."
+  - id: "A4"
+    statement: "A bounded path-correlated delegated command can be represented by existing VerificationCommandAuthorityV1."
+    status: verified
+    evidence: "VerificationCommandAuthorityV1 hashes exact task/modality/argv/cwd and ProjectCompletionContractV1 revalidates it."
+
+pre_mortem:
+  failure_point: >
+    A broad CE escape hatch could authorize arbitrary paths or shell commands, or silently weaken exact PM authority for
+    non-delegated projects.
+  risk_zone:
+    - "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py"
+    - "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    - "polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_01.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contractsa.py"
+      description: "Accept explicit CE-owned Python package entrypoint and reject non-delegated or unsafe variants."
+      expected: "Only bounded delegated topology produces exact artifact, entrypoint and verifier authority."
+      status: new
+  integration_tests:
+    - description: "Run focused CE blueprint and Factory stage tests, then same-run L3-21 CE retry."
+      command: "python -m pytest -q polaris/cells/chief_engineer/blueprint/public/tests/test_public_contractsa.py"
+      status: new
+  manual_check:
+    - "Confirm retry reuses factory_f11604129d5b PM stage and advances to Director without a new PM call."
+
+related_adrs:
+  - "ADR-0108"
+
+sign_off:
+  completed_by: "codex"
+  completed_at: ""
+  verified_by: ""
+  verified_at: ""
+

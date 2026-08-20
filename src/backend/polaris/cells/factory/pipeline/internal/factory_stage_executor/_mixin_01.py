@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -742,6 +742,22 @@ class _Mixin01:
                 for path in self._task_string_list(task, "project_declared_entrypoint_targets")
                 if path in target_file_set
             )
+            raw_metadata = task.get("metadata")
+            metadata = raw_metadata if isinstance(raw_metadata, Mapping) else {}
+            raw_topology_authority = str(metadata.get("topology_authority") or "pm").strip()
+            if raw_topology_authority not in {"pm", "chief_engineer"}:
+                raise _ChiefEngineerPortfolioAuthorityError(
+                    "chief_engineer.topology_authority_invalid",
+                    f"committed PM task {self._task_id(task, index)!r} has invalid topology authority",
+                )
+            topology_authority: Literal["pm", "chief_engineer"] = (
+                "chief_engineer" if raw_topology_authority == "chief_engineer" else "pm"
+            )
+            required_source_kinds = (
+                tuple(str(value).strip() for value in metadata.get("required_source_kinds", ()) if str(value).strip())
+                if isinstance(metadata.get("required_source_kinds"), (list, tuple))
+                else ()
+            )
             portfolio_tasks.append(
                 ChiefEngineerPortfolioTaskV1(
                     task_id=self._task_id(task, index),
@@ -750,6 +766,8 @@ class _Mixin01:
                     scope_paths=scope_paths,
                     dependencies=tuple(self._task_string_list(task, "depends_on", "dependencies")),
                     entrypoint_targets=entrypoint_targets,
+                    topology_authority=topology_authority,
+                    required_source_kinds=required_source_kinds,
                 )
             )
         return tuple(portfolio_tasks)

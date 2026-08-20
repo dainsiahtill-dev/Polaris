@@ -1274,6 +1274,145 @@ class TestChiefEngineerBlueprintPortfolio:
         assert completion.obligations.entrypoints[0].source_path == "src/main.py"
         assert completion.obligations.entrypoints[0].command == "python -m src.main"
 
+    def test_completion_contract_accepts_bounded_ce_owned_python_entrypoint(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Explicit PM topology delegation may resolve one path-correlated CE entrypoint."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Choose and implement the Python package topology and CLI",
+                target_files=("requirements.txt",),
+                scope_paths=("requirements.txt",),
+                topology_authority="chief_engineer",
+                required_source_kinds=("domain_modules", "entrypoint"),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build the application tests",
+                target_files=("tests/test_main.py",),
+                scope_paths=("tests/test_main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        requirements["obligations"]["artifacts"][0].update(
+            {
+                "path": "src/dream_subway/__main__.py",
+                "owner_task_id": "TASK-A",
+            }
+        )
+        requirements["obligations"]["entrypoints"][0].update(
+            {
+                "source_path": "src/dream_subway/__main__.py",
+                "runtime_path": "src/dream_subway/__main__.py",
+                "owner_task_id": "TASK-A",
+                "command": "python -m dream_subway",
+            }
+        )
+
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-delegated-python-entrypoint",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-delegated-python-entrypoint",
+                    entrypoint_owner_task_ids=("TASK-NOT-PRESENT",),
+                ),
+                llm_blueprint={
+                    "construction_plan": {"project_interface_contract": {}},
+                    "project_completion_contract": requirements,
+                    "risk_flags": [],
+                },
+            )
+        )
+
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        entrypoint = completion.obligations.entrypoints[0]
+        assert entrypoint.source_path == "src/dream_subway/__main__.py"
+        assert entrypoint.command == "python -m dream_subway"
+        verifier = next(item for item in completion.obligations.verification if item.modality == "entrypoint")
+        authority = next(
+            item
+            for item in completion.verification_command_authority
+            if item.modality == "entrypoint" and item.task_id == "TASK-A"
+        )
+        assert authority.argv == ("python", "-m", "dream_subway")
+        assert verifier.command_authority_hash == authority.authority_hash
+        assert verifier.command == entrypoint.command
+
+    @pytest.mark.parametrize(
+        ("source_path", "command"),
+        [
+            ("src/dream_subway/__main__.py", "python -m other_package"),
+            ("src/dream_subway/main.py", "python -m dream_subway"),
+            ("../dream_subway/__main__.py", "python -m dream_subway"),
+        ],
+    )
+    def test_completion_contract_rejects_unbounded_delegated_entrypoint(
+        self,
+        tmp_path: Path,
+        source_path: str,
+        command: str,
+    ) -> None:
+        """Delegation never grants arbitrary path or command authority."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Choose the Python package topology",
+                target_files=("requirements.txt",),
+                scope_paths=("requirements.txt",),
+                topology_authority="chief_engineer",
+                required_source_kinds=("domain_modules", "entrypoint"),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build tests",
+                target_files=("tests/test_main.py",),
+                scope_paths=("tests/test_main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        requirements["obligations"]["artifacts"][0].update({"path": source_path, "owner_task_id": "TASK-A"})
+        requirements["obligations"]["entrypoints"][0].update(
+            {
+                "source_path": source_path,
+                "runtime_path": None,
+                "owner_task_id": "TASK-A",
+                "command": command,
+            }
+        )
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            build_chief_engineer_blueprint_portfolio(
+                BuildChiefEngineerBlueprintPortfolioCommandV1(
+                    workspace=str(tmp_path),
+                    run_id="run-reject-unbounded-entrypoint",
+                    tasks=tasks,
+                    **_portfolio_command_authority(
+                        tasks=tasks,
+                        workspace=tmp_path,
+                        run_id="run-reject-unbounded-entrypoint",
+                        entrypoint_owner_task_ids=("TASK-NOT-PRESENT",),
+                    ),
+                    llm_blueprint={
+                        "construction_plan": {"project_interface_contract": {}},
+                        "project_completion_contract": requirements,
+                        "risk_flags": [],
+                    },
+                )
+            )
+
+        assert exc_info.value.code == "invalid_project_completion_contract"
+
     def test_completion_contract_drops_malformed_advisory_runtime_path(self, tmp_path: Path) -> None:
         """A dot-prefixed CE runtime locator cannot invalidate an exact PM entrypoint."""
 

@@ -598,6 +598,10 @@ class TestChiefEngineerHandoffGuards:
                 "goal": "Bind exact completion owner",
                 "target_files": ["src/owner.py"],
                 "project_declared_entrypoint_targets": ["src/owner.py", "src/other-owner.py"],
+                "metadata": {
+                    "topology_authority": "chief_engineer",
+                    "required_source_kinds": ["domain_modules", "entrypoint"],
+                },
                 "acceptance_criteria": ["python -m compileall src passes"],
                 "verification_commands": [
                     {
@@ -610,6 +614,8 @@ class TestChiefEngineerHandoffGuards:
         ]
         portfolio_tasks = executor._chief_engineer_portfolio_tasks(pm_tasks)
         assert portfolio_tasks[0].entrypoint_targets == ("src/owner.py",)
+        assert portfolio_tasks[0].topology_authority == "chief_engineer"
+        assert portfolio_tasks[0].required_source_kinds == ("domain_modules", "entrypoint")
         store_calls: list[tuple[Path, bool]] = []
 
         class _FakeFactoryStore:

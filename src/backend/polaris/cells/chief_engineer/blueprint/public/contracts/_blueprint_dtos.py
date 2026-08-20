@@ -73,6 +73,8 @@ class ChiefEngineerPortfolioTaskV1:
     scope_paths: tuple[str, ...] = field(default_factory=tuple)
     dependencies: tuple[str, ...] = field(default_factory=tuple)
     entrypoint_targets: tuple[str, ...] = field(default_factory=tuple)
+    topology_authority: Literal["pm", "chief_engineer"] = "pm"
+    required_source_kinds: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         task_id = _require_non_empty("task_id", self.task_id)
@@ -94,6 +96,19 @@ class ChiefEngineerPortfolioTaskV1:
         if unknown_entrypoint_targets:
             raise ValueError(f"entrypoint_targets must be exact PM target_files; unknown={unknown_entrypoint_targets}")
         object.__setattr__(self, "entrypoint_targets", entrypoint_targets)
+        topology_authority = str(self.topology_authority or "").strip()
+        if topology_authority not in {"pm", "chief_engineer"}:
+            raise ValueError("topology_authority must be 'pm' or 'chief_engineer'")
+        required_source_kinds = _strict_unique_string_tuple(
+            "required_source_kinds",
+            self.required_source_kinds,
+        )
+        if topology_authority == "chief_engineer" and not required_source_kinds:
+            raise ValueError("chief_engineer topology authority requires required_source_kinds")
+        if topology_authority == "pm" and required_source_kinds:
+            raise ValueError("PM topology authority must not declare delegated required_source_kinds")
+        object.__setattr__(self, "topology_authority", topology_authority)
+        object.__setattr__(self, "required_source_kinds", required_source_kinds)
 
     def to_dict(self) -> dict[str, Any]:
         """Return the normalized PM-authoritative task projection."""
@@ -105,6 +120,8 @@ class ChiefEngineerPortfolioTaskV1:
             "scope_paths": list(self.scope_paths),
             "dependencies": list(self.dependencies),
             "entrypoint_targets": list(self.entrypoint_targets),
+            "topology_authority": self.topology_authority,
+            "required_source_kinds": list(self.required_source_kinds),
         }
 
 
