@@ -68,6 +68,7 @@ def build_typescript_runtime_plan_for_source_tool(
         TYPESCRIPT_SOURCEFILE_DIAGNOSTICS_SOURCE_TOOL: _build_typescript_sourcefile_diagnostics_plan,
         TYPESCRIPT_STRING_LITERAL_SUGGESTION_SOURCE_TOOL: build_typescript_string_literal_suggestion_plan,
         TYPESCRIPT_TEST_BLOCK_RESIDUE_SOURCE_TOOL: _build_typescript_test_block_residue_plan,
+        TYPESCRIPT_TIMER_HANDLE_SOURCE_TOOL: build_typescript_timer_handle_plan,
         TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL: _build_typescript_too_few_arguments_plan,
         TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL: _build_typescript_tsconfig_lib_plan,
         TYPESCRIPT_TSCONFIG_ROOTDIR_SOURCE_TOOL: _build_typescript_tsconfig_rootdir_plan,

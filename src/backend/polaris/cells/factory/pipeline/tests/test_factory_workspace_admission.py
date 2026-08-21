@@ -41,6 +41,7 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunService,
     FactoryRunStatus,
     StageResult,
+    _service_core as service_core_module,
     _service_lifecycle as service_lifecycle_module,
     _service_physical as service_physical_module,
 )
@@ -1252,6 +1253,7 @@ async def test_recovery_deadline_is_rechecked_after_blocking_replay_capture(
             return 31.0 if expired else 0.0
 
     monkeypatch.setattr(service_physical_module, "time", _ReplayTime)
+    monkeypatch.setattr(service_core_module, "time", _ReplayTime)
     with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_head_unstable"):
         await restarted.recover_run(created.id)
 
@@ -1291,11 +1293,10 @@ async def test_recovery_deadline_stops_before_lifecycle_read_after_role_read_exp
         def monotonic() -> float:
             return 31.0 if expired else 0.0
 
-    monkeypatch.setattr(
-        factory_run_service_module, "query_factory_role_evidence_replay_snapshot", role_query_then_expire
-    )
-    monkeypatch.setattr(factory_run_service_module, "query_factory_provider_attempt_lifecycle_replay", lifecycle_query)
+    monkeypatch.setattr(service_core_module, "query_factory_role_evidence_replay_snapshot", role_query_then_expire)
+    monkeypatch.setattr(service_core_module, "query_factory_provider_attempt_lifecycle_replay", lifecycle_query)
     monkeypatch.setattr(service_physical_module, "time", _ReplayTime)
+    monkeypatch.setattr(service_core_module, "time", _ReplayTime)
 
     with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_head_unstable"):
         await restarted.recover_run(created.id)
@@ -1345,6 +1346,7 @@ async def test_recovery_deadline_stops_before_snapshot_read_after_event_read_exp
     monkeypatch.setattr(restarted.store, "_read_authoritative_events_sync", event_read_then_expire)
     monkeypatch.setattr(restarted.store, "_read_strict_snapshot_sync", snapshot_read)
     monkeypatch.setattr(service_physical_module, "time", _ReplayTime)
+    monkeypatch.setattr(service_core_module, "time", _ReplayTime)
 
     with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_head_unstable"):
         await restarted.recover_run(created.id)
@@ -1389,6 +1391,7 @@ async def test_recovery_deadline_stops_after_lifecycle_hold_entry_before_second_
 
     monkeypatch.setattr(restarted._admission, "hold_active_lifecycle_operation_claim", hold_then_expire)
     monkeypatch.setattr(service_physical_module, "time", _ReplayTime)
+    monkeypatch.setattr(service_core_module, "time", _ReplayTime)
 
     with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_head_unstable"):
         await restarted.recover_run(created.id)
@@ -1442,6 +1445,7 @@ async def test_recovery_deadline_stops_after_final_lease_revalidation_before_fin
     monkeypatch.setattr(restarted._admission, "hold_active_lifecycle_operation_claim", counted_hold)
     monkeypatch.setattr(restarted, "_capture_physical_attempt_replay_fence", count_capture)
     monkeypatch.setattr(service_physical_module, "time", _ReplayTime)
+    monkeypatch.setattr(service_core_module, "time", _ReplayTime)
 
     with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_head_unstable"):
         await restarted.recover_run(created.id)

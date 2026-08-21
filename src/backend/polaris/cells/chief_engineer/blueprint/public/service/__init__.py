@@ -250,6 +250,8 @@ from ._portfolio import (
     _task_plan_components,
     build_chief_engineer_blueprint_portfolio,
     derive_project_kind_authority_from_catalog_snapshot,
+    project_chief_engineer_delivery_depth_feasibility_from_pm_tasks,
+    project_chief_engineer_portfolio_delivery_depth_feasibility,
     project_chief_engineer_task_blueprint,
     query_project_completion_contract,
 )
@@ -284,6 +286,8 @@ __all__ = [
     "list_risks",
     "list_tech_debt",
     "list_tech_radar",
+    "project_chief_engineer_delivery_depth_feasibility_from_pm_tasks",
+    "project_chief_engineer_portfolio_delivery_depth_feasibility",
     "project_chief_engineer_task_blueprint",
     "query_blueprint_provenance",
     "register_adr",

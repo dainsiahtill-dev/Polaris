@@ -123,7 +123,8 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
         ),
         pytest_targets=(
             "src/backend/polaris/cells/factory/pipeline/tests/test_factory_physical_attempt_control.py",
-            "src/backend/polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py",
+            "src/backend/polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority_sa.py",
+            "src/backend/polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority_sb.py",
         ),
         invariants=(
             "unknown_source_tool_fail_closed",
@@ -160,7 +161,7 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "test_r155_prepare_batch_idempotent_replay_after_ready_does_not_drop",
             "src/backend/polaris/cells/roles/kernel/tests/test_directed_effect_lifecycle.py::"
             "test_lifecycle_admits_second_turn_after_first_batch_receipts_close",
-            "src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py::"
+            "src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecyclea.py::"
             "test_r156_lifecycle_failure_reason_not_bare_dispatched_status",
             "src/backend/polaris/cells/roles/adapters/tests/"
             "test_director_directed_effect_policy_snapshot.py::"
@@ -230,7 +231,7 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "src/backend/polaris/kernelone/audit/context_os_prompt.py",
         ),
         pytest_targets=(
-            "src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_components.py::"
+            "src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_components_sb.py::"
             "test_r152_sibling_export_pin_preserves_current_user_final_role",
             "src/backend/polaris/cells/roles/kernel/internal/llm_caller/tests/test_context_audit.py::"
             "test_r152_context_os_audit_finding_surfaces_current_user_final_failure",
@@ -274,17 +275,19 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
             "src/backend/polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
             "src/backend/polaris/cells/runtime/task_runtime/internal/service.py",
+            "src/backend/polaris/cells/control_plane/run_ledger/public/task_boundary.py",
             "src/backend/polaris/cells/roles/kernel/public/deferred_repair_commit_service.py",
         ),
         pytest_targets=(
             "src/backend/polaris/cells/factory/pipeline/tests/test_director_binding_fanout.py",
             "src/backend/polaris/cells/factory/pipeline/tests/test_director_fanout_evidence.py",
             "src/backend/polaris/cells/factory/pipeline/tests/test_director_stage_materialization_settle.py",
-            "src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py::"
+            "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py::"
             "TestRunWorkspaceQualityChecks::"
             "test_workspace_quality_owner_score_ignores_project_wide_target_inventory",
             "src/backend/polaris/cells/factory/pipeline/tests/test_factory_settlement_runtime.py::"
             "test_durable_wake_bridge_open_barrier_does_not_block_later_deliveries",
+            "src/backend/polaris/cells/control_plane/run_ledger/tests/test_task_boundary.py",
             "src/backend/polaris/cells/roles/kernel/tests/test_deferred_repair_commit_service.py",
         ),
         invariants=(
@@ -295,6 +298,7 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "deferred_settle_partitions_non_conflicting_target_paths",
             "workspace_repair_reopens_exact_task_owner_not_project_wide_inventory_peer",
             "settlement_open_barrier_never_monopolizes_the_durable_consumer",
+            "task_boundary_entrypoint_projection_accepts_paths_not_inline_script_expressions",
         ),
         depends_on=("M02_physical_attempt_authority", "M04_final_request_context", "M03_tool_batch_deo"),
         markers=("module_director_fanout",),
@@ -325,7 +329,7 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
         ),
         pytest_targets=(
             "src/backend/polaris/cells/factory/pipeline/tests/test_factory_execution_control_plane_ssot.py",
-            "src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py::"
+            "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_quality_gate_deadline.py::"
             "TestQualityGateDeadlineHandling::"
             "test_quality_gate_workspace_validation_failure_skips_advisory_qa_judgement",
             "src/backend/polaris/kernelone/platform_modules/tests/test_residual_attribution.py",
@@ -357,12 +361,13 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "src/backend/polaris/cells/events/fact_stream/public/service.py",
         ),
         pytest_targets=(
-            "src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycle.py",
-            "src/backend/polaris/cells/control_plane/run_ledger/tests/test_public_service.py::"
+            "src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecyclea.py",
+            "src/backend/polaris/cells/control_plane/run_ledger/tests/test_tool_lifecycleb.py",
+            "src/backend/polaris/cells/control_plane/run_ledger/tests/test_public_servicea.py::"
             "test_repaired_gate_revision_supersedes_historical_failure_for_current_outcome",
-            "src/backend/polaris/cells/control_plane/run_ledger/tests/test_public_service.py::"
+            "src/backend/polaris/cells/control_plane/run_ledger/tests/test_public_servicea.py::"
             "test_latest_failed_gate_revision_supersedes_historical_success",
-            "src/backend/polaris/cells/control_plane/run_ledger/tests/test_public_service.py::"
+            "src/backend/polaris/cells/control_plane/run_ledger/tests/test_public_servicea.py::"
             "test_repaired_gate_revision_cannot_shrink_required_evidence_contract",
         ),
         invariants=(
@@ -396,39 +401,37 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
         ),
         pytest_targets=(
             "src/backend/polaris/cells/roles/adapters/tests/test_director_helpers_pure.py::TestR154PlaceholderCommentGuard",
-            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract_3.py::"
             "test_public_html_module_script_rewrites_dot_slash_src_typescript_to_dist",
-            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract_3.py::"
             "test_public_html_truncated_entrypoint_closes_script_and_html_and_rewrites_ts_script",
-            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract_3.py::"
             "test_public_html_module_script_rewrites_typescript_source_entrypoint",
-            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract_3.py::"
             "test_public_typescript_duplicate_function_removes_later_stub",
-            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract_3.py::"
             "test_public_typescript_readonly_assignment_mutates_readonly_array_fields",
-            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
-            "test_public_typescript_json_as_source_rewrites_package_manifest_and_adds_smoke_test",
-            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
-            "test_public_typescript_json_as_source_seeds_vitest_smoke_for_bare_test_script",
-            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract_3.py::"
+            "test_public_typescript_json_as_source_does_not_invent_vitest_smoke",
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract_3.py::"
             "test_public_typescript_member_alias_rewrites_position_glow_and_garden_tick",
-            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract_3.py::"
             "test_public_typescript_literal_union_expand_adds_missing_literals",
-            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract_3.py::"
             "test_public_typescript_init_property_alias_renames_garden_init_keys",
-            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract_3.py::"
             "test_public_typescript_arg_type_function_alias_rewrites_humidity_to_hydration",
-            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract_3.py::"
             "test_public_typescript_import_type_value_conflict_drops_type_flower_keeps_value",
-            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract_3.py::"
             "test_public_typescript_import_type_value_conflict_promotes_type_only_import",
-            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract_3.py::"
             "test_public_runtime_dependency_repair_plans_node_types_dev_dependency",
-            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract_3.py::"
             "test_public_runtime_dependency_repair_tsconfig_types_when_atypes_node_already_declared",
-            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract_4.py::"
             "test_typescript_ts2459_declares_locally_reexports_imported_type",
-            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py::"
+            "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract_1.py::"
             "test_materialization_runtime_probe_plans_direct_node_typescript_import_repair",
             "src/backend/polaris/cells/director/runtime/tests/test_typescript_m10_strict_compile_repairs.py",
         ),
@@ -441,8 +444,7 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "duplicate_function_declaration_removed_for_tsc",
             "readonly_array_index_assignment_mutability_repaired",
             "package_manifest_json_in_ts_path_rewritten",
-            "missing_package_test_target_gets_smoke_test",
-            "bare_vitest_run_seeds_tests_verify_smoke",
+            "repair_kernel_does_not_invent_vitest_smoke",
             "member_alias_position_glow_and_garden_tick",
             "ts7010_interface_method_void_return",
             "ts2322_object_freeze_named_type_assertion",
@@ -480,7 +482,11 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "src/backend/polaris/cells/factory/pipeline/internal/bench_gates.py",
             "src/backend/scripts/factory_bench/run_factory_bench.py",
         ),
-        pytest_targets=("src/backend/polaris/cells/factory/pipeline/tests/test_bench_gates.py",),
+        pytest_targets=(
+            "src/backend/polaris/cells/factory/pipeline/tests/test_bench_gates_1.py",
+            "src/backend/polaris/cells/factory/pipeline/tests/test_bench_gates_2.py",
+            "src/backend/polaris/cells/factory/pipeline/tests/test_bench_gates_3.py",
+        ),
         invariants=(
             "gates_are_measure_only_no_workspace_repair",
             "four_pillars_all_required_for_pass",

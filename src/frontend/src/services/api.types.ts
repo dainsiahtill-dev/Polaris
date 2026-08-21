@@ -1655,8 +1655,76 @@ export interface FactoryRunEventsV2Response {
 
 export interface FactoryRunAuditBundleV2Response {
   run_id: string;
-  bundle: Record<string, unknown>;
-  timestamp?: string;
+  status?: string | null;
+  phase?: string | null;
+  current_stage?: string | null;
+  failure?: Record<string, unknown> | null;
+  evidence_counts?: Record<string, unknown> | null;
+  control_plane_projection?: Record<string, unknown> | null;
+  exact_run_causal_audit?: {
+    schema_version?: string;
+    diagnosis_id?: string;
+    current_status?: string;
+    terminal?: boolean;
+    root_cause_code?: string | null;
+    responsible_cell?: string | null;
+    retry_boundary?: string | null;
+    pm_ce_restart_allowed?: boolean;
+    target_project_defect?: boolean;
+    authority_contradiction_detected?: boolean;
+    historical_error_count?: number;
+    historical_counts?: Record<string, number>;
+    evidence_gaps?: string[];
+    evidence_completeness?: {
+      complete?: boolean;
+      required_links?: string[];
+      available_links?: string[];
+      missing_links?: string[];
+    };
+    root_cause_candidates?: Array<Record<string, unknown>>;
+    next_action?: {
+      action?: string;
+      owner_cell?: string;
+      failed_task_ids?: string[];
+      failed_verifier_modalities?: string[];
+      suspected_files?: string[];
+      required_evidence?: string[];
+      repair?: {
+        status?: string;
+        residual_error_count?: number;
+        residual_errors?: string[];
+        diagnostic_paths?: string[];
+        changed_paths?: string[];
+        plannable_source_tools?: string[];
+        covered_unplannable_source_tools?: string[];
+      };
+      preserve?: Record<string, boolean>;
+      prohibited_actions?: string[];
+    };
+    platform_residual_attribution?: {
+      primary_module_id?: string;
+      delivery_status?: string;
+      gate_commands?: string[];
+      next_action?: string;
+    } | null;
+    repair_diagnosis?: {
+      status?: string;
+      residual_error_count?: number;
+      residual_errors?: string[];
+      diagnostic_paths?: string[];
+      changed_paths?: string[];
+      plannable_source_tools?: string[];
+      covered_unplannable_source_tools?: string[];
+      plan_probe_status?: string;
+      coverage_is_not_planning?: boolean;
+    };
+    evidence_chain?: Record<string, unknown>;
+  } | null;
+  exact_run_causal_audit_error?: {
+    error_code?: string;
+    error_message?: string;
+  } | null;
+  [key: string]: unknown;
 }
 
 export interface RuntimeMigrationStatusV2Response {

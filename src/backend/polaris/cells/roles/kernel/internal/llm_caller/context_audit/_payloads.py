@@ -41,6 +41,7 @@ from ._primitives import (
 )
 from ._request_core import (
     _delivery_contract_payload,
+    _delivery_depth_contract_summary,
     _execution_contract,
     _execution_contract_summary,
     _execution_envelope,
@@ -884,6 +885,7 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
     execution_envelope_summary = _execution_envelope_summary(ai_request)
     delivery_plan_document = _delivery_contract_payload(ai_request, "delivery_plan_document")
     delivery_depth_contract = _delivery_contract_payload(ai_request, "delivery_depth_contract")
+    delivery_depth_contract_summary = _delivery_depth_contract_summary(ai_request)
     task_metadata = _task_metadata(ai_request)
     pm_contract = _pm_contract_payload(ai_request)
     ce_blueprint = _ce_blueprint_payload(ai_request)
@@ -945,6 +947,7 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
         "has_delivery_plan_document": bool(delivery_plan_document),
         "delivery_plan_document_hash": _stable_digest(delivery_plan_document) if delivery_plan_document else "",
         "has_delivery_depth_contract": bool(delivery_depth_contract),
+        "delivery_depth_contract_summary": delivery_depth_contract_summary,
         "delivery_depth_contract_hash": _stable_digest(delivery_depth_contract) if delivery_depth_contract else "",
         "has_pm_contract": bool(pm_contract),
         "pm_contract_summary": _pm_contract_summary(pm_contract),

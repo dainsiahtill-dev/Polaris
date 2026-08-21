@@ -1,0 +1,67 @@
+{
+  "schema_version": "polaris.defect-manifest.v1",
+  "defect_id": "DEFECT-20260821-DIRECTOR-REPAIR-MULTI-EDIT-ATOMICITY",
+  "status": "CLOSED",
+  "severity": "P0",
+  "scope": {
+    "owner": "director.runtime",
+    "component": "TransactionalRepairExecutor",
+    "affected_path": "public run_director_repair execution",
+    "production_deferred_effect_path": "already collapsed multi-edit patches to one atomic write"
+  },
+  "symptom": "Two text_replace operations targeting one file were sent to the editor sequentially. The first mutated the file, the second was rejected against the original hash, and the failed receipt reported rollback_attempted=false while the file remained partially changed.",
+  "exact_run": {
+    "factory_run_id": "factory_dc3f1803031e",
+    "project_id": "L1-01",
+    "task_id": "TASK-3",
+    "workspace": "/tmp/factory-bench-l1-01-audit-r01/workspaces/f5947aa22d20-a7b735f33a2f4b0e/L1-01-7bb25f6bf0f37baf/2026aec34022fe27d2b10562"
+  },
+  "dynamic_evidence": {
+    "failed_receipt_id": "repair_receipt_1a62706650def4e8f92a73dc",
+    "error": "repair editor rejected tests/verify.test.ts",
+    "before_hash": "b4bfbcebc720e2d8fd2559006d56d6bbc67d97376fcdfea77a811230a88d1168",
+    "observed_partial_after_hash": "7e7089b8d6d5b045e1bc04c15be77b587261549f62c07e9c9651b5ec1aab9adb",
+    "rollback_attempted": false,
+    "partial_effect": "types.js changed to types.ts while simulation.js remained unchanged",
+    "target_project_manual_edits": false
+  },
+  "root_cause": {
+    "code": "director.runtime.repair_multi_edit_transaction_not_atomic",
+    "mechanism": "written rollback state was appended only after every editor operation succeeded",
+    "contract_mismatch": "all operations carried the original file before_hash but were executed as independent mutations"
+  },
+  "fix": {
+    "behavior": [
+      "Rebind each execution-only edit copy to the current physical file hash while preserving immutable plan and operation identities.",
+      "Register the patch rollback record immediately after the first accepted edit effect.",
+      "Detect mutation even when editor, writer, or deleter rejects or raises.",
+      "Register rollback before surfacing the failure and restore original UTF-8 content through the policy-gated writer."
+    ],
+    "files": [
+      "src/backend/polaris/cells/director/runtime/internal/repair_kernel/executor.py",
+      "src/backend/polaris/cells/director/runtime/tests/test_repair_executor_atomicity.py"
+    ]
+  },
+  "live_closure": {
+    "same_task_replay": "TASK-3 only",
+    "successful_receipt_id": "repair_receipt_7c91630ea1ee9b5b22f0665b",
+    "successful_receipt_authoritative": true,
+    "npm_test_exit_code": 0,
+    "npm_run_check": "52 passed, 0 failed",
+    "entrypoint": "npm start exit 0",
+    "pm_ce_restart": false
+  },
+  "validation": {
+    "atomicity_tests": "3 passed",
+    "precise_edit_suite": "20 passed",
+    "focused_backend_suite": "75 passed",
+    "ruff": "clean",
+    "mypy": "clean"
+  },
+  "lessons": [
+    "Tool callbacks are untrusted effect ports; ok=true is insufficient without reading post-effect state.",
+    "Failure receipts must describe the physical state, including rollback attempts.",
+    "Multi-edit same-file plans require patch-level rollback plus per-effect current-hash binding, not repeated original-hash checks.",
+    "Repair resumes at the failed Director task and failed verifier; PM, CE, and green artifacts remain preserved."
+  ]
+}

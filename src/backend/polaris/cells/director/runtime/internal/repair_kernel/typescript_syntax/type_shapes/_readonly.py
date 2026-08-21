@@ -15,7 +15,7 @@ def build_typescript_readonly_assignment_plan(
     diagnostics: Sequence[RepairDiagnostic],
     mode: str = "commit",
 ) -> RepairPlan | None:
-    """Build TS2540/TS2542 repairs for readonly property and ReadonlyArray index writes."""
+    """Build TS2540/TS2542/TS4104 repairs for readonly assignment mismatches."""
 
     normalized_base_files = {
         _normalize_repair_path(path): str(content or "")
@@ -27,10 +27,11 @@ def build_typescript_readonly_assignment_plan(
         diagnostics,
         base_files=normalized_base_files,
     )
+    value_targets_by_path = _parse_readonly_value_assignment_targets(diagnostics)
     operations: list[RepairOperation] = []
     matched_diagnostics: list[RepairDiagnostic] = []
     repaired_items: list[dict[str, object]] = []
-    all_paths = sorted(set(targets_by_path) | set(index_targets_by_path))
+    all_paths = sorted(set(targets_by_path) | set(index_targets_by_path) | set(value_targets_by_path))
     for path in all_paths:
         if path not in normalized_base_files:
             continue
@@ -50,6 +51,13 @@ def build_typescript_readonly_assignment_plan(
                 path=path,
                 content=original,
                 properties=index_targets_by_path.get(path, set()),
+            )
+        )
+        path_operations.extend(
+            _readonly_value_assignment_operations(
+                path=path,
+                content=original,
+                targets=value_targets_by_path.get(path, set()),
             )
         )
         if not path_operations:
@@ -187,6 +195,93 @@ def _parse_readonly_index_assignment_targets(
         if _TS_IDENTIFIER_RE.fullmatch(prop):
             by_path.setdefault(path, set()).add(prop)
     return by_path
+
+
+def _parse_readonly_value_assignment_targets(
+    diagnostics: Sequence[RepairDiagnostic],
+) -> dict[str, set[tuple[int, int]]]:
+    """Map TS4104 diagnostics to exact assignment lines.
+
+    TS4104 means a readonly array/tuple value is assigned to a mutable target.
+    Keep discovery strict: typed code, path, line, column, and canonical compiler
+    wording are all required before an edit can be planned.
+    """
+
+    by_path: dict[str, set[tuple[int, int]]] = {}
+    for diagnostic in diagnostics:
+        text = f"{diagnostic.message}\n{diagnostic.raw}".lower()
+        if (
+            str(diagnostic.code or "").lower() != "typescript_ts4104"
+            or "readonly" not in text
+            or "cannot be assigned to the mutable type" not in text
+        ):
+            continue
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        line = int(diagnostic.line or 0)
+        column = int(diagnostic.column or 0)
+        if path and line > 0 and column > 0:
+            by_path.setdefault(path, set()).add((line, column))
+    return by_path
+
+
+def _readonly_value_assignment_operations(
+    *,
+    path: str,
+    content: str,
+    targets: set[tuple[int, int]],
+) -> tuple[RepairOperation, ...]:
+    """Copy simple readonly member-chain values before mutable assignment.
+
+    Example: ``fireflies = next.fireflies`` becomes
+    ``fireflies = [...next.fireflies]``. Complex expressions fail closed.
+    """
+
+    if not targets:
+        return ()
+    lines = content.splitlines(keepends=True)
+    offsets = _line_start_offsets(lines)
+    before_hash = sha256_text(content)
+    operations: list[RepairOperation] = []
+    assignment = re.compile(
+        r"^(?P<indent>[ \t]*)(?P<lhs>[A-Za-z_$][A-Za-z0-9_$]*)"
+        r"(?P<between>[ \t]*=[ \t]*)"
+        r"(?P<rhs>[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+)"
+        r"(?P<suffix>[ \t]*;?[ \t]*(?://[^\r\n]*)?)(?P<newline>\r?\n)?$"
+    )
+    for line_number, column in sorted(targets):
+        line_index = line_number - 1
+        if line_index < 0 or line_index >= len(lines):
+            continue
+        original = lines[line_index]
+        match = assignment.fullmatch(original)
+        if match is None:
+            continue
+        rhs = str(match.group("rhs") or "")
+        if not rhs or rhs.startswith("..."):
+            continue
+        start = offsets[line_index] + match.start("rhs")
+        end = offsets[line_index] + match.end("rhs")
+        if content[start:end] != rhs:
+            continue
+        operations.append(
+            RepairOperation(
+                kind="text_replace",
+                path=path,
+                span_start=start,
+                span_end=end,
+                expected=rhs,
+                replacement=f"[...{rhs}]",
+                before_hash=before_hash,
+                metadata={
+                    "repair_kind": "typescript_readonly_value_assignment_copy",
+                    "target": str(match.group("lhs") or ""),
+                    "diagnostic_lines": (line_number,),
+                    "diagnostic_column": column,
+                    "unique_context": original,
+                },
+            )
+        )
+    return tuple(operations)
 
 
 def _readonly_array_index_assignment_operations(

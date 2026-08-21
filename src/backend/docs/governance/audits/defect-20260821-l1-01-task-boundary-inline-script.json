@@ -1,0 +1,60 @@
+{
+  "schema_version": "polaris.defect-manifest.v1",
+  "defect_id": "DEFECT-20260821-L1-01-TASK-BOUNDARY-INLINE-SCRIPT",
+  "status": "FIXED_REPROJECTED_OFFLINE",
+  "severity": "P0",
+  "exact_run": {
+    "factory_run_id": "factory_dc3f1803031e",
+    "project_id": "L1-01",
+    "workspace": "/tmp/factory-bench-l1-01-audit-r01/workspaces/f5947aa22d20-a7b735f33a2f4b0e/L1-01-7bb25f6bf0f37baf/2026aec34022fe27d2b10562"
+  },
+  "symptom": "Run Ledger reported MISSING_ENTRYPOINT_TARGET after all Director writes and effect receipts succeeded.",
+  "physical_evidence": {
+    "native_write_effects": 13,
+    "effect_receipts": 13,
+    "tool_lifecycle_ok": true,
+    "failed_task_id": "TASK-3",
+    "false_entrypoint_target": "import('node:fs').then(fs=>fs.copyFileSync('index.html','dist/index.html'))",
+    "old_task_boundary": "MISSING_ENTRYPOINT_TARGET",
+    "reprojected_task_boundary": "PASSED",
+    "reprojected_status": "completed_verified"
+  },
+  "root_cause": {
+    "code": "control_plane.run_ledger.task_boundary_missing_entrypoint_target",
+    "owner": "control_plane.run_ledger",
+    "platform_module_id": "M06_director_multi_task",
+    "mechanism": "The package-script scanner admitted any token ending in a known entrypoint suffix, including an inline JavaScript expression ending in .js).",
+    "target_project_defect": false
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/control_plane/run_ledger/public/task_boundary.py",
+    "strategy": "Admit only safe relative entrypoint paths; reject executable expressions and shell syntax.",
+    "retry_boundary": "same_run_task_boundary_reproject_only",
+    "preserve": [
+      "pm",
+      "chief_engineer",
+      "completed_director_artifacts"
+    ]
+  },
+  "audit_output": {
+    "diagnosis_id": "ad7a889b0652dd38b02fd98e",
+    "failed_task_ids": [
+      "TASK-3"
+    ],
+    "evidence_complete": true
+  },
+  "validation": {
+    "focused_tests": "58 passed",
+    "combined_parser_attribution_tests": "68 passed",
+    "m06_module_gate": "PASS",
+    "m02_refactor_recovery_gate": "192 passed",
+    "ruff": "PASS",
+    "mypy": "PASS",
+    "cascade": "M01-M04 PASS; M05 blocked by two independent workspace-admission test failures"
+  },
+  "constraints": [
+    "No generated L1-01 file was modified.",
+    "Do not restart PM, Chief Engineer, or completed Director tasks.",
+    "Persist a new TaskBoundary revision before declaring the original Factory run terminally repaired."
+  ]
+}

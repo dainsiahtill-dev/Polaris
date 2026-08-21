@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from polaris.cells.chief_engineer.blueprint.public import (
     BlueprintPersistence,
+    ChiefEngineerPortfolioTaskV1,
     project_completion_catalog_snapshot_hash,
 )
 from polaris.cells.factory.pipeline.internal import (
@@ -173,6 +174,23 @@ class TestChiefEngineerHandoffGuards:
         )
 
         assert errors == ["task_plans contains unknown task ids: TASK-UNKNOWN"]
+
+    def test_portfolio_validation_rejects_delivery_depth_authority_deficit(self) -> None:
+        payload = dict(_single_task_chief_engineer_result().metadata["structured_output"])
+        task = ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-CANCEL",
+            objective="Deliver a real project",
+            target_files=("src/main.py",),
+            delivery_depth_contract={"minimums": {"min_prod_files": 2, "min_test_files": 2}},
+        )
+
+        errors = OrchestrationStageExecutor._chief_engineer_portfolio_output_errors(
+            payload,
+            tasks=(task,),
+        )
+
+        assert "project_completion_contract delivery depth infeasible: prod_files=1 < 2" in errors
+        assert "project_completion_contract delivery depth infeasible: test_files=1 < 2" in errors
 
     def test_task_blueprint_context_injects_catalog_delivery_depth_contract(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -1280,4 +1298,5 @@ class TestChiefEngineerHandoffGuards:
         ]["TASK-1"]
         assert task_plan_schema["properties"]["scope_for_apply"]["type"] == "array"
         assert task_plan_schema["properties"]["risk_flags"]["type"] == "array"
-        assert "advisory arrays may be empty" in objective
+        assert "Arrays may be empty only when" in objective
+        assert "enough distinct task-owned production/test source artifacts" in objective

@@ -54,6 +54,9 @@ from polaris.cells.director.runtime.public import (
     query_director_repair_plan_probe,
     run_director_repair,
 )
+from polaris.cells.director.runtime.tests._repair_kernel_contract_support import (
+    _install_delete_file_test_runtime_binding,
+)
 
 
 def test_public_typescript_unresolved_identifier_repairs_parameter_alias() -> None:

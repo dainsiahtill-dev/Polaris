@@ -60,6 +60,8 @@ class QueryExactRunCausalAuditV1:
     factory_run_id: str
     project_id: str = ""
     audit_event_limit: int = 300
+    preloaded_run_ledger_projection: Mapping[str, Any] | None = None
+    preloaded_repair_evidence: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
@@ -72,6 +74,18 @@ class QueryExactRunCausalAuditV1:
         if not 1 <= int(self.audit_event_limit) <= 2000:
             raise ValueError("audit_event_limit must be between 1 and 2000")
         object.__setattr__(self, "audit_event_limit", int(self.audit_event_limit))
+        if self.preloaded_run_ledger_projection is not None:
+            object.__setattr__(
+                self,
+                "preloaded_run_ledger_projection",
+                _to_dict_copy(self.preloaded_run_ledger_projection),
+            )
+        if self.preloaded_repair_evidence is not None:
+            object.__setattr__(
+                self,
+                "preloaded_repair_evidence",
+                _to_dict_copy(self.preloaded_repair_evidence),
+            )
 
 
 @dataclass(frozen=True)

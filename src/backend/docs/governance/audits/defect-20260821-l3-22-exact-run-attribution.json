@@ -1,0 +1,106 @@
+{
+  "schema_version": "polaris.defect-manifest.v1",
+  "defect_id": "DEFECT-20260821-L3-22-EXACT-RUN-ATTRIBUTION",
+  "status": "HARDENED_PENDING_FRESH_RUN_REVALIDATION",
+  "severity": "P0",
+  "exact_run": {
+    "factory_run_id": "factory_d8966d9d011a",
+    "project_id": "L3-22",
+    "workspace": "/tmp/factory-bench-l3-22-r01/workspaces/44258d0bdc0f-d72aea370e81075d/L3-22-5aaab9a81e5e829d/1f99b14265b657cf44731cfa"
+  },
+  "symptoms": [
+    "running projection was synthesized as factory.pipeline.stage_failed",
+    "Factory-scoped audit trail returned zero correlated role events/provider audits",
+    "delivery-depth scope contradiction was labelled target_project_defect",
+    "offline audit facade requires bootstrap AuditStore registration even when journals exist",
+    "formal JSON schema rejected valid RUNNING and evidence-link states emitted by the implementation",
+    "last-N context snapshot selection allowed a long Director tail to evict PM and Chief Engineer evidence",
+    "role failure without a matching final provider request was guessed as a Director defect",
+    "Factory audit-bundle read the same 78 MB Run Ledger projection twice"
+  ],
+  "physical_evidence": {
+    "factory_status": "failed at quality_gate after PM, CE, and Director completed",
+    "go_test": "passed after same-run Director repair",
+    "quality_gate": "prod_files=3<7; test_files=1<2",
+    "final_request": "edit_file only; allowed_write_path_count=4; missing files cannot be created",
+    "correlated_journal_events": 61,
+    "immutable_ce_authority": "3 production source obligations and 1 test obligation while PM delivery-depth minimums require 7 and 2",
+    "dynamic_replay": "actual=3/1; required=7/2; deficits=4/1",
+    "stable_diagnosis_id": "acff27430c37172354e30d99",
+    "performance_replay": "single ledger projection 1.937s; causal classification with preloaded projection 0.588s"
+  },
+  "primary_root_cause": {
+    "code": "chief_engineer.blueprint.delivery_depth_completion_contract_infeasible",
+    "owner": "chief_engineer.blueprint",
+    "retry_boundary": "same_ce_stage",
+    "pm_restart_allowed": false,
+    "ce_restart_allowed": true,
+    "target_project_defect": false
+  },
+  "root_causes": [
+    {
+      "code": "audit.diagnosis.nonterminal_status_misclassified",
+      "owner": "audit.diagnosis"
+    },
+    {
+      "code": "audit.diagnosis.role_run_correlation_missing",
+      "owner": "audit.diagnosis"
+    },
+    {
+      "code": "director.tasking.delivery_contract_scope_contradiction",
+      "owner": "director.tasking"
+    },
+    {
+      "code": "chief_engineer.blueprint.delivery_depth_completion_contract_infeasible",
+      "owner": "chief_engineer.blueprint"
+    },
+    {
+      "code": "audit.diagnosis.offline_store_bootstrap_dependency",
+      "owner": "audit.diagnosis"
+    },
+    {
+      "code": "audit.diagnosis.schema_runtime_contract_drift",
+      "owner": "audit.diagnosis"
+    },
+    {
+      "code": "audit.diagnosis.role_context_tail_starvation",
+      "owner": "audit.diagnosis"
+    },
+    {
+      "code": "context.engine.final_provider_request_evidence_missing",
+      "owner": "context.engine"
+    },
+    {
+      "code": "audit.diagnosis.duplicate_run_ledger_projection",
+      "owner": "audit.diagnosis"
+    }
+  ],
+  "required_validation": [
+    "running status unit test",
+    "nested exact-run correlation unit test",
+    "final request evidence projection unit test",
+    "scope/depth contradiction classifier unit test",
+    "same L3-22 workspace offline revalidation",
+    "ruff and mypy"
+  ],
+  "validation_results": {
+    "exact_run_causal_tests": "20 passed",
+    "ce_director_evidence_tests": "38 passed",
+    "final_request_evidence_tests": "70 passed",
+    "http_audit_contract_tests": "6 passed",
+    "frontend_auto_audit_tests": "2 passed plus TypeScript and ESLint",
+    "mypy": "clean for changed audit diagnosis and HTTP composition sources",
+    "ruff": "clean for changed audit, HTTP, evidence, and test sources",
+    "preserved_l3_22_replay": {
+      "prod_files": 3,
+      "min_prod_files": 7,
+      "test_files": 1,
+      "min_test_files": 2
+    }
+  },
+  "constraints": [
+    "Do not modify generated L3-22 files.",
+    "Do not restart PM; only the same CE stage may rebuild the infeasible authority contract.",
+    "Do not use diagnosis as an execution source of truth."
+  ]
+}

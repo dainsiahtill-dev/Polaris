@@ -94,6 +94,7 @@ from ._readonly import (
     build_typescript_readonly_array_mutation_plan,
     build_typescript_readonly_assignment_plan,
 )
+from ._timer_handle import build_typescript_timer_handle_plan
 from ._value_args import (
     _build_typescript_too_few_arguments_plan,
     _build_typescript_unresolved_identifier_plan,
@@ -175,5 +176,6 @@ __all__ = (
     "build_typescript_readonly_array_mutation_plan",
     "build_typescript_readonly_assignment_plan",
     "build_typescript_string_literal_suggestion_plan",
+    "build_typescript_timer_handle_plan",
     "build_typescript_unused_local_plan",
 )

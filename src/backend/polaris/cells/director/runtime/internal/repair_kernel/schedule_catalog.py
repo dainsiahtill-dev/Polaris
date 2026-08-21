@@ -298,6 +298,7 @@ _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
     "deterministic_typescript_canvas_scale_return_type_repair",
     "deterministic_typescript_commonjs_package_type_repair",
     "deterministic_typescript_strict_null_relaxation_repair",
+    "deterministic_typescript_timer_handle_repair",
     "deterministic_typescript_duplicate_object_property_repair",
     "deterministic_typescript_entrypoint_repair",
     "deterministic_typescript_enum_member_separator_repair",

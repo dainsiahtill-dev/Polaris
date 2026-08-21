@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
-from polaris.cells.control_plane.run_ledger.public import TaskBoundaryFailureClassV1
 from polaris.cells.director.runtime.internal.repair_kernel import (
-    PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL,
     PatchComposer,
     RepairAdvisorNote,
     RepairArchetype,
@@ -18,180 +13,49 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     RepairDiagnostic,
     RepairOperation,
     RepairPlan,
-    RepairPolicyContext,
-    RepairPolicyGate,
     RepairReceipt,
     RepairRevalidationEvidence,
     RepairRuleDefinition,
     RepairRuleRegistry,
     RepairVerifierSnapshot,
-    TransactionalRepairExecutor,
-    build_cpp_failing_smoke_translation_unit_plan,
-    build_cpp_include_path_plan,
-    build_cpp_missing_private_members_plan,
-    build_cpp_placeholder_declaration_plan,
-    build_cpp_post_plan,
-    build_cpp_standard_include_plan,
-    build_cpp_struct_getter_field_access_plan,
-    build_go_bare_import_string_plan,
-    build_go_bare_local_import_plan,
-    build_go_error_string_helper_plan,
-    build_go_nested_import_plan,
-    build_go_subpath_import_plan,
-    build_go_unused_import_plan,
-    build_java_accessor_alias_plan,
-    build_patch_residue_cleanup_plan,
-    build_python_readme_required_token_plan,
     build_repair_coverage_report,
-    build_repair_receipt_context,
-    build_rust_dependency_plan,
-    build_rust_missing_binary_entrypoint_plan,
-    build_typescript_canvas_scale_return_type_plan,
-    build_typescript_duplicate_object_property_plan,
-    build_typescript_enum_member_separator_plan,
     build_typescript_hyphenated_identifier_plan,
-    build_typescript_missing_closing_brace_plan,
-    build_typescript_nullable_canvas_context_plan,
-    build_typescript_number_property_call_plan,
-    build_typescript_number_to_string_argument_plan,
     build_typescript_object_literal_comma_plan,
-    build_typescript_readonly_assignment_plan,
-    build_typescript_shorthand_property_scope_plan,
-    build_typescript_string_literal_suggestion_plan,
     default_repair_rule_registry,
-    deterministic_repair_source_tool_known,
     javascript_syntax as js_syntax,
     normalize_artifact_quality_errors,
     order_repair_plans,
-    plan_runtime_repair,
-    plan_typescript_canvas_scale_return_type_repair,
-    plan_typescript_duplicate_object_property_repair,
-    plan_typescript_enum_member_separator_repair,
-    plan_typescript_nullable_canvas_context_repair,
     plan_typescript_object_literal_comma_repair,
-    remove_patch_residue_lines,
-    repair_cpp_failing_smoke_translation_unit_text,
-    repair_cpp_include_paths_text,
-    repair_cpp_invalid_placeholder_declarations_text,
-    repair_cpp_missing_private_members_text,
-    repair_cpp_missing_standard_includes_text,
-    repair_cpp_struct_getter_field_access_text,
-    repair_go_bare_import_strings_text,
-    repair_go_nested_import_keywords_text,
-    repair_java_common_accessor_aliases_text,
-    repair_typescript_missing_closing_braces,
-    repair_typescript_nullable_canvas_context_guards,
-    repair_typescript_object_literal_commas,
-    run_materialization_quality_repair_schedule_callbacks,
-    run_post_execution_repair_schedule_callbacks,
-    run_runtime_repair,
     runtime_dispatch as runtime_dispatch_module,
-    runtime_repair_bindings,
-    runtime_repair_source_tools,
     typescript_syntax as ts_syntax,
 )
-from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy import (
-    FORBIDDEN_REPAIR_ADVISORY_METADATA_FIELDS,
-    FORBIDDEN_REPAIR_ADVISORY_SUGGESTED_RULE_FIELDS,
-)
-from polaris.cells.director.runtime.internal.repair_kernel.contracts import (
-    FILE_ABSENT_HASH,
-    ComposedPatch,
-    CompositionResult,
-    sha256_text,
-)
-from polaris.cells.director.runtime.internal.repair_kernel.generic_hygiene_syntax import (
-    SCAFFOLD_MARKER_QUALITY_CLEANUP_SOURCE_TOOL,
-    build_scaffold_marker_cleanup_plan,
-)
-from polaris.cells.director.runtime.internal.repair_kernel.java_syntax import (
-    build_java_eof_truncation_plan,
-    build_java_test_dependency_plan,
-    repair_java_eof_truncation_text,
-)
-from polaris.cells.director.runtime.internal.repair_kernel.rust_syntax import (
-    build_rust_crate_import_rewrite_plan,
-    build_rust_field_rename_suggestion_plan,
-    build_rust_incompatible_copy_derive_plan,
-    build_rust_line_suggestion_plan,
-    build_rust_method_self_signature_plan,
-    build_rust_missing_trait_derive_plan,
-    build_rust_serde_derive_plan,
-    build_rust_trait_import_plan,
-    build_rust_unresolved_pub_use_plan,
-    build_rust_unused_import_plan,
-    build_rust_wrong_crate_path_plan,
-)
 from polaris.cells.director.runtime.public import (
-    AttachDirectorRepairRevalidationEvidenceV1,
-    CompareDirectorRepairShadowRunV1,
-    DirectorRepairAdvisoryPolicyResultV1,
-    DirectorRepairAdvisoryValidationResultV1,
-    DirectorRepairCoverageReportV1,
-    DirectorRepairEffectPlanV1,
-    DirectorRepairEffectV1,
-    DirectorRepairKernelSummaryProjectionResultV1,
-    DirectorRepairLanguageSlotsResultV1,
-    DirectorRepairLanguageSlotV1,
     DirectorRepairMaterializationAllowedPathsResultV1,
     DirectorRepairMaterializationPlanProbeResultV1,
-    DirectorRepairMaterializationQualityFacadeResultV1,
-    DirectorRepairMaterializationQualityScheduleResultV1,
-    DirectorRepairMetricsResultV1,
     DirectorRepairPlanningResultV1,
-    DirectorRepairPostExecutionScheduleResultV1,
-    DirectorRepairRevalidationProjectionResultV1,
-    DirectorRepairShadowComparisonResultV1,
-    EvaluateDirectorRepairCutoverReadinessV1,
     PlanDirectorRepairCommandV1,
-    ProjectDirectorRepairKernelSummaryV1,
-    ProjectDirectorRepairMaterializationBridgeMetadataV1,
-    ProjectDirectorRepairMetricsV1,
-    QueryDirectorRepairAdvisoryPolicyV1,
-    QueryDirectorRepairAdvisoryValidationV1,
-    QueryDirectorRepairCoverageV1,
-    QueryDirectorRepairLanguageSlotsV1,
     QueryDirectorRepairMaterializationAllowedPathsV1,
     QueryDirectorRepairMaterializationPlanProbeV1,
-    QueryDirectorRepairMaterializationQualityScheduleV1,
     QueryDirectorRepairPlanProbeV1,
-    QueryDirectorRepairPostExecutionScheduleV1,
-    QueryDirectorRepairStrategyCatalogV1,
-    RepairAdvisoryV1,
     RepairDiagnosticV1,
     RepairReceiptV1,
-    RunDirectorRepairCommandV1,
-    attach_director_repair_revalidation_evidence,
-    build_director_repair_kernel_summary,
-    compare_director_repair_shadow_run,
-    evaluate_director_repair_cutover_readiness,
-    hash_director_repair_effect_plan,
     normalize_director_repair_issue_diagnostics,
     plan_director_repair,
-    project_director_repair_kernel_summary,
-    project_director_repair_materialization_bridge_metadata,
-    project_director_repair_metrics,
-    project_director_repair_revalidation_evidence,
-    query_director_repair_advisory_policy,
-    query_director_repair_coverage,
-    query_director_repair_language_slots,
     query_director_repair_materialization_allowed_paths,
     query_director_repair_materialization_plan_probe,
-    query_director_repair_materialization_quality_schedule,
     query_director_repair_plan_probe,
-    query_director_repair_post_execution_schedule,
-    query_director_repair_strategy_catalog,
-    run_director_materialization_quality_repair_facade,
-    run_director_repair,
     service as runtime_public_service,
-    validate_director_repair_advisory,
 )
-from polaris.cells.director.runtime.public.directed_effect_contracts import hash_directed_effect_arguments
-from polaris.cells.director.runtime.public.service import normalize_director_repair_diagnostics
+from polaris.cells.director.runtime.public.service import (
+    _execution as runtime_public_execution,
+    normalize_director_repair_diagnostics,
+)
+from polaris.cells.director.runtime.tests._repair_kernel_contract_support import (
+    _javascript_esm_commonjs_after,
+    _javascript_missing_export_after,
+    _plan_javascript_missing_export,
+)
 from polaris.kernelone.quality import artifact_quality_issues_from_errors
-from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
-
-
 
 
 def test_public_normalizes_typed_artifact_quality_issues_to_repair_diagnostics() -> None:
@@ -1189,7 +1053,7 @@ def test_plan_probe_passes_coverage_items_as_typed_diagnostics(monkeypatch: pyte
             error_code="test_probe_planner",
         )
 
-    monkeypatch.setattr(runtime_public_service, "plan_director_repair", fake_plan)
+    monkeypatch.setattr(runtime_public_execution, "plan_director_repair", fake_plan)
     result = runtime_public_service.query_director_repair_plan_probe(
         QueryDirectorRepairPlanProbeV1(
             artifact_quality_errors=(),
@@ -1561,8 +1425,7 @@ def test_javascript_assertion_failure_does_not_rewrite_exported_domain_functions
     base_files = {
         "src/engine/rules.js": "export function validateDream(value) {\n  return value?.length > 0;\n}\n",
         "tests/product.test.js": (
-            'import { validateDream } from "../src/engine/rules.js";\n'
-            "assert.equal(validateDream('moon'), true);\n"
+            "import { validateDream } from \"../src/engine/rules.js\";\nassert.equal(validateDream('moon'), true);\n"
         ),
     }
 
@@ -1725,23 +1588,22 @@ def test_javascript_esm_commonjs_entrypoint_repair_preserves_namespace_require_b
 
 def test_javascript_missing_export_repair_does_not_invent_domain_contracts() -> None:
     base_files = {
-            "src/index.js": "console.log('dream note app');\n",
-            "tests/test_basic.js": (
-                'import { run, refineDreamNotes } from "../src/index.js";\n'
-                "const result = refineDreamNotes({ notes: ['有效便签', '', null] });\n"
-                "assert.equal(result.count, 1);\n"
-                "assert.equal(result.distilled[0], '[提炼] 有效便签');\n"
-                "const output = run();\n"
-                "assert.equal(output.ok, true);\n"
-                "assert.match(output.entrypoint, /src[\\\\/]+index\\.js$/);\n"
-            ),
-        }
+        "src/index.js": "console.log('dream note app');\n",
+        "tests/test_basic.js": (
+            'import { run, refineDreamNotes } from "../src/index.js";\n'
+            "const result = refineDreamNotes({ notes: ['有效便签', '', null] });\n"
+            "assert.equal(result.count, 1);\n"
+            "assert.equal(result.distilled[0], '[提炼] 有效便签');\n"
+            "const output = run();\n"
+            "assert.equal(output.ok, true);\n"
+            "assert.match(output.entrypoint, /src[\\\\/]+index\\.js$/);\n"
+        ),
+    }
     diagnostics = (
-            "Artifact quality scan failed: unresolved import symbol 'refineDreamNotes' "
-            "from '../src/index.js' in tests/test_basic.js",
-            "Artifact quality scan failed: unresolved import symbol 'run' "
-            "from '../src/index.js' in tests/test_basic.js",
-        )
+        "Artifact quality scan failed: unresolved import symbol 'refineDreamNotes' "
+        "from '../src/index.js' in tests/test_basic.js",
+        "Artifact quality scan failed: unresolved import symbol 'run' from '../src/index.js' in tests/test_basic.js",
+    )
 
     planning = plan_director_repair(
         PlanDirectorRepairCommandV1(
@@ -2670,5 +2532,3 @@ def test_typescript_hyphenated_identifier_rule_repairs_declaration_and_uses() ->
     assert "return !hasSampleCheck;" in str(operation.replacement)
     assert "hasSample-check" in str(operation.expected)
     assert "hasSample-check" not in str(operation.replacement)
-
-

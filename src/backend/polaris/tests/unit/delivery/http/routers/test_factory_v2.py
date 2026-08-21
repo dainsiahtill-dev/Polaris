@@ -1059,9 +1059,28 @@ async def test_get_factory_run_audit_bundle_success(client: AsyncClient, tmp_pat
     artifacts_dir.mkdir(parents=True)
     (artifacts_dir / "report.json").write_text('{"passed": true}')
 
-    with patch(
-        "polaris.delivery.http.routers.factory.FactoryRunService",
-    ) as mock_svc_cls:
+    causal_result = SimpleNamespace(
+        status="control_plane_fail",
+        payload={
+            "schema_version": "audit.exact-run-causal-report.v1",
+            "factory_run_id": "factory_abc",
+            "root_cause_code": "director.tasking.delivery_contract_scope_contradiction",
+            "responsible_cell": "director.tasking",
+            "retry_boundary": "same_contract_projection_only",
+        },
+        error_code=None,
+        error_message=None,
+    )
+    causal_query = AsyncMock(return_value=causal_result)
+    with (
+        patch(
+            "polaris.delivery.http.routers.factory.FactoryRunService",
+        ) as mock_svc_cls,
+        patch(
+            "polaris.delivery.http.routers.factory.query_exact_run_causal_audit",
+            new=causal_query,
+        ),
+    ):
         mock_svc = MagicMock()
         mock_svc_cls.return_value = mock_svc
         mock_svc.get_run = AsyncMock(return_value=run)
@@ -1074,6 +1093,10 @@ async def test_get_factory_run_audit_bundle_success(client: AsyncClient, tmp_pat
         assert data["run_id"] == "factory_abc"
         assert data["status"] == "completed"
         assert "evidence_counts" in data
+        assert data["exact_run_causal_audit"]["responsible_cell"] == "director.tasking"
+        assert data["exact_run_causal_audit"]["retry_boundary"] == "same_contract_projection_only"
+        exact_query = causal_query.await_args.args[0]
+        assert exact_query.preloaded_run_ledger_projection is not None
 
 
 @pytest.mark.asyncio

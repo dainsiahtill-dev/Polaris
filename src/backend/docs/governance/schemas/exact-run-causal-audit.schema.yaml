@@ -5,23 +5,35 @@ type: object
 additionalProperties: false
 required:
   - schema_version
+  - diagnosis_id
   - workspace
   - factory_run_id
   - project_id
   - current_status
+  - terminal
   - root_cause_code
   - responsible_cell
   - retry_boundary
   - pm_ce_restart_allowed
+  - pm_restart_allowed
+  - ce_restart_allowed
   - target_project_defect
   - authority_contradiction_detected
   - historical_error_count
   - historical_counts
   - evidence_gaps
+  - evidence_completeness
+  - root_cause_candidates
+  - next_action
+  - platform_residual_attribution
+  - repair_diagnosis
   - evidence_chain
 properties:
   schema_version:
     const: audit.exact-run-causal-report.v1
+  diagnosis_id:
+    type: string
+    pattern: "^[0-9a-f]{24}$"
   workspace:
     type: string
     minLength: 1
@@ -31,7 +43,9 @@ properties:
   project_id:
     type: string
   current_status:
-    enum: [DELIVERY_VERIFIED, CHAIN_INCOMPLETE, QA_FAILED, CONTROL_PLANE_FAIL]
+    enum: [RUNNING, DELIVERY_VERIFIED, CHAIN_INCOMPLETE, QA_FAILED, CONTROL_PLANE_FAIL]
+  terminal:
+    type: boolean
   root_cause_code:
     type: string
   responsible_cell:
@@ -40,6 +54,10 @@ properties:
     type: string
     minLength: 1
   pm_ce_restart_allowed:
+    type: boolean
+  pm_restart_allowed:
+    type: boolean
+  ce_restart_allowed:
     type: boolean
   target_project_defect:
     type: boolean
@@ -57,6 +75,97 @@ properties:
     type: array
     items:
       type: string
+  evidence_completeness:
+    type: object
+    additionalProperties: false
+    required: [complete, required_links, available_links, missing_links]
+    properties:
+      complete:
+        type: boolean
+      required_links:
+        type: array
+        items: {type: string}
+      available_links:
+        type: array
+        items: {type: string}
+      missing_links:
+        type: array
+        items: {type: string}
+  root_cause_candidates:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required:
+        - priority
+        - root_cause_code
+        - responsible_cell
+        - detected_by
+        - retry_boundary
+        - current_status
+        - reason
+        - evidence_refs
+        - target_project_defect
+        - authority_contradiction_detected
+      properties:
+        priority: {type: integer, minimum: 1}
+        root_cause_code: {type: string, minLength: 1}
+        responsible_cell: {type: string, minLength: 1}
+        detected_by: {type: string, minLength: 1}
+        retry_boundary: {type: string, minLength: 1}
+        current_status:
+          enum: [CHAIN_INCOMPLETE, QA_FAILED, CONTROL_PLANE_FAIL]
+        reason: {type: string, minLength: 1}
+        evidence_refs:
+          type: array
+          items: {type: string}
+        target_project_defect: {type: boolean}
+        authority_contradiction_detected: {type: boolean}
+  next_action:
+    type: object
+    additionalProperties: false
+    required:
+      - action
+      - owner_cell
+      - failed_task_ids
+      - failed_verifier_modalities
+      - suspected_files
+      - required_evidence
+      - repair
+      - preserve
+      - prohibited_actions
+    properties:
+      action: {type: string, minLength: 1}
+      owner_cell: {type: string}
+      failed_task_ids:
+        type: array
+        items: {type: string}
+      failed_verifier_modalities:
+        type: array
+        items: {type: string}
+      suspected_files:
+        type: array
+        items: {type: string}
+      required_evidence:
+        type: array
+        items: {type: string}
+      repair:
+        type: object
+      preserve:
+        type: object
+        additionalProperties: false
+        required: [pm, chief_engineer, completed_director_artifacts]
+        properties:
+          pm: {type: boolean}
+          chief_engineer: {type: boolean}
+          completed_director_artifacts: {type: boolean}
+      prohibited_actions:
+        type: array
+        items: {type: string}
+  platform_residual_attribution:
+    type: [object, "null"]
+  repair_diagnosis:
+    type: object
   evidence_chain:
     type: object
     required:
@@ -65,9 +174,12 @@ properties:
       - task_boundary
       - task_runtime
       - tool_lifecycle
+      - failure_evidence
+      - structured_failure_signals
       - verifier
       - qa_verdict
       - final_provider_request
+      - role_context_coverage
     additionalProperties:
       type: object
       required: [status, source, details]

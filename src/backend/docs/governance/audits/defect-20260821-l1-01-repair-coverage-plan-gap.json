@@ -1,0 +1,87 @@
+{
+  "schema_version": "polaris.defect-manifest.v1",
+  "defect_id": "DEFECT-20260821-L1-01-REPAIR-COVERAGE-PLAN-GAP",
+  "status": "CLOSED",
+  "severity": "P1",
+  "exact_run": {
+    "factory_run_id": "factory_dc3f1803031e",
+    "project_id": "L1-01",
+    "task_id": "TASK-2",
+    "workspace": "/tmp/factory-bench-l1-01-audit-r01/workspaces/f5947aa22d20-a7b735f33a2f4b0e/L1-01-7bb25f6bf0f37baf/2026aec34022fe27d2b10562"
+  },
+  "symptom": "The verifier retained TS2322 after TS4104 repair; coverage reported known rules although no rule could produce a changed patch.",
+  "dynamic_evidence": {
+    "verifier_command": "npm run check",
+    "verifier_exit_code": 2,
+    "repair_receipt_id": "repair_receipt_95cf6505de3d19552ede4b81",
+    "errors_before": 3,
+    "errors_after": 1,
+    "net_error_reduction": 1,
+    "residual_diagnostic": "src/render/gardenCanvas.ts(96,7): error TS2322: Type 'Timeout' is not assignable to type 'number'.",
+    "coverage_matched_source_tools": [
+      "deterministic_typescript_literal_union_expand_repair",
+      "deterministic_typescript_object_assign_assertion_repair",
+      "deterministic_typescript_strict_null_relaxation_repair"
+    ],
+    "plannable_source_tools": [],
+    "changed_paths": [],
+    "exact_audit_diagnosis_id": "ab1cfb0fa5632a9eb54a1daa",
+    "exact_audit_evidence_complete": true,
+    "closed_coverage_rule": "typescript.timer_handle",
+    "closed_source_tool": "deterministic_typescript_timer_handle_repair",
+    "closed_plan_status": "covered_plannable",
+    "closed_changed_paths": [
+      "src/render/gardenCanvas.ts"
+    ],
+    "post_repair_build_exit_code": 0,
+    "next_residual": "ERR_MODULE_NOT_FOUND for direct Node TypeScript-source .js imports",
+    "next_residual_receipt_id": "repair_receipt_7c91630ea1ee9b5b22f0665b",
+    "next_residual_receipt_authoritative": true,
+    "next_residual_verifier_exit_code": 0,
+    "final_check_exit_code": 0,
+    "final_test_count": 52,
+    "entrypoint_exit_code": 0
+  },
+  "root_cause": {
+    "code": "director.runtime.repair_coverage_matched_but_unplannable",
+    "owner": "director.runtime",
+    "classification": "coverage_is_not_planning",
+    "retry_boundary": "same_director_task_repair_only"
+  },
+  "audit_fix": {
+    "cell": "audit.diagnosis",
+    "behavior": [
+      "Read full workspace repair evidence from the canonical runtime root.",
+      "Fall back to the latest effective Run Ledger gate projection.",
+      "Run public read-only coverage and plan probes when evidence is incomplete.",
+      "Require a changed patch before declaring deterministic repair available.",
+      "Emit affected files, residual diagnostics, owner, retry boundary, and prohibited restarts."
+    ]
+  },
+  "repair_rule_followup": {
+    "status": "CLOSED",
+    "constraint": "Existing broad TS2322 rules were narrowed; the new rule requires the exact Timeout-to-number diagnostic, globalThis.setTimeout at the reported line, and browser-authority source evidence.",
+    "archetype": "typescript_dom_node_timer_handle_type_mismatch",
+    "source_tool": "deterministic_typescript_timer_handle_repair",
+    "revalidation": "npm run build passed"
+  },
+  "validation": {
+    "focused_backend_tests": "75 passed",
+    "executor_and_precise_edit_tests": "20 passed",
+    "ruff": "clean",
+    "mypy": "clean",
+    "frontend_vitest": "2 passed",
+    "frontend_build": "passed",
+    "live_exact_run_result_before_fix": "director.runtime.repair_coverage_matched_but_unplannable",
+    "live_repair_route_after_fix": "covered_plannable",
+    "generated_project_check": "52 passed, 0 failed",
+    "generated_project_entrypoint": "passed"
+  },
+  "prohibited_actions": [
+    "modify generated target project outside Director tools",
+    "restart PM",
+    "restart Chief Engineer",
+    "restart completed Director tasks",
+    "repeat a covered-but-unplannable deterministic repair"
+  ]
+}

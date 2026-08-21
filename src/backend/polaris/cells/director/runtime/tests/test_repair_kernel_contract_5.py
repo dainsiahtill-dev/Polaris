@@ -48,6 +48,13 @@ from polaris.cells.director.runtime.public import (
     query_director_repair_plan_probe,
     run_director_repair,
 )
+from polaris.cells.director.runtime.tests._repair_kernel_contract_support import (
+    _assert_direct_runtime_receipt_pending_revalidation,
+    _rust_copy_derive_error,
+    _rust_missing_trait_derive_error,
+    _rust_serde_derive_error,
+    _rust_wrong_crate_path_error,
+)
 
 
 def test_go_error_string_helper_coverage_uses_typed_identifier_metadata() -> None:
@@ -271,7 +278,6 @@ def test_go_undefined_selector_remaps_existing_bindings_without_inventing() -> N
         "main_test.go:146:23: undefined: engine.ClampIntensity",
         "main_test.go:48:10: undefined: models.MoodExcited",
     )
-    diagnostics = normalize_artifact_quality_errors(list(raw_errors))
     base_files = {
         "models/entity.go": (
             "package models\n\n"
@@ -731,6 +737,14 @@ def test_rust_missing_trait_derive_runtime_binding_executes_public_edit(tmp_path
     assert "#[derive(Debug, Eq, PartialEq)]" in target.read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize(
+    ("derive_line", "replacement"),
+    (
+        ("#[derive(Debug, Clone, Copy)]\n", "#[derive(Debug, Clone)]\n"),
+        ("#[derive(Copy, Clone)]\n", "#[derive(Clone)]\n"),
+        ("#[derive(Copy)]\n", "#[derive()]\n"),
+    ),
+)
 def test_rust_copy_derive_rule_removes_copy_with_text_replace(
     derive_line: str,
     replacement: str,
@@ -754,8 +768,9 @@ def test_rust_copy_derive_rule_removes_copy_with_text_replace(
     operation = plan.operations[0]
     assert operation.kind == "text_replace"
     assert operation.path == relative_path
-    assert operation.expected == derive_line
-    assert operation.replacement == replacement
+    unique_tail = "pub struct Demo { value: String }\n"
+    assert operation.expected == f"{derive_line}{unique_tail}"
+    assert operation.replacement == f"{replacement}{unique_tail}"
     assert operation.metadata["repair_kind"] == "rust_incompatible_copy_derive"
     assert operation.metadata["edit_strategy"] == "text_replace"
     assert operation.metadata["span_based"] is True
@@ -817,7 +832,7 @@ def test_rust_copy_derive_rule_does_not_plan_without_copy_token() -> None:
     assert plan is None
 
 
-def test_rust_copy_derive_rule_rejects_non_unique_expected_line() -> None:
+def test_rust_copy_derive_rule_uses_context_to_disambiguate_repeated_derive_line() -> None:
     content = (
         "#[derive(Clone, Copy)]\n"
         "pub struct Demo { value: String }\n"
@@ -825,6 +840,23 @@ def test_rust_copy_derive_rule_rejects_non_unique_expected_line() -> None:
         "pub struct Other { value: String }\n"
     )
     diagnostics = normalize_artifact_quality_errors([_rust_copy_derive_error()])
+
+    plan = build_rust_incompatible_copy_derive_plan(
+        base_files={"src/lib.rs": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    operation = plan.operations[0]
+    assert operation.expected == ("#[derive(Clone, Copy)]\npub struct Demo { value: String }\n")
+    assert content.count(operation.expected) == 1
+
+
+def test_rust_copy_derive_rule_rejects_non_unique_full_context() -> None:
+    repeated_chunk = f"// {'a' * 220}\n#[derive(Clone, Copy)]\npub struct Demo {{ value: String }}\n// {'b' * 220}\n"
+    content = repeated_chunk * 2
+    diagnostics = normalize_artifact_quality_errors([_rust_copy_derive_error(line=2)])
 
     plan = build_rust_incompatible_copy_derive_plan(
         base_files={"src/lib.rs": content},
@@ -899,8 +931,8 @@ def test_rust_copy_derive_runtime_binding_executes_public_edit(tmp_path: Path) -
     assert edit_calls == [
         (
             relative_path,
-            "#[derive(Debug, Clone, Copy)]\n",
-            "#[derive(Debug, Clone)]\n",
+            "#[derive(Debug, Clone, Copy)]\npub struct Demo { value: String }\n",
+            "#[derive(Debug, Clone)]\npub struct Demo { value: String }\n",
         )
     ]
     assert write_calls == []
@@ -1092,7 +1124,9 @@ def test_rust_crate_import_rewrite_rule_uses_span_based_editor_operations(tmp_pa
         "extern_crate",
     }
     assert all(operation.expected for operation in plan.operations)
-    assert all(operation.metadata["expected_context_after"] for operation in plan.operations)
+    assert all(operation.metadata["expected_context_before"] == "" for operation in plan.operations)
+    assert all(operation.metadata["expected_context_after"] == "" for operation in plan.operations)
+    assert all(main_content.count(str(operation.expected or "")) == 1 for operation in plan.operations)
 
     runtime_planning = plan_runtime_repair(
         source_tool="deterministic_rust_crate_import_rewrite_repair",

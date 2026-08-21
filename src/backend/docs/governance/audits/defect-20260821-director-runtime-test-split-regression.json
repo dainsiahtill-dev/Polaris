@@ -1,0 +1,95 @@
+{
+  "schema_version": "polaris.defect-manifest.v1",
+  "defect_id": "DEFECT-20260821-DIRECTOR-RUNTIME-TEST-SPLIT-REGRESSION",
+  "status": "CLOSED",
+  "severity": "P0",
+  "head": "5d307b2df",
+  "scope": {
+    "owner": "director.runtime",
+    "component": "repair kernel contract and coverage suite",
+    "target_project_modified": false,
+    "blocks_fresh_bench_claim": true
+  },
+  "symptom": "The complete Director Runtime suite is red after recent large-file splitting even though the exact-run audit, repair atomicity, precise-edit, and new TypeScript repair subsets are green.",
+  "reproduction": {
+    "command": "PYTHONPATH=src/backend /home/dains/.pyenv/versions/3.12.3/bin/python -m pytest -q src/backend/polaris/cells/director/runtime/tests",
+    "log": "/tmp/polaris-director-runtime-full-20260821.log",
+    "collected": 738,
+    "passed": 673,
+    "failed": 64,
+    "errors": 1,
+    "duration_seconds": 15.48
+  },
+  "closure_validation": {
+    "command": "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/director/runtime/tests",
+    "log": "/tmp/polaris-director-runtime-full-r4.log",
+    "collected": 741,
+    "passed": 741,
+    "failed": 0,
+    "errors": 0,
+    "duration_seconds": 14.58,
+    "focused_semantic_regressions": "4 passed",
+    "split_contract_subset": "423 passed"
+  },
+  "dynamic_evidence": {
+    "missing_test_symbol_or_fixture_occurrences": 57,
+    "missing_symbols": [
+      "_assert_direct_runtime_receipt_pending_revalidation",
+      "_install_delete_file_test_runtime_binding",
+      "_javascript_esm_commonjs_after",
+      "_javascript_missing_export_after",
+      "_plan_javascript_missing_export",
+      "_ready_shadow_comparison",
+      "_rust_copy_derive_error",
+      "_rust_missing_trait_derive_error",
+      "_rust_serde_derive_error",
+      "_rust_wrong_crate_path_error",
+      "_ts_diag",
+      "_typescript_conservative_planner_safe_cases"
+    ],
+    "missing_fixtures": [
+      "derive_line"
+    ],
+    "other_signatures": [
+      "coverage expectations receive overlapping runtime_plan_rule_ids",
+      "coverage item cardinality changed and tuple unpacking now fails",
+      "some public repair paths return repair_not_planned where the contract expects an executable plan"
+    ]
+  },
+  "root_cause": {
+    "code": "director.runtime.repair_kernel_split_contract_drift",
+    "classification": "platform_refactor_regression",
+    "mechanism": "Recent contract-test and runtime package splitting did not preserve every shared helper/fixture import and stale monkeypatch target. Once collection was restored, four production-semantic drifts remained: causal diagnostics were split across rows, coverage matched rules that their planner could not execute, a TypeScript narrow repair was hidden behind a broad type-position guard, and Rust enum E0063 coverage inspected unrelated source excerpts instead of the diagnostic headline.",
+    "not_caused_by": [
+      "generated target project",
+      "LLM provider output",
+      "exact-run causal audit classifier",
+      "multi-edit atomicity change"
+    ]
+  },
+  "affected_work_that_is_green": {
+    "repair_executor_atomicity": "3 passed",
+    "precise_edit_and_coverage": "16 passed",
+    "typescript_timer_handle": "3 passed including collection",
+    "typescript_readonly_assignment": "2 passed including collection"
+  },
+  "repair_plan": [
+    "Restore explicit imports or colocated fixtures for every split contract test; do not add compatibility shims in production code.",
+    "Re-run only the affected contract files and verify each missing symbol is eliminated before touching registry semantics.",
+    "Audit coverage overlaps as a separate behavior change; either make rule matching mutually exclusive or update a contract only when the new overlap is intentional and executable.",
+    "Re-run the complete 738-test suite before authorizing a fresh isolated bench verdict."
+  ],
+  "repairs_applied": [
+    "Restored split-test helpers and fixtures in one test-only support module and restored the lost parametrize contract.",
+    "Updated monkeypatch targets to the post-split public execution owner rather than obsolete facade imports.",
+    "Preserved JavaScript constructor and Rust missing-library multi-line diagnostics as causal islands before per-line normalization.",
+    "Required TypeScript coverage to reflect planner-supported object-shape signatures and kept the narrow array-length assertion repair reachable.",
+    "Disambiguated Rust enum-variant E0063 from ordinary struct literals using the normalized diagnostic headline rather than unrelated raw source paths.",
+    "Updated Rust edit tests to enforce unique-context semantics without weakening ambiguous-edit fail-closed behavior."
+  ],
+  "stop_conditions": [
+    "Do not rerun PM, Chief Engineer, or a generated project to diagnose this defect.",
+    "Do not weaken repair contracts or delete assertions merely to make the suite green.",
+    "Do not claim the Director Runtime platform is green until the complete suite exits 0."
+  ]
+}

@@ -25,6 +25,7 @@ from polaris.cells.chief_engineer.blueprint.public import (
     ProjectKindAuthorityV1,
     VerificationCommandAuthorityV1,
     derive_project_kind_authority_from_catalog_snapshot,
+    project_chief_engineer_portfolio_delivery_depth_feasibility,
     project_completion_catalog_snapshot_hash,
     project_completion_verifier_policy_snapshot_hash,
 )
@@ -758,6 +759,10 @@ class _Mixin01:
                 if isinstance(metadata.get("required_source_kinds"), (list, tuple))
                 else ()
             )
+            raw_depth_contract = task.get("delivery_depth_contract") or metadata.get("delivery_depth_contract")
+            delivery_depth_contract = (
+                dict(raw_depth_contract) if isinstance(raw_depth_contract, Mapping) else {}
+            )
             portfolio_tasks.append(
                 ChiefEngineerPortfolioTaskV1(
                     task_id=self._task_id(task, index),
@@ -768,6 +773,7 @@ class _Mixin01:
                     entrypoint_targets=entrypoint_targets,
                     topology_authority=topology_authority,
                     required_source_kinds=required_source_kinds,
+                    delivery_depth_contract=delivery_depth_contract,
                 )
             )
         return tuple(portfolio_tasks)
@@ -866,11 +872,35 @@ class _Mixin01:
             f"- {self._task_id(task, index)}: {self._task_objective(task)}"
             for index, task in enumerate(pm_tasks, start=1)
         ]
+        depth_minimums: dict[str, int] = {}
+        for task in pm_tasks:
+            raw_metadata = task.get("metadata")
+            metadata = raw_metadata if isinstance(raw_metadata, Mapping) else {}
+            raw_contract = task.get("delivery_depth_contract") or metadata.get("delivery_depth_contract")
+            contract = raw_contract if isinstance(raw_contract, Mapping) else {}
+            candidate_minimums = contract.get("minimums")
+            minimums = candidate_minimums if isinstance(candidate_minimums, Mapping) else {}
+            for key in ("min_prod_files", "min_test_files"):
+                try:
+                    value = max(0, int(minimums.get(key) or 0))
+                except (TypeError, ValueError):
+                    continue
+                depth_minimums[key] = max(depth_minimums.get(key, 0), value)
+        depth_clause = ""
+        if depth_minimums:
+            depth_clause = (
+                "\n\nAuthoritative portfolio depth minimums: "
+                + json.dumps(depth_minimums, ensure_ascii=False, sort_keys=True)
+                + ". The artifact obligation set itself must satisfy these counts before Director dispatch."
+            )
         return (
             "Produce one coherent Chief Engineer project blueprint portfolio for the validated PM task graph. "
             "Define shared module boundaries and cross-file interfaces before projecting concrete plans for every "
             "task. Preserve PM target/scope authority and make each task independently executable by Director.\n\n"
-            "Validated PM tasks:\n" + "\n".join(task_lines) + _CE_BLUEPRINT_OUTPUT_CONTRACT
+            "Validated PM tasks:\n"
+            + "\n".join(task_lines)
+            + depth_clause
+            + _CE_BLUEPRINT_OUTPUT_CONTRACT
         )
 
     def _chief_engineer_project_kind_authority(
@@ -1393,11 +1423,27 @@ class _Mixin01:
     def _chief_engineer_portfolio_output_errors(
         payload: Mapping[str, Any],
         *,
-        task_ids: tuple[str, ...],
+        task_ids: tuple[str, ...] | None = None,
+        tasks: tuple[ChiefEngineerPortfolioTaskV1, ...] = (),
     ) -> list[str]:
         """Validate the nested project-level CE output contract."""
 
-        return ce_evidence.chief_engineer_portfolio_output_errors(payload, task_ids=task_ids)
+        errors = ce_evidence.chief_engineer_portfolio_output_errors(
+            payload,
+            task_ids=tuple(task.task_id for task in tasks) or tuple(task_ids or ()),
+        )
+        if errors or not tasks:
+            return errors
+        feasibility = project_chief_engineer_portfolio_delivery_depth_feasibility(
+            payload,
+            tasks=tasks,
+        )
+        for deficit in feasibility["deficits"]:
+            errors.append(
+                "project_completion_contract delivery depth infeasible: "
+                f"{deficit['metric']}={deficit['actual']} < {deficit['required']}"
+            )
+        return errors
 
     def _settle_chief_engineer_execution_attempt_after_exception(
         self,
@@ -1472,9 +1518,10 @@ class _Mixin01:
             "- task-plan overlays are advisory only; do not invent alternate task ids, target files, scope, "
             "dependencies, or entrypoints\n"
             "- project_completion_contract.obligations: object containing artifacts, entrypoints, and verification "
-            "arrays that follow the active provider tool schema and PM authority; these advisory arrays may be "
-            "empty because exact PM target_files, entrypoint_targets, and verifier command authority are projected "
-            "deterministically after schema validation\n"
+            "arrays that follow the active provider tool schema and PM authority; include every required PM target "
+            "and, when delivery_depth_contract is present, enough distinct task-owned production/test source "
+            "artifacts to satisfy min_prod_files and min_test_files. Arrays may be empty only when the authoritative "
+            "PM/depth/application contract has no obligation of that kind\n"
             "- risk_flags: array; optional scope_for_apply, when present: array\n\n"
             f"Validated PM task ids: {json.dumps(list(portfolio_task_ids), ensure_ascii=False)}\n"
             f"Prior validation failure: {prior_error}\n"

@@ -352,6 +352,28 @@ def _delivery_contract_payload(ai_request: Any, key: str) -> dict[str, Any]:
     return {}
 
 
+def _delivery_depth_contract_summary(ai_request: Any) -> dict[str, Any]:
+    """Project numeric delivery-depth policy without embedding prompt content."""
+
+    payload = _delivery_contract_payload(ai_request, "delivery_depth_contract")
+    if not payload:
+        return {}
+    minimums = _mapping(payload.get("minimums"))
+    acceptance = _mapping(payload.get("acceptance_contract"))
+    numeric_minimums = {
+        str(key): value
+        for key, value in minimums.items()
+        if str(key).startswith("min_") and isinstance(value, (int, float)) and not isinstance(value, bool)
+    }
+    return {
+        "schema_version": str(payload.get("schema_version") or ""),
+        "level": payload.get("level") if isinstance(payload.get("level"), int) else None,
+        "minimums": numeric_minimums,
+        "deterministic_checks": _string_list(acceptance.get("deterministic_checks")),
+        "required_behavior_test_count": len(_string_list(acceptance.get("required_behavior_tests"))),
+    }
+
+
 def _execution_envelope(ai_request: Any) -> dict[str, Any]:
     context_payload = _request_context(ai_request)
     for key in (

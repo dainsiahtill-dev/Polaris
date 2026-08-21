@@ -417,6 +417,8 @@ def summarize_failed_gate_evidence_context_slot(value: Any) -> dict[str, Any]:
     raw_quality_errors = found.get("quality_errors")
     quality_errors = list(raw_quality_errors) if isinstance(raw_quality_errors, (list, tuple)) else []
     first_item = next((dict(item) for item in evidence_items if isinstance(item, Mapping)), {})
+    quality_metrics = found.get("quality_metrics")
+    quality_minimums = found.get("quality_minimums")
     return {
         "schema_version": "polaris.failed_gate_evidence.context_slot.v1",
         "source_schema_version": str(found.get("schema_version") or ""),
@@ -435,6 +437,10 @@ def summarize_failed_gate_evidence_context_slot(value: Any) -> dict[str, Any]:
         "exit_code": _int_value(found.get("exit_code")),
         "diagnostic_count": len(diagnostics),
         "quality_error_count": len(quality_errors),
+        "quality_metrics": dict(quality_metrics) if isinstance(quality_metrics, Mapping) else {},
+        "quality_minimums": dict(quality_minimums) if isinstance(quality_minimums, Mapping) else {},
+        "missing_target_file_count": len(_dedupe_text_tokens(found.get("missing_target_files") or ())),
+        "repair_target_file_count": len(_dedupe_text_tokens(found.get("repair_target_files") or ())),
         "failed_required_modalities": list(_dedupe_text_tokens(found.get("failed_required_modalities") or ())),
         "failed_checks": list(_dedupe_text_tokens(found.get("failed_checks") or ())),
     }

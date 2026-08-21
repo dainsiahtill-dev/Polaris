@@ -252,12 +252,13 @@ def _attach_control_plane_projection(
     bundle: dict[str, Any],
     run: FactoryRun,
     workspace: str,
-) -> None:
+) -> dict[str, Any] | None:
     identity = _factory_run_identity(run=run, workspace=workspace)
     bundle["factory_run_id"] = run.id
     bundle["workspace"] = str(workspace)
     bundle["run_identity"] = identity
     projection_errors: list[dict[str, str]] = []
+    run_ledger_projection: dict[str, Any] | None = None
     try:
         projection = read_run_ledger_projection(
             ReadRunLedgerProjectionQueryV1(workspace=str(workspace), run_id=run.id)
@@ -271,6 +272,7 @@ def _attach_control_plane_projection(
             }
         )
     else:
+        run_ledger_projection = projection
         bundle["control_plane_projection"] = projection
         bundle["run_ledger_projection"] = projection
 
@@ -314,6 +316,7 @@ def _attach_control_plane_projection(
             "code": "CONTROL_PLANE_PROJECTION_INCOMPLETE",
             "errors": projection_errors,
         }
+    return run_ledger_projection
 
 
 async def _persist_run_summary(

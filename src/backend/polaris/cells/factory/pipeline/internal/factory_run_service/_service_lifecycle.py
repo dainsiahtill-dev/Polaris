@@ -715,6 +715,17 @@ class _FactoryRunServiceLifecycleMixin:
             if run.status != FactoryRunStatus.FAILED and not qa_only_terminal_retry:
                 raise ValueError(f"Run {run_id} cannot be retried in status {run.status.value}")
 
+            # A retry must not use FAILED terminal-drain cleanup to kill a
+            # still-live Director child and then declare the workspace safe.
+            # Check child authority first: expired children owned by this run
+            # may be terminalized by the settlement guard, while live or
+            # foreign children remain fail-closed. Explicit complete/cancel
+            # closeout keeps its separate force-abort policy.
+            await self._require_child_session_settlement_for_reentry(
+                run,
+                operation="retry_run_from_stage_preflight",
+            )
+
             # Launcher-restart can leave an orphaned settle_terminal_run claim.
             # Finish that exact nonce before recover_run, otherwise retry_phase
             # conflicts for the workspace TTL (live L2-12 factory_a1b49b0460f2).

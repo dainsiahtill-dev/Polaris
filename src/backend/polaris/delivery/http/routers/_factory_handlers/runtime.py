@@ -16,6 +16,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.audit.diagnosis.public import (
+    QueryExactRunCausalAuditV1,
+    query_exact_run_causal_audit,
+)
 from polaris.cells.factory.pipeline.internal.bench_service import (
     FactoryBenchService,
 )
@@ -859,7 +863,36 @@ async def _get_factory_run_audit_bundle_core(
         artifacts=artifacts,
         events_tail_limit=limit,
     )
-    _attach_control_plane_projection(bundle=bundle, run=run, workspace=effective_workspace)
+    run_ledger_projection = _attach_control_plane_projection(
+        bundle=bundle,
+        run=run,
+        workspace=effective_workspace,
+    )
+    # Compose the audit Cell at the HTTP delivery boundary rather than making
+    # factory.pipeline depend back on audit.diagnosis (which already consumes
+    # Factory/Run-Ledger/TaskRuntime projections).  A terminal audit bundle is
+    # therefore self-contained: callers get the current root cause, owning
+    # Cell, retry boundary, and evidence gaps without reconstructing causality
+    # from the event tail.  Diagnosis failure remains explicit evidence and
+    # never hides the underlying Factory bundle.
+    identity = _factory_run_identity(run=run, workspace=effective_workspace)
+    project_id = str(identity.get("canonical_project_id") or identity.get("requested_project_id") or "")
+    causal = await query_exact_run_causal_audit(
+        QueryExactRunCausalAuditV1(
+            workspace=effective_workspace,
+            factory_run_id=run.id,
+            project_id=project_id,
+            audit_event_limit=max(300, min(int(limit or 100) * 4, 2000)),
+            preloaded_run_ledger_projection=run_ledger_projection,
+        )
+    )
+    if causal.status != "unavailable":
+        bundle["exact_run_causal_audit"] = dict(causal.payload)
+    else:
+        bundle["exact_run_causal_audit_error"] = {
+            "error_code": causal.error_code or "exact_run_causal_audit_failed",
+            "error_message": causal.error_message or "Exact-run causal diagnosis unavailable",
+        }
     return FactoryRunAuditBundleResponse(**bundle)
 
 

@@ -294,6 +294,17 @@ def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
         # test command and MODULE_NOT_FOUND, so coverage becomes unplannable and
         # the Director needlessly escalates instead of editing the exact task.
         return [_normalize_one_error(blob.strip())]
+    if ".js" in lowered and "requires" in lowered and " at new " in lowered:
+        # A JavaScript constructor-contract error and its ``at new`` frame are
+        # one causal island. Splitting them makes both coverage and the runtime
+        # planner unplannable: one row owns the required field, the other owns
+        # the class/file location.
+        return [_normalize_one_error(blob.strip())]
+    if "can't find library" in lowered and "at path" in lowered and ".rs" in lowered:
+        # Cargo's missing library headline, target path, and explanatory note
+        # form one diagnostic. Per-line fallback creates fake extra residuals
+        # and disconnects the path evidence required by the repair rule.
+        return [_normalize_one_error(blob.strip())]
     # Compiler/runtime wrappers carry the actionable diagnostic on a later
     # line (Rust locations, Python traceback exceptions, Node ESM errors).
     # Normalize the causal blob before per-line fallback so the leading

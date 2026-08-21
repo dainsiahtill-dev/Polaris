@@ -419,14 +419,22 @@ def _repair_typescript_unresolved_identifier_lines(
     target_index = target_line_number - 1
     if target_index < 0 or target_index >= len(lines):
         return str(text or ""), ""
+    line = lines[target_index]
+    # A phantom array element type used only by ``(... as Type[]).length =``
+    # is a narrow, local assertion repair. Handle it before the general
+    # type-position import guard; no runtime symbol is required or invented.
+    array_length_assertion = _typescript_unresolved_identifier_is_array_length_assertion(line, missing_symbol)
     # Type-position TS2304 must import a real binding. Fuzzy-aliasing to a
     # nearby function (FlightReport → renderFlightReport) is a live L1-08
     # regression, not a local structural repair.
     type_item = {"symbol": missing_symbol, "line": str(target_line_number)}
-    if _typescript_missing_identifier_usage_is_type_position(str(text or ""), type_item):
+    if not array_length_assertion and _typescript_missing_identifier_usage_is_type_position(str(text or ""), type_item):
         return str(text or ""), ""
-    replacement = _select_typescript_unresolved_identifier_replacement(lines, target_index, missing_symbol)
-    line = lines[target_index]
+    replacement = (
+        "unknown"
+        if array_length_assertion
+        else _select_typescript_unresolved_identifier_replacement(lines, target_index, missing_symbol)
+    )
     if replacement:
         repaired_line = re.sub(rf"\b{re.escape(missing_symbol)}\b", replacement, line)
         if repaired_line == line:

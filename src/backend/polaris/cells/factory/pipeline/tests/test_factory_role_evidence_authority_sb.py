@@ -33,23 +33,16 @@ from polaris.cells.factory.pipeline.internal.factory_physical_attempt_replay imp
     build_factory_physical_attempt_replay_candidate,
 )
 from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
-    FACTORY_ROLE_EVIDENCE_ATTEMPT_BUDGET,
     FACTORY_ROLE_EVIDENCE_CUTOFF_EVENT_TYPE,
     FACTORY_ROLE_EVIDENCE_CUTOFF_FRAGMENT_EVENT_TYPE,
     FactoryRoleEvidenceAuthorityError,
     FactoryRoleEvidenceAuthorityPort,
-    FactoryRoleEvidenceCutoffBodyV1,
-    FactoryRoleEvidenceReplaySnapshotV1,
     FactoryRoleEvidenceResolvedCutV1,
     FactoryRoleEvidenceSourceHeadV1,
     FactoryRoleEvidenceSourceItemV1,
     FactoryRoleEvidenceSourceSlotV1,
     FactoryRoleEvidenceStageAuthorityV1,
     UnavailableFactoryRoleEvidenceSourceAuthority,
-    _canonical_cutoff_body_bytes,
-    _CutoffCommitManifest,
-    _CutoffFragmentPayload,
-    _fragment_cutoff_body,
     query_factory_role_evidence_replay_snapshot,
 )
 from polaris.cells.factory.pipeline.internal.factory_run_admission import FactoryWorkspaceRunAdmission
@@ -59,11 +52,9 @@ from polaris.cells.factory.pipeline.internal.factory_run_models import (
     FactoryRunStatus,
 )
 from polaris.cells.factory.pipeline.public.contracts import (
-    FactoryWorkspaceReleaseEvidenceV1,
     FactoryWorkspaceRunLeaseConflictError,
 )
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
-    FACTORY_ROLE_EVIDENCE_CUTOFF_ACK_SCHEMA,
     FACTORY_ROLE_EVIDENCE_CUTOFF_REQUEST_SCHEMA,
     FactoryRoleEvidenceAuthorityBindingV1,
     FactoryRoleEvidenceCutoffAckV1,
@@ -611,9 +602,7 @@ def _authorized_request(
     values.update(overrides)
     return _request(**values)
 
-
-
-
+@pytest.mark.asyncio
 async def test_physical_attempt_replay_candidate_matches_cutoff_and_never_exposes_admission(tmp_path: Path) -> None:
     port, _, _, facts = _authority(tmp_path=tmp_path)
     request = _authorized_request(port)
@@ -1479,6 +1468,31 @@ async def test_fragment_payload_corruption_is_rejected_before_replay_ack_or_reso
     assert resolver.calls == resolver_calls
 
 
+async def _seed_three_cutoffs(port: FactoryRoleEvidenceAuthorityPort) -> tuple[object, object, object]:
+    """Seed replay pagination fixtures lost during the sa/sb test split."""
+
+    return (
+        await port.acquire_cutoff(_authorized_request(port)),
+        await port.acquire_cutoff(
+            _authorized_request(
+                port,
+                request_freeze_id="freeze-2",
+                call_id="call-2",
+                semantic_candidate_hash="c" * 64,
+            )
+        ),
+        await port.acquire_cutoff(
+            _authorized_request(
+                port,
+                request_freeze_id="freeze-3",
+                call_id="call-3",
+                semantic_candidate_hash="d" * 64,
+            )
+        ),
+    )
+
+
+@pytest.mark.asyncio
 async def test_exact_replay_scans_every_authority_page_before_returning_ack(tmp_path: Path) -> None:
     port, _, resolver, facts = _authority(tmp_path=tmp_path)
     first, _, _ = await _seed_three_cutoffs(port)

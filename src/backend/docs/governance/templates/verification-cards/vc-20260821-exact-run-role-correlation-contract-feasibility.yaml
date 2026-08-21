@@ -1,0 +1,66 @@
+card_id: "vc-20260821-exact-run-role-correlation-contract-feasibility"
+bug_summary: >
+  Exact-run diagnosis synthesized a terminal Factory failure while a run was
+  active, lost correlated PM/CE/Director final-request evidence, and blamed
+  target code for a delivery-depth gate that the authorized repair tool
+  surface could not physically satisfy. Preserved authority replay proved the
+  earliest defect was the CE completion contract itself: 3/1 artifacts against
+  PM minimums 7/2.
+classification: structural
+bug_path:
+  file: "polaris/cells/audit/diagnosis/public/service.py"
+  method: "query_exact_run_causal_audit"
+  symptom: "factory_d8966d9d011a reported generic QA target defect with zero provider audits despite preserved role journals and an impossible edit-only repair scope"
+assumptions:
+  - id: A1
+    statement: "Non-terminal Factory status is not a failure verdict."
+    status: verified_true
+    evidence: "During L3-22 execution, status=running, failed_stages=[], and chain_completed=false were projected together."
+  - id: A2
+    statement: "Role journals preserve exact Factory ownership in nested run identifiers."
+    status: verified_true
+    evidence: "61/76 L3-22 journal events correlate to factory_d8966d9d011a through run_id/factory_run_id, including immutable context_snapshot_ref values."
+  - id: A3
+    statement: "A file-count deficit cannot be repaired by editing existing files only."
+    status: verified_true
+    evidence: "Final Director request offered only edit_file; allowed_write_path_count=4; QA required prod_files>=7 and test_files>=2."
+  - id: A4
+    statement: "Diagnosis remains derived evidence and must not broaden CE authorization or mutate the target project."
+    status: verified_true
+    evidence: "AGENTS.md requires fail-closed scope authority and forbids target-project edits by the main Agent."
+  - id: A5
+    statement: "The immutable CE completion authority must be feasible against PM delivery-depth minimums before Director dispatch."
+    status: verified_true
+    evidence: "Preserved L3-22 replay projects actual prod/test obligations 3/1 against required 7/2 and returns deficits 4/1."
+pre_mortem:
+  failure_point: >
+    Recursive run matching may overmatch an unrelated nested run; a broad
+    feasibility heuristic may misclassify a normal code defect as a contract
+    contradiction.
+  risk_zone:
+    - "polaris/cells/audit/diagnosis/public/service.py"
+    - "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    - "polaris/cells/roles/kernel/internal/llm_caller/context_audit"
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/audit/diagnosis/internal/tests/test_exact_run_causal_audit.py"
+      description: "Running status stays non-terminal; explicit contradiction outranks generic failed verifier."
+      expected: "RUNNING has no root cause; contradiction is director.tasking-owned and forbids PM/CE restart."
+      status: passed
+    - file: "polaris/cells/audit/diagnosis/internal/tests/test_exact_run_causal_service.py"
+      description: "Nested factory_run_id correlates role journals and provider snapshot refs."
+      expected: "Only exact identifier fields match; arbitrary message text cannot correlate a run."
+      status: passed
+  integration_tests:
+    - description: "Offline exact-run diagnosis after isolated backend stops"
+      command: "query factory_d8966d9d011a against its preserved workspace"
+      status: passed
+  manual_check:
+    - "Confirm no PM/CE/Director replay and no generated-project mutation."
+related_adrs:
+  - "ADR-0111"
+sign_off:
+  completed_by: "Codex"
+  completed_at: "2026-08-21"
+  verified_by: "targeted automated gates plus preserved-run dynamic replay"
+  verified_at: "2026-08-21"

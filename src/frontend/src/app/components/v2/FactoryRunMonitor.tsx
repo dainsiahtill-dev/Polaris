@@ -8,7 +8,7 @@
  * - View artifacts link
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useFactoryRuns } from '@/app/hooks/useV2Api';
 import { useV2ApiError } from '@/app/hooks/useV2ApiError';
 
@@ -53,6 +53,7 @@ export function FactoryRunMonitor({
   const { events, auditBundle, loading, error, fetchEvents, fetchAuditBundle } = useFactoryRuns();
   const { apiError } = useV2ApiError();
   const [expanded, setExpanded] = useState(false);
+  const autoAuditRunRef = useRef<string>('');
 
   const handleLoad = useCallback(() => {
     void fetchEvents(runId, { limit: 50 });
@@ -82,6 +83,18 @@ export function FactoryRunMonitor({
 
   const latestEvent = events?.events?.[events.events.length - 1];
   const status: RunStatus = normalizeStatus(latestEvent?.type, latestEvent?.stage);
+  const causalAudit = auditBundle?.exact_run_causal_audit;
+
+  useEffect(() => {
+    if (
+      (status === 'failed' || status === 'completed') &&
+      auditBundle?.run_id !== runId &&
+      autoAuditRunRef.current !== runId
+    ) {
+      autoAuditRunRef.current = runId;
+      void fetchAuditBundle(runId);
+    }
+  }, [auditBundle?.run_id, fetchAuditBundle, runId, status]);
 
   return (
     <div className="border rounded-lg bg-white dark:bg-gray-900">
@@ -199,13 +212,68 @@ export function FactoryRunMonitor({
       )}
 
       {auditBundle && (
-        <div className="border-t px-4 py-3">
-          <h4 className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
-            Audit Bundle
+        <div className="border-t px-4 py-3 space-y-2" data-testid="factory-exact-run-audit">
+          <h4 className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+            Current exact-run diagnosis
           </h4>
-          <pre className="text-xs bg-gray-100 dark:bg-gray-800 rounded p-2 overflow-x-auto text-gray-700 dark:text-gray-300">
-            {JSON.stringify(auditBundle.bundle, null, 2)}
-          </pre>
+          {causalAudit ? (
+            <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-xs text-gray-700 dark:text-gray-300">
+              <dt className="font-medium">Status</dt>
+              <dd>{causalAudit.current_status || auditBundle.status || 'unknown'}</dd>
+              <dt className="font-medium">Diagnosis</dt>
+              <dd className="break-all">{causalAudit.diagnosis_id || 'unavailable'}</dd>
+              <dt className="font-medium">Root cause</dt>
+              <dd className="break-all">{causalAudit.root_cause_code || 'none'}</dd>
+              <dt className="font-medium">Owner</dt>
+              <dd>{causalAudit.responsible_cell || 'unassigned'}</dd>
+              <dt className="font-medium">Retry boundary</dt>
+              <dd>{causalAudit.retry_boundary || 'none'}</dd>
+              <dt className="font-medium">Platform module</dt>
+              <dd>{causalAudit.platform_residual_attribution?.primary_module_id || 'unattributed'}</dd>
+              <dt className="font-medium">Next action</dt>
+              <dd>{causalAudit.next_action?.action || 'none'}</dd>
+              <dt className="font-medium">Repair route</dt>
+              <dd>{causalAudit.repair_diagnosis?.status || 'not applicable'}</dd>
+              <dt className="font-medium">Affected files</dt>
+              <dd className="break-all">
+                {(causalAudit.next_action?.suspected_files || []).join(', ') || 'none'}
+              </dd>
+              <dt className="font-medium">Executable repair</dt>
+              <dd className="break-all">
+                {(causalAudit.repair_diagnosis?.plannable_source_tools || []).join(', ') ||
+                  ((causalAudit.repair_diagnosis?.covered_unplannable_source_tools || []).length > 0
+                    ? 'coverage matched, but no changed patch was planned'
+                    : 'none')}
+              </dd>
+              <dt className="font-medium">Residual diagnostic</dt>
+              <dd className="break-all">
+                {(causalAudit.repair_diagnosis?.residual_errors || [])[0] || 'none'}
+              </dd>
+              <dt className="font-medium">Evidence</dt>
+              <dd>
+                {causalAudit.evidence_completeness?.complete
+                  ? 'complete'
+                  : `missing: ${(causalAudit.evidence_completeness?.missing_links || []).join(', ') || 'unknown'}`}
+              </dd>
+              <dt className="font-medium">Historical errors</dt>
+              <dd>{causalAudit.historical_error_count ?? 0} (non-authoritative)</dd>
+            </dl>
+          ) : (
+            <p className="text-xs text-red-600 dark:text-red-400">
+              {auditBundle.exact_run_causal_audit_error?.error_code || 'exact_run_causal_audit_unavailable'}
+              {auditBundle.exact_run_causal_audit_error?.error_message
+                ? `: ${auditBundle.exact_run_causal_audit_error.error_message}`
+                : ''}
+            </p>
+          )}
+          <details>
+            <summary className="cursor-pointer text-xs text-gray-500 dark:text-gray-400">
+              Full machine-readable audit bundle
+            </summary>
+            <pre className="mt-2 text-xs bg-gray-100 dark:bg-gray-800 rounded p-2 overflow-x-auto text-gray-700 dark:text-gray-300">
+              {JSON.stringify(auditBundle, null, 2)}
+            </pre>
+          </details>
         </div>
       )}
 

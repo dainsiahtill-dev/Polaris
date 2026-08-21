@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -101,12 +102,19 @@ class TransactionalRepairExecutor:
                         raise RuntimeError(f"repair delete_file requires policy-gated writer rollback for {patch.path}")
                     if deleter is None:
                         raise RuntimeError(f"repair delete_file requires policy-gated deleter for {patch.path}")
-                    result = dict(deleter(patch.path))
+                    try:
+                        result = dict(deleter(patch.path))
+                    except (OSError, RuntimeError, ValueError):
+                        if not target.exists():
+                            _append_rollback_entry_once(written, patch)
+                        raise
                     if not bool(result.get("ok")):
+                        if not target.exists():
+                            _append_rollback_entry_once(written, patch)
                         raise RuntimeError(f"repair deleter rejected {patch.path}")
                     if target.exists():
                         raise RuntimeError(f"repair deleter did not remove {patch.path}")
-                    written.append(_rollback_entry_for_patch(patch))
+                    _append_rollback_entry_once(written, patch)
                     execution_records.append(
                         _execution_record(
                             patch=patch,
@@ -121,13 +129,29 @@ class TransactionalRepairExecutor:
                     editor_results: list[dict[str, Any]] = []
                     editor_rejected = False
                     for operation in text_operations:
-                        result = dict(editor(operation))
+                        # All planned operations are bound to the original file
+                        # hash, but an editor commits them one at a time. Rebind
+                        # only the execution copy to the current physical state;
+                        # immutable plan/operation ids remain unchanged.
+                        execution_operation = replace(
+                            operation,
+                            before_hash=sha256_text(_target_content(target)),
+                        )
+                        try:
+                            result = dict(editor(execution_operation))
+                        except (OSError, RuntimeError, ValueError):
+                            if _target_state_changed(target, existed_before=current_exists, content_before=current):
+                                _append_rollback_entry_once(written, patch)
+                            raise
                         if not bool(result.get("ok")):
                             editor_rejected = True
                             break
                         editor_results.append(result)
+                        # Register rollback immediately after the first accepted
+                        # effect. A later operation can now fail without leaving
+                        # a partial file outside transaction accounting.
+                        _append_rollback_entry_once(written, patch)
                     if not editor_rejected:
-                        written.append(_rollback_entry_for_patch(patch))
                         edit_strategy = _precise_edit_strategy(
                             patch=patch,
                             operation="edit_file",
@@ -150,15 +174,23 @@ class TransactionalRepairExecutor:
                         continue
                     if editor_results:
                         raise RuntimeError(f"repair editor rejected {patch.path}")
-                    current_after_editor_reject = target.read_text(encoding="utf-8") if target.is_file() else ""
+                    current_after_editor_reject = _target_content(target)
                     if current_after_editor_reject != current:
+                        _append_rollback_entry_once(written, patch)
                         raise RuntimeError(f"repair editor rejected after mutating {patch.path}")
                 if writer is None:
                     raise RuntimeError(f"repair patch requires whole-file writer for {patch.path}")
-                result = dict(writer(patch.path, patch.content_after))
+                try:
+                    result = dict(writer(patch.path, patch.content_after))
+                except (OSError, RuntimeError, ValueError):
+                    if _target_state_changed(target, existed_before=current_exists, content_before=current):
+                        _append_rollback_entry_once(written, patch)
+                    raise
                 if not bool(result.get("ok")):
+                    if _target_state_changed(target, existed_before=current_exists, content_before=current):
+                        _append_rollback_entry_once(written, patch)
                     raise RuntimeError(f"repair writer rejected {patch.path}")
-                written.append(_rollback_entry_for_patch(patch))
+                _append_rollback_entry_once(written, patch)
                 precise_edit_strategy = None
                 if bool(patch.metadata.get("span_based")):
                     precise_edit_strategy = _precise_edit_strategy(
@@ -333,6 +365,20 @@ def _rollback_entry_for_patch(patch: Any) -> dict[str, Any]:
         "operation_ids": list(patch.operation_ids),
         "rollback_strategy": _rollback_strategy_for_patch(patch),
     }
+
+
+def _append_rollback_entry_once(entries: list[dict[str, Any]], patch: Any) -> None:
+    if any(str(entry.get("path") or "") == str(patch.path) for entry in entries):
+        return
+    entries.append(_rollback_entry_for_patch(patch))
+
+
+def _target_content(target: Path) -> str:
+    return target.read_text(encoding="utf-8") if target.is_file() else ""
+
+
+def _target_state_changed(target: Path, *, existed_before: bool, content_before: str) -> bool:
+    return target.is_file() != existed_before or _target_content(target) != content_before
 
 
 def _rollback_strategy_for_patch(patch: Any) -> str:

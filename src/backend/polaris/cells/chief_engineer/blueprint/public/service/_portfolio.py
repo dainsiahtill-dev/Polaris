@@ -39,11 +39,138 @@ from ._helpers import (
     _PROJECT_COMPLETION_PREDICATE_VERSION,
     _blueprint_path,
     _compact_llm_blueprint_value,
+    _delivery_depth_minimums,
     _is_ce_source_topology_path,
     _mapping,
     _portfolio_hash,
     _string_list,
 )
+
+
+def project_chief_engineer_portfolio_delivery_depth_feasibility(
+    payload: Mapping[str, Any],
+    *,
+    tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
+) -> dict[str, Any]:
+    """Project whether CE artifact authority can satisfy delivery depth.
+
+    This is a contract-feasibility check, not a workspace-quality verdict: it
+    counts only required artifact paths the immutable CE completion contract
+    would authorize.  A deficit here cannot be repaired later by Director
+    without widening its JobToken, so it must be rejected before dispatch.
+    """
+
+    minimums: dict[str, int] = {}
+    for task in tasks:
+        for key, raw_value in _delivery_depth_minimums(dict(task.delivery_depth_contract)).items():
+            try:
+                value = max(0, int(raw_value or 0))
+            except (TypeError, ValueError):
+                continue
+            minimums[key] = max(minimums.get(key, 0), value)
+
+    completion = _mapping(payload.get("project_completion_contract"))
+    obligations = _mapping(completion.get("obligations"))
+    raw_artifacts = obligations.get("artifacts")
+    artifacts = [dict(item) for item in raw_artifacts if isinstance(item, Mapping)] if isinstance(raw_artifacts, list) else []
+
+    required_paths: list[tuple[str, str]] = []
+    for artifact in artifacts:
+        if str(artifact.get("applicability") or "required").strip() != "required":
+            continue
+        path = str(artifact.get("path") or "").strip().replace("\\", "/")
+        role = str(artifact.get("semantic_role") or "").strip().lower()
+        if path:
+            required_paths.append((path, role))
+
+    def is_test_path(path: str, role: str) -> bool:
+        normalized = path.lower()
+        name = normalized.rsplit("/", 1)[-1]
+        return bool(
+            role == "test"
+            or normalized.startswith("tests/")
+            or "/tests/" in normalized
+            or name.startswith("test_")
+            or "_test." in name
+            or ".test." in name
+            or ".spec." in name
+            or name.endswith("test.java")
+        )
+
+    test_paths = {path for path, role in required_paths if is_test_path(path, role)}
+    production_paths = {
+        path
+        for path, role in required_paths
+        if path not in test_paths and role in {"entrypoint", "source"} and _is_ce_source_topology_path(path)
+    }
+    actual = {
+        "prod_files": len(production_paths),
+        "test_files": len(test_paths),
+    }
+    requirements = {
+        "prod_files": int(minimums.get("min_prod_files", 0)),
+        "test_files": int(minimums.get("min_test_files", 0)),
+    }
+    deficits = [
+        {
+            "metric": metric,
+            "actual": actual[metric],
+            "required": required,
+            "deficit": required - actual[metric],
+        }
+        for metric, required in requirements.items()
+        if required > actual[metric]
+    ]
+    return {
+        "schema_version": "chief_engineer.portfolio_delivery_depth_feasibility.v1",
+        "ok": not deficits,
+        "actual": actual,
+        "minimums": minimums,
+        "deficits": deficits,
+        "required_artifact_paths": [path for path, _role in required_paths],
+        "authority_source": "chief_engineer.project_completion_contract",
+    }
+
+
+def project_chief_engineer_delivery_depth_feasibility_from_pm_tasks(
+    payload: Mapping[str, Any],
+    *,
+    pm_tasks: list[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Project feasibility from persisted PM payloads using CE normalization."""
+
+    tasks: list[ChiefEngineerPortfolioTaskV1] = []
+    for index, raw_task in enumerate(pm_tasks, start=1):
+        task = dict(raw_task)
+        metadata_raw = task.get("metadata")
+        metadata = metadata_raw if isinstance(metadata_raw, Mapping) else {}
+        target_files = tuple(_string_list(task.get("target_files")))
+        target_file_set = set(target_files)
+        raw_authority = str(metadata.get("topology_authority") or "pm").strip()
+        if raw_authority not in {"pm", "chief_engineer"}:
+            raise ValueError(f"PM task {index} has invalid topology_authority={raw_authority!r}")
+        topology_authority: Literal["pm", "chief_engineer"] = (
+            "chief_engineer" if raw_authority == "chief_engineer" else "pm"
+        )
+        raw_depth = task.get("delivery_depth_contract") or metadata.get("delivery_depth_contract")
+        tasks.append(
+            ChiefEngineerPortfolioTaskV1(
+                task_id=str(task.get("id") or task.get("task_id") or f"TASK-{index}").strip(),
+                objective=str(task.get("goal") or task.get("objective") or task.get("description") or "").strip(),
+                target_files=target_files,
+                scope_paths=tuple(_string_list(task.get("scope_paths"))) or target_files,
+                dependencies=tuple(_string_list(task.get("depends_on") or task.get("dependencies"))),
+                entrypoint_targets=tuple(
+                    path
+                    for path in _string_list(task.get("project_declared_entrypoint_targets"))
+                    if path in target_file_set
+                ),
+                topology_authority=topology_authority,
+                required_source_kinds=tuple(_string_list(metadata.get("required_source_kinds"))),
+                delivery_depth_contract=dict(raw_depth) if isinstance(raw_depth, Mapping) else {},
+            )
+        )
+    return project_chief_engineer_portfolio_delivery_depth_feasibility(payload, tasks=tuple(tasks))
 
 
 @dataclass(frozen=True)
@@ -1019,6 +1146,24 @@ def _build_portfolio_completion_contract(
             return (*kept_not_applicable, *collapsed), remapped
 
         artifact_rows, artifact_id_remap = collapse_duplicate_artifact_paths(artifact_rows)
+        depth_feasibility = project_chief_engineer_portfolio_delivery_depth_feasibility(
+            {
+                "project_completion_contract": {
+                    "obligations": {"artifacts": list(artifact_rows)},
+                }
+            },
+            tasks=command.tasks,
+        )
+        if depth_feasibility["ok"] is not True:
+            deficits = ", ".join(
+                f"{item['metric']}={item['actual']} < {item['required']}"
+                for item in depth_feasibility["deficits"]
+            )
+            raise _portfolio_contract_error(
+                "project completion contract cannot satisfy delivery depth before Director dispatch: " + deficits,
+                code="delivery_depth_completion_contract_infeasible",
+                details=depth_feasibility,
+            )
         if artifact_id_remap:
             remapped_verification_rows: list[dict[str, Any]] = []
             for row in verification_rows:

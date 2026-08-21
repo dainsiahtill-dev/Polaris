@@ -261,6 +261,10 @@ Chief Engineer output contract:
   not_applicable. Applications also require an
   executable entrypoint with source_path/runtime_path plus an authorized entrypoint verifier. Libraries must mark
   entrypoint not_applicable.
+- The validated PM contracts include delivery_depth_contract minimums. When topology_authority is
+  chief_engineer, the completion contract must authorize enough distinct, safe, task-owned production and test
+  source paths to satisfy min_prod_files and min_test_files before Director dispatch. Do not merely repeat the
+  numeric requirement in prose; represent every required file as an artifacts obligation with an exact owner.
 - Do not emit project_id, run_id, project_kind, project_kind_authority, pm_contract_hash, covered_task_ids,
   completion_predicate_version, or verifier_policy_hash. Factory injects those authority fields from committed PM,
   catalog, and verifier-policy evidence.

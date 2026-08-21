@@ -6,7 +6,6 @@ import hashlib
 import json
 from types import SimpleNamespace
 
-from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.roles.kernel.internal.llm_caller import context_audit as context_audit_module
 from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
     FinalRequestEvidenceCoverageError,
@@ -185,6 +184,16 @@ def test_delivery_contracts_satisfy_architecture_file_plan_requirement_for_retry
             },
             "delivery_depth_contract": {
                 "schema_version": "polaris.delivery_depth_contract.v1",
+                "level": 3,
+                "minimums": {
+                    "min_production_source_files": 3,
+                    "min_behavior_test_files": 1,
+                    "advisory_label": "not projected",
+                },
+                "acceptance_contract": {
+                    "deterministic_checks": ["production_source_files", "behavior_test_files"],
+                    "required_behavior_tests": ["normal", "boundary", "invalid"],
+                },
                 "behavior_contract": {
                     "rule_matrix": ["priority rules are observable from the entrypoint"],
                     "required_behavior_tests": ["normal", "boundary", "invalid"],
@@ -232,6 +241,16 @@ def test_delivery_contracts_satisfy_architecture_file_plan_requirement_for_retry
     metadata_summary = audit["request_metadata_summary"]
     assert metadata_summary["has_delivery_plan_document"] is True
     assert metadata_summary["has_delivery_depth_contract"] is True
+    assert metadata_summary["delivery_depth_contract_summary"] == {
+        "schema_version": "polaris.delivery_depth_contract.v1",
+        "level": 3,
+        "minimums": {
+            "min_production_source_files": 3,
+            "min_behavior_test_files": 1,
+        },
+        "deterministic_checks": ["production_source_files", "behavior_test_files"],
+        "required_behavior_test_count": 3,
+    }
     assert metadata_summary["has_architecture_or_file_plan"] is True
     assert metadata_summary["architecture_or_file_plan_summary"]["source"] == "delivery_contracts"
     evidence_coverage = audit["final_request_evidence_coverage"]

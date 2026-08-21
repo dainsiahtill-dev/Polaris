@@ -4,12 +4,26 @@ import json
 from pathlib import Path
 
 import pytest
-from polaris.cells.control_plane.run_ledger.public import TaskBoundaryFailureClassV1 as PublicTaskBoundaryFailureClassV1
+from polaris.cells.control_plane.run_ledger.public import (
+    AppendRunLedgerEventCommandV1,
+    ControlPlaneRunLedgerV1Error,
+    ReadRunLedgerProjectionQueryV1,
+    TaskBoundaryFailureClassV1 as PublicTaskBoundaryFailureClassV1,
+    append_run_ledger_event,
+    read_run_ledger_projection,
+)
 from polaris.cells.control_plane.run_ledger.public.task_boundary import (
+    ReprojectTaskBoundaryVerdictCommandV1,
     TaskBoundaryFailureClassV1,
     evaluate_task_boundary_verdict,
     normalize_task_boundary_verdict,
     reconcile_task_boundary_artifacts_with_workspace,
+    reproject_task_boundary_verdict,
+)
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
 )
 
 
@@ -406,6 +420,129 @@ def test_task_boundary_ignores_package_script_glob_patterns(tmp_path: Path) -> N
     assert verdict["ok"] is True
     assert verdict["status"] == "completed_verified"
     assert verdict["missing_entrypoint_targets"] == []
+
+
+def test_task_boundary_ignores_inline_javascript_in_package_script(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "copy:html": (
+                        "node -e \"import('node:fs').then(fs=>"
+                        "fs.copyFileSync('index.html','dist/index.html'))\""
+                    )
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-inline-script",
+        run_id="run-inline-script",
+        target_files=["package.json", "index.html"],
+        completed_artifacts=["package.json", "index.html"],
+    ).to_dict()
+
+    assert verdict["ok"] is True
+    assert verdict["missing_entrypoint_targets"] == []
+
+
+def test_task_boundary_reprojection_supersedes_false_failure_without_role_replay(tmp_path: Path) -> None:
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="task_boundary_reprojection_test",
+        )
+    )
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "copy:html": (
+                        "node -e \"import('node:fs').then(fs=>"
+                        "fs.copyFileSync('index.html','dist/index.html'))\""
+                    )
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
+    run_id = "director-reproject-1"
+    task_id = "TASK-3"
+    old_verdict = {
+        "schema_version": "polaris.task_boundary_verdict.v1",
+        "task_id": task_id,
+        "run_id": run_id,
+        "status": "missing_entrypoint_target",
+        "ok": False,
+        "failure_class": "MISSING_ENTRYPOINT_TARGET",
+        "responsible_layer": "task_boundary",
+        "reason": "legacy parser treated inline JavaScript as an entrypoint",
+        "target_files": ["package.json", "index.html"],
+        "completed_artifacts": ["package.json", "index.html"],
+        "missing_entrypoint_targets": [
+            "import('node:fs').then(fs=>fs.copyFileSync('index.html','dist/index.html'))"
+        ],
+    }
+    old_receipt = append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id=run_id,
+            event={
+                "event_type": "task_boundary_verdict",
+                "stage": "task_boundary",
+                "task_id": task_id,
+                "run_id": run_id,
+                "task_boundary_verdict": old_verdict,
+                "job_token": {"run_id": run_id, "task_id": task_id, "project_id": task_id},
+            },
+        )
+    ).receipt
+    old_content_id = str(old_receipt["event"]["content_id"])
+    command = ReprojectTaskBoundaryVerdictCommandV1(
+        workspace=str(tmp_path),
+        run_id=run_id,
+        task_id=task_id,
+        expected_content_id=old_content_id,
+        reason="task_boundary_inline_script_parser_fixed",
+    )
+
+    result = reproject_task_boundary_verdict(command)
+    repeated = reproject_task_boundary_verdict(command)
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id=run_id, max_runs=1)
+    ).projection
+
+    assert result.status == "reprojected"
+    assert result.changed is True
+    assert result.idempotent is False
+    assert result.verdict["ok"] is True
+    assert result.verdict["reprojection"]["pm_restart_allowed"] is False
+    assert result.verdict["reprojection"]["chief_engineer_restart_allowed"] is False
+    assert result.verdict["reprojection"]["director_restart_allowed"] is False
+    assert repeated.status == "idempotent"
+    assert repeated.content_id == result.content_id
+    assert projection["task_boundary"]["verdict_count"] == 2
+    assert projection["task_boundary"]["historical_failed_count"] == 1
+    assert projection["task_boundary"]["latest_by_task"][task_id]["ok"] is True
+
+    with pytest.raises(ControlPlaneRunLedgerV1Error, match="task_boundary_reprojection_stale_predecessor"):
+        reproject_task_boundary_verdict(
+            ReprojectTaskBoundaryVerdictCommandV1(
+                workspace=str(tmp_path),
+                run_id=run_id,
+                task_id=task_id,
+                expected_content_id="f" * 64,
+                reason="stale",
+            )
+        )
 
 
 def test_task_boundary_reports_missing_html_script_entrypoint(tmp_path: Path) -> None:

@@ -52,6 +52,7 @@ from ..typescript_syntax import (
     TYPESCRIPT_STRICT_NULL_RELAXATION_SOURCE_TOOL,
     TYPESCRIPT_STRING_LITERAL_SUGGESTION_SOURCE_TOOL,
     TYPESCRIPT_TEST_BLOCK_RESIDUE_SOURCE_TOOL,
+    TYPESCRIPT_TIMER_HANDLE_SOURCE_TOOL,
     TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL,
     TYPESCRIPT_TRUNCATED_EOF_SOURCE_TOOL,
     TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL,
@@ -170,6 +171,16 @@ def typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             archetype=RepairArchetype.WRONG_IMPORT_PATH,
             priority=1,
             diagnostic_codes=("typescript_ts18048", "typescript_ts2322"),
+            message_any_terms=(
+                "possibly 'undefined'",
+                'possibly "undefined"',
+                "possibly 'null'",
+                'possibly "null"',
+                "undefined' is not assignable",
+                'undefined" is not assignable',
+                "null' is not assignable",
+                'null" is not assignable',
+            ),
             risk_level="medium",
             description=(
                 "Relaxes tsconfig compilerOptions.strict/noUnusedLocals when TS18048 "
@@ -179,6 +190,24 @@ def typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             ),
             runtime_plan_available=True,
             metadata=_executable_runtime_metadata(scope="tsconfig_strict_null_relaxation_json_set"),
+        ),
+        RepairRuleDefinition(
+            rule_id="typescript.timer_handle",
+            source_tool=TYPESCRIPT_TIMER_HANDLE_SOURCE_TOOL,
+            language="typescript",
+            phase="quality_repair",
+            archetype=RepairArchetype.NULLABLE_TYPE_MISMATCH,
+            priority=1,
+            diagnostic_codes=("typescript_ts2322",),
+            message_terms=("not assignable to type 'number'",),
+            message_any_terms=("type 'timeout'", "type 'nodejs.timeout'"),
+            risk_level="low",
+            description=(
+                "Uses the DOM timer namespace for browser scheduler calls when Node typings make "
+                "globalThis.setTimeout return Timeout instead of the declared numeric handle."
+            ),
+            runtime_plan_available=True,
+            metadata=_executable_runtime_metadata(scope="browser_timer_namespace_text_replace"),
         ),
         RepairRuleDefinition(
             rule_id="typescript.config_key_split",
@@ -808,11 +837,12 @@ def typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             phase="quality_repair",
             archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
             priority=1,
-            diagnostic_codes=("typescript_ts2540", "typescript_ts2542"),
+            diagnostic_codes=("typescript_ts2540", "typescript_ts2542", "typescript_ts4104"),
             risk_level="low",
             description=(
                 "Removes same-file readonly property modifiers and ReadonlyArray "
-                "wrappers when generated code mutates those properties or indexes."
+                "wrappers when generated code mutates those properties or indexes; "
+                "copies simple readonly array values before mutable assignment."
             ),
             runtime_plan_available=True,
             metadata={
@@ -820,7 +850,7 @@ def typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
                 "metadata_only": False,
                 "executable_runtime_binding": True,
                 "planner_helper_available": True,
-                "runtime_plan_scope": "same_file_readonly_property_or_array_mutability_text_replace",
+                "runtime_plan_scope": "same_file_readonly_property_array_or_value_mutability_text_replace",
                 "unsafe_cases_fail_closed": True,
             },
         ),
@@ -884,6 +914,7 @@ def typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             priority=1,
             diagnostic_codes=("typescript_ts2322",),
             message_terms=("not assignable to type",),
+            message_any_terms=("type '\"", "type \"'"),
             risk_level="low",
             description=(
                 "Expands string-literal union type aliases when usage emits a missing "
@@ -1242,6 +1273,7 @@ def typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             priority=2,
             diagnostic_codes=("typescript_ts2322",),
             message_terms=("not assignable to type",),
+            message_any_terms=("type 'readonly<{", 'type "readonly<{'),
             risk_level="low",
             description=(
                 "Asserts Object.freeze({...}) payloads as the declared named type when nested string "
@@ -1326,6 +1358,11 @@ def typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             priority=1,
             diagnostic_codes=("typescript_ts2345", "typescript_ts2322", "typescript_ts2339"),
             message_terms=("argument of type", "parameter of type"),
+            message_any_terms=(
+                "missing the following properties",
+                "parameter of type '{",
+                'parameter of type "{',
+            ),
             risk_level="low",
             description=(
                 "Adapts call-site arguments that miss required object properties "

@@ -27,6 +27,7 @@ _LOCAL_ENTRYPOINT_SUFFIXES = (
     ".html",
 )
 _ENTRYPOINT_PATTERN_CHARS = frozenset("*?[]{}")
+_CONCRETE_LOCAL_ENTRYPOINT_RE = re.compile(r"^[A-Za-z0-9_@.+-]+(?:/[A-Za-z0-9_@.+-]+)*$")
 _GENERATED_ENTRYPOINT_PREFIXES = (
     ".next/",
     ".nuxt/",
@@ -132,7 +133,14 @@ def _is_concrete_local_entrypoint_target(value: Any) -> bool:
         return False
     if _is_generated_entrypoint_artifact(token):
         return False
-    return not any(char in token for char in _ENTRYPOINT_PATTERN_CHARS)
+    if any(char in token for char in _ENTRYPOINT_PATTERN_CHARS):
+        return False
+    # Package scripts can contain arbitrary JavaScript/shell expressions.  A
+    # token merely ending in ``.js`` is not necessarily a path (live defect:
+    # ``import('node:fs').then(...'dist/index.html'))``).  Admit only a safe,
+    # relative path grammar here; executable code, operators, quotes,
+    # parentheses, variables, and redirections are not entrypoint targets.
+    return bool(_CONCRETE_LOCAL_ENTRYPOINT_RE.fullmatch(token))
 
 
 def _is_generated_entrypoint_artifact(value: Any) -> bool:
@@ -503,6 +511,217 @@ class TaskBoundaryVerdictV1:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ReprojectTaskBoundaryVerdictCommandV1:
+    """Re-evaluate one immutable task boundary without replaying role work."""
+
+    workspace: str
+    run_id: str
+    task_id: str
+    expected_content_id: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        for field_name in ("workspace", "run_id", "task_id", "reason"):
+            value = str(getattr(self, field_name) or "").strip()
+            if not value:
+                raise ValueError(f"{field_name} must be a non-empty string")
+            object.__setattr__(self, field_name, value)
+        content_id = str(self.expected_content_id or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", content_id):
+            raise ValueError("expected_content_id must be a 64-character hex content id")
+        object.__setattr__(self, "expected_content_id", content_id)
+
+
+@dataclass(frozen=True, slots=True)
+class TaskBoundaryReprojectionResultV1:
+    """Typed receipt for one local task-boundary reprojection attempt."""
+
+    status: str
+    changed: bool
+    idempotent: bool
+    previous_content_id: str
+    content_id: str
+    append_id: str
+    verdict: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "changed": self.changed,
+            "idempotent": self.idempotent,
+            "previous_content_id": self.previous_content_id,
+            "content_id": self.content_id,
+            "append_id": self.append_id,
+            "verdict": dict(self.verdict),
+        }
+
+
+_TASK_BOUNDARY_REPROJECTION_COMPARE_FIELDS = (
+    "status",
+    "ok",
+    "failure_class",
+    "responsible_layer",
+    "reason",
+    "target_files",
+    "missing_target_files",
+    "missing_entrypoint_targets",
+    "unresolved_local_imports",
+    "artifact_semantic_mismatches",
+    "downstream_pending_artifacts",
+    "completed_artifacts",
+    "blocked_dependencies",
+    "required_evidence_modalities",
+    "present_evidence_modalities",
+    "missing_required_evidence_modalities",
+    "failed_required_evidence_modalities",
+    "required_verifiers",
+    "completed_verifiers",
+    "missing_required_verifiers",
+    "failed_required_verifiers",
+    "tool_dispatch",
+    "evidence_refs",
+)
+
+
+def _task_boundary_reprojection_changed(previous: dict[str, Any], current: dict[str, Any]) -> bool:
+    return any(previous.get(key) != current.get(key) for key in _TASK_BOUNDARY_REPROJECTION_COMPARE_FIELDS)
+
+
+def reproject_task_boundary_verdict(
+    command: ReprojectTaskBoundaryVerdictCommandV1,
+) -> TaskBoundaryReprojectionResultV1:
+    """Append one corrected TaskBoundary fact from existing delivery evidence.
+
+    This path is intentionally local: it consumes the latest immutable verdict,
+    re-evaluates only deterministic workspace facts, and appends a successor.
+    It never invokes PM, Chief Engineer, Director, QA, or an LLM.
+    """
+
+    from polaris.cells.control_plane.run_ledger.public.contracts import (
+        AppendRunLedgerEventCommandV1,
+        ControlPlaneRunLedgerV1Error,
+        ReadRunLedgerProjectionQueryV1,
+    )
+    from polaris.cells.control_plane.run_ledger.public.service import (
+        append_run_ledger_event,
+        read_run_ledger_projection,
+    )
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(
+            workspace=command.workspace,
+            run_id=command.run_id,
+            max_runs=1,
+        )
+    ).projection
+    boundary = projection.get("task_boundary")
+    boundary_map = boundary if isinstance(boundary, dict) else {}
+    latest_by_task = boundary_map.get("latest_by_task")
+    latest_map = latest_by_task if isinstance(latest_by_task, dict) else {}
+    previous_raw = latest_map.get(command.task_id)
+    if not isinstance(previous_raw, dict):
+        raise ControlPlaneRunLedgerV1Error("task_boundary_reprojection_source_missing")
+    previous = dict(previous_raw)
+    previous_content_id = str(previous.get("content_id") or "").strip().lower()
+
+    reprojection = previous.get("reprojection")
+    reprojection_map = reprojection if isinstance(reprojection, dict) else {}
+    if previous_content_id != command.expected_content_id:
+        if (
+            str(reprojection_map.get("source_content_id") or "").strip().lower()
+            == command.expected_content_id
+            and str(reprojection_map.get("reason") or "").strip() == command.reason
+        ):
+            return TaskBoundaryReprojectionResultV1(
+                status="idempotent",
+                changed=True,
+                idempotent=True,
+                previous_content_id=command.expected_content_id,
+                content_id=previous_content_id,
+                append_id=str(previous.get("append_id") or ""),
+                verdict=previous,
+            )
+        raise ControlPlaneRunLedgerV1Error("task_boundary_reprojection_stale_predecessor")
+    if bool(previous.get("ok")):
+        raise ControlPlaneRunLedgerV1Error("task_boundary_reprojection_source_already_passed")
+
+    verdict = evaluate_task_boundary_verdict(
+        workspace=command.workspace,
+        task_id=command.task_id,
+        run_id=command.run_id,
+        target_files=previous.get("target_files"),
+        completed_artifacts=previous.get("completed_artifacts"),
+        downstream_pending_artifacts=previous.get("downstream_pending_artifacts"),
+        blocked_dependencies=previous.get("blocked_dependencies"),
+        required_evidence_modalities=previous.get("required_evidence_modalities"),
+        present_evidence_modalities=previous.get("present_evidence_modalities"),
+        missing_required_evidence_modalities=previous.get("missing_required_evidence_modalities"),
+        failed_required_evidence_modalities=previous.get("failed_required_evidence_modalities"),
+        required_verifiers=previous.get("required_verifiers"),
+        completed_verifiers=previous.get("completed_verifiers"),
+        missing_required_verifiers=previous.get("missing_required_verifiers"),
+        failed_required_verifiers=previous.get("failed_required_verifiers"),
+        tool_dispatch=previous.get("tool_dispatch") if isinstance(previous.get("tool_dispatch"), dict) else {},
+        evidence_refs=previous.get("evidence_refs"),
+    ).to_dict()
+    if not _task_boundary_reprojection_changed(previous, verdict):
+        return TaskBoundaryReprojectionResultV1(
+            status="no_change",
+            changed=False,
+            idempotent=False,
+            previous_content_id=previous_content_id,
+            content_id=previous_content_id,
+            append_id=str(previous.get("append_id") or ""),
+            verdict=previous,
+        )
+
+    verdict["reprojection"] = {
+        "schema_version": "polaris.task_boundary_reprojection.v1",
+        "source_content_id": previous_content_id,
+        "reason": command.reason,
+        "reused_delivery_evidence": True,
+        "pm_restart_allowed": False,
+        "chief_engineer_restart_allowed": False,
+        "director_restart_allowed": False,
+    }
+    append_result = append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=command.workspace,
+            run_id=command.run_id,
+            event={
+                "event_type": "task_boundary_verdict",
+                "stage": "task_boundary_reprojection",
+                "task_id": command.task_id,
+                "run_id": command.run_id,
+                "supersedes_task_boundary_content_id": previous_content_id,
+                "task_boundary_reprojection": dict(verdict["reprojection"]),
+                "task_boundary_verdict": verdict,
+                "job_token": {
+                    "run_id": command.run_id,
+                    "task_id": command.task_id,
+                    "project_id": command.task_id,
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+            },
+        )
+    )
+    receipt = append_result.receipt
+    event = receipt.get("event")
+    persisted = event if isinstance(event, dict) else {}
+    persisted_verdict = persisted.get("task_boundary_verdict")
+    return TaskBoundaryReprojectionResultV1(
+        status="reprojected",
+        changed=True,
+        idempotent=False,
+        previous_content_id=previous_content_id,
+        content_id=str(persisted.get("content_id") or ""),
+        append_id=str(persisted.get("append_id") or ""),
+        verdict=dict(persisted_verdict) if isinstance(persisted_verdict, dict) else verdict,
+    )
+
+
 def build_completed_task_boundary_verdict(
     *,
     task_id: str,
@@ -840,11 +1059,14 @@ def normalize_task_boundary_verdict(value: Any) -> dict[str, Any]:
 
 
 __all__ = [
+    "ReprojectTaskBoundaryVerdictCommandV1",
     "TaskBoundaryFailureClassV1",
+    "TaskBoundaryReprojectionResultV1",
     "TaskBoundaryVerdictV1",
     "build_completed_task_boundary_verdict",
     "build_deferred_followup_task_boundary_verdict",
     "evaluate_task_boundary_verdict",
     "normalize_task_boundary_verdict",
     "reconcile_task_boundary_artifacts_with_workspace",
+    "reproject_task_boundary_verdict",
 ]

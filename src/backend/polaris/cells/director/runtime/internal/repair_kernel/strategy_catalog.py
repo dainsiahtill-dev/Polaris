@@ -82,6 +82,7 @@ KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS: frozenset[str] = frozenset(
         "deterministic_typescript_canvas_scale_return_type_repair",
         "deterministic_typescript_commonjs_package_type_repair",
         "deterministic_typescript_strict_null_relaxation_repair",
+        "deterministic_typescript_timer_handle_repair",
         "deterministic_typescript_config_key_split_repair",
         "deterministic_typescript_dom_local_shim_cleanup_repair",
         "deterministic_typescript_duplicate_object_property_repair",

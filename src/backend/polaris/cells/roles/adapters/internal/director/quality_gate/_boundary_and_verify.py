@@ -73,6 +73,41 @@ _requirements_txt_declared_dependencies: Any
 _task_boundary_scope_filter_evidence: Any
 
 
+_DEPTH_METRIC_ALIASES = {
+    "prod_files": "prod_files",
+    "production_source_files": "prod_files",
+    "prod_lines": "prod_lines",
+    "production_source_lines": "prod_lines",
+    "test_files": "test_files",
+    "test_source_files": "test_files",
+    "test_assertions": "test_assertions",
+    "test_assertion_count": "test_assertions",
+}
+_DEPTH_METRIC_NAMES = "|".join(re.escape(name) for name in _DEPTH_METRIC_ALIASES)
+_DEPTH_ASSIGNMENT_RE = re.compile(rf"\b({_DEPTH_METRIC_NAMES})\s*=\s*(\d+)", re.IGNORECASE)
+_DEPTH_COMPARISON_RE = re.compile(rf"\b({_DEPTH_METRIC_NAMES})\s*=\s*(\d+)\s*<\s*(\d+)", re.IGNORECASE)
+_DEPTH_MINIMUM_RE = re.compile(r"['\"]?(min_[a-z_]+)['\"]?\s*:\s*(\d+)", re.IGNORECASE)
+
+
+def _delivery_depth_failure_metrics(quality_errors: list[str]) -> tuple[dict[str, int], dict[str, int]]:
+    """Project platform-emitted depth diagnostics into numeric evidence."""
+
+    metrics: dict[str, int] = {}
+    minimums: dict[str, int] = {}
+    for error in quality_errors:
+        if "delivery_depth_contract_failed" not in error:
+            continue
+        for match in _DEPTH_ASSIGNMENT_RE.finditer(error):
+            metrics[_DEPTH_METRIC_ALIASES[match.group(1).lower()]] = int(match.group(2))
+        for match in _DEPTH_COMPARISON_RE.finditer(error):
+            metric = _DEPTH_METRIC_ALIASES[match.group(1).lower()]
+            metrics[metric] = int(match.group(2))
+            minimums[f"min_{metric}"] = int(match.group(3))
+        for match in _DEPTH_MINIMUM_RE.finditer(error):
+            minimums[match.group(1).lower()] = int(match.group(2))
+    return metrics, minimums
+
+
 def _run_materialization_quality_public_boundary(
     adapter: Any,
     *,
@@ -192,6 +227,7 @@ def _build_materialization_quality_failure_evidence_context(
     missing_targets = [str(path).strip() for path in missing_target_files if str(path or "").strip()]
     repair_targets = [str(path).strip() for path in repair_target_files if str(path or "").strip()]
     changed = [str(path).strip() for path in changed_files if str(path or "").strip()]
+    quality_metrics, quality_minimums = _delivery_depth_failure_metrics(quality_errors)
     failure_class = "INCOMPLETE_MATERIALIZATION" if missing_targets else "WORKSPACE_QUALITY_GATE_FAILED"
     return {
         "schema_version": "polaris.failure_evidence.v1",
@@ -202,6 +238,8 @@ def _build_materialization_quality_failure_evidence_context(
         "requires_ce_replan": False,
         "requires_pm_revision": False,
         "quality_errors": quality_errors[:20],
+        "quality_metrics": quality_metrics,
+        "quality_minimums": quality_minimums,
         "failed_checks": ["artifact_quality", "task_boundary"],
         "missing_target_files": missing_targets[:20],
         "repair_target_files": repair_targets[:20],
@@ -224,11 +262,14 @@ def _build_materialization_quality_workspace_evidence_context(
     missing_targets = [str(path).strip() for path in missing_target_files if str(path or "").strip()]
     repair_targets = [str(path).strip() for path in repair_target_files if str(path or "").strip()]
     changed = [str(path).strip() for path in changed_files if str(path or "").strip()]
+    quality_metrics, quality_minimums = _delivery_depth_failure_metrics(quality_errors)
     return {
         "schema_version": "polaris.workspace_quality_evidence.v1",
         "source": "director.materialization_quality_repair",
         "all_checks_passed": False,
         "quality_errors": quality_errors[:20],
+        "quality_metrics": quality_metrics,
+        "quality_minimums": quality_minimums,
         "missing_required_modalities": ["code"] if missing_targets else [],
         "failed_required_modalities": ["command"] if quality_errors else [],
         "missing_target_files": missing_targets[:20],

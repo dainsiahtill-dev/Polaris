@@ -1026,7 +1026,7 @@ class _Mixin02:
                     stage_signals.append(omission_signal)
                 output_errors = self._chief_engineer_portfolio_output_errors(
                     ce_llm_blueprint,
-                    task_ids=tuple(task.task_id for task in portfolio_tasks),
+                    tasks=portfolio_tasks,
                 )
                 if output_errors:
                     stage_signals.append(

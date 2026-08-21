@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import threading
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -13,24 +12,13 @@ from typing import Any, Awaitable, Callable
 
 import pytest
 from polaris.cells.events.fact_stream.public import (
-    ProvisionFactStreamLockAuthorityCommandV1,
-    QuerySegmentedFactEventsV1,
     SegmentedFactEventAppendedV1,
     SegmentedFactLedgerHeadV1,
     SegmentedFactLedgerReadyV1,
     SegmentedFactQueryResultV1,
-    provision_fact_stream_lock_authority,
-    query_segmented_fact_events,
 )
 from polaris.cells.factory.pipeline.internal.factory_physical_attempt_coordinator import (
     FactoryPhysicalAttemptLiveControlPort,
-    canonical_factory_physical_attempt_composite_hash,
-)
-from polaris.cells.factory.pipeline.internal.factory_physical_attempt_replay import (
-    FACTORY_PHYSICAL_ATTEMPT_REPLAY_FENCE_SCHEMA,
-    FactoryPhysicalAttemptReplayError,
-    FactoryPhysicalAttemptReplayFenceV1,
-    build_factory_physical_attempt_replay_candidate,
 )
 from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
     FACTORY_ROLE_EVIDENCE_ATTEMPT_BUDGET,
@@ -45,7 +33,6 @@ from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority imp
     FactoryRoleEvidenceSourceItemV1,
     FactoryRoleEvidenceSourceSlotV1,
     FactoryRoleEvidenceStageAuthorityV1,
-    UnavailableFactoryRoleEvidenceSourceAuthority,
     _canonical_cutoff_body_bytes,
     _CutoffCommitManifest,
     _CutoffFragmentPayload,
@@ -70,27 +57,12 @@ from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FactoryRoleEvidenceCutoffRequestV1,
 )
 from polaris.cells.roles.kernel.public.physical_attempt_control import (
-    FACTORY_PHYSICAL_ATTEMPT_CUTOFF_VIEW_SCHEMA,
-    FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
-    PROVIDER_ATTEMPT_TERMINAL_RECEIPT_SCHEMA,
-    SETTLE_FACTORY_PHYSICAL_ATTEMPT_SCHEMA,
-    FactoryPhysicalAttemptCutoffViewV1,
     FactoryPhysicalAttemptGrantViewV1,
-    ProviderAttemptTerminalReceiptV1,
-    SettleFactoryPhysicalAttemptV1,
-)
-from polaris.cells.roles.kernel.public.provider_attempt_lifecycle_replay import (
-    FACTORY_PROVIDER_ATTEMPT_LIFECYCLE_REPLAY_FACT_SCHEMA,
-    FACTORY_PROVIDER_ATTEMPT_LIFECYCLE_REPLAY_SNAPSHOT_SCHEMA,
-    FactoryProviderAttemptLifecycleReplayFactV1,
-    FactoryProviderAttemptLifecycleReplaySnapshotV1,
-    factory_provider_attempt_lifecycle_stream,
 )
 from polaris.kernelone.events.final_request_evidence import (
     canonical_role_final_request_hash,
     role_final_request_policy,
 )
-from polaris.kernelone.events.sourcing import SegmentedJsonlEventStore
 
 _HASH_A = "a" * 64
 _HASH_B = "b" * 64
@@ -700,9 +672,6 @@ def test_director_capacity_preflight_rejects_513_without_minting_any_grant(tmp_p
     assert port._grants == {}
     assert resolver.calls == 0
     assert facts.ensure_calls == 0
-
-
-@pytest.mark.asyncio
 async def test_same_grant_same_child_accepts_32_freezes_then_33rd_has_zero_new_effect(
     tmp_path: Path,
 ) -> None:
@@ -1915,6 +1884,3 @@ async def test_replay_snapshot_rejects_partial_cutoff_fragments(tmp_path: Path) 
             factory_run_id="factory-run-1",
             fact_stream=facts,
         )
-
-
-@pytest.mark.asyncio

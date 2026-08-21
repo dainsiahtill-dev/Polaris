@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from polaris.kernelone.platform_modules.registry import (
     MODULE_CASCADE_ORDER,
@@ -15,6 +16,16 @@ from polaris.kernelone.platform_modules.registry import (
 
 
 class TestPlatformModuleRegistry(unittest.TestCase):
+    def test_registered_pytest_files_exist_after_refactors(self) -> None:
+        repo = Path(__file__).resolve().parents[6]
+        missing: list[str] = []
+        for module in list_modules():
+            for relative in module.pytest_targets:
+                file_part = relative.split("::", 1)[0]
+                if not (repo / file_part).exists():
+                    missing.append(f"{module.module_id}:{file_part}")
+        self.assertEqual(missing, [])
+
     def test_cascade_order_covers_all_registered_modules(self) -> None:
         cascade = set(MODULE_CASCADE_ORDER)
         registered = set(PLATFORM_MODULES)

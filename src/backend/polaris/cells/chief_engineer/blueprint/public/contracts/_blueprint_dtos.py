@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from polaris.cells.chief_engineer.blueprint.public.contracts._completion import (
     ProjectCompletionContractV1,
@@ -75,6 +75,7 @@ class ChiefEngineerPortfolioTaskV1:
     entrypoint_targets: tuple[str, ...] = field(default_factory=tuple)
     topology_authority: Literal["pm", "chief_engineer"] = "pm"
     required_source_kinds: tuple[str, ...] = field(default_factory=tuple)
+    delivery_depth_contract: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         task_id = _require_non_empty("task_id", self.task_id)
@@ -109,6 +110,11 @@ class ChiefEngineerPortfolioTaskV1:
             raise ValueError("PM topology authority must not declare delegated required_source_kinds")
         object.__setattr__(self, "topology_authority", topology_authority)
         object.__setattr__(self, "required_source_kinds", required_source_kinds)
+        object.__setattr__(
+            self,
+            "delivery_depth_contract",
+            _to_dict_copy(self.delivery_depth_contract),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Return the normalized PM-authoritative task projection."""
@@ -122,6 +128,7 @@ class ChiefEngineerPortfolioTaskV1:
             "entrypoint_targets": list(self.entrypoint_targets),
             "topology_authority": self.topology_authority,
             "required_source_kinds": list(self.required_source_kinds),
+            "delivery_depth_contract": dict(self.delivery_depth_contract),
         }
 
 
@@ -566,14 +573,15 @@ class ChiefEngineerBlueprintPortfolioV1:
         if self.llm_blueprint_consumed:
             if type(completion_contract) is not ProjectCompletionContractV1:
                 raise TypeError("advisory portfolio requires exact ProjectCompletionContractV1")
+            completion_contract_v1 = cast(ProjectCompletionContractV1, completion_contract)
             expected_completion_ref = f"{portfolio_path}#project_completion_contract"
             if completion_ref != expected_completion_ref:
                 raise ValueError("project_completion_contract_ref must target the portfolio contract fragment")
-            if completion_hash != completion_contract.contract_hash:
+            if completion_hash != completion_contract_v1.contract_hash:
                 raise ValueError("project_completion_contract_hash must match the project completion contract")
-            if completion_contract.run_id != self.run_id:
+            if completion_contract_v1.run_id != self.run_id:
                 raise ValueError("project completion contract run_id must match portfolio run_id")
-            if completion_contract.covered_task_ids != tuple(sorted(task_ids)):
+            if completion_contract_v1.covered_task_ids != tuple(sorted(task_ids)):
                 raise ValueError("project completion contract must cover the exact portfolio task set")
         elif completion_contract is not None or completion_ref is not None or completion_hash is not None:
             raise ValueError("offline diagnostic portfolio cannot bind a project completion contract")

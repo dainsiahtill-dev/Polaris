@@ -927,6 +927,9 @@ def test_composer_executes_toml_and_yaml_structured_operations(tmp_path: Path) -
 
     def writer(path: str, content: str) -> dict[str, object]:
         write_calls.append(path)
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
         return {"ok": True}
 
     for kind, path, json_path, value, content, structured_format, expected_content in structured_cases:

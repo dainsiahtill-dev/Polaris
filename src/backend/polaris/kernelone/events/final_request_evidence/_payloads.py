@@ -356,6 +356,8 @@ def summarize_workspace_quality_evidence_context_slot(value: Any) -> dict[str, A
     found = _as_mapping(value)
     if not found:
         return {}
+    quality_metrics = found.get("quality_metrics")
+    quality_minimums = found.get("quality_minimums")
     return {
         "schema_version": "polaris.workspace_quality_evidence.context_slot.v1",
         "source_schema_version": _text(found.get("schema_version")),
@@ -364,6 +366,8 @@ def summarize_workspace_quality_evidence_context_slot(value: Any) -> dict[str, A
         "quality_error_count": len(found.get("quality_errors") or [])
         if isinstance(found.get("quality_errors"), (list, tuple))
         else 0,
+        "quality_metrics": dict(quality_metrics) if isinstance(quality_metrics, Mapping) else {},
+        "quality_minimums": dict(quality_minimums) if isinstance(quality_minimums, Mapping) else {},
         "deterministic_check_count": len(_string_tokens(found.get("deterministic_checks"))),
         "failed_required_modalities": _string_tokens(found.get("failed_required_modalities")),
         "missing_required_modalities": _string_tokens(found.get("missing_required_modalities")),

@@ -1694,7 +1694,12 @@ def pre_typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             archetype=RepairArchetype.MISSING_METHOD_SELF,
             priority=2,
             diagnostic_codes=("rust_e0063",),
-            message_terms=("missing field",),
+            # Match an enum-variant initializer path in the diagnostic
+            # headline (for example ``AlchemyError::InvalidInput``).  Do not
+            # inspect the full raw compiler block: an ordinary struct literal
+            # may contain unrelated paths such as ``String::new()`` in its
+            # source excerpt and would otherwise be misclassified as an enum.
+            message_terms=("missing field", "::"),
             risk_level="low",
             description="Fills rustc E0063 missing enum-variant fields from an existing MAX_* const.",
             runtime_plan_available=True,
