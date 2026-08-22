@@ -390,6 +390,29 @@ class TestAutofixPmContractForQuality:
 
         assert _go_text_target_files_for_task(task) == ["main.go"]
 
+    @pytest.mark.parametrize(
+        ("instruction", "expected"),
+        [
+            ("Do not create models/model.go but create engine/engine.go.", ["engine/engine.go"]),
+            ("不要创建 models/model.go，但要创建 engine/engine.go。", ["engine/engine.go"]),
+        ],
+    )
+    def test_go_contract_mixed_negation_preserves_affirmative_clause(
+        self,
+        instruction: str,
+        expected: list[str],
+    ) -> None:
+        task: dict[str, Any] = {
+            "title": "Go topology constraints",
+            "goal": instruction,
+            "description": "",
+            "execution_checklist": [],
+            "target_files": [],
+            "scope_paths": [],
+        }
+
+        assert _go_text_target_files_for_task(task) == expected
+
     def test_sanitizes_go_contract_ce_topology_authority_does_not_infer_exact_files_from_text(
         self,
         tmp_path: Any,

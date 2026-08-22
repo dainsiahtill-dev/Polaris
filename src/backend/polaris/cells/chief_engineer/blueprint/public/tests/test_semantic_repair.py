@@ -81,8 +81,9 @@ def _tasks(
             scope_paths=(("src",) if expandable else ("src/main.py",)),
             topology_authority="chief_engineer" if delegated else "pm",
             required_source_kinds=delegated_kinds if delegated else (),
-            primary_language="python" if delegated else "",
-            allowed_source_suffixes=(".py",) if delegated else (),
+            primary_language="python",
+            allowed_source_suffixes=(".py",),
+            entrypoint_kind_authority="cli",
             delivery_depth_contract={"minimums": {"min_prod_files": 2}},
         ),
         ChiefEngineerPortfolioTaskV1(
@@ -179,6 +180,50 @@ def test_behavior_and_entrypoint_patch_validate_authority_and_refs(tmp_path) -> 
     construction = repaired.candidate["construction_plan"]
     assert construction["task_plans"]["TASK-2"]["behavior_invariant_refs"] == ["behavior-roundtrip"]
     assert construction["shared_behavior_contract"]["invariants"][0]["owner_task_id"] == "TASK-1"
+
+
+def test_entrypoint_patch_cannot_change_immutable_pm_kind_authority(tmp_path) -> None:
+    candidate = _candidate(tmp_path)
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("entrypoint.missing",),
+        allowed_operations=("entrypoint_upsert",),
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        entrypoint_upserts=(
+            EntrypointObligationV1(
+                obligation_id="entry-main-go",
+                kind="web",
+                applicability="required",
+                owner_task_id="TASK-1",
+                source_path="main.go",
+                command="go run .",
+            ),
+        ),
+    )
+    tasks = (
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-1",
+            objective="Implement Go CLI",
+            target_files=("main.go",),
+            scope_paths=("main.go",),
+            entrypoint_targets=("main.go",),
+            primary_language="go",
+            allowed_source_suffixes=(".go",),
+            entrypoint_kind_authority="cli",
+        ),
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-2",
+            objective="Document the project",
+            target_files=("README.md",),
+            scope_paths=("README.md",),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="entrypoint kind conflicts with immutable PM authority"):
+        compose_chief_engineer_semantic_repair(candidate, diagnosis, patch, tasks=tasks)
 
 
 def test_candidate_store_round_trip_and_exact_cas(tmp_path) -> None:
@@ -384,6 +429,9 @@ def test_provider_context_projects_current_rows_and_task_authority(tmp_path) -> 
         "expandable_scope_paths": ["src"],
         "topology_authority": "pm",
         "required_source_kinds": [],
+        "primary_language": "python",
+        "allowed_source_suffixes": [".py"],
+        "entrypoint_kind_authority": "cli",
         "delegated_artifact_roles": [],
     }
     assert projected["repair_feasible"] is True

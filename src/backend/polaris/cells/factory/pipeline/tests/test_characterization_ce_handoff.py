@@ -697,6 +697,7 @@ class TestChiefEngineerHandoffGuards:
             {
                 "id": "TASK-OWNER",
                 "goal": "Bind exact completion owner",
+                "language": "python",
                 "target_files": ["src/owner.py"],
                 "project_declared_entrypoint_targets": ["src/owner.py", "src/other-owner.py"],
                 "metadata": {
@@ -1327,6 +1328,7 @@ class TestChiefEngineerHandoffGuards:
                         "id": "TASK-CANCEL",
                         "title": "Implement cancellation coverage",
                         "goal": "Exercise the Chief Engineer cancellation path.",
+                        "language": "python",
                         "target_files": [
                             "src/cancel.py",
                             "src/cancel_policy.py",
@@ -1470,6 +1472,7 @@ class TestChiefEngineerHandoffGuards:
                         "id": "TASK-CANCEL",
                         "title": "Implement cancellation coverage",
                         "goal": "Exercise the Chief Engineer cancellation path.",
+                        "language": "python",
                         "target_files": ["src/cancel.py", "tests/test_cancel.py"],
                         "scope_paths": ["src", "tests"],
                         "acceptance_criteria": ["cancellation is observable"],
@@ -1613,6 +1616,7 @@ class TestChiefEngineerHandoffGuards:
                         "id": "TASK-CANCEL",
                         "title": "Implement cancellation coverage",
                         "goal": "Exercise the Chief Engineer cancellation path.",
+                        "language": "python",
                         "target_files": ["src/cancel.py", "tests/test_cancel.py"],
                         "scope_paths": ["src", "tests"],
                         "acceptance_criteria": ["cancellation is observable"],
@@ -1704,6 +1708,7 @@ class TestChiefEngineerHandoffGuards:
                         "id": "TASK-CANCEL",
                         "title": "Implement cancellation coverage",
                         "goal": "Exercise the Chief Engineer cancellation path.",
+                        "language": "python",
                         "target_files": ["src/cancel.py", "tests/test_cancel.py"],
                         "scope_paths": ["src", "tests"],
                         "acceptance_criteria": ["cancellation is observable"],
@@ -1849,3 +1854,52 @@ class TestChiefEngineerHandoffGuards:
         assert task_plan_schema["properties"]["risk_flags"]["type"] == "array"
         assert "Arrays may be empty only when" in objective
         assert "enough distinct task-owned production/test source artifacts" in objective
+
+    def test_chief_engineer_portfolio_tasks_bind_go_source_and_cli_authority(self, tmp_path: Path) -> None:
+        executor = OrchestrationStageExecutor(tmp_path)
+
+        portfolio_tasks = executor._chief_engineer_portfolio_tasks(
+            [
+                {
+                    "id": "TASK-GO-CLI",
+                    "goal": "Implement the Go command-line entrypoint",
+                    "language": "go",
+                    "target_files": ["main.go", "internal/engine.go"],
+                    "project_declared_entrypoint_targets": ["main.go"],
+                    "delivery_depth_contract": {"project_type": "cli_game"},
+                    "verification_commands": [
+                        {
+                            "modality": "entrypoint",
+                            "argv": ["go", "run", "."],
+                            "cwd": ".",
+                        }
+                    ],
+                    "metadata": {
+                        "topology_authority": "chief_engineer",
+                        "required_source_kinds": ["domain_modules", "entrypoint"],
+                    },
+                }
+            ]
+        )
+
+        assert portfolio_tasks[0].primary_language == "go"
+        assert portfolio_tasks[0].allowed_source_suffixes == (".go",)
+        assert portfolio_tasks[0].entrypoint_kind_authority == "cli"
+
+    def test_chief_engineer_portfolio_tasks_reject_unknown_delegated_language(self, tmp_path: Path) -> None:
+        executor = OrchestrationStageExecutor(tmp_path)
+
+        with pytest.raises(stage_executor_module._ChiefEngineerPortfolioAuthorityError) as exc_info:
+            executor._chief_engineer_portfolio_tasks(
+                [
+                    {
+                        "id": "TASK-UNKNOWN",
+                        "goal": "Implement a delegated topology",
+                        "language": "unknown-language",
+                        "target_files": ["src/main.unknown"],
+                        "metadata": {"topology_authority": "chief_engineer"},
+                    }
+                ]
+            )
+
+        assert exc_info.value.code == "chief_engineer.topology_language_authority_missing"

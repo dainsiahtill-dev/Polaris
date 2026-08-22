@@ -967,7 +967,14 @@ class TestChiefEngineerBlueprintPortfolio:
         )
         requirements = _application_completion_requirements()
         requirements["obligations"]["artifacts"] = []
-        requirements["obligations"]["entrypoints"] = []
+        requirements["obligations"]["entrypoints"][0].update(
+            {
+                "kind": "web",
+                "owner_task_id": "TASK-A",
+                "source_path": "main.go",
+                "runtime_path": "main.go",
+            }
+        )
         requirements["obligations"]["verification"] = []
 
         portfolio = build_chief_engineer_blueprint_portfolio(
@@ -1293,6 +1300,8 @@ class TestChiefEngineerBlueprintPortfolio:
                 scope_paths=("requirements.txt",),
                 topology_authority="chief_engineer",
                 required_source_kinds=("domain_modules", "entrypoint"),
+                primary_language="python",
+                allowed_source_suffixes=(".py",),
             ),
             ChiefEngineerPortfolioTaskV1(
                 task_id="TASK-B",
@@ -1442,6 +1451,8 @@ class TestChiefEngineerBlueprintPortfolio:
                 scope_paths=("requirements.txt",),
                 topology_authority="chief_engineer",
                 required_source_kinds=("entrypoint",),
+                primary_language="python",
+                allowed_source_suffixes=(".py",),
             ),
             ChiefEngineerPortfolioTaskV1(
                 task_id="TASK-B",
@@ -1508,6 +1519,8 @@ class TestChiefEngineerBlueprintPortfolio:
                 scope_paths=("requirements.txt",),
                 topology_authority="chief_engineer",
                 required_source_kinds=("domain_modules", "entrypoint"),
+                primary_language="python",
+                allowed_source_suffixes=(".py",),
             ),
             ChiefEngineerPortfolioTaskV1(
                 task_id="TASK-B",
@@ -1579,6 +1592,8 @@ class TestChiefEngineerBlueprintPortfolio:
                 scope_paths=("requirements.txt",),
                 topology_authority="chief_engineer",
                 required_source_kinds=("domain_modules", "entrypoint"),
+                primary_language="python",
+                allowed_source_suffixes=(".py",),
             ),
             ChiefEngineerPortfolioTaskV1(
                 task_id="TASK-B",
@@ -1588,6 +1603,8 @@ class TestChiefEngineerBlueprintPortfolio:
                 dependencies=("TASK-A",),
                 topology_authority="chief_engineer",
                 required_source_kinds=("domain_modules", "entrypoint"),
+                primary_language="python",
+                allowed_source_suffixes=(".py",),
             ),
         )
         requirements = _application_completion_requirements()
@@ -1688,6 +1705,8 @@ class TestChiefEngineerBlueprintPortfolio:
                 scope_paths=("requirements.txt",),
                 topology_authority="chief_engineer",
                 required_source_kinds=("domain_modules", "entrypoint"),
+                primary_language="python",
+                allowed_source_suffixes=(".py",),
             ),
             ChiefEngineerPortfolioTaskV1(
                 task_id="TASK-B",

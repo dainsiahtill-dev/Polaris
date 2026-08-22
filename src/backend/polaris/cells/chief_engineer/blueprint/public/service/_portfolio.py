@@ -56,6 +56,7 @@ from ._helpers import (
     _mapping,
     _portfolio_hash,
     _string_list,
+    chief_engineer_source_suffixes_for_language,
 )
 
 
@@ -171,6 +172,8 @@ def project_chief_engineer_delivery_depth_feasibility_from_pm_tasks(
             "chief_engineer" if raw_authority == "chief_engineer" else "pm"
         )
         raw_depth = task.get("delivery_depth_contract") or metadata.get("delivery_depth_contract")
+        primary_language = str(task.get("language") or "").strip().lower()
+        allowed_source_suffixes = chief_engineer_source_suffixes_for_language(primary_language)
         tasks.append(
             ChiefEngineerPortfolioTaskV1(
                 task_id=str(task.get("id") or task.get("task_id") or f"TASK-{index}").strip(),
@@ -185,6 +188,8 @@ def project_chief_engineer_delivery_depth_feasibility_from_pm_tasks(
                 ),
                 topology_authority=topology_authority,
                 required_source_kinds=tuple(_string_list(metadata.get("required_source_kinds"))),
+                primary_language=primary_language,
+                allowed_source_suffixes=allowed_source_suffixes,
                 delivery_depth_contract=dict(raw_depth) if isinstance(raw_depth, Mapping) else {},
             )
         )
@@ -687,6 +692,23 @@ def _pm_entrypoint_kind(
     if any(token in joined for token in ("uvicorn", "gunicorn", "fastapi", " api", "server")):
         return "api"
     return "cli"
+
+
+def classify_chief_engineer_pm_entrypoint_kind(
+    *,
+    path: str,
+    command: str,
+    project_kind: str,
+    catalog_snapshot: Mapping[str, Any],
+) -> str:
+    """Public deterministic projection of PM/catalog entrypoint kind authority."""
+
+    return _pm_entrypoint_kind(
+        path=path,
+        command=command,
+        project_kind=project_kind,
+        catalog_snapshot=catalog_snapshot,
+    )
 
 
 def derive_project_kind_authority_from_catalog_snapshot(
@@ -1468,6 +1490,15 @@ def _build_portfolio_completion_contract(
             """
 
             normalized = dict(row)
+            source_path = str(normalized.get("source_path") or "").strip()
+            command = str(normalized.get("command") or "").strip()
+            if source_path and command:
+                normalized["kind"] = _pm_entrypoint_kind(
+                    path=source_path,
+                    command=command,
+                    project_kind=project_kind_authority.project_kind,
+                    catalog_snapshot=carrier.catalog_snapshot,
+                )
             raw_runtime_path = normalized.get("runtime_path")
             if raw_runtime_path is None:
                 return normalized
@@ -1523,7 +1554,7 @@ def _build_portfolio_completion_contract(
             ):
                 normalized_row = normalize_advisory_runtime_path(row)
                 normalized_row["command"] = matching[0].command
-                normalized_entrypoint_rows.append(normalized_row)
+                normalized_entrypoint_rows.append(normalize_advisory_runtime_path(normalized_row))
                 continue
             if row["applicability"] != "not_applicable":
                 dropped_unexecutable_entrypoint_ids.add(str(row["obligation_id"]))

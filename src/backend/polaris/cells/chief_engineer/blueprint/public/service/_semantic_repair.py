@@ -297,6 +297,9 @@ def project_chief_engineer_semantic_repair_provider_context(
             "expandable_scope_paths": list(_task_expandable_scope_paths(task)),
             "topology_authority": task.topology_authority,
             "required_source_kinds": list(task.required_source_kinds),
+            "primary_language": task.primary_language,
+            "allowed_source_suffixes": list(task.allowed_source_suffixes),
+            "entrypoint_kind_authority": task.entrypoint_kind_authority,
             "delegated_artifact_roles": sorted(_delegated_artifact_roles(task)),
         }
         for task in tasks
@@ -349,15 +352,26 @@ def project_chief_engineer_semantic_repair_provider_context(
     delegated_artifact_roles = sorted(
         {role for task in tasks for role in _delegated_artifact_roles(task)}
     )
-    expandable_test_scope_paths = [
-        path for path in expandable_scope_paths if _is_ce_test_topology_path(f"{path}/test.py")
-    ]
-    expandable_prod_scope_paths = [
-        path
-        for path in expandable_scope_paths
-        if not _is_ce_test_topology_path(f"{path}/test.py")
-        and not set(str(path).lower().replace("\\", "/").split("/")).intersection({"docs", "doc"})
-    ]
+    expandable_test_scope_paths = sorted(
+        {
+            path
+            for task in tasks
+            if task.allowed_source_suffixes
+            for path in _task_expandable_scope_paths(task)
+            if "test" in _delegated_artifact_roles(task)
+            or "tests" in _delegated_artifact_roles(task)
+            or _is_ce_test_topology_path(f"{path}/test_file{task.allowed_source_suffixes[0]}")
+        }
+    )
+    expandable_prod_scope_paths = sorted(
+        {
+            path
+            for task in tasks
+            if task.allowed_source_suffixes
+            for path in _task_expandable_scope_paths(task)
+            if not set(str(path).lower().replace("\\", "/").split("/")).intersection({"docs", "doc"})
+        }
+    )
     depth_artifact_repair = "artifact_upsert" in diagnosis.allowed_operations and any(
         code.startswith("chief_engineer.delivery_depth.") for code in diagnosis.diagnostic_codes
     )
@@ -502,6 +516,16 @@ def compose_chief_engineer_semantic_repair(
             raise ValueError(f"entrypoint owner_task_id is outside candidate task set: {entrypoint.owner_task_id}")
     for entrypoint in patch.entrypoint_upserts:
         owner = tasks_by_id.get(str(entrypoint.owner_task_id or ""))
+        if owner is None or not owner.entrypoint_kind_authority:
+            raise ValueError(
+                "semantic repair entrypoint lacks immutable PM kind authority: "
+                f"owner_task_id={entrypoint.owner_task_id!r}"
+            )
+        if entrypoint.kind != owner.entrypoint_kind_authority:
+            raise ValueError(
+                "semantic repair entrypoint kind conflicts with immutable PM authority: "
+                f"expected={owner.entrypoint_kind_authority!r}:actual={entrypoint.kind!r}"
+            )
         source_authorized = bool(
             owner is not None
             and entrypoint.source_path is not None

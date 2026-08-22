@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import re
+import shlex
 import unicodedata
 from collections.abc import Mapping
 from copy import deepcopy
@@ -24,6 +25,8 @@ from polaris.cells.chief_engineer.blueprint.public import (
     ChiefEngineerPortfolioTaskV1,
     ProjectKindAuthorityV1,
     VerificationCommandAuthorityV1,
+    chief_engineer_source_suffixes_for_language,
+    classify_chief_engineer_pm_entrypoint_kind,
     derive_project_kind_authority_from_catalog_snapshot,
     project_chief_engineer_portfolio_delivery_depth_feasibility,
     project_completion_catalog_snapshot_hash,
@@ -761,6 +764,41 @@ class _Mixin01:
             )
             raw_depth_contract = task.get("delivery_depth_contract") or metadata.get("delivery_depth_contract")
             delivery_depth_contract = dict(raw_depth_contract) if isinstance(raw_depth_contract, Mapping) else {}
+            primary_language = str(task.get("language") or delivery_depth_contract.get("language") or "").strip().lower()
+            allowed_source_suffixes = chief_engineer_source_suffixes_for_language(primary_language)
+            if topology_authority == "chief_engineer" and not allowed_source_suffixes:
+                raise _ChiefEngineerPortfolioAuthorityError(
+                    "chief_engineer.topology_language_authority_missing",
+                    f"committed PM task {self._task_id(task, index)!r} has no supported source suffix authority",
+                )
+            entrypoint_command = ""
+            raw_verification_commands = task.get("verification_commands")
+            if isinstance(raw_verification_commands, list):
+                for raw_command in raw_verification_commands:
+                    if not isinstance(raw_command, Mapping):
+                        continue
+                    if str(raw_command.get("modality") or "").strip() != "entrypoint":
+                        continue
+                    argv = raw_command.get("argv")
+                    if isinstance(argv, list) and argv and all(str(item).strip() for item in argv):
+                        entrypoint_command = shlex.join(str(item) for item in argv)
+                        break
+            entrypoint_kind_authority = ""
+            if entrypoint_command:
+                project_type = str(delivery_depth_contract.get("project_type") or "").strip().lower()
+                project_kind = (
+                    "library"
+                    if project_type in {"library", "package", "sdk", "crate"}
+                    or project_type.endswith(("_library", "_package", "_sdk", "_crate"))
+                    else "application"
+                )
+                classification_path = entrypoint_targets[0] if entrypoint_targets else target_files[0]
+                entrypoint_kind_authority = classify_chief_engineer_pm_entrypoint_kind(
+                    path=classification_path,
+                    command=entrypoint_command,
+                    project_kind=project_kind,
+                    catalog_snapshot={"project_type": project_type},
+                )
             portfolio_tasks.append(
                 ChiefEngineerPortfolioTaskV1(
                     task_id=self._task_id(task, index),
@@ -771,6 +809,9 @@ class _Mixin01:
                     entrypoint_targets=entrypoint_targets,
                     topology_authority=topology_authority,
                     required_source_kinds=required_source_kinds,
+                    primary_language=primary_language,
+                    allowed_source_suffixes=allowed_source_suffixes,
+                    entrypoint_kind_authority=entrypoint_kind_authority,
                     delivery_depth_contract=delivery_depth_contract,
                 )
             )

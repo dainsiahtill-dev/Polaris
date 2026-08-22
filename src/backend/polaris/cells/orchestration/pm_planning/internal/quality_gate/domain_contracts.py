@@ -150,7 +150,10 @@ _GO_LANGUAGE_TEXT_RE = re.compile(
     r"(?i)(?:\bprimary_language\s*=\s*go\b|用\s*go\s*实现|\bgo\s+(?:build|test|mod)\b|\.go\b)"
 )
 _GO_TOPOLOGY_NEGATION_RE = re.compile(r"(?i)(?:禁止|不得|不要|\bdo\s+not\b|\bdon't\b|\bavoid\b|\bwithout\b)")
-_GO_TOPOLOGY_CLAUSE_BOUNDARY_RE = re.compile(r"[。！？；;\n]+")
+_GO_TOPOLOGY_CLAUSE_BOUNDARY_RE = re.compile(
+    r"(?:[。！？；;\n]+|(?:,|，)?\s*(?:\bbut\b|\bhowever\b|但(?:是)?|而是|不过)\s*)",
+    re.IGNORECASE,
+)
 _GO_DEFAULT_TOPOLOGY_PATH_RE = re.compile(
     r"^(?:src/)?(?:models/model\.go|engine/engine\.go)$",
     re.IGNORECASE,
@@ -938,15 +941,16 @@ def _go_task_has_affirmative_topology_hint(task: dict[str, Any], hints: tuple[st
 
 
 def _go_text_match_is_negated(text: str, start: int, end: int) -> bool:
-    clause_start = max(
-        (text.rfind(boundary, 0, start) for boundary in ("。", "！", "？", "；", ";", "\n")),
-        default=-1,
-    )
-    clause_ends = [
-        position for boundary in ("。", "！", "？", "；", ";", "\n") if (position := text.find(boundary, end)) >= 0
-    ]
-    clause_end = min(clause_ends, default=len(text))
-    return bool(_GO_TOPOLOGY_NEGATION_RE.search(text[clause_start + 1 : clause_end]))
+    clause_start = 0
+    clause_end = len(text)
+    for boundary in _GO_TOPOLOGY_CLAUSE_BOUNDARY_RE.finditer(text):
+        if boundary.end() <= start:
+            clause_start = boundary.end()
+            continue
+        if boundary.start() >= end:
+            clause_end = boundary.start()
+            break
+    return bool(_GO_TOPOLOGY_NEGATION_RE.search(text[clause_start:clause_end]))
 
 
 def _go_task_is_verification_only(task: dict[str, Any]) -> bool:
@@ -1286,15 +1290,26 @@ def _is_game_pm_contract(normalized: dict[str, Any], tasks: list[Any]) -> bool:
 
 
 def _read_workspace_planning_hint_text(workspace_full: str) -> str:
-    workspace = Path(str(workspace_full or "").strip())
-    if not workspace:
+    workspace_raw = str(workspace_full or "").strip()
+    if not workspace_raw:
         return ""
+    workspace = Path(workspace_raw)
     from polaris.kernelone.storage import resolve_runtime_path
 
-    canonical_contracts = Path(resolve_runtime_path(str(workspace), "runtime/contracts"))
+    canonical_candidates: tuple[Path, ...] = ()
+    try:
+        canonical_contracts = Path(resolve_runtime_path(str(workspace), "runtime/contracts"))
+        canonical_candidates = (
+            canonical_contracts / "plan.md",
+            canonical_contracts / "requirements.md",
+        )
+    except (OSError, RuntimeError, ValueError):
+        # Workspace hints are optional read-only enrichment.  An absent or
+        # non-writable workspace must mean "no hints", not abort PM contract
+        # normalization before its actual zero-trust gates run.
+        canonical_candidates = ()
     candidates = (
-        canonical_contracts / "plan.md",
-        canonical_contracts / "requirements.md",
+        *canonical_candidates,
         # Read-only compatibility for pre-migration workspaces.  New writers
         # must never recreate this workspace-adjacent runtime root.
         workspace / "runtime" / "contracts" / "plan.md",
