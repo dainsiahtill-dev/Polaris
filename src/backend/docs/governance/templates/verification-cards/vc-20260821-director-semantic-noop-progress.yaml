@@ -1,0 +1,81 @@
+card_id: vc-20260821-director-semantic-noop-progress
+bug_summary: >
+  Director repair progress accepted unequal content hashes even when the only
+  executable addition was an algebraic identity such as `x -= 0`. The edit was
+  physically real but behaviorally inert, consumed a Provider attempt, and
+  left the same verifier failures.
+  The following behavior-changing edit then resolved every prior failing test
+  but exposed an equal-size disjoint test set; the local loop also needed a
+  bounded forward-unmask classification rather than premature stagnation.
+
+classification: pattern
+
+bug_path:
+  file: polaris/cells/roles/adapters/internal/director/execute_method/_helpers.py
+  method: _quality_repair_progress_evidence
+  symptom: >
+    Exact L3-22 run factory_a9812b43a06a emitted two successful edit_file
+    receipts with unequal hashes. The second added `b.Velocity.Y -= 0` while
+    go test remained 2 failures -> 2 failures.
+
+assumptions:
+  - id: A1
+    statement: The final Director request lacked verifier setup or assertion evidence.
+    status: verified_false
+    evidence: >
+      Snapshot 44b4193705493fa4b2a224da contained the complete enclosing Go
+      test function, forced edit_file, and engine/engine.go-only write scope.
+  - id: A2
+    statement: Any unequal before/after hash proves repair progress.
+    status: verified_false
+    evidence: >
+      The hash changed after adding an algebraic identity, but execution and
+      diagnostics were unchanged.
+  - id: A3
+    statement: A broad semantic source parser is required.
+    status: verified_false
+    evidence: >
+      The guard is deliberately narrow: only comment/whitespace-only changes
+      and obvious identity statements are rejected; ambiguous edits still go
+      to the authoritative verifier.
+  - id: A4
+    statement: Every equal-count diagnostic replacement is churn.
+    status: verified_false
+    evidence: >
+      The prior floor/end-to-end tests disappeared, the main package passed,
+      and two previously unseen gravity/restitution tests became the only
+      residuals. Signature history and the five-attempt hard cap prevent
+      oscillation from renewing budget.
+
+pre_mortem:
+  failure_point: >
+    Overbroad semantic classification could reject legitimate numerical or
+    stateful edits.
+  risk_zone:
+    - polaris/cells/roles/adapters/internal/director/execute_method/_helpers.py
+    - polaris/cells/roles/adapters/internal/director/quality_gate/_prompt_and_targets.py
+
+verification_plan:
+  - command: >
+      PYTHONPATH=src/backend pytest -q
+      src/backend/polaris/cells/roles/adapters/tests/test_director_quality_repair_progress.py
+      src/backend/polaris/cells/roles/adapters/tests/test_director_quality_repair_verifier_context.py
+    expected: >
+      Obvious identity edits retain physical evidence but cannot renew repair
+      progress; verifier prompts state executable failure-condition semantics;
+      an unseen disjoint failing-test layer advances once but a seen signature
+      does not.
+  - command: ruff check <touched paths>
+    expected: No lint violations.
+  - command: mypy <touched implementation paths>
+    expected: No type errors.
+  - command: same-run quality_gate recovery for factory_a9812b43a06a
+    expected: >
+      PM and Chief Engineer remain sealed, Director edits only engine/engine.go,
+      and go test diagnostics decrease or the attempt is explicitly classified
+      semantic-noop/stalled without restarting the project.
+
+rollback:
+  strategy: >
+    Revert the narrow no-op classifier and prompt contract together. Keep the
+    existing two-stagnant-attempt cycle breaker and verifier authority.

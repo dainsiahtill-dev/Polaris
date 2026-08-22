@@ -170,6 +170,35 @@ def normalize_stream_chunk(
 
     if event_type == "tool_call":
         tool_name, tool_args, tool_call_id = _normalize_stream_tool_call_payload(tool_call_payload)
+        raw_provider_meta = tool_call_payload.get("provider_meta")
+        if isinstance(raw_provider_meta, dict):
+            assembly_raw = raw_provider_meta.get("assembly")
+            assembly = (
+                {
+                    key: assembly_raw[key]
+                    for key in (
+                        "argument_source",
+                        "complete_snapshot_count",
+                        "delta_count",
+                        "explicit_complete_count",
+                        "fragment_count",
+                        "provisional_placeholder_count",
+                    )
+                    if key in assembly_raw
+                }
+                if isinstance(assembly_raw, dict)
+                else {}
+            )
+            metadata["tool_call_assembly"] = {
+                key: value
+                for key, value in {
+                    "provider": raw_provider_meta.get("provider"),
+                    "index": raw_provider_meta.get("index"),
+                    "content_block_index": raw_provider_meta.get("content_block_index"),
+                    "assembly": assembly,
+                }.items()
+                if value not in (None, {}, "")
+            }
 
     metadata.setdefault("native_tool_mode", native_tool_mode)
     metadata.setdefault("tool_protocol", tool_protocol)

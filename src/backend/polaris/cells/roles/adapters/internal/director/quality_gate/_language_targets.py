@@ -399,6 +399,10 @@ _GO_TEST_FAILURE_TITLE_RE = re.compile(
     r"(?:^|[\n:])\s*---\s+FAIL:\s+(?P<title>[A-Za-z_][A-Za-z0-9_]*)",
     re.IGNORECASE | re.MULTILINE,
 )
+_GO_TEST_ASSERTION_LOCATION_RE = re.compile(
+    r"(?:^|\s)(?:[A-Za-z]:)?[^\s:\n]*_test\.go:\d+:",
+    re.IGNORECASE | re.MULTILINE,
+)
 _GO_STACK_OVERFLOW_FRAME_RE = re.compile(
     r"(?P<pkg>[A-Za-z0-9_./]+)\.\(\*?(?P<type>[A-Za-z0-9_]+)\)\.(?P<method>[A-Za-z0-9_]+)"
 )
@@ -448,6 +452,8 @@ def _looks_like_go_workspace_quality_error(text: str) -> bool:
     if _GO_COMPILE_PATH_RE.search(str(text or "")):
         return True
     lowered = str(text or "").lower()
+    if "--- fail:" in lowered and _GO_TEST_ASSERTION_LOCATION_RE.search(str(text or "")):
+        return True
     if "workspace validation command failed" in lowered and ("go run" in lowered or "go test" in lowered):
         return True
     return ("go test" in lowered or "go compile" in lowered) and ".go:" in lowered
@@ -536,7 +542,10 @@ def _go_test_behavior_repair_target_files(
     workspace_root: Path,
 ) -> list[str]:
     lowered = str(text or "").lower()
-    if "go test" not in lowered or "--- fail:" not in lowered:
+    commandless_test_output = bool(
+        "--- fail:" in lowered and _GO_TEST_ASSERTION_LOCATION_RE.search(str(text or ""))
+    )
+    if "--- fail:" not in lowered or ("go test" not in lowered and not commandless_test_output):
         return []
 
     production_files = [

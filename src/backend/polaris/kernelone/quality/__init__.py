@@ -14,6 +14,10 @@ from polaris.kernelone.quality.artifact_quality import (
     scan_workspace_artifact_quality,
     scan_workspace_artifact_quality_evidence,
 )
+from polaris.kernelone.quality.candidate_compile_gate import (
+    CandidateCompileCheckResult,
+    check_candidate_workspace_compile,
+)
 from polaris.kernelone.quality.cross_artifact_interfaces import (
     CrossArtifactConsistencyIssue,
     CrossArtifactInterfaceContract,
@@ -73,6 +77,7 @@ __all__ = [
     "DEBT_MARKERS",
     "ArtifactQualityEvidence",
     "ArtifactQualityIssue",
+    "CandidateCompileCheckResult",
     "CrossArtifactConsistencyIssue",
     "CrossArtifactInterfaceContract",
     "CrossArtifactInterfaceRequirement",
@@ -95,6 +100,7 @@ __all__ = [
     "build_owner_handoff_index",
     "build_scope_authority_decision",
     "build_symbol_index_snapshot",
+    "check_candidate_workspace_compile",
     "check_content_syntax",
     "check_file_syntax",
     "check_package_scripts",

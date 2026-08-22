@@ -69,6 +69,40 @@ _TEST_MODALITY_SHORTFALL_RE = re.compile(
 _PYTEST_COUNT_RE = re.compile(r"\b(?P<count>\d+)\s+(?P<kind>failed|error|errors)\b", re.IGNORECASE)
 _DIAGNOSTIC_LINE_LABEL_RE = re.compile(r"\bline\s+\d+\b", re.IGNORECASE)
 _DIAGNOSTIC_FILE_LOCATION_RE = re.compile(r"(?P<path>(?:[A-Za-z]:)?[^\s:\n]+\.[A-Za-z0-9_+-]+):\d+(?::\d+)?")
+_GO_COMPILER_DIAGNOSTIC_RE = re.compile(
+    r"(?:^|\s)(?:[A-Za-z]:)?[^\s:\n]+\.go:\d+(?::\d+)?:[^\n]*(?:"
+    r"cannot\s+convert|undefined|declared\s+and\s+not\s+used|imported\s+and\s+not\s+used|"
+    r"has\s+no\s+field\s+or\s+method|invalid\s+operation|syntax\s+error|"
+    r"not\s+enough\s+arguments|too\s+many\s+arguments"
+    r")",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _is_workspace_quality_test_target(path: str) -> bool:
+    """Return whether a verifier path is a test wrapper, across languages.
+
+    Go reports package-local paths such as ``engine_test.go`` while Java and
+    Python commonly encode the test role in the basename.  Treating only
+    JavaScript ``*.test.*`` as tests made the quality loop claim a test task
+    before the implementation owner and, for package-local Go paths, fail with
+    ``workspace_quality_repair_canonical_owner_missing``.
+    """
+
+    normalized = str(path or "").strip().replace("\\", "/")
+    candidate = Path(normalized)
+    lowered_parts = {part.casefold() for part in candidate.parts[:-1]}
+    lowered_name = candidate.name.casefold()
+    stem = candidate.stem.casefold()
+    return bool(
+        lowered_parts.intersection({"test", "tests", "__tests__"})
+        or lowered_name.startswith("test_")
+        or lowered_name.endswith("_test.go")
+        or lowered_name.endswith("_test.py")
+        or ".test." in lowered_name
+        or ".spec." in lowered_name
+        or (candidate.suffix.casefold() in {".java", ".kt", ".kts"} and stem.endswith("test"))
+    )
 
 
 def _workspace_quality_deterministic_probe_signature(errors: Sequence[str]) -> tuple[str, ...]:
@@ -422,6 +456,15 @@ _CRATE_REWRITE_HOLD_MARKERS = (
 )
 
 
+def _workspace_quality_plannable_source_tools(plan_probe: Mapping[str, Any] | None) -> set[str]:
+    payload = dict(plan_probe) if isinstance(plan_probe, Mapping) else {}
+    return {
+        str(item or "").strip()
+        for item in (payload.get("plannable_source_tools") or ())
+        if str(item or "").strip()
+    }
+
+
 def _workspace_quality_hold_llm_for_plannable_deterministic(
     plan_probe: Mapping[str, Any] | None,
     *,
@@ -438,10 +481,7 @@ def _workspace_quality_hold_llm_for_plannable_deterministic(
     """
 
     del write_tool_evidence
-    payload = dict(plan_probe) if isinstance(plan_probe, Mapping) else {}
-    tools = {
-        str(item or "").strip() for item in (payload.get("plannable_source_tools") or ()) if str(item or "").strip()
-    }
+    tools = _workspace_quality_plannable_source_tools(plan_probe)
     hold_tools = {
         "deterministic_rust_crate_import_rewrite_repair",
         "deterministic_rust_lib_root_facade_repair",
@@ -580,18 +620,39 @@ def _workspace_quality_authoritative_owner_paths(
     """
 
     paths: list[str] = []
-    for key in ("control_plane_job_token", "capability_token"):
-        raw_token = metadata.get(key)
-        token = raw_token if isinstance(raw_token, Mapping) else {}
-        token_run_id = str(token.get("factory_run_id") or token.get("run_id") or "").strip()
-        if token_run_id and token_run_id != run_id:
-            continue
-        for path_key in ("allowed_write_paths", "target_files"):
-            raw_paths = token.get(path_key)
-            if isinstance(raw_paths, str):
-                paths.append(raw_paths)
-            elif isinstance(raw_paths, list | tuple | set):
-                paths.extend(str(item) for item in raw_paths)
+    completion_raw = metadata.get("task_completion_projection")
+    completion = completion_raw if isinstance(completion_raw, Mapping) else {}
+    completion_run_id = str(completion.get("run_id") or "").strip()
+    owned_artifacts = completion.get("owned_artifacts")
+    if not completion_run_id or completion_run_id == run_id:
+        for artifact in owned_artifacts if isinstance(owned_artifacts, list | tuple) else ():
+            if not isinstance(artifact, Mapping):
+                continue
+            owner_task_id = str(artifact.get("owner_task_id") or "").strip()
+            projection_task_id = str(completion.get("task_id") or "").strip()
+            if owner_task_id and projection_task_id and owner_task_id != projection_task_id:
+                continue
+            path = str(artifact.get("path") or "").strip()
+            if path:
+                paths.append(path)
+
+    # JobToken scope is capability authority, not unique artifact ownership:
+    # dependency manifests/entrypoints can legitimately be writable by more
+    # than one task. Prefer the CE completion projection when it names owned
+    # artifacts; use token paths only for legacy rows that lack that SSoT.
+    if not paths:
+        for key in ("control_plane_job_token", "capability_token"):
+            raw_token = metadata.get(key)
+            token = raw_token if isinstance(raw_token, Mapping) else {}
+            token_run_id = str(token.get("factory_run_id") or token.get("run_id") or "").strip()
+            if token_run_id and token_run_id != run_id:
+                continue
+            for path_key in ("allowed_write_paths", "target_files"):
+                raw_paths = token.get(path_key)
+                if isinstance(raw_paths, str):
+                    paths.append(raw_paths)
+                elif isinstance(raw_paths, list | tuple | set):
+                    paths.extend(str(item) for item in raw_paths)
     adapter_result_raw = metadata.get("adapter_result")
     adapter_result = adapter_result_raw if isinstance(adapter_result_raw, Mapping) else {}
     batch_receipt_raw = adapter_result.get("batch_receipt")
@@ -752,18 +813,6 @@ def _workspace_quality_test_shortfall_owner_targets(
     if _TEST_MODALITY_SHORTFALL_RE.search(blob) is None:
         return []
 
-    def is_test_target(path: str) -> bool:
-        normalized = str(path or "").strip().replace("\\", "/")
-        candidate = Path(normalized)
-        lowered_parts = {part.casefold() for part in candidate.parts[:-1]}
-        lowered_name = candidate.name.casefold()
-        return (
-            bool(lowered_parts.intersection({"test", "tests", "__tests__"}))
-            or lowered_name.startswith("test_")
-            or ".test." in lowered_name
-            or ".spec." in lowered_name
-        )
-
     targets: list[str] = []
     for canonical_task in executor._load_pm_plan_tasks("tasks/plan.json"):
         if not isinstance(canonical_task, Mapping):
@@ -781,7 +830,7 @@ def _workspace_quality_test_shortfall_owner_targets(
         normalized_targets = _dedupe_workspace_repair_paths(
             [raw_targets] if isinstance(raw_targets, str) else list(raw_targets)
         )
-        targets.extend(path for path in normalized_targets if is_test_target(path))
+        targets.extend(path for path in normalized_targets if _is_workspace_quality_test_target(path))
     return _dedupe_workspace_repair_paths(targets)
 
 
@@ -1185,7 +1234,10 @@ async def _apply_workspace_quality_deterministic_repairs(
     # ``src/engine/*.rs`` compiler failure could repeatedly reopen TASK-1 merely
     # because TASK-1 owned more files.  That erased same-task locality and made
     # ordinary Director code repair look like a cross-task CE contract gap.
-    diagnostic_target_files = executor._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors)
+    diagnostic_target_files = _workspace_quality_causal_repair_target_files(
+        executor,
+        artifact_quality_errors=artifact_quality_errors,
+    )
     if not diagnostic_target_files:
         diagnostic_target_files = _workspace_quality_test_shortfall_owner_targets(
             executor,
@@ -1417,17 +1469,58 @@ def _workspace_quality_llm_claim_target_files(
         if normalized_owners and set(normalized_owners).issubset(diagnostic_set):
             owner_set = set(normalized_owners)
             return [path for path in normalized_diagnostics if path in owner_set][:1]
-        source_targets = [
-            path
-            for path in normalized_diagnostics
-            if not path.startswith(("tests/", "test/", "__tests__/"))
-            and "/__tests__/" not in path
-            and not path.endswith((".test.js", ".test.ts", ".test.tsx", ".spec.js", ".spec.ts", ".spec.tsx"))
-        ]
+        source_targets = [path for path in normalized_diagnostics if not _is_workspace_quality_test_target(path)]
         return (source_targets or normalized_diagnostics)[:1]
     if owner_target_files:
         return _dedupe_workspace_repair_paths(owner_target_files)
     return _dedupe_workspace_repair_paths(fallback_target_files)
+
+
+def _workspace_quality_causal_repair_target_files(
+    executor,
+    *,
+    artifact_quality_errors: list[str],
+) -> list[str]:
+    """Combine direct verifier paths with Director's causal source discovery.
+
+    This function is deliberately read-only.  The returned paths are evidence
+    for selecting a canonical CE-owned task; they do not grant write scope.
+    The subsequent TaskRuntime claim and JobToken remain authoritative.
+    """
+
+    from polaris.cells.roles.adapters.public import resolve_director_causal_quality_repair_target_files
+
+    direct_targets = executor._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors)
+    causal_targets = resolve_director_causal_quality_repair_target_files(
+        artifact_quality_errors=list(artifact_quality_errors),
+        changed_files=executor._workspace_quality_repair_changed_files(),
+        workspace_full=str(executor.workspace),
+    )
+    diagnostic_blob = "\n".join(str(item or "") for item in artifact_quality_errors)
+    causal_go_sources = [
+        path
+        for path in causal_targets
+        if Path(path).suffix.casefold() == ".go" and not _is_workspace_quality_test_target(path)
+    ]
+    # A runnable Go test assertion names the observing ``*_test.go`` wrapper,
+    # not necessarily the implementation that owns the behavior.  Keeping
+    # that wrapper in the owner-candidate set lets an existing test-task lease
+    # win before the causal source paths are considered.  Live L3-22 then spent
+    # repeated TASK-3 turns rewriting already-compiling tests while validation,
+    # physics, and error-priority defects remained in production packages.
+    #
+    # Preserve direct test ownership whenever a real compiler location exists:
+    # syntax/type failures in authored tests still belong to the test task.
+    # Only assertion-only ``go test`` residuals move to causal implementation
+    # sources discovered by the read-only Director target resolver.
+    if (
+        causal_go_sources
+        and "--- fail:" in diagnostic_blob.casefold()
+        and _GO_COMPILER_DIAGNOSTIC_RE.search(diagnostic_blob) is None
+    ):
+        direct_sources = [path for path in direct_targets if not _is_workspace_quality_test_target(path)]
+        return _dedupe_workspace_repair_paths([*causal_go_sources, *direct_sources])
+    return _dedupe_workspace_repair_paths([*direct_targets, *causal_targets])
 
 
 async def _apply_workspace_quality_llm_repairs(
@@ -1451,7 +1544,10 @@ async def _apply_workspace_quality_llm_repairs(
             "tool_results": 0,
         }
     declared_target_files = executor._workspace_quality_repair_target_files()
-    diagnostic_target_files = executor._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors)
+    diagnostic_target_files = _workspace_quality_causal_repair_target_files(
+        executor,
+        artifact_quality_errors=artifact_quality_errors,
+    )
     materialized_declared_targets = [path for path in declared_target_files if path in set(changed_files)]
     claim_target_files = _workspace_quality_llm_claim_target_files(
         owner_target_files=owner_target_files,
@@ -1463,6 +1559,14 @@ async def _apply_workspace_quality_llm_repairs(
     # this narrow list prevents an obsolete owner override from hiding the
     # file the verifier actually proved faulty.
     target_files = claim_target_files or materialized_declared_targets or changed_files
+    inbound_quality_context = context.get("director_quality_repair")
+    inbound_regression_guards: list[str] = []
+    if isinstance(inbound_quality_context, Mapping):
+        raw_guards = inbound_quality_context.get("regression_guard_errors")
+        if isinstance(raw_guards, list | tuple):
+            inbound_regression_guards = [
+                str(item or "").strip() for item in raw_guards if str(item or "").strip()
+            ][:6]
     repair_context: dict[str, Any] = {
         "delivery_mode": "materialize_changes",
         "run_id": run_id,
@@ -1486,6 +1590,8 @@ async def _apply_workspace_quality_llm_repairs(
             "target_files": target_files[:80],
         },
     }
+    if inbound_regression_guards:
+        repair_context["director_quality_repair"]["regression_guard_errors"] = inbound_regression_guards
     catalog = executor._read_catalog_contract()
     primary_language = str(catalog.get("primary_language") or "").strip()
     project_type = str(catalog.get("project_type") or "").strip()
@@ -1901,6 +2007,8 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
         last_nonprogress_task_id = ""
         convergence_stop_reason = ""
         seen_diagnostic_error_codes: set[str] = set()
+        seen_plannable_source_tools: set[str] = set()
+        regression_guard_errors: list[str] = []
         # One diagnostic signature gets at most one materialization-schedule
         # probe that reaches the canonical TaskRuntime claim boundary.  The
         # materialization schedule contains callback labels which are not
@@ -1912,6 +2020,18 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
         # burns CPU/attempt epochs.  Route subsequent identical diagnostics
         # directly to the same-owner LLM edit path instead.
         deterministic_no_commit_signatures: set[tuple[str, ...]] = set()
+
+        def llm_repair_context() -> dict[str, Any]:
+            """Attach bounded prior-round failures without changing write authority."""
+
+            if not regression_guard_errors:
+                return context
+            projected = dict(context)
+            raw_quality = projected.get("director_quality_repair")
+            quality = dict(raw_quality) if isinstance(raw_quality, Mapping) else {}
+            quality["regression_guard_errors"] = list(regression_guard_errors[:6])
+            projected["director_quality_repair"] = quality
+            return projected
 
         def current_workspace_repair_summary(
             *,
@@ -2080,7 +2200,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                         )
                     round_repair_results, round_summary = await executor._apply_workspace_quality_llm_repairs(
                         run=run,
-                        context=context,
+                        context=llm_repair_context(),
                         artifact_quality_errors=repair_errors,
                         repair_attempt=round_index + 1,
                         interface_discrepancy_evidence=interface_discrepancy_evidence,
@@ -2129,7 +2249,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     )
                 round_repair_results, round_summary = await executor._apply_workspace_quality_llm_repairs(
                     run=run,
-                    context=context,
+                    context=llm_repair_context(),
                     artifact_quality_errors=repair_errors,
                     repair_attempt=round_index + 1,
                     owner_target_files=round_llm_owner_targets,
@@ -2158,7 +2278,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     )
                 round_repair_results, round_summary = await executor._apply_workspace_quality_llm_repairs(
                     run=run,
-                    context=context,
+                    context=llm_repair_context(),
                     artifact_quality_errors=repair_errors,
                     repair_attempt=round_index + 1,
                     owner_target_files=round_llm_owner_targets,
@@ -2193,7 +2313,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     )
                 round_repair_results, round_summary = await executor._apply_workspace_quality_llm_repairs(
                     run=run,
-                    context=context,
+                    context=llm_repair_context(),
                     artifact_quality_errors=repair_errors,
                     repair_attempt=round_index + 1,
                     owner_target_files=round_llm_owner_targets,
@@ -2228,7 +2348,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     )
                 round_repair_results, round_summary = await executor._apply_workspace_quality_llm_repairs(
                     run=run,
-                    context=context,
+                    context=llm_repair_context(),
                     artifact_quality_errors=repair_errors,
                     repair_attempt=round_index + 1,
                     # Live L2-15 remint-14: leftover FAILING_TUS seed filled
@@ -2296,6 +2416,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 "round": round_index + 1,
                 "attempted": True,
                 "artifact_quality_errors": repair_errors[:10],
+                "regression_guard_errors": regression_guard_errors[:6],
                 "director_runtime_repair_coverage": executor._workspace_quality_repair_coverage_report(repair_errors),
                 "plan_probe_preaudit": round_plan_probe,
                 "tool_results": len(round_repair_results),
@@ -2500,6 +2621,24 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 before_results=before_check_results,
                 after_results=latest_check_results,
             )
+            if repair_effect == "equal_count_swap":
+                after_signature_set = set(after_signature)
+                replaced_errors = [
+                    error
+                    for error in repair_errors
+                    if not set(executor._workspace_quality_diagnostic_signature([error])).intersection(
+                        after_signature_set
+                    )
+                ]
+                current_error_set = {str(item or "").strip() for item in after_errors if str(item or "").strip()}
+                merged_guards: list[str] = []
+                for item in [*regression_guard_errors, *replaced_errors]:
+                    normalized = str(item or "").strip()
+                    if not normalized or normalized in current_error_set or normalized in merged_guards:
+                        continue
+                    merged_guards.append(normalized[:6000])
+                regression_guard_errors = merged_guards[-6:]
+                round_payload["regression_guard_errors_for_next_round"] = regression_guard_errors
             settled_attempt = await _settle_pending_workspace_quality_repair_attempt(
                 executor,
                 pending_round_attempt,
@@ -2525,6 +2664,9 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 if settled_attempt is not None:
                     projected_summary["task_runtime_repair_attempt"] = settled_attempt
             after_codes = executor._workspace_quality_diagnostic_error_codes(after_signature)
+            after_plan_probe = executor._workspace_quality_repair_plan_probe_report(after_errors)
+            before_plannable_tools = _workspace_quality_plannable_source_tools(round_plan_probe)
+            after_plannable_tools = _workspace_quality_plannable_source_tools(after_plan_probe)
             # A forward_unmask onto error codes already observed earlier in
             # this loop (A -> B -> A ping-pong, or a slide back to a code a
             # prior round already resolved) is oscillation, not phase
@@ -2532,13 +2674,30 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             forward_unmask_advances = repair_effect == "forward_unmask" and not (
                 after_codes & seen_diagnostic_error_codes
             )
+            newly_plannable_source_tools = sorted(
+                after_plannable_tools - before_plannable_tools - seen_plannable_source_tools
+            )
+            # Some compilers do not expose stable diagnostic codes for every
+            # phase. Go's ``cannot convert`` -> ``undefined: math`` live L3-22
+            # transition is one example: the error count stayed equal and the
+            # generic code extractor returned an empty set, but the second
+            # verifier result newly exposed an executable deterministic import
+            # repair. Stopping after that round discarded a concrete next
+            # action. Grant exactly one bounded continuation for a newly
+            # plannable source_tool; repeating the same tool remains stagnant
+            # and still trips the existing cycle breaker/hard cap.
+            plannable_repair_unmasked = repair_effect == "equal_count_swap" and bool(
+                newly_plannable_source_tools
+            )
+            if plannable_repair_unmasked:
+                round_payload["newly_plannable_source_tools"] = newly_plannable_source_tools
             round_task_id = ""
             projected_for_task = round_payload.get("repair_summary")
             if isinstance(projected_for_task, Mapping):
                 round_task_id = str(projected_for_task.get("task_id") or "").strip()
             if not round_task_id:
                 round_task_id = "__unknown_owner__"
-            if repair_effect in {"resolved", "progress"} or forward_unmask_advances:
+            if repair_effect in {"resolved", "progress"} or forward_unmask_advances or plannable_repair_unmasked:
                 consecutive_stagnant_rounds = 0
                 nonprogress_rounds_since_last_progress = 0
                 last_nonprogress_effect = ""
@@ -2554,9 +2713,14 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 consecutive_stagnant_rounds = 1
                 last_nonprogress_effect = repair_effect
                 last_nonprogress_task_id = round_task_id
-            if repair_effect not in {"resolved", "progress"} and not forward_unmask_advances:
+            if (
+                repair_effect not in {"resolved", "progress"}
+                and not forward_unmask_advances
+                and not plannable_repair_unmasked
+            ):
                 nonprogress_rounds_since_last_progress += 1
             seen_diagnostic_error_codes.update(after_codes)
+            seen_plannable_source_tools.update(after_plannable_tools)
             if verifier_passed:
                 convergence_stop_reason = "verifier_passed"
                 break

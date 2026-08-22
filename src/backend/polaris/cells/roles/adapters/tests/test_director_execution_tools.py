@@ -396,6 +396,35 @@ def test_edit_file_rejects_new_go_syntax_failure_before_commit(tmp_path) -> None
     assert target.read_text(encoding="utf-8") == original
 
 
+def test_edit_file_rejects_new_go_compile_failure_before_commit(tmp_path) -> None:
+    """L3-22: gofmt-valid undefined identifiers must not reach the workspace."""
+
+    (tmp_path / "go.mod").write_text("module example.com/candidate\n\ngo 1.21\n", encoding="utf-8")
+    target = tmp_path / "engine" / "engine.go"
+    target.parent.mkdir(parents=True)
+    original = "package engine\n\nfunc Value() int {\n\tvalue := 1\n\treturn value\n}\n"
+    target.write_text(original, encoding="utf-8")
+    executor = _create_director_tool_executor(str(tmp_path))
+
+    result = executor.execute_tool(
+        "edit_file",
+        {
+            "file": "engine/engine.go",
+            "search": "\tvalue := 1\n",
+            "replace": "",
+            "target_files": ["engine/engine.go"],
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["error_type"] == "source_compile_regression"
+    assert result["retryable"] is True
+    assert result["compile_check"] == "failed_precommit"
+    assert result["verifier_command"] == "go test -run ^$ ./..."
+    assert "undefined: value" in result["error"]
+    assert target.read_text(encoding="utf-8") == original
+
+
 def test_edit_file_rejects_changed_but_still_invalid_go_candidate(tmp_path) -> None:
     """L1-04 r51: an existing parse error must be fixed atomically, not moved."""
 

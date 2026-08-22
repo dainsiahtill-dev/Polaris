@@ -16,7 +16,6 @@ import gc
 import hashlib
 import time
 import warnings
-from dataclasses import fields
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -25,9 +24,7 @@ import pytest
 from polaris.cells.roles.kernel.internal import context_gateway as context_gateway_module
 from polaris.cells.roles.kernel.internal.llm_caller import request_preparer as request_preparer_module
 from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
-    build_final_provider_request_snapshot,
     build_final_request_context_audit,
-    build_final_request_context_audit_for_request,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.decision_caller import DecisionCaller
 from polaris.cells.roles.kernel.internal.llm_caller.error_handling import (
@@ -48,10 +45,6 @@ from polaris.cells.roles.kernel.internal.llm_caller.event_emitter import LLMEven
 from polaris.cells.roles.kernel.internal.llm_caller.finalization_caller import FinalizationCaller
 from polaris.cells.roles.kernel.internal.llm_caller.invoker import (
     LLMInvoker,
-    _clear_context_snapshot_context,
-    _physical_dispatch_port_for_request,
-    _profile_lacks_forced_tool_choice,
-    _required_tool_not_called_error,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.provider_formatter import (
     AnnotatedProviderFormatter,
@@ -60,8 +53,6 @@ from polaris.cells.roles.kernel.internal.llm_caller.provider_formatter import (
 )
 from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import (
     LLMRequestPreparer,
-    _ensure_core_role_identity,
-    _ensure_current_user_message_final,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import (
     LLMResponse,
@@ -75,7 +66,6 @@ from polaris.cells.roles.kernel.internal.structured_output_transport import (
     STRUCTURED_OUTPUT_TOOL_NAME,
     resolve_structured_output_transport,
 )
-from polaris.cells.roles.kernel.public import final_request_evidence_cutoff as cutoff_contract
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
     FACTORY_ROLE_EVIDENCE_CUTOFF_ACK_SCHEMA,
@@ -1676,7 +1666,21 @@ class TestStreamEngineRunStream:
             {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
         )
         assert plan is not None
-        prepared = _b33_propagating_prepared()
+        prepared = PreparedLLMRequest(
+            messages=[{"role": "user", "content": "Build the CE portfolio."}],
+            input_text="Build the CE portfolio.",
+            context_result=SimpleNamespace(
+                token_estimate=24,
+                compression_strategy="none",
+                compression_applied=False,
+            ),
+            context_summary="summary",
+            request_options={},
+            ai_request=SimpleNamespace(context={}, options={}, input=""),
+            native_tool_schemas=[plan.tool_definition],
+            native_tool_mode="native_tools_streaming",
+            response_format_mode="provider_tool_json_schema",
+        )
         prepared.structured_output_transport = plan
         context = SimpleNamespace(
             context_override={"stream_max_reconnects": 0},
@@ -1687,14 +1691,21 @@ class TestStreamEngineRunStream:
         emit_error = Mock()
 
         class _Executor:
-            async def invoke_stream(self, _request: object, *, physical_dispatch_port: object):
-                assert physical_dispatch_port is prepared.factory_dispatch_port
+            async def invoke_stream(self, _request: object):
                 yield {
                     "type": "tool_call",
                     "tool_call": {
                         "id": "call-invalid-structured-result",
                         "name": STRUCTURED_OUTPUT_TOOL_NAME,
                         "arguments": {"construction_plan": "not-an-object", "risk_flags": []},
+                        "provider_meta": {
+                            "provider": "anthropic_compat",
+                            "content_block_index": 0,
+                            "assembly": {
+                                "argument_source": "complete_snapshot",
+                                "delta_count": 1,
+                            },
+                        },
                     },
                 }
                 yield {"type": "complete", "content": ""}
@@ -1719,6 +1730,10 @@ class TestStreamEngineRunStream:
                 "polaris.cells.roles.kernel.internal.llm_caller.stream_engine."
                 "enforce_factory_aware_final_request_evidence_coverage"
             ),
+            patch(
+                "polaris.cells.roles.kernel.internal.llm_caller.stream_engine."
+                "assert_tool_in_final_request_surface"
+            ),
         ):
             events = [
                 event
@@ -1741,8 +1756,17 @@ class TestStreamEngineRunStream:
         assert [event["type"] for event in events] == ["error"]
         assert events[0]["error"].startswith("structured_output_payload_schema_mismatch:construction_plan:")
         assert "is not of type 'object'" in events[0]["error"]
+        assert events[0]["metadata"]["tool_call_assembly"] == {
+            "provider": "anthropic_compat",
+            "content_block_index": 0,
+            "assembly": {
+                "argument_source": "complete_snapshot",
+                "delta_count": 1,
+            },
+        }
         emit_error.assert_called_once()
         assert emit_error.call_args.kwargs["error_message"] == events[0]["error"]
+        assert emit_error.call_args.kwargs["metadata"] == events[0]["metadata"]
 
     async def test_cancel_before_invoke(self) -> None:
         """取消标志设置时应立即抛出 CancelledError."""

@@ -1,0 +1,41 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "defect-20260821-l3-22-ce-semantic-output-repair",
+  "status": "IMPLEMENTED_LIVE_ROUTE_PROVEN_NEW_RESIDUAL",
+  "severity": "P0",
+  "classification": "platform_control_flow_gap",
+  "exact_run": {
+    "project_id": "L3-22",
+    "factory_run_id": "factory_a9812b43a06a",
+    "workspace": "/tmp/factory-bench-l3-22-audit-r01/workspaces/af07ec60fa38-b7b9e23e5b6d4e08/L3-22-5aaab9a81e5e829d/dc3c9f897f499583929b8714",
+    "failed_stage": "chief_engineer_review"
+  },
+  "symptom": "chief_engineer.portfolio_output_invalid: project_completion_contract delivery depth infeasible: prod_files=3 < 7",
+  "dynamic_evidence": {
+    "native_tool_call_count": 1,
+    "native_tool_name": "submit_structured_role_output",
+    "schema_transport_succeeded": true,
+    "actual_prod_files": 3,
+    "required_prod_files": 7,
+    "pm_replayed": false
+  },
+  "root_cause": "Factory only invokes its bounded same-stage CE reconstruction when RoleExecutionResultV1 itself reports a schema/transport failure. Schema-valid candidates that fail semantic completion-contract feasibility bypass repair and terminate immediately.",
+  "responsible_cell": "factory.pipeline",
+  "authority_owner": "chief_engineer.blueprint",
+  "fix": {
+    "strategy": "Route primary schema-valid post-validation contract errors through the existing one-shot CE reconstruction lease, then run the repaired payload through unchanged validation.",
+    "forbidden": [
+      "weaken delivery-depth minimums",
+      "restart PM",
+      "mutate generated project",
+      "dispatch Director with infeasible authority"
+    ]
+  },
+  "verification": {
+    "unit": "34 passed: test_characterization_ce_handoff.py",
+    "ruff": "passed for changed Factory files and test",
+    "mypy": "passed for changed Factory files",
+    "same_run_ce_retry": "route proven: primary prod_files=5 < 7 triggered one repair; repair rejected verification.3.modality=domain"
+  },
+  "next_action": "Dynamically audit the structured-output enum normalization/repair boundary for invalid verifier modalities; preserve the two-call cap and same CE stage."
+}

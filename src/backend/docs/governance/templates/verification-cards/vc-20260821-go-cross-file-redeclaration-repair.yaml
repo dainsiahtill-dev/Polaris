@@ -1,0 +1,57 @@
+card_id: "vc-20260821-go-cross-file-redeclaration-repair"
+bug_summary: >
+  L3-22 reduced to a paired Go cross-file function redeclaration, but repair
+  coverage matched only the primary compiler line and marked the companion
+  declaration line uncovered. The advertised Go dedup source tool then
+  received an incomplete diagnostic group and could only perform generated
+  intra-file type/const/var cleanup, producing zero patch.
+classification: pattern
+target_cell: "director.runtime"
+state_owner: "director.runtime.repair_kernel"
+effects_allowed:
+  - "read-only diagnostic coverage and plan-probe projection"
+  - "precise policy-gated edit_file through the existing Director adapter"
+  - "same-verifier revalidation and repair receipt attachment"
+effects_forbidden:
+  - "generated-project mutation by the main Agent"
+  - "whole-file fallback for an exact declaration span"
+  - "PM or Chief Engineer replay"
+  - "removing non-equivalent or receiver-bound declarations"
+assumptions:
+  - id: A1
+    statement: "Go redeclaration primary and companion lines are one diagnostic group."
+    status: verified_true
+    evidence: "Exact go test transcript names ParseNote in models/seed.go and its other declaration in models/model.go."
+  - id: A2
+    statement: "Current coverage splits the pair before planning."
+    status: verified_true
+    evidence: "Public coverage reports 1 covered/1 uncovered; plan probe reports deterministic_go_dedup_repair covered_unplannable with patch_count=0."
+  - id: A3
+    statement: "Equivalent top-level function bodies can be deduplicated without choosing between different semantics."
+    status: pending_unit_and_live_revalidation
+    evidence: "L3-22 contains equivalent ParseNote declarations; planner will compare normalized declaration text before emitting a patch."
+pre_mortem:
+  failure_point: >
+    A broad redeclaration regex could delete a different implementation, a Go
+    method, or an unpaired declaration and silently change project semantics.
+  prevention:
+    - "Require both compiler diagnostic halves and the same identifier."
+    - "Require both files to declare the same Go package."
+    - "Accept top-level functions only; reject receiver methods."
+    - "Require normalized declaration-body equivalence before planning."
+    - "Emit one exact text_replace operation against the compiler-primary path."
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/director/runtime/tests/test_go_cross_file_redeclaration.py"
+      description: "Coverage groups both compiler lines and plan probe emits one changed patch."
+      expected: "Both diagnostics executable-runtime covered; seed.go changed; model.go preserved."
+    - file: "polaris/cells/director/runtime/tests/test_go_cross_file_redeclaration.py"
+      description: "Different bodies, missing companion, and receiver methods fail closed."
+      expected: "No repair plan and no write operation."
+  live_test:
+    run_id: "factory_a9812b43a06a"
+    boundary: "same_director_task_repair_only"
+    expected: "TASK-2 edit receipt changes models/seed.go; go test residual decreases without PM/CE replay."
+sign_off:
+  completed_by: "pending"
+  completed_at: ""

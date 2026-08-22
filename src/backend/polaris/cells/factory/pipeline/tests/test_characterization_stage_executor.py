@@ -1500,6 +1500,51 @@ def test_workspace_validation_ledger_uses_terminal_verifier_epoch(tmp_path: Path
     assert artifact["commands"][0]["passed"] is False
 
 
+def test_workspace_validation_failure_detail_uses_terminal_verifier_epoch(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    artifact_path = executor._artifact_path("runtime/qa/workspace-validation.json")
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "passed": False,
+                "commands": [
+                    {
+                        "command": ["go", "test", "./..."],
+                        "phase": "check",
+                        "passed": False,
+                        "stderr_tail": "engine/engine.go: undefined: restBand",
+                    },
+                    {
+                        "command": ["go", "test", "./..."],
+                        "phase": "check_after_repair",
+                        "passed": False,
+                        "stderr_tail": "TestStepClampsOnFloor: velocity remains downward",
+                    },
+                ],
+                "effective_commands": [
+                    {
+                        "command": ["go", "test", "./..."],
+                        "phase": "check_after_repair",
+                        "passed": False,
+                        "stderr_tail": "TestStepClampsOnFloor: velocity remains downward",
+                    }
+                ],
+                "repair": {
+                    "residual_errors": ["TestStepClampsOnFloor: velocity remains downward"],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    detail = executor._workspace_quality_failure_detail("runtime/qa/workspace-validation.json")
+
+    assert "TestStepClampsOnFloor" in detail
+    assert "undefined: restBand" not in detail
+
+
 def test_pm_plan_validation_contract_hygiene_defers_test_acceptance_to_validation_task() -> None:
     payload = {
         "tasks": [

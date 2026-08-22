@@ -1,0 +1,87 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "defect-20260821-l3-22-package-local-owner-and-plannable-unmask",
+  "status": "SEMANTIC_NOOP_AND_FORWARD_UNMASK_UNIT_VERIFIED_LIVE_REVALIDATION_PENDING",
+  "severity": "P0",
+  "classification": "ownership_and_convergence",
+  "project_id": "L3-22",
+  "factory_run_id": "factory_a9812b43a06a",
+  "owner_cell": "factory.pipeline",
+  "symptom": "Same-run QA repair first selected no canonical owner for Go package-local diagnostics, then stopped after equal-count diagnostic swaps; after verifier context was repaired, a forced edit still accepted an algebraic semantic no-op as a physical mutation.",
+  "exact_run_evidence": {
+    "workspace": "/tmp/factory-bench-l3-22-audit-r01/workspaces/af07ec60fa38-b7b9e23e5b6d4e08/L3-22-5aaab9a81e5e829d/dc3c9f897f499583929b8714",
+    "initial_error_code": "workspace_quality_repair_canonical_owner_missing",
+    "package_local_diagnostic": "engine_test.go",
+    "canonical_target": "engine/engine_test.go",
+    "equal_count_transition": "Go constant conversion -> undefined: math",
+    "new_source_tool": "deterministic_go_missing_stdlib_import_repair",
+    "live_effect_receipts": [
+      {
+        "path": "main.go",
+        "before_sha256": "ee711c3eaebf19eabf2bf77faf9bb2d41bd0d844e059be53dd18d3e56b90716f",
+        "after_sha256": "9d6aedefa71d8a0062a07a04f0f2cdcf31902b00836cbbdc2d1e0e2c38d6616e"
+      },
+      {
+        "path": "main.go",
+        "before_sha256": "9d6aedefa71d8a0062a07a04f0f2cdcf31902b00836cbbdc2d1e0e2c38d6616e",
+        "after_sha256": "7ea9b2d4ae04e7f12bd74d8dc0e7df063778c56fe96947096ed1e227bf190613"
+      }
+    ],
+    "latest_final_request_snapshots": {
+      "pre_provider": "59a6b678551a65fa44829164",
+      "final_provider": "44b4193705493fa4b2a224da",
+      "context_verdict": "PASS: Director identity, full enclosing Go verifier function, forced edit_file, and engine/engine.go-only write scope"
+    },
+    "latest_ineffective_effect": {
+      "path": "engine/engine.go",
+      "before_sha256": "143d7ae",
+      "after_sha256": "ed922c",
+      "added_statement": "b.Velocity.Y -= 0",
+      "verifier_transition": "2 failures -> 2 failures"
+    },
+    "latest_forward_unmask": {
+      "resolved_tests": [
+        "TestRunEndToEndViaLibraryAPI",
+        "TestStepClampsOnFloor"
+      ],
+      "new_tests": [
+        "TestStepAppliesGravity",
+        "TestStepWithRestitutionBounces"
+      ],
+      "main_package_status": "passed",
+      "old_error_overlap": 0
+    }
+  },
+  "root_causes": [
+    "Go *_test.go diagnostics were not classified as test wrappers, so test files could outrank implementation owners.",
+    "Verifier package-local paths were compared literally and engine_test.go could not resolve to the unique canonical engine/engine_test.go target.",
+    "Shared JobToken allowed_write_paths were treated as unique ownership even though they are capability scope; CE task_completion_projection.owned_artifacts is the ownership SSoT.",
+    "The convergence breaker counted an equal-count diagnostic swap as stagnation without recognizing a newly exposed executable deterministic source_tool.",
+    "Tool-effect accounting treated any unequal content hash as mutation evidence, even when the only executable addition was an algebraic identity operation that cannot change behavior.",
+    "Director-local progress classification treated a fully disjoint, equal-size first-time failing-test transition as stagnation even though every prior failing test was resolved and the next verifier layer was exposed."
+  ],
+  "repair_strategy": [
+    "Use one cross-language test-target classifier including Go *_test.go.",
+    "Resolve package-local diagnostic paths by unique suffix under the workspace and fail closed on ambiguity.",
+    "Prefer CE task_completion_projection.owned_artifacts; use JobToken paths only for legacy rows lacking completion ownership.",
+    "Grant one bounded continuation when verifier output newly exposes an unseen plannable source_tool; repeated tools remain subject to the existing cycle breaker and hard cap.",
+    "Classify only narrow, provable comment/whitespace or algebraic identity edits as semantic no-ops; retain physical hash evidence separately but deny mutation-progress authority.",
+    "Project a generic verifier truth contract: a failure guard passes only when its executable condition becomes false, and comments cannot override setup/calls/assertions.",
+    "Allow one bounded verifier forward-unmask transition only when identifiable prior failing tests are all gone, the new set is disjoint and no larger, and its complete diagnostic signature has not appeared earlier in the local loop."
+  ],
+  "forbidden_actions": [
+    "modify generated L3-22 files outside Director policy execution",
+    "replay PM",
+    "replay Chief Engineer",
+    "treat shared capability scope as unique ownership",
+    "allow unlimited equal-count retries"
+  ],
+  "verification": {
+    "targeted_tests": "17 passed",
+    "workspace_quality_suite": "52 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "live_same_run": "latest recovery preserved PM/CE, rejected comment-only progress, resolved both old tests, and exposed two new tests; bounded forward-unmask revalidation is pending"
+  },
+  "next_action": "Restart the exact isolated instance on current source and retry only quality_gate for factory_a9812b43a06a; require a behavior-changing engine/engine.go edit, verifier reduction, and unchanged PM/CE hashes."
+}

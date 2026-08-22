@@ -132,6 +132,9 @@ async def _phase_quality_repair_loop(
     # progress: r14 changed one TypeScript error into multiple syntax/name
     # errors, yet the old predicate renewed the loop until the hard cap.
     stagnant_attempts = 0
+    seen_error_signatures: set[tuple[str, ...]] = {
+        _artifact_quality_error_signature(artifact_quality_errors)
+    }
     for repair_attempt in range(1, _QUALITY_REPAIR_ATTEMPT_HARD_CAP + 1):
         if not artifact_quality_errors:
             break
@@ -231,7 +234,9 @@ async def _phase_quality_repair_loop(
                 before_missing_count=deterministic_before_missing_count,
                 after_missing_count=len(_missing_declared_target_files(task, _adapter_workspace)),
                 successful_write_paths=_extract_successful_write_paths(deterministic_quality_tool_results),
+                previously_seen_error_signatures=seen_error_signatures,
             )
+            seen_error_signatures.add(_artifact_quality_error_signature(artifact_quality_errors))
             _annotate_quality_repair_progress(
                 deterministic_quality_summary,
                 evidence=deterministic_progress,
@@ -276,6 +281,7 @@ async def _phase_quality_repair_loop(
                 before_missing_count=llm_before_missing_count,
                 after_missing_count=len(_missing_declared_target_files(task, _adapter_workspace)),
                 successful_write_paths=[],
+                previously_seen_error_signatures=seen_error_signatures,
             )
             stagnant_attempts += 1
             stopped = stagnant_attempts >= _QUALITY_REPAIR_STAGNATION_LIMIT
@@ -342,7 +348,9 @@ async def _phase_quality_repair_loop(
                 before_missing_count=llm_before_missing_count,
                 after_missing_count=len(_missing_declared_target_files(task, _adapter_workspace)),
                 successful_write_paths=_extract_successful_write_paths(repair_tool_results),
+                previously_seen_error_signatures=seen_error_signatures,
             )
+            seen_error_signatures.add(_artifact_quality_error_signature(artifact_quality_errors))
             if bool(progress_evidence.get("effective_progress")):
                 stagnant_attempts = 0
             else:

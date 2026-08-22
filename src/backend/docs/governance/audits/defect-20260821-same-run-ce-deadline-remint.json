@@ -1,0 +1,28 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "defect-20260821-same-run-ce-deadline-remint",
+  "status": "IMPLEMENTED_PENDING_LIVE_REVALIDATION",
+  "severity": "P0",
+  "classification": "same_run_recovery_budget_gap",
+  "exact_run": {
+    "project_id": "L3-22",
+    "factory_run_id": "factory_a9812b43a06a",
+    "retry_stage": "chief_engineer_review"
+  },
+  "symptom": "Explicit same-run CE retry made zero provider calls and failed chief_engineer.deadline_admission_blocked.",
+  "dynamic_evidence": {
+    "remaining_seconds": 455,
+    "reserved_downstream_seconds": 310,
+    "available_for_ce_seconds": 145,
+    "requested_ce_timeout_seconds": 600,
+    "provider_calls": 0
+  },
+  "root_cause": "chief_engineer_review was absent from _SAME_RUN_RETRY_FULL_EPOCH_STAGES, so a 455-second stale lease passed the generic 180-second viability check even though CE plus mandatory Director/QA reserves could not be admitted.",
+  "fix": "Treat chief_engineer_review as a full-epoch owner-stage retry while retaining extension count and 5400-second caps.",
+  "verification": {
+    "deadline_tests": "17 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "same_run_ce_retry": "pending"
+  }
+}

@@ -17,6 +17,7 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
 )
 from polaris.cells.factory.pipeline.internal.factory_workspace_quality_impl import (
     _workspace_quality_authoritative_owner_paths,
+    _workspace_quality_causal_repair_target_files,
     _workspace_quality_llm_claim_target_files,
     _workspace_quality_test_shortfall_owner_targets,
 )
@@ -703,6 +704,147 @@ class TestRunWorkspaceQualityChecks:
             diagnostic_target_files=["tests/test_product.py", "src/dream_subway/__init__.py"],
             fallback_target_files=["src/main.py"],
         ) == ["src/dream_subway/__init__.py"]
+
+    def test_workspace_quality_llm_claim_treats_go_test_suffix_as_test_wrapper(self) -> None:
+        """Go package-local test diagnostics must not outrank source errors."""
+
+        assert _workspace_quality_llm_claim_target_files(
+            owner_target_files=None,
+            diagnostic_target_files=["engine/engine_test.go", "main.go"],
+            fallback_target_files=[],
+        ) == ["main.go"]
+
+    def test_workspace_quality_go_residual_claims_causal_implementation_owner(self, tmp_path: Path) -> None:
+        """L3-22: Go test wrappers must not lease before causal sources are known."""
+
+        (tmp_path / "engine").mkdir()
+        (tmp_path / "models").mkdir()
+        (tmp_path / "engine" / "engine_test.go").write_text("package engine\n", encoding="utf-8")
+        (tmp_path / "engine" / "engine.go").write_text("package engine\ntype Engine struct{}\n", encoding="utf-8")
+        (tmp_path / "models" / "model_test.go").write_text("package models\n", encoding="utf-8")
+        (tmp_path / "models" / "model.go").write_text("package models\ntype Bubble struct{}\n", encoding="utf-8")
+        (tmp_path / "main_test.go").write_text("package main\n", encoding="utf-8")
+        (tmp_path / "main.go").write_text("package main\n", encoding="utf-8")
+        executor = _executor(tmp_path)
+        errors = [
+            "Workspace validation command failed (go test ./...):\n"
+            "--- FAIL: TestBubbleValidMethod (0.00s)\n"
+            "models/model_test.go:32: expected ErrInvalidRadius\n"
+            "engine/engine_test.go:98: eng.Floor undefined "
+            "(type *engine.Engine has no field or method Floor)\n"
+            "main_test.go:113: cannot convert totalTime/dt+0.5 (untyped float constant) to type int"
+        ]
+
+        targets = _workspace_quality_causal_repair_target_files(
+            executor,
+            artifact_quality_errors=errors,
+        )
+        claim_targets = _workspace_quality_llm_claim_target_files(
+            owner_target_files=None,
+            diagnostic_target_files=targets,
+            fallback_target_files=[],
+        )
+
+        assert "models/model_test.go" in targets
+        assert "engine/engine.go" in targets
+        assert "models/model.go" in targets
+        assert "main.go" in targets
+        assert claim_targets == ["engine/engine.go"]
+
+    def test_workspace_quality_go_behavior_failure_excludes_test_owner(self, tmp_path: Path) -> None:
+        """L3-22: runnable assertions must lease implementation, not tests."""
+
+        (tmp_path / "engine").mkdir()
+        (tmp_path / "models").mkdir()
+        (tmp_path / "engine" / "engine_test.go").write_text("package engine\n", encoding="utf-8")
+        (tmp_path / "engine" / "engine.go").write_text("package engine\ntype Engine struct{}\n", encoding="utf-8")
+        (tmp_path / "models" / "model_test.go").write_text("package models\n", encoding="utf-8")
+        (tmp_path / "models" / "errors.go").write_text("package models\nvar ErrInvalidRadius error\n", encoding="utf-8")
+        (tmp_path / "main_test.go").write_text("package main\n", encoding="utf-8")
+        (tmp_path / "main.go").write_text("package main\n", encoding="utf-8")
+        executor = _executor(tmp_path)
+        errors = [
+            "Workspace validation command failed (go test ./...):\n"
+            "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+            "    engine_test.go:112: bubble still moving downward\n"
+            "--- FAIL: TestBubbleValidMethod (0.00s)\n"
+            "    model_test.go:124: want ErrInvalidRadius\n"
+        ]
+
+        targets = _workspace_quality_causal_repair_target_files(
+            executor,
+            artifact_quality_errors=errors,
+        )
+        claim_targets = _workspace_quality_llm_claim_target_files(
+            owner_target_files=["engine/engine_test.go", "models/model_test.go", "main_test.go"],
+            diagnostic_target_files=targets,
+            fallback_target_files=[],
+        )
+
+        assert targets
+        assert all(not path.endswith("_test.go") for path in targets)
+        assert claim_targets
+        assert not claim_targets[0].endswith("_test.go")
+
+    def test_workspace_quality_go_compile_failure_keeps_direct_test_owner(self, tmp_path: Path) -> None:
+        """Compiler diagnostics in an authored test still belong to that test."""
+
+        (tmp_path / "engine").mkdir()
+        (tmp_path / "engine" / "engine_test.go").write_text("package engine\n", encoding="utf-8")
+        (tmp_path / "engine" / "engine.go").write_text("package engine\ntype Engine struct{}\n", encoding="utf-8")
+        executor = _executor(tmp_path)
+        errors = [
+            "Workspace validation command failed (go test ./...):\n"
+            "--- FAIL: TestEngine\n"
+            "engine/engine_test.go:12:4: eng.Floor undefined"
+        ]
+
+        targets = _workspace_quality_causal_repair_target_files(
+            executor,
+            artifact_quality_errors=errors,
+        )
+
+        assert "engine/engine_test.go" in targets
+
+    def test_workspace_quality_owner_paths_prefer_completion_projection_over_shared_token(self) -> None:
+        """Capability scope may be shared; CE owned_artifacts is unique ownership."""
+
+        metadata = {
+            "task_completion_projection": {
+                "run_id": "factory-owner",
+                "task_id": "TASK-2",
+                "owned_artifacts": [
+                    {"path": "engine/physics.go", "owner_task_id": "TASK-2"},
+                ],
+            },
+            "control_plane_job_token": {
+                "factory_run_id": "factory-owner",
+                "allowed_write_paths": ["main.go", "engine/physics.go"],
+            },
+        }
+
+        assert _workspace_quality_authoritative_owner_paths(metadata, run_id="factory-owner") == [
+            "engine/physics.go"
+        ]
+
+    def test_workspace_quality_resolves_unique_package_local_go_test_path(self, tmp_path: Path) -> None:
+        """Go emits engine_test.go while the project owner path includes engine/."""
+
+        engine = tmp_path / "engine"
+        engine.mkdir()
+        (engine / "engine_test.go").write_text("package engine\n", encoding="utf-8")
+        (tmp_path / "main.go").write_text("package main\n", encoding="utf-8")
+        executor = _executor(tmp_path)
+
+        targets = executor._workspace_quality_repair_diagnostic_target_files(
+            [
+                "--- FAIL: TestStepAppliesGravity (0.00s)\n"
+                "    engine_test.go:61: bubble did not fall",
+                "# musicbubble\n./main.go:55:15: cannot convert totalTime / step",
+            ]
+        )
+
+        assert targets == ["engine/engine_test.go", "main.go"]
 
     def test_workspace_quality_llm_claim_rejects_stale_owner_when_current_cause_moved(self) -> None:
         """Prior TASK-1 scope cannot hide a new TASK-2 verifier failure."""
@@ -1727,6 +1869,39 @@ class TestRunWorkspaceQualityChecks:
             )
             == "forward_unmask"
         )
+        # Live L3-22: packages engine/models already exposed assertions while
+        # root-package main_test.go still failed compilation. Fixing the root
+        # compile barrier revealed runnable root tests; total diagnostic count
+        # stayed equal, but verifier phase advanced.
+        assert (
+            classify(
+                before_signature=(
+                    "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+                    "engine_test.go:112: bubble still moving downward",
+                    "main_test.go:113:15: cannot convert totalTime / dt + 0.5 "
+                    "(untyped float constant 30.5) to type int",
+                ),
+                after_signature=(
+                    "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+                    "engine_test.go:112: bubble still moving downward",
+                    "--- FAIL: TestRunEndToEndViaLibraryAPI (0.00s)\n"
+                    "main_test.go:148: bubble still moving downward",
+                ),
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "forward_unmask"
+        )
+        # Compile-to-compile churn is not phase advancement.
+        assert (
+            classify(
+                before_signature=("main.go:10:2: undefined: first",),
+                after_signature=("main.go:11:2: undefined: second",),
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "equal_count_swap"
+        )
         # Live L3-21: fixing a missing dataclass import moved unittest from a
         # module-level _FailedTest/NameError into 34 executed tests.  The newly
         # visible assertion failures increased the residual count, but the
@@ -2368,6 +2543,243 @@ class TestRunWorkspaceQualityChecks:
             assert item["repair_summary"]["claimed_success_before_revalidation"] is True
             assert item["repair_summary"]["success"] is False
             assert item["repair_summary"]["success_authority"] == "post_repair_verifier"
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_equal_count_swap_carries_prior_failure_as_llm_regression_guard(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Current residuals stay authoritative while prior fixed tests guard against ping-pong."""
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-regression-guard",
+            config=FactoryConfig(name="quality-regression-guard"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-21T00:00:00+00:00",
+        )
+        diagnostics = (
+            "engine_test.go:112: TestStepClampsOnFloor still moving downward",
+            "engine_test.go:69: TestStepAppliesGravity velocity=-4.905 want 4.905",
+            "engine_test.go:112: TestStepClampsOnFloor still moving downward",
+        )
+        command_calls = 0
+        llm_contexts: list[dict[str, object]] = []
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            nonlocal command_calls
+            del timeout_seconds
+            diagnostic = diagnostics[min(command_calls, len(diagnostics) - 1)]
+            command_calls += 1
+            return {
+                "command": command,
+                "exit_code": 1,
+                "passed": False,
+                "stdout_tail": diagnostic,
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def no_deterministic_effect(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            del kwargs
+            return [], {"attempted": True, "success": False, "write_tool_evidence": False}
+
+        async def mutating_llm_effect(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            llm_contexts.append(dict(kwargs["context"]))
+            attempt = len(llm_contexts)
+            return (
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {
+                            "file": "engine/engine.go",
+                            "operation": "modify",
+                            "before_hash": f"before-{attempt}",
+                            "after_hash": f"after-{attempt}",
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "task_id": "TASK-3",
+                    "repair_target_files": ["engine/engine.go"],
+                    "write_tool_evidence": True,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["go", "test", "./..."]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_deterministic_repairs", no_deterministic_effect)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", mutating_llm_effect)
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "workspace_quality_unclaimed_failing_tu_targets",
+            lambda *_args, **_kwargs: [],
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "workspace_quality_unclaimed_residual_targets",
+            lambda *_args, **_kwargs: [],
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "leftover_targets_should_force_owner_rotate",
+            lambda *_args, **_kwargs: False,
+        )
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 3},
+        )
+
+        assert passed is False
+        assert len(llm_contexts) == 2
+        first_quality = llm_contexts[0].get("director_quality_repair")
+        assert not isinstance(first_quality, dict) or not first_quality.get("regression_guard_errors")
+        second_quality = llm_contexts[1]["director_quality_repair"]
+        assert isinstance(second_quality, dict)
+        guards = second_quality["regression_guard_errors"]
+        assert isinstance(guards, list)
+        assert any("TestStepClampsOnFloor" in str(item) for item in guards)
+        assert all("TestStepAppliesGravity" not in str(item) for item in guards)
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        rounds = payload["repair"]["rounds"]
+        assert rounds[0]["regression_guard_errors"] == []
+        assert any(
+            "TestStepClampsOnFloor" in str(item)
+            for item in rounds[0]["regression_guard_errors_for_next_round"]
+        )
+        assert any("TestStepClampsOnFloor" in str(item) for item in rounds[1]["regression_guard_errors"])
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_new_plannable_repair_gets_next_bounded_round(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An equal-count swap may unmask one executable deterministic repair.
+
+        Live L3-22 changed a Go constant-conversion failure into
+        ``undefined: math``. Go diagnostics had no stable extracted error code,
+        so the second equal-count swap tripped the stagnation breaker even
+        though plan-probe had just exposed the executable stdlib-import repair.
+        The newly plannable source_tool earns one more bounded round; repeated
+        exposure of the same tool still remains subject to the normal breaker.
+        """
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-go-plannable-unmask",
+            config=FactoryConfig(name="quality-go-plannable-unmask"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-21T00:00:00+00:00",
+        )
+        diagnostics = (
+            "./main.go:55:15: cannot convert totalTime / step + 0.5 to type int",
+            "./main.go:55:15: cannot convert totalTime / step + 0.5 to type int (rephrased)",
+            "./main.go:55:15: undefined: math",
+        )
+        command_calls = 0
+        repair_calls = 0
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            nonlocal command_calls
+            del timeout_seconds
+            if command_calls >= len(diagnostics):
+                command_calls += 1
+                return {
+                    "command": command,
+                    "exit_code": 0,
+                    "passed": True,
+                    "stdout_tail": "ok\n",
+                    "stderr_tail": "",
+                    "error": "",
+                }
+            diagnostic = diagnostics[command_calls]
+            command_calls += 1
+            return {
+                "command": command,
+                "exit_code": 1,
+                "passed": False,
+                "stdout_tail": "",
+                "stderr_tail": diagnostic,
+                "error": "",
+            }
+
+        async def fake_apply_workspace_quality_deterministic_repairs(
+            *,
+            run: FactoryRun,
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal repair_calls
+            assert run.id == "factory-quality-go-plannable-unmask"
+            assert artifact_quality_errors
+            repair_calls += 1
+            return (
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {
+                            "source_tool": "deterministic_go_missing_stdlib_import_repair",
+                            "file": "main.go",
+                            "operation": "modify",
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "source_tools": ["deterministic_go_missing_stdlib_import_repair"],
+                    "tool_results": 1,
+                    "write_tool_evidence": True,
+                    "attempt": repair_attempt,
+                },
+            )
+
+        def fake_plan_probe(errors: list[str]) -> dict[str, object]:
+            if any("undefined: math" in item for item in errors):
+                return {
+                    "status": "covered_plannable",
+                    "plannable_source_tools": ["deterministic_go_missing_stdlib_import_repair"],
+                }
+            return {"status": "coverage_gap", "plannable_source_tools": []}
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["go", "test", "./..."]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_workspace_quality_repair_plan_probe_report", fake_plan_probe)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_deterministic_repairs",
+            fake_apply_workspace_quality_deterministic_repairs,
+        )
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 3},
+        )
+
+        assert passed is True
+        assert command_calls == 4
+        assert repair_calls == 3
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        repair = payload["repair"]
+        assert repair["success"] is True
+        assert repair["convergence_stop_reason"] == "verifier_passed"
+        assert repair["rounds"][1]["verifier_effect"] == "equal_count_swap"
+        assert repair["rounds"][1]["newly_plannable_source_tools"] == [
+            "deterministic_go_missing_stdlib_import_repair"
+        ]
 
     @pytest.mark.asyncio
     async def test_workspace_quality_rust_forward_unmask_chain_runs_to_verifier(

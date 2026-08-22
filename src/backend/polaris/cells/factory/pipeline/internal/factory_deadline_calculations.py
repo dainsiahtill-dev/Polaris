@@ -72,7 +72,7 @@ _SAME_RUN_RETRY_MAX_TIMEOUT_SECONDS = 5400.0
 # director.dispatch_deadline_blocker (requested 139, remaining 259).
 # Implementation retries need a full Director epoch, same as quality_gate.
 _SAME_RUN_RETRY_FULL_EPOCH_STAGES = frozenset(
-    {"quality_gate", "implementation", "director_dispatch"},
+    {"chief_engineer_review", "quality_gate", "implementation", "director_dispatch"},
 )
 # Live L2-14: remints were consumed diagnosing bind/observer, crate rewrite
 # plan_probe, and LLM reverting a committed rewrite. Another same-run
@@ -137,11 +137,12 @@ def extend_factory_run_deadline_for_same_run_retry(
     retry_stage: str,
     max_extensions: int = _SAME_RUN_RETRY_MAX_EXTENSIONS,
 ) -> dict[str, Any] | None:
-    """Remint ``factory_run_deadline`` for a same-run Director/QA retry.
+    """Remint ``factory_run_deadline`` for a same-run CE/Director/QA retry.
 
     Isolated backends can outlive the original bench wall-clock.  Quality
-    repair and Director admission both fail-closed when that caller-supplied
-    deadline is already expired, so owner-task LLM repair never starts.
+    CE reconstruction, quality repair, and Director admission all fail-closed
+    when that caller-supplied deadline is already expired or reduced to a
+    non-viable sliver, so the owner-stage LLM repair never starts.
     A same-run retry is not a new Factory run: PM/CE stay frozen and only
     the retry epoch receives a fresh conserved budget.
 

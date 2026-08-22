@@ -125,6 +125,72 @@ def test_structured_failure_signal_uses_typed_fields_not_message_prose() -> None
     ]
 
 
+def test_structured_failure_signal_promotes_machine_error_message_prefix() -> None:
+    events = [
+        {
+            "event": "error",
+            "raw": {
+                "metadata": {
+                    "role": "chief_engineer",
+                    "error_code": "output_validation_failed",
+                    "error_category": "provider",
+                    "error_message": (
+                        "structured_output_payload_schema_mismatch:$:Additional properties are not allowed"
+                    ),
+                    "context_snapshot_ref": "000000000000000000000003",
+                }
+            },
+        }
+    ]
+
+    assert _structured_failure_signals(events) == [
+        {
+            "error_code": "structured_output_payload_schema_mismatch",
+            "error_category": "provider",
+            "error_message": "structured_output_payload_schema_mismatch:$:Additional properties are not allowed",
+            "event_kind": "error",
+            "role": "chief_engineer",
+            "stage": "",
+            "task_id": "",
+            "context_snapshot_ref": "000000000000000000000003",
+            "timestamp": "",
+        }
+    ]
+
+
+def test_structured_failure_signal_dedup_keeps_latest_physical_error() -> None:
+    events = [
+        {
+            "event": "error",
+            "ts": "2026-08-21T00:00:01Z",
+            "raw": {
+                "metadata": {
+                    "role": "chief_engineer",
+                    "error_message": "structured_output_payload_schema_mismatch:first",
+                    "context_snapshot_ref": "000000000000000000000001",
+                }
+            },
+        },
+        {
+            "event": "error",
+            "ts": "2026-08-21T00:00:02Z",
+            "raw": {
+                "metadata": {
+                    "role": "chief_engineer",
+                    "error_message": "structured_output_payload_schema_mismatch:latest",
+                    "context_snapshot_ref": "000000000000000000000002",
+                }
+            },
+        },
+    ]
+
+    signals = _structured_failure_signals(events)
+
+    assert len(signals) == 1
+    assert signals[0]["error_message"].endswith(":latest")
+    assert signals[0]["context_snapshot_ref"] == "000000000000000000000002"
+
+
 def test_workspace_quality_artifact_is_read_from_canonical_runtime_root(tmp_path, monkeypatch) -> None:
     runtime_root = tmp_path / ".polaris" / "runtime"
     evidence_path = runtime_root / "qa" / "workspace-validation.json"
@@ -230,3 +296,40 @@ def test_offline_journal_fallback_correlates_role_run_to_factory_run(tmp_path, m
     assert result.status == "available"
     assert result.payload["total"] == 1
     assert result.payload["events"][0]["run_id"] == "director-role-run"
+
+
+def test_registered_empty_audit_store_still_discovers_exact_run_journal(tmp_path, monkeypatch) -> None:
+    """A registered-but-empty AuditStore must not hide physical run evidence."""
+    runtime_root = tmp_path / ".polaris" / "runtime"
+    logs = runtime_root / "runs" / "factory_exact" / "logs"
+    logs.mkdir(parents=True)
+    event = {
+        "event_id": "event-from-journal",
+        "run_id": "factory_exact",
+        "ts": "2026-08-21T00:00:00Z",
+        "ts_epoch": 1.0,
+        "role": "chief_engineer",
+        "refs": {"context_snapshot_ref": "ec851e95f353eb000dab334b"},
+    }
+    with open(logs / "journal.norm.jsonl", "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+    monkeypatch.setattr(diagnosis_service, "has_audit_store_factory", lambda: True)
+    monkeypatch.setattr(
+        diagnosis_service,
+        "AuditUseCaseFacade",
+        lambda *, runtime_root: SimpleNamespace(query_logs=lambda **_kwargs: []),
+    )
+
+    result = query_audit_diagnosis_trail(
+        QueryAuditDiagnosisTrailV1(
+            workspace=str(tmp_path),
+            run_id="factory_exact",
+            limit=50,
+        )
+    )
+
+    assert result.ok is True
+    assert result.status == "available"
+    assert result.payload["total"] == 1
+    assert result.payload["events"][0]["event_id"] == "event-from-journal"

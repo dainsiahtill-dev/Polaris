@@ -1,0 +1,60 @@
+card_id: "vc-20260821-ce-semantic-output-repair"
+bug_summary: >
+  L3-22 produced a schema-valid Chief Engineer portfolio whose immutable
+  completion contract authorized only 3 production artifacts while the
+  validated PM delivery-depth contract required 7. Factory rejected the
+  portfolio correctly, but the only bounded same-stage repair path was gated
+  on transport/schema failure, so a repairable semantic contract deficit
+  terminated the run before Director dispatch.
+classification: pattern
+target_cell: "factory.pipeline"
+state_owner: "chief_engineer.blueprint"
+effects_allowed:
+  - "one additional Chief Engineer provider call under the existing bounded repair lease"
+  - "project-local runtime evidence writes through existing Factory helpers"
+effects_forbidden:
+  - "generated-project mutation"
+  - "PM replay"
+  - "Director dispatch before CE feasibility passes"
+assumptions:
+  - id: A1
+    statement: "Delivery-depth feasibility remains a hard pre-Director authority invariant."
+    status: verified_true
+    evidence: "project_chief_engineer_portfolio_delivery_depth_feasibility returned prod_files=3, required=7 for exact run factory_a9812b43a06a."
+  - id: A2
+    statement: "The failed response was schema-valid and came from one native submit_structured_role_output call."
+    status: verified_true
+    evidence: "Exact CE journal records native_tool_calls_count=1 and Factory reached chief_engineer.portfolio_output_invalid rather than structured-output transport failure."
+  - id: A3
+    statement: "Existing schema repair already preserves PM authority, final-request profile identity, deadline admission, lease settlement, and a two-call cap."
+    status: verified_true
+    evidence: "_run_chief_engineer_schema_repair reconstructs from validated PM contracts and is separately claimed and deadline-admitted."
+  - id: A4
+    statement: "Semantic underdelivery is repairable without weakening the gate or restarting PM."
+    status: pending_live_revalidation
+    evidence: "The repair objective already names delivery_depth_contract and requires enough production/test artifact obligations."
+pre_mortem:
+  failure_point: >
+    Reusing the bounded repair after a schema-valid response could double-call
+    the provider, settle the primary lease twice, or accept a second infeasible
+    portfolio without preserving the original failure evidence.
+  prevention:
+    - "Trigger only when the primary result is ok and post-schema contract validation reports errors."
+    - "Use the existing primary-settlement and repair-claim path exactly once."
+    - "Run the repaired payload through the unchanged full validation and feasibility gates."
+    - "Persist machine-readable primary validation errors and final repair verdict."
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/factory/pipeline/tests/test_characterization_ce_handoff.py"
+      description: "Schema-valid delivery-depth deficit invokes one bounded CE repair; repaired feasible payload succeeds."
+      expected: "Two CE commands, no PM replay, repair feedback contains exact deficit, final blueprint generated."
+    - file: "polaris/cells/factory/pipeline/tests/test_characterization_ce_handoff.py"
+      description: "Second infeasible payload remains failed after the single repair budget."
+      expected: "Exactly two CE calls and chief_engineer.portfolio_output_invalid remains terminal."
+  live_test:
+    run_id: "factory_a9812b43a06a"
+    boundary: "same_ce_stage"
+    expected: "CE either produces a feasible portfolio and advances to Director, or stops with a new exact residual; PM is not replayed."
+sign_off:
+  completed_by: "pending"
+  completed_at: ""

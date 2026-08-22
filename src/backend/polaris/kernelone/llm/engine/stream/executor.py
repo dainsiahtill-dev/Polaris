@@ -521,6 +521,7 @@ class StreamExecutor:
         key = _tool_accumulator_key(tool_call, ordinal)
         self._enforce_pending_tool_calls_limit(pending_tool_calls)
         accumulator = pending_tool_calls.setdefault(key, _ToolCallAccumulator())
+        accumulator.delta_count += 1
 
         tool_name = str(tool_call.get("tool") or "").strip()
         if tool_name:
@@ -541,16 +542,20 @@ class StreamExecutor:
             arguments_text = ""
             arguments_complete = False
             arguments_text_is_empty_placeholder = True
+            accumulator.provisional_placeholder_count += 1
 
         if arguments_text:
             if arguments_complete and not accumulator.arguments_buffer:
                 accumulator.arguments_buffer = arguments_text
+                accumulator.complete_snapshot_count += 1
             elif arguments_complete and arguments_text.lstrip().startswith("{"):
                 parsed_next_arguments, parsed_next_complete = _normalize_arguments(arguments_text)
                 if parsed_next_complete and parsed_next_arguments:
                     accumulator.arguments_buffer = arguments_text
+                    accumulator.complete_snapshot_count += 1
             else:
                 accumulator.arguments_buffer += arguments_text
+                accumulator.fragment_count += 1
 
         if explicit_complete:
             accumulator.explicit_arguments = explicit_arguments
@@ -560,6 +565,8 @@ class StreamExecutor:
             # argument deltas arrive; emitting that placeholder mid-stream caused the
             # partial call to be executed alongside the completed one.
             accumulator.explicit_arguments_provisional = not explicit_arguments
+            if explicit_arguments:
+                accumulator.explicit_complete_count += 1
             if arguments_complete and explicit_arguments and not accumulator.arguments_buffer:
                 accumulator.arguments_buffer = json.dumps(explicit_arguments, ensure_ascii=False)
 
@@ -572,10 +579,28 @@ class StreamExecutor:
             )
             raise RuntimeError(msg)
 
+        if accumulator.fragment_count:
+            argument_source = "stream_fragments"
+        elif accumulator.complete_snapshot_count:
+            argument_source = "complete_snapshot"
+        elif accumulator.explicit_complete_count:
+            argument_source = "explicit_arguments"
+        elif accumulator.provisional_placeholder_count:
+            argument_source = "provisional_placeholder"
+        else:
+            argument_source = "unknown"
         accumulator.provider_meta = {
             "provider": provider_type,
             "index": tool_call.get("index"),
             "content_block_index": tool_call.get("content_block_index"),
+            "assembly": {
+                "argument_source": argument_source,
+                "complete_snapshot_count": accumulator.complete_snapshot_count,
+                "delta_count": accumulator.delta_count,
+                "explicit_complete_count": accumulator.explicit_complete_count,
+                "fragment_count": accumulator.fragment_count,
+                "provisional_placeholder_count": accumulator.provisional_placeholder_count,
+            },
         }
 
         payload = self._build_stream_tool_payload(accumulator)

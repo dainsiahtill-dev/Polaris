@@ -538,6 +538,7 @@ class StreamEngine:
             retry_error_message = ""
             retry_error_category = "unknown"
             provider_stream: Any | None = None
+            last_event_metadata: dict[str, Any] = {}
 
             try:
                 prepared.__post_init__()
@@ -569,6 +570,7 @@ class StreamEngine:
                     metadata.setdefault("stream_event_index", stream_event_count)
                     metadata.setdefault("stream_reconnect_attempt", reconnect_count)
                     metadata.setdefault("stream_reconnect_recovered", reconnect_count > 0)
+                    last_event_metadata = dict(metadata)
 
                     if event_type == "error":
                         error_message = str(normalized.error or content or "stream_error").strip() or "stream_error"
@@ -750,6 +752,10 @@ class StreamEngine:
                     should_retry, retry_error_message, retry_error_category = True, error_message, error_category
                 else:
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
+                    exception_metadata = {
+                        **last_event_metadata,
+                        **_build_stream_error_metadata(elapsed_ms=elapsed_ms, error_type=type(stream_exc).__name__),
+                    }
                     self._emit_call_error(
                         event_emitter=event_emitter,
                         role=role_id,
@@ -761,16 +767,12 @@ class StreamEngine:
                         error_message=error_message,
                         call_id=call_id,
                         elapsed_ms=elapsed_ms,
-                        metadata=_build_stream_error_metadata(
-                            elapsed_ms=elapsed_ms, error_type=type(stream_exc).__name__
-                        ),
+                        metadata=exception_metadata,
                     )
                     yield {
                         "type": "error",
                         "error": error_message,
-                        "metadata": _build_stream_error_metadata(
-                            elapsed_ms=elapsed_ms, error_type=type(stream_exc).__name__
-                        ),
+                        "metadata": exception_metadata,
                         "iteration": turn_round,
                     }
                     return

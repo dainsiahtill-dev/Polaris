@@ -844,12 +844,15 @@ def build_exact_run_causal_report(
         "roles.kernel",
         "llm.provider_runtime",
     }
+    stage_signal_role = _normalized_role((stage_signal or {}).get("role"))
     required_provider_role = {
         "orchestration.pm_planning": "pm",
         "chief_engineer.blueprint": "chief_engineer",
         "director.runtime": "director",
-        "roles.kernel": "director",
-    }.get(selected_owner, _stage_role(failed_stages[0]) if failed_stages else "")
+    }.get(
+        selected_owner,
+        stage_signal_role or (_stage_role(failed_stages[0]) if failed_stages else ""),
+    )
     required_provider_request_available = bool(required_provider_role) and required_provider_role in provider_roles
     final_provider_details = _mapping(evidence_chain["final_provider_request"].get("details"))
     evidence_chain["final_provider_request"]["details"] = {

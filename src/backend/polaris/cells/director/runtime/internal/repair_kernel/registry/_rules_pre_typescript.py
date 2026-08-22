@@ -425,6 +425,38 @@ def pre_typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             runtime_plan_available=True,
         ),
         RepairRuleDefinition(
+            rule_id="go.deduplicate_generated_declarations_companion",
+            source_tool=GO_DEDUP_SOURCE_TOOL,
+            language="go",
+            phase="code_repair",
+            archetype=RepairArchetype.GENERATED_RESIDUE,
+            priority=2,
+            diagnostic_codes=("go_compile_error",),
+            message_terms=("other declaration of",),
+            risk_level="medium",
+            description=(
+                "Binds the compiler companion location to the same conservative Go "
+                "cross-file declaration dedup planner."
+            ),
+            runtime_plan_available=True,
+        ),
+        RepairRuleDefinition(
+            rule_id="go.deduplicate_generated_methods",
+            source_tool=GO_DEDUP_SOURCE_TOOL,
+            language="go",
+            phase="code_repair",
+            archetype=RepairArchetype.GENERATED_RESIDUE,
+            priority=2,
+            diagnostic_codes=("go_compile_error",),
+            message_terms=("method", "already declared at"),
+            risk_level="medium",
+            description=(
+                "Removes a compiler-located duplicate Go method only when both complete "
+                "declarations are token-equivalent."
+            ),
+            runtime_plan_available=True,
+        ),
+        RepairRuleDefinition(
             rule_id="go.unused_import",
             source_tool=GO_UNUSED_IMPORT_SOURCE_TOOL,
             language="go",

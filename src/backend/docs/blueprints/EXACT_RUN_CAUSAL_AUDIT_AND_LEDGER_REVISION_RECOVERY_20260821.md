@@ -406,3 +406,266 @@ fresh Bench may be reported as platform-validated until the full Director
 Runtime suite exits zero. Repair must start with the split test imports and
 fixtures, then audit semantic coverage drift separately; generated project
 files and PM/CE stages are outside this repair boundary.
+
+## L3-22 CE semantic-output repair boundary
+
+Exact run `factory_a9812b43a06a` established a second pre-Director failure
+class. The CE provider completed one native `submit_structured_role_output`
+call and returned a schema-valid portfolio, but its immutable completion
+contract authorized only three production artifacts against the validated L3
+minimum of seven. The feasibility gate was correct; the orchestration path was
+not convergent because its single bounded repair was reachable only for
+transport/schema failures.
+
+The repair design keeps the existing authority boundary:
+
+```text
+validated PM contracts + CE topology authority
+                 |
+                 v
+primary CE structured candidate
+                 |
+       schema + semantic + feasibility validation
+                 |
+        repairable contract deficit only
+                 |
+                 v
+one separately claimed/deadline-admitted CE reconstruction
+                 |
+                 v
+unchanged full validation -> persist candidate -> Director
+```
+
+No gate is relaxed. No generated-project file is edited. PM is never replayed.
+The repair call inherits the original prompt-profile identity, validated PM
+contracts, target/scope authority, project-completion authority, and exact
+validation errors. A second invalid payload exhausts the repair budget and
+remains a CE-local failure. Verification is defined by
+`vc-20260821-ce-semantic-output-repair.yaml` and exact same-run CE retry.
+
+Live same-run revalidation then exposed and closed a separate deadline-owner
+bug. `chief_engineer_review` was absent from the retry stages that require a
+fresh full Factory epoch, so a stale 455-second lease admitted zero CE calls
+after reserving 310 seconds for Director/QA/finalization. Adding CE to that
+full-epoch set preserves all existing budgets rather than weakening them.
+The next retry of exact run `factory_a9812b43a06a` preserved PM completion,
+reopened only CE, projected `factory_run_deadline_source=same_run_retry_epoch`,
+incremented the extension count to 2, and entered a real CE provider stream.
+The L3 march therefore remains anchored at `L3-22`, the first recorded open
+L3 project; completed earlier projects are not replayed.
+
+## L3-22 Go cross-file redeclaration repair gap
+
+Exact run `factory_a9812b43a06a` advanced through PM, Chief Engineer, and
+Director materialization, then reduced the physical `go test -count=0 ./...`
+residual to one compiler island:
+
+```text
+models/seed.go:119:6: ParseNote redeclared in this block
+models/model.go:169:6: other declaration of ParseNote
+```
+
+The same-run QA recovery correctly reclaimed only `TASK-2`, forced native
+`edit_file`, committed a non-no-op effect receipt for `models/seed.go`, and
+reran the same verifier. The residual did not close. Public repair coverage
+proved the platform defect:
+
+- the primary `redeclared in this block` diagnostic matched
+  `deterministic_go_dedup_repair`;
+- the companion `other declaration of ParseNote` diagnostic was classified as
+  uncovered;
+- plan probe therefore passed only one half of the compiler diagnostic group
+  to the planner and returned `covered_unplannable`, `patch_count=0`;
+- the existing Go dedup implementation only removed repeated generated
+  `type|const|var` lines inside one file; it could not repair equivalent
+  top-level function declarations across files despite advertising generic Go
+  redeclaration coverage.
+
+The repair remains inside `director.runtime` and preserves the public generic
+Plan/Run boundary:
+
+```text
+paired Go compiler diagnostics
+        |
+        v
+coverage: both halves -> deterministic_go_dedup_repair
+        |
+        v
+planner: locate same top-level function in both package files
+        |
+        +-- bodies differ / pair incomplete -> no patch, fail closed
+        |
+        v
+equivalent bodies -> remove compiler-primary duplicate only
+        |
+        v
+PatchComposer -> policy-gated edit_file -> receipt -> go test revalidation
+```
+
+Assumption Register:
+
+1. The two compiler lines form one indivisible diagnostic group. Verified by
+   the exact `go test` transcript and shared symbol name.
+2. Removing the compiler-primary declaration is safe only when the primary and
+   companion are complete declarations in the same directory/package and have
+   token-equivalent source after removing comments/insignificant whitespace.
+   Functions, receiver methods, structs, single-line variables, and grouped
+   const/var declarations use the same rule. Any semantic difference remains
+   an LLM repair/blocker.
+3. Coverage must include the companion line under the same source tool; merely
+   broadening the primary match cannot make the planner plannable.
+4. The repair must emit a precise text replacement, never write a whole file,
+   and must not mutate generated projects outside Director policy execution.
+
+Pre-mortem: the most likely wrong repair would delete a semantically different
+function or a build-specific declaration. The planner therefore rejects
+missing/ambiguous companions, different names or declaration kinds, different
+directories/packages, build-tagged files, malformed/unbalanced declarations,
+and non-equivalent bodies. Equivalent methods are permitted because the exact
+receiver-bearing declaration is compared; different methods remain blocked.
+
+Implementation evidence (2026-08-21): eight focused tests cover paired
+coverage, public plan probing, functions/types/vars, grouped constants, method
+diagnostic spelling, multi-pair compiler receipts, and fail-closed paths. The
+focused Director Runtime suite reports `76 passed`; Ruff and Mypy are clean.
+A no-write shadow replay against the exact L3-22 workspace produced two
+non-overlapping patches in wave 1 and two in wave 2. The verifier residual
+then narrowed to the intentionally non-equivalent `Engine.Step`, its missing
+`applyPhysics` dependency, stale imports, and missing `Bubble.Validate`. Those
+are separate semantic repairs and must not be hidden by declaration dedup.
+
+Verification is defined by
+`vc-20260821-go-cross-file-redeclaration-repair.yaml`. Live acceptance requires
+same-run `TASK-2` repair only, a changed-hash `edit_file` receipt, and a new
+`go test -count=0 ./...` result. PM and Chief Engineer calls must remain
+unchanged.
+
+## L3-22 package-local owner routing and plannable-repair unmask
+
+The next same-run QA recovery exposed two factory-level defects. First, Go
+package diagnostics used package-local paths such as `engine_test.go`, while
+the canonical CE target was `engine/engine_test.go`. The repair loop neither
+classified `*_test.go` as a test wrapper nor resolved the unique package-local
+path. It also treated shared JobToken capability paths as unique ownership,
+even though multiple tasks may legitimately receive write capability for a
+manifest or entrypoint. The unique ownership SSoT is the CE
+`task_completion_projection.owned_artifacts` projection.
+
+Second, two real Director `edit_file` effects changed `main.go` and reran
+`go test`. The second change replaced a constant conversion with
+`math.Round`, changing the residual to `undefined: math`. Error count stayed
+equal and the generic Go diagnostic-code extractor reported no stable code,
+so the convergence breaker stopped after two `equal_count_swap` rounds. The
+post-verifier coverage plan nevertheless newly exposed
+`deterministic_go_missing_stdlib_import_repair`. That is concrete executable
+progress and must receive one bounded continuation.
+
+The hardened flow is:
+
+```text
+verifier diagnostic path
+        |
+        v
+unique workspace suffix resolution (ambiguity blocks)
+        |
+        v
+CE completion owned_artifacts selects owner
+        |
+        v
+Director edit + unequal hashes + verifier rerun
+        |
+        +-- resolved / fewer errors -> continue or pass
+        |
+        +-- equal count + new unseen plannable source_tool
+        |          -> exactly one bounded continuation
+        |
+        +-- repeated tool / no new effect -> existing cycle breaker
+```
+
+The implementation keeps PM and Chief Engineer sealed. Focused tests cover Go
+test classification, CE ownership preference over a shared JobToken,
+package-local path resolution, and a three-round constant-conversion ->
+missing-import -> verifier-pass sequence. The complete workspace-quality test
+file reports `52 passed`; Ruff and targeted Mypy are clean. Live acceptance is
+the same run `factory_a9812b43a06a`, resumed only at `quality_gate`.
+
+## L3-22 Go verifier function-context projection
+
+Same-run recovery moved L3-22 from eleven quality errors to two behavior
+assertions. Production-owner routing was correct and every `engine/engine.go`
+edit had unequal hashes, but verifier results remained unchanged. Dynamic
+final-request audit proved the remaining issue was evidence granularity, not
+missing role identity, tools, PM/CE authority, or retry context:
+
+```text
+go test assertion: engine_test.go:112
+        |
+        v
+old projection: lines 108-116 only
+        |
+        +-- hidden: SeedCMajorChord, restitution=0, dt=0.02, 500 Step calls
+        +-- nearby prose conflicts with executable `Velocity.Y > epsilon`
+        |
+        v
+Director makes real edit, verifier remains 2 -> 2
+```
+
+The prompt projection now includes the complete enclosing Go
+`Test`/`Benchmark`/`Fuzz`/`Example` function, bounded by the next verifier
+declaration and the existing total character budget. It explicitly states
+that executable setup, calls, and assertions outrank conflicting comments.
+Verifier files remain read-only evidence and never expand the JobToken-derived
+write scope.
+
+Verification is defined by
+`vc-20260821-go-verifier-function-context.yaml`. Live acceptance remains the
+same `factory_a9812b43a06a` quality-gate boundary; PM and Chief Engineer must
+not rerun.
+
+## L3-22 physical mutation versus behavioral progress
+
+The complete Go verifier projection closed the context defect, but the next
+same-run retry still remained at two failures. Dynamic audit of final provider
+request `44b4193705493fa4b2a224da`, role turn outcomes, effect receipts, file
+hashes, and the verifier rerun proved a deeper distinction:
+
+```text
+valid forced edit_file + unequal before/after hash
+        |
+        v
+only executable addition: b.Velocity.Y -= 0
+        |
+        v
+program behavior unchanged; go test 2 -> 2
+```
+
+Physical mutation is necessary but insufficient for repair progress. The
+progress projector now retains separate physical evidence while denying
+mutation authority to a deliberately narrow set of provable semantic no-ops:
+comment/whitespace-only changes, self-assignment, plus/minus zero, and
+multiply/divide one. Ambiguous edits are never guessed; the real verifier
+remains authoritative.
+
+The Director prompt also states the general executable truth rule: for a
+failure guard `if condition { fail }`, passing requires `condition` to become
+false. Setup, calls, and assertions outrank comments. This is a generic repair
+contract, not a generated-project patch.
+
+Verification is defined by
+`vc-20260821-director-semantic-noop-progress.yaml`. Live acceptance remains the
+same L3-22 Factory run and the same QA/Director boundary; PM and Chief Engineer
+must remain sealed.
+
+The first live revalidation proved the no-op classifier and exposed the next
+convergence defect. A comment-only edit no longer counted as progress. The
+next behavior-changing edit removed both prior failures and made the main Go
+package pass, but exposed two different engine tests. Because the count stayed
+two, the Director-local loop stopped even though the prior failing-test set was
+fully resolved.
+
+The local progress evidence now recognizes an unseen verifier
+`forward_unmask` only when all of these hold: a responsible non-no-op write,
+identifiable failing tests on both sides, disjoint old/new test identities,
+the new set is no larger, and the full new diagnostic signature was not seen
+earlier in this loop. A repeated A -> B -> A signature cannot renew the budget;
+the existing five-attempt hard cap remains authoritative.

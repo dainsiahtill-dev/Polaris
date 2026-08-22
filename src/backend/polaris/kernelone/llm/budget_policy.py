@@ -137,6 +137,15 @@ FORCED_WRITE_RETRY_TIMEOUT_MIN_SECONDS: Final[float] = 10.0
 #: one place, value 40.0 (blueprint §1 quantified evidence).
 FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS: Final[float] = 40.0
 
+#: Default timeout for one bounded Director quality-repair provider turn.
+#:
+#: This is shared by the Director repair loop and Factory's workspace-quality
+#: child dispatch.  Live L3-22 proved that a Factory-local 90-second default
+#: silently overrode Director's 180-second repair budget even while the exact
+#: run still had more than 27 minutes available.  Both callers retain their
+#: own absolute-deadline safety cap; this constant only prevents policy drift.
+DIRECTOR_QUALITY_REPAIR_TIMEOUT_SECONDS: Final[float] = 180.0
+
 #: Default timeout for the Factory Director dispatch stage. This value is
 #: injected into the stage context as both stage timeout and LLM-call timeout.
 DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS: Final[int] = 1_800
@@ -557,6 +566,7 @@ __all__ = [
     "DEFAULT_CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKENS",
     "DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS",
     "DIRECTOR_DISPATCH_TIMEOUT_ENV_KEYS",
+    "DIRECTOR_QUALITY_REPAIR_TIMEOUT_SECONDS",
     "FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS",
     "FORCED_WRITE_CONTEXT_KEYS",
     "FORCED_WRITE_OUTPUT_TOKEN_CEILING",

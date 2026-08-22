@@ -399,6 +399,40 @@ def test_structured_provider_timeout_attributes_provider_runtime_with_same_stage
     assert report["ce_restart_allowed"] is True
 
 
+def test_structured_output_schema_mismatch_attributes_roles_kernel() -> None:
+    report = build_exact_run_causal_report(
+        workspace="/tmp/project",
+        factory_run_id="factory-ce-schema",
+        project_id="L3-22",
+        factory_projection=_factory(failed_stages=["chief_engineer_review"]),
+        ledger_projection=_ledger(ok=True),
+        terminal_task_runtime_projection=None,
+        provider_request_audits=[
+            {
+                "ok": True,
+                "role": "chief_engineer",
+                "context_snapshot_ref": "ec851e95f353eb000dab334b",
+                "tool_names": ["submit_structured_role_output"],
+            }
+        ],
+        structured_failure_signals=[
+            {
+                "error_code": "structured_output_payload_schema_mismatch",
+                "error_message": "structured_output_payload_schema_mismatch:$:unexpected field",
+                "role": "chief_engineer",
+                "stage": "chief_engineer_review",
+                "context_snapshot_ref": "ec851e95f353eb000dab334b",
+            }
+        ],
+    )
+
+    assert report["root_cause_code"] == "structured_output_payload_schema_mismatch"
+    assert report["responsible_cell"] == "roles.kernel"
+    assert report["retry_boundary"] == "same_ce_stage"
+    assert report["pm_restart_allowed"] is False
+    assert report["ce_restart_allowed"] is True
+
+
 def test_broken_final_request_context_outranks_provider_timeout() -> None:
     report = build_exact_run_causal_report(
         workspace="/tmp/project",

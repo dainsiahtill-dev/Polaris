@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import fnmatch as fnmatch
 import json as json
 import logging
@@ -428,6 +429,66 @@ def _artifact_quality_error_signature(errors: list[str]) -> tuple[str, ...]:
 
 _QUALITY_REPAIR_STAGNATION_LIMIT = 2
 
+_GO_VERIFIER_FAILURE_ID_RE = re.compile(r"---\s+FAIL:\s*([^\s(]+)")
+_PYTEST_VERIFIER_FAILURE_ID_RE = re.compile(r"(?:^|\s)FAILED\s+([^\s]+::[^\s]+)")
+_TAP_VERIFIER_FAILURE_ID_RE = re.compile(r"(?m)^not ok\s+\d+\s+-\s+(.+?)\s*$")
+
+
+_OBVIOUS_IDENTITY_MUTATION_RE = re.compile(
+    r"^\s*(?P<lhs>[A-Za-z_][\w.\[\]]*)\s*(?:"
+    r"(?:\+=|-=)\s*(?:0(?:\.0+)?)|"
+    r"(?:\*=|/=)\s*(?:1(?:\.0+)?)|"
+    r"=\s*(?P=lhs)"
+    r")\s*;?\s*$"
+)
+
+
+def _source_change_is_obvious_semantic_noop(before: str, after: str) -> bool:
+    """Reject hash-only mutations that cannot change the executed program.
+
+    This is intentionally narrow: only whitespace/comment-only edits and
+    algebraic identity statements added without removing executable source are
+    classified.  Anything ambiguous remains a real mutation and must be judged
+    by the verifier.  Live L3-22 added ``velocity -= 0`` after an unchanged
+    failing guard; the content hash changed, but execution and diagnostics did
+    not.
+    """
+
+    changed_lines = [
+        line
+        for line in difflib.ndiff(str(before or "").splitlines(), str(after or "").splitlines())
+        if line.startswith(("+ ", "- "))
+    ]
+    if not changed_lines:
+        return False
+
+    saw_identity_addition = False
+    for item in changed_lines:
+        marker = item[:2]
+        line = item[2:].strip()
+        if not line or line.startswith(("//", "#", "/*", "*", "*/")):
+            continue
+        if marker == "+ " and _OBVIOUS_IDENTITY_MUTATION_RE.fullmatch(line):
+            saw_identity_addition = True
+            continue
+        return False
+    return saw_identity_addition or all(
+        not item[2:].strip() or item[2:].strip().startswith(("//", "#", "/*", "*", "*/"))
+        for item in changed_lines
+    )
+
+
+def _verifier_failure_identities(errors: list[str]) -> set[str]:
+    """Extract stable failing-test identities without parsing domain output."""
+
+    identities: set[str] = set()
+    for error in errors:
+        text = str(error or "")
+        identities.update(f"go:{item}" for item in _GO_VERIFIER_FAILURE_ID_RE.findall(text))
+        identities.update(f"pytest:{item}" for item in _PYTEST_VERIFIER_FAILURE_ID_RE.findall(text))
+        identities.update(f"tap:{item.strip()}" for item in _TAP_VERIFIER_FAILURE_ID_RE.findall(text) if item.strip())
+    return identities
+
 
 def _quality_repair_progress_evidence(
     *,
@@ -438,6 +499,7 @@ def _quality_repair_progress_evidence(
     before_missing_count: int,
     after_missing_count: int,
     successful_write_paths: list[str],
+    previously_seen_error_signatures: set[tuple[str, ...]] | None = None,
 ) -> dict[str, Any]:
     """Project one repair attempt into strict, machine-readable progress evidence.
 
@@ -471,19 +533,53 @@ def _quality_repair_progress_evidence(
         for path in mutated_paths
         if any(_matches_responsible_path(path, candidate) for candidate in successful_write_paths)
     )
+    semantic_noop_paths = sorted(
+        path
+        for path in responsible_mutated_paths
+        if _source_change_is_obvious_semantic_noop(
+            before_files.get(path, ""),
+            after_files.get(path, ""),
+        )
+    )
     introduced = sorted(after_signature - before_signature)
     resolved = sorted(before_signature - after_signature)
     error_reduction = len(before_signature) - len(after_signature)
     missing_reduction = max(0, int(before_missing_count) - int(after_missing_count))
-    mutation_evidenced = bool(successful_write_paths and responsible_mutated_paths)
+    physical_mutation_evidenced = bool(successful_write_paths and responsible_mutated_paths)
+    mutation_evidenced = bool(physical_mutation_evidenced and not semantic_noop_paths)
     converged = not after_signature and int(after_missing_count) == 0
+    before_verifier_failures = _verifier_failure_identities(before_errors)
+    after_verifier_failures = _verifier_failure_identities(after_errors)
+    after_signature_tuple = tuple(sorted(after_signature))
+    forward_unmask_candidate = bool(
+        mutation_evidenced
+        and before_verifier_failures
+        and after_verifier_failures
+        and before_verifier_failures.isdisjoint(after_verifier_failures)
+        and len(after_verifier_failures) <= len(before_verifier_failures)
+        and not (before_signature & after_signature)
+    )
+    forward_unmask_advances = bool(
+        forward_unmask_candidate
+        and (
+            previously_seen_error_signatures is None
+            or after_signature_tuple not in previously_seen_error_signatures
+        )
+    )
     effective_progress = bool(
-        mutation_evidenced and not introduced and (converged or error_reduction > 0 or missing_reduction > 0)
+        mutation_evidenced
+        and (
+            (not introduced and (converged or error_reduction > 0 or missing_reduction > 0))
+            or forward_unmask_advances
+        )
     )
     return {
         "schema_version": "director.quality_repair_progress.v1",
         "status": "converged" if converged and effective_progress else "progress" if effective_progress else "stalled",
         "workspace_mutation_evidenced": mutation_evidenced,
+        "physical_workspace_mutation_evidenced": physical_mutation_evidenced,
+        "semantic_noop_detected": bool(semantic_noop_paths),
+        "semantic_noop_paths": semantic_noop_paths[:20],
         "successful_write_paths": successful_write_paths[:20],
         "mutated_paths": mutated_paths[:20],
         "responsible_mutated_paths": responsible_mutated_paths[:20],
@@ -495,6 +591,21 @@ def _quality_repair_progress_evidence(
         "missing_target_reduction": missing_reduction,
         "resolved_diagnostic_signatures": resolved[:20],
         "introduced_diagnostic_signatures": introduced[:20],
+        "before_verifier_failure_identities": sorted(before_verifier_failures)[:20],
+        "after_verifier_failure_identities": sorted(after_verifier_failures)[:20],
+        "forward_unmask_candidate": forward_unmask_candidate,
+        "forward_unmask_advances": forward_unmask_advances,
+        "progress_kind": (
+            "forward_unmask"
+            if forward_unmask_advances
+            else "converged"
+            if converged and effective_progress
+            else "diagnostic_reduction"
+            if effective_progress
+            else "semantic_noop"
+            if semantic_noop_paths
+            else "stalled"
+        ),
         "effective_progress": effective_progress,
     }
 
@@ -513,16 +624,24 @@ def _annotate_quality_repair_progress(
     summary["workspace_mutation_evidenced"] = bool(evidence.get("workspace_mutation_evidenced"))
     summary["stagnant_attempts"] = int(stagnant_attempts)
     if stopped:
+        semantic_noop = bool(evidence.get("semantic_noop_detected"))
         summary.update(
             {
                 "success": False,
                 "convergence_status": "repair_stalled",
-                "stopped_reason": "quality_repair_no_net_progress",
+                "stopped_reason": (
+                    "quality_repair_semantic_noop" if semantic_noop else "quality_repair_no_net_progress"
+                ),
                 "error_code": "director_quality_repair_stalled",
                 "failure_class": "model_ceiling",
                 "responsible_layer": "director",
                 "retry_scope": "same_director_task_only",
                 "pm_ce_restart_allowed": False,
+                "root_cause_hint": (
+                    "physical_write_was_obvious_semantic_noop"
+                    if semantic_noop
+                    else "quality_repair_no_net_progress"
+                ),
             }
         )
 

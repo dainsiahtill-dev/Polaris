@@ -1353,6 +1353,48 @@ class TestQualityRepairMissingTargetContractB:
         assert "engine/riddle.go" in targets
         assert "models/capsule.go" in targets
 
+    def test_commandless_go_test_behavior_output_targets_production_sources(self, tmp_path) -> None:
+        """Factory splits verifier output; causal routing must survive lost command prefix."""
+
+        (tmp_path / "engine").mkdir()
+        (tmp_path / "models").mkdir()
+        for rel in (
+            "engine/engine.go",
+            "engine/physics.go",
+            "engine/engine_test.go",
+            "models/errors.go",
+            "models/model.go",
+            "models/model_test.go",
+            "main.go",
+            "main_test.go",
+        ):
+            (tmp_path / rel).write_text("package product\n", encoding="utf-8")
+
+        targets = _go_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[
+                "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+                "    engine_test.go:112: bubble still moving downward\n"
+                "--- FAIL: TestBubbleValidMethod (0.00s)\n"
+                "    model_test.go:124: want ErrInvalidRadius"
+            ],
+            changed_files=[
+                "engine/engine.go",
+                "engine/physics.go",
+                "engine/engine_test.go",
+                "models/errors.go",
+                "models/model.go",
+                "models/model_test.go",
+                "main.go",
+                "main_test.go",
+            ],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets
+        assert all(not path.endswith("_test.go") for path in targets)
+        assert "engine/engine.go" in targets
+        assert "models/errors.go" in targets
+
     @pytest.mark.asyncio
     async def test_existing_go_runtime_smoke_failure_repair_forces_write_context(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

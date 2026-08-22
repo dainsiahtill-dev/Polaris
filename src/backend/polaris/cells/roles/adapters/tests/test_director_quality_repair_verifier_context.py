@@ -36,6 +36,182 @@ def test_quality_repair_includes_complete_go_verifier_when_helper_is_far_from_fa
     assert "[diagnostic excerpt" not in message
 
 
+def test_quality_repair_includes_go_assertion_source_as_read_only_context(tmp_path: Path) -> None:
+    """Commandless Go failures must expose test inputs without granting test writes."""
+
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    (engine / "engine.go").write_text(
+        "package engine\nfunc Step() {}\n",
+        encoding="utf-8",
+    )
+    (engine / "engine_test.go").write_text(
+        "package engine\n\n"
+        "func TestStepClampsOnFloor(t *testing.T) {\n"
+        "    world := worldWithGravityY(9.81) // positive Y means downward\n"
+        "    got := Step(world)\n"
+        '    if got.Velocity.Y > 0 { t.Fatalf("still moving downward: %v", got.Velocity.Y) }\n'
+        "}\n",
+        encoding="utf-8",
+    )
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair the Go behavior failure.",
+        artifact_quality_errors=[
+            "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+            "    engine_test.go:6: still moving downward: 98.1\n"
+            "FAIL\tmusicbubble/engine\t0.006s"
+        ],
+        changed_files=["engine/engine.go", "engine/engine_test.go"],
+        repair_target_files=["engine/engine.go"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "FAILING VERIFIER SOURCE CONTEXT (READ-ONLY EVIDENCE; NEVER EDIT THESE FILES)" in message
+    assert "engine/engine_test.go around line 6 (READ-ONLY)" in message
+    assert "positive Y means downward" in message
+    assert "Authorized tool target paths:\n- engine/engine.go" in message
+    assert "Authorized tool target paths:\n- engine/engine_test.go" not in message
+
+
+def test_quality_repair_includes_bounded_go_sibling_verifier_contract(tmp_path: Path) -> None:
+    """One behavior fix must preserve sibling tests, not discover them by regression."""
+
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    (engine / "engine.go").write_text("package engine\nfunc Step() {}\n", encoding="utf-8")
+    (engine / "engine_test.go").write_text(
+        "package engine\n\n"
+        "func TestStepAppliesGravity(t *testing.T) {\n"
+        "    got := Step(worldWithGravityY(9.81), 0.5)\n"
+        '    if got.Velocity.Y != 4.905 { t.Fatalf("gravity velocity=%v", got.Velocity.Y) }\n'
+        "}\n\n"
+        "func TestStepClampsOnFloor(t *testing.T) {\n"
+        "    got := Step(worldOnFloorWithGravityY(9.81), 0.02)\n"
+        '    if got.Velocity.Y > 0 { t.Fatalf("still moving downward: %v", got.Velocity.Y) }\n'
+        "}\n\n"
+        "func TestStepWithRestitutionBounces(t *testing.T) {\n"
+        "    got := Step(worldWithRestitution(0.5), 0.05)\n"
+        '    if got.Velocity.Y <= 0 { t.Fatalf("expected upward bounce: %v", got.Velocity.Y) }\n'
+        "}\n",
+        encoding="utf-8",
+    )
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair the Go floor behavior failure.",
+        artifact_quality_errors=[
+            "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+            "    engine_test.go:10: still moving downward: 98.1\n"
+            "FAIL\tmusicbubble/engine\t0.006s"
+        ],
+        changed_files=["engine/engine.go", "engine/engine_test.go"],
+        repair_target_files=["engine/engine.go"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "GO SIBLING VERIFIER CONTRACT" in message
+    assert "TestStepAppliesGravity" in message
+    assert "TestStepClampsOnFloor" in message
+    assert "TestStepWithRestitutionBounces" in message
+    assert "Authorized tool target paths:\n- engine/engine.go" in message
+    assert "Authorized tool target paths:\n- engine/engine_test.go" not in message
+
+
+def test_quality_repair_includes_previous_go_failure_as_regression_guard(tmp_path: Path) -> None:
+    """A repair that swaps Go test failures must see both behavior contracts."""
+
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    (engine / "engine.go").write_text("package engine\nfunc Step() {}\n", encoding="utf-8")
+    (engine / "engine_test.go").write_text(
+        "package engine\n\n"
+        "func TestStepAppliesGravity(t *testing.T) {\n"
+        "    world := worldWithGravityY(9.81)\n"
+        "    got := Step(world)\n"
+        '    if got.Velocity.Y != 4.905 { t.Fatalf("velocity=%v", got.Velocity.Y) }\n'
+        "}\n\n"
+        "func TestStepClampsOnFloor(t *testing.T) {\n"
+        "    world := worldOnFloorWithGravityY(9.81)\n"
+        "    got := Step(world)\n"
+        '    if got.Velocity.Y > 0 { t.Fatalf("still moving downward: %v", got.Velocity.Y) }\n'
+        "}\n",
+        encoding="utf-8",
+    )
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair the Go behavior failure.",
+        artifact_quality_errors=[
+            "--- FAIL: TestStepAppliesGravity (0.00s)\n"
+            "    engine_test.go:6: velocity=-4.905"
+        ],
+        regression_guard_errors=[
+            "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+            "    engine_test.go:12: still moving downward: 98.1"
+        ],
+        changed_files=["engine/engine.go", "engine/engine_test.go"],
+        repair_target_files=["engine/engine.go"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "REGRESSION GUARDS FROM THE PREVIOUS REPAIR ROUND" in message
+    assert "TestStepAppliesGravity" in message
+    assert "TestStepClampsOnFloor" in message
+    assert "REGRESSION GUARD VERIFIER SOURCE CONTEXT" in message
+    assert "worldWithGravityY(9.81)" in message
+    assert "worldOnFloorWithGravityY(9.81)" in message
+    assert "do not expand authorized tool paths" in message
+    assert "Authorized tool target paths:\n- engine/engine.go" in message
+    assert "Authorized tool target paths:\n- engine/engine_test.go" not in message
+
+
+def test_quality_repair_includes_complete_go_verifier_function(tmp_path: Path) -> None:
+    """Go assertion evidence must retain setup far above the failing line."""
+
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    (engine / "engine.go").write_text(
+        "package engine\nfunc Step() {}\n",
+        encoding="utf-8",
+    )
+    spacer = "\n".join(f"    // simulation step {index}" for index in range(40))
+    (engine / "engine_test.go").write_text(
+        "package engine\n\n"
+        "func TestStepClampsOnFloor(t *testing.T) {\n"
+        "    world := worldWithGravityY(9.81) // VERIFIER_SETUP_POSITIVE_Y_IS_DOWN\n"
+        "    const dt = 0.02\n"
+        f"{spacer}\n"
+        "    got := Step(world, dt)\n"
+        "    // This stale comment says positive means rising.\n"
+        '    if got.Velocity.Y > 0 { t.Fatalf("still moving downward: %v", got.Velocity.Y) }\n'
+        "}\n\n"
+        "func TestOther(t *testing.T) { t.Skip() }\n",
+        encoding="utf-8",
+    )
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair the Go behavior failure.",
+        artifact_quality_errors=[
+            "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+            "    engine_test.go:47: still moving downward: 98.1\n"
+            "FAIL\tmusicbubble/engine\t0.006s"
+        ],
+        changed_files=["engine/engine.go", "engine/engine_test.go"],
+        repair_target_files=["engine/engine.go"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "VERIFIER_SETUP_POSITIVE_Y_IS_DOWN" in message
+    assert "simulation step 0" in message
+    assert "simulation step 39" in message
+    assert "func TestOther" not in message
+    assert "Executable setup, calls, and assertions are authoritative" in message
+    assert "passes only when `<condition>` becomes false" in message
+    assert "`x -= 0`" in message
+    assert "semantic no-ops" in message
+    assert "Authorized tool target paths:\n- engine/engine.go" in message
+    assert "Authorized tool target paths:\n- engine/engine_test.go" not in message
+
+
 def test_quality_repair_includes_read_only_referenced_rust_definitions(tmp_path: Path) -> None:
     engine = tmp_path / "src" / "engine"
     models = tmp_path / "src" / "models"

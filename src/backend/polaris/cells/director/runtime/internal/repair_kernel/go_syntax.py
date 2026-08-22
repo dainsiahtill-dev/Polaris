@@ -68,6 +68,44 @@ _GO_METHOD_RE = re.compile(r"(?m)^func\s+\((?P<recv>[^)]+)\)\s+(?P<name>[A-Za-z_
 _GO_DECLARATION_LINE_RE = re.compile(
     r"^(?P<indent>\s*)(?P<kind>type|const|var)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b(?P<body>[^\n]*)$"
 )
+_GO_TOP_LEVEL_FUNC_DECL_RE = re.compile(
+    r"^func\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]\n]+\]\s*)?\("
+)
+_GO_TOP_LEVEL_METHOD_DECL_RE = re.compile(
+    r"^func\s+\((?P<receiver>[^)]+)\)\s+"
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]\n]+\]\s*)?\("
+)
+_GO_TOP_LEVEL_NAMED_DECL_RE = re.compile(
+    r"^(?P<kind>type|const|var)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b"
+)
+_GO_TOP_LEVEL_DECL_GROUP_RE = re.compile(r"^(?P<kind>const|var)\s*\(\s*$")
+_GO_REDECLARED_MESSAGE_RE = re.compile(
+    r"\b(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s+redeclared in this block\b",
+    re.IGNORECASE,
+)
+_GO_OTHER_DECLARATION_MESSAGE_RE = re.compile(
+    r"\bother declaration of\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b",
+    re.IGNORECASE,
+)
+_GO_OTHER_DECLARATION_LOCATION_RE = re.compile(
+    r"(?m)^\s*(?P<path>[^\n:]+\.go):(?P<line>\d+):(?P<column>\d+):\s*"
+    r"other declaration of\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b",
+    re.IGNORECASE,
+)
+_GO_REDECLARATION_PAIR_RE = re.compile(
+    r"(?m)^\s*(?P<primary_path>[^\n:]+\.go):(?P<primary_line>\d+):(?P<primary_column>\d+):\s*"
+    r"(?P<primary_name>[A-Za-z_][A-Za-z0-9_]*)\s+redeclared in this block\s*\n"
+    r"\s*(?P<companion_path>[^\n:]+\.go):(?P<companion_line>\d+):(?P<companion_column>\d+):\s*"
+    r"other declaration of\s+(?P<companion_name>[A-Za-z_][A-Za-z0-9_]*)\b",
+    re.IGNORECASE,
+)
+_GO_METHOD_ALREADY_DECLARED_PAIR_RE = re.compile(
+    r"(?m)^\s*(?P<primary_path>[^\n:]+\.go):(?P<primary_line>\d+):(?P<primary_column>\d+):\s*"
+    r"method\s+(?P<receiver>[A-Za-z_][A-Za-z0-9_]*)\."
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s+already declared at\s+"
+    r"(?P<companion_path>[^\n:]+\.go):(?P<companion_line>\d+):(?P<companion_column>\d+)\b",
+    re.IGNORECASE,
+)
 _GO_ERROR_STRING_HELPER_NAMES = frozenset({"errString", "errorString"})
 _GO_GENERATED_MARKER_TERMS = (
     "polaris marker:",
@@ -278,18 +316,43 @@ def build_go_dedup_plan(
     diagnostics: Sequence[RepairDiagnostic],
     mode: str = "commit",
 ) -> RepairPlan | None:
-    """Build a conservative plan for generated Go intra-file declaration dedup."""
+    """Build conservative intra-file and compiler-proven cross-file dedup repairs."""
 
-    return _build_go_text_plan(
-        base_files=base_files,
-        diagnostics=diagnostics,
-        source_tool=GO_DEDUP_SOURCE_TOOL,
+    normalized_base_files = _normalize_base_files(base_files)
+    operations: list[RepairOperation] = []
+    for path in sorted(normalized_base_files):
+        if not path.endswith(".go") or path.endswith("_test.go"):
+            continue
+        operations.extend(_go_intra_file_dedup_operations(path, normalized_base_files[path]))
+    operations.extend(
+        _go_cross_file_dedup_operations(
+            base_files=normalized_base_files,
+            diagnostics=diagnostics,
+        )
+    )
+    unique_operations: list[RepairOperation] = []
+    seen: set[tuple[str, int | None, int | None]] = set()
+    for operation in operations:
+        key = (operation.path, operation.span_start, operation.span_end)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_operations.append(operation)
+    if not unique_operations:
+        return None
+    return RepairPlan(
         rule_id="go.intra_file_dedup",
-        repair_kind="go_intra_file_dedup",
+        source_tool=GO_DEDUP_SOURCE_TOOL,
+        operations=tuple(unique_operations),
+        diagnostics=tuple(diagnostics or ()),
+        mode=mode,
+        risk_level="medium",
         priority=4,
         depends_on=("go.module_import_path",),
-        transform=_go_intra_file_dedup_operations,
-        mode=mode,
+        metadata={
+            "repair_kind": "go_declaration_dedup",
+            "precision_strategy": "compiler_pair_equivalent_declaration_text_replace",
+        },
     )
 
 
@@ -949,6 +1012,426 @@ def _go_intra_file_dedup_operations(path: str, text: str) -> tuple[RepairOperati
         seen.add(key)
         offset += len(line)
     return tuple(operations)
+
+
+def _go_cross_file_dedup_operations(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+) -> tuple[RepairOperation, ...]:
+    operations: list[RepairOperation] = []
+    for primary_name, primary_path, primary_line, companion_path, companion_line in (
+        _go_redeclaration_pairs(diagnostics)
+    ):
+        if (
+            not companion_path
+            or companion_line <= 0
+            or companion_path == primary_path
+            or _go_parent_dir(companion_path) != _go_parent_dir(primary_path)
+        ):
+            continue
+        primary_text = base_files.get(primary_path)
+        companion_text = base_files.get(companion_path)
+        if primary_text is None or companion_text is None:
+            continue
+        if _go_has_build_constraints(primary_text) or _go_has_build_constraints(companion_text):
+            continue
+        primary_package = _go_package_name(primary_text)
+        companion_package = _go_package_name(companion_text)
+        if not primary_package or primary_package != companion_package:
+            continue
+        primary_declaration = _go_top_level_declaration_at_line(
+            path=primary_path,
+            text=primary_text,
+            line_number=primary_line,
+            expected_name=primary_name,
+        )
+        companion_declaration = _go_top_level_declaration_at_line(
+            path=companion_path,
+            text=companion_text,
+            line_number=companion_line,
+            expected_name=primary_name,
+        )
+        if primary_declaration is None or companion_declaration is None:
+            continue
+        primary_kind, primary_decl_name, start, end, expected = primary_declaration
+        companion_kind, companion_decl_name, _, _, companion_expected = companion_declaration
+        if (
+            primary_decl_name != primary_name
+            or companion_decl_name != primary_name
+            or primary_kind != companion_kind
+            or _go_declaration_fingerprint(expected)
+            != _go_declaration_fingerprint(companion_expected)
+        ):
+            continue
+        operations.append(
+            _text_replace_operation(
+                path=primary_path,
+                text=primary_text,
+                start=start,
+                end=end,
+                expected=expected,
+                replacement="",
+                repair_kind="go_cross_file_declaration_dedup",
+                extra_metadata={
+                    "declaration_kind": primary_kind,
+                    "declaration_name": primary_name,
+                    "companion_path": companion_path,
+                    "companion_line": str(companion_line),
+                    "companion_before_hash": sha256_text(companion_text),
+                    "compiler_pair_required": "true",
+                    "equivalent_declaration_required": "true",
+                },
+            )
+        )
+    return tuple(operations)
+
+
+def _go_redeclaration_pairs(
+    diagnostics: Sequence[RepairDiagnostic],
+) -> tuple[tuple[str, str, int, str, int], ...]:
+    pairs: set[tuple[str, str, int, str, int]] = set()
+    for diagnostic in diagnostics:
+        for match in _GO_REDECLARATION_PAIR_RE.finditer(str(diagnostic.raw or "")):
+            primary_name = match.group("primary_name")
+            if primary_name != match.group("companion_name"):
+                continue
+            primary_path = _normalize_repair_path(match.group("primary_path"))
+            companion_path = _normalize_repair_path(match.group("companion_path"))
+            primary_line = int(match.group("primary_line"))
+            companion_line = int(match.group("companion_line"))
+            if primary_path and companion_path and primary_line > 0 and companion_line > 0:
+                pairs.add(
+                    (
+                        primary_name,
+                        primary_path,
+                        primary_line,
+                        companion_path,
+                        companion_line,
+                    )
+                )
+        for match in _GO_METHOD_ALREADY_DECLARED_PAIR_RE.finditer(str(diagnostic.raw or "")):
+            primary_path = _normalize_repair_path(match.group("primary_path"))
+            companion_path = _normalize_repair_path(match.group("companion_path"))
+            primary_line = int(match.group("primary_line"))
+            companion_line = int(match.group("companion_line"))
+            if primary_path and companion_path and primary_line > 0 and companion_line > 0:
+                pairs.add(
+                    (
+                        match.group("name"),
+                        primary_path,
+                        primary_line,
+                        companion_path,
+                        companion_line,
+                    )
+                )
+        primary_name = _go_primary_redeclaration_name(diagnostic)
+        primary_path = _normalize_repair_path(str(diagnostic.path or ""))
+        primary_line = int(diagnostic.line or 0)
+        if not primary_name or not primary_path or primary_line <= 0:
+            continue
+        companions = _go_companion_declaration_locations(
+            diagnostics=diagnostics,
+            primary=diagnostic,
+            name=primary_name,
+        )
+        if len(companions) == 1:
+            pairs.add(
+                (
+                    primary_name,
+                    primary_path,
+                    primary_line,
+                    companions[0][0],
+                    companions[0][1],
+                )
+            )
+    return tuple(sorted(pairs))
+
+
+def _go_primary_redeclaration_name(diagnostic: RepairDiagnostic) -> str:
+    match = _GO_REDECLARED_MESSAGE_RE.search(str(diagnostic.message or diagnostic.raw or ""))
+    return match.group("name") if match is not None else ""
+
+
+def _go_companion_declaration_locations(
+    *,
+    diagnostics: Sequence[RepairDiagnostic],
+    primary: RepairDiagnostic,
+    name: str,
+) -> tuple[tuple[str, int], ...]:
+    candidates: set[tuple[str, int]] = set()
+    for location_match in _GO_OTHER_DECLARATION_LOCATION_RE.finditer(str(primary.raw or "")):
+        if location_match.group("name") != name:
+            continue
+        path = _normalize_repair_path(location_match.group("path"))
+        line = int(location_match.group("line"))
+        if path and line > 0:
+            candidates.add((path, line))
+    for diagnostic in diagnostics:
+        message_match = _GO_OTHER_DECLARATION_MESSAGE_RE.search(
+            str(diagnostic.message or diagnostic.raw or "")
+        )
+        if message_match is None or message_match.group("name") != name:
+            continue
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        line = int(diagnostic.line or 0)
+        if path and line > 0:
+            candidates.add((path, line))
+    return tuple(sorted(candidates))
+
+
+def _go_top_level_declaration_at_line(
+    *,
+    path: str,
+    text: str,
+    line_number: int,
+    expected_name: str,
+) -> tuple[str, str, int, int, str] | None:
+    del path  # Reserved for future path-aware syntax policies.
+    line_span = _go_line_span(text, line_number=line_number)
+    if line_span is None:
+        return None
+    start, line_end, line = line_span
+    line_body, _ = _split_line_ending(line)
+    if line_body != line_body.lstrip():
+        return _go_enclosing_declaration_group_at_line(
+            text=text,
+            line_number=line_number,
+            expected_name=expected_name,
+        )
+    function_match = _GO_TOP_LEVEL_FUNC_DECL_RE.match(line_body)
+    method_match = _GO_TOP_LEVEL_METHOD_DECL_RE.match(line_body)
+    named_match = _GO_TOP_LEVEL_NAMED_DECL_RE.match(line_body)
+    if function_match is not None:
+        kind = "func"
+        name = function_match.group("name")
+        end = _go_balanced_declaration_end(text, start=start, requires_brace=True)
+    elif method_match is not None:
+        kind = "method"
+        name = method_match.group("name")
+        end = _go_balanced_declaration_end(text, start=start, requires_brace=True)
+    elif named_match is not None:
+        kind = named_match.group("kind")
+        name = named_match.group("name")
+        if kind == "type" and "{" in line_body:
+            end = _go_balanced_declaration_end(text, start=start, requires_brace=True)
+        else:
+            end = line_end
+    else:
+        return None
+    if end is None or end <= start:
+        return None
+    if end < len(text) and text[end : end + 1] == "\n":
+        end += 1
+    expected = text[start:end]
+    return kind, name, start, end, expected
+
+
+def _go_enclosing_declaration_group_at_line(
+    *,
+    text: str,
+    line_number: int,
+    expected_name: str,
+) -> tuple[str, str, int, int, str] | None:
+    lines = str(text or "").splitlines(keepends=True)
+    if line_number <= 0 or line_number > len(lines):
+        return None
+    target_line = lines[line_number - 1]
+    if re.match(rf"^\s+{re.escape(expected_name)}\b", target_line) is None:
+        return None
+    offsets: list[int] = []
+    offset = 0
+    for line in lines:
+        offsets.append(offset)
+        offset += len(line)
+    target_offset = offsets[line_number - 1]
+    for index in range(line_number - 2, -1, -1):
+        candidate = lines[index]
+        candidate_body, _ = _split_line_ending(candidate)
+        if candidate_body != candidate_body.lstrip():
+            continue
+        match = _GO_TOP_LEVEL_DECL_GROUP_RE.match(candidate_body)
+        if match is None:
+            if _GO_TOP_LEVEL_FUNC_DECL_RE.match(candidate_body) or _GO_TOP_LEVEL_METHOD_DECL_RE.match(
+                candidate_body
+            ) or _GO_TOP_LEVEL_NAMED_DECL_RE.match(candidate_body):
+                return None
+            continue
+        start = offsets[index]
+        open_paren = _go_find_code_character(text, start=start, character="(")
+        if open_paren is None:
+            return None
+        end = _go_matching_code_delimiter_end(
+            text,
+            delimiter_start=open_paren,
+            opening="(",
+            closing=")",
+        )
+        if end is None or not (start <= target_offset < end):
+            return None
+        if end < len(text) and text[end : end + 1] == "\n":
+            end += 1
+        kind = f"{match.group('kind')}_block"
+        return kind, expected_name, start, end, text[start:end]
+    return None
+
+
+def _go_line_span(text: str, *, line_number: int) -> tuple[int, int, str] | None:
+    if line_number <= 0:
+        return None
+    offset = 0
+    for current_line, line in enumerate(str(text or "").splitlines(keepends=True), start=1):
+        end = offset + len(line)
+        if current_line == line_number:
+            return offset, end, line
+        offset = end
+    return None
+
+
+def _go_balanced_declaration_end(text: str, *, start: int, requires_brace: bool) -> int | None:
+    brace_start = _go_find_first_code_brace(text, start=start)
+    if brace_start is None:
+        return None if requires_brace else _go_line_end(text, start)
+    return _go_matching_code_brace_end(text, brace_start=brace_start)
+
+
+def _go_find_first_code_brace(text: str, *, start: int) -> int | None:
+    for index, char, state in _go_lexical_chars(text, start=start):
+        if state == "code" and char == "{":
+            return index
+        if state == "code" and char == "\n" and _go_next_line_starts_top_level_declaration(text, index + 1):
+            return None
+    return None
+
+
+def _go_matching_code_brace_end(text: str, *, brace_start: int) -> int | None:
+    return _go_matching_code_delimiter_end(
+        text,
+        delimiter_start=brace_start,
+        opening="{",
+        closing="}",
+    )
+
+
+def _go_matching_code_delimiter_end(
+    text: str,
+    *,
+    delimiter_start: int,
+    opening: str,
+    closing: str,
+) -> int | None:
+    depth = 0
+    for index, char, state in _go_lexical_chars(text, start=delimiter_start):
+        if state != "code":
+            continue
+        if char == opening:
+            depth += 1
+        elif char == closing:
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return None
+
+
+def _go_find_code_character(text: str, *, start: int, character: str) -> int | None:
+    for index, char, state in _go_lexical_chars(text, start=start):
+        if state == "code" and char == character:
+            return index
+        if state == "code" and char == "\n":
+            return None
+    return None
+
+
+def _go_lexical_chars(text: str, *, start: int = 0) -> Sequence[tuple[int, str, str]]:
+    output: list[tuple[int, str, str]] = []
+    state = "code"
+    escaped = False
+    index = max(0, start)
+    while index < len(text):
+        char = text[index]
+        next_char = text[index + 1] if index + 1 < len(text) else ""
+        output.append((index, char, state))
+        if state == "line_comment":
+            if char == "\n":
+                state = "code"
+        elif state == "block_comment":
+            if char == "*" and next_char == "/":
+                output.append((index + 1, next_char, state))
+                index += 1
+                state = "code"
+        elif state in {"double_quote", "single_quote"}:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif (state == "double_quote" and char == '"') or (
+                state == "single_quote" and char == "'"
+            ):
+                state = "code"
+        elif state == "raw_quote":
+            if char == "`":
+                state = "code"
+        elif char == "/" and next_char == "/":
+            state = "line_comment"
+        elif char == "/" and next_char == "*":
+            state = "block_comment"
+        elif char == '"':
+            state = "double_quote"
+        elif char == "'":
+            state = "single_quote"
+        elif char == "`":
+            state = "raw_quote"
+        index += 1
+    return tuple(output)
+
+
+def _go_declaration_fingerprint(text: str) -> str:
+    tokens: list[str] = []
+    source = str(text or "")
+    for index, char, state in _go_lexical_chars(source):
+        if state in {"line_comment", "block_comment"}:
+            continue
+        if state == "code":
+            next_char = source[index + 1] if index + 1 < len(source) else ""
+            if char == "/" and next_char in {"/", "*"}:
+                continue
+            if char.isspace():
+                continue
+        tokens.append(char)
+    return "".join(tokens)
+
+
+def _go_next_line_starts_top_level_declaration(text: str, start: int) -> bool:
+    line_end = text.find("\n", start)
+    line = text[start : len(text) if line_end < 0 else line_end]
+    return bool(
+        line == line.lstrip()
+        and (
+            _GO_TOP_LEVEL_FUNC_DECL_RE.match(line)
+            or _GO_TOP_LEVEL_METHOD_DECL_RE.match(line)
+            or _GO_TOP_LEVEL_NAMED_DECL_RE.match(line)
+            or _GO_TOP_LEVEL_DECL_GROUP_RE.match(line)
+        )
+    )
+
+
+def _go_line_end(text: str, start: int) -> int:
+    end = text.find("\n", start)
+    return len(text) if end < 0 else end
+
+
+def _go_parent_dir(path: str) -> str:
+    return path.rsplit("/", 1)[0] if "/" in path else ""
+
+
+def _go_package_name(text: str) -> str:
+    match = _GO_PACKAGE_RE.search(str(text or ""))
+    return match.group("name") if match is not None else ""
+
+
+def _go_has_build_constraints(text: str) -> bool:
+    prefix = "\n".join(str(text or "").splitlines()[:20])
+    return "//go:build" in prefix or "// +build" in prefix
 
 
 def _go_unused_import_operation(

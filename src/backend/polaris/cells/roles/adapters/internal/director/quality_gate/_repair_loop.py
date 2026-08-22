@@ -23,6 +23,7 @@ from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeExecutionAttemptAuthorityV1,
     TaskRuntimeExecutionAttemptIdentityV1,
 )
+from polaris.kernelone.llm.budget_policy import DIRECTOR_QUALITY_REPAIR_TIMEOUT_SECONDS
 from polaris.kernelone.quality import (
     artifact_quality_issue_raw,
     artifact_quality_issues_for_errors,
@@ -601,12 +602,19 @@ async def _run_materialization_quality_repair_retry(
     )
     factory_quality = context.get("director_quality_repair") if isinstance(context, Mapping) else None
     factory_forced_targets: list[str] = []
+    regression_guard_errors: list[str] = []
     if isinstance(factory_quality, Mapping):
         raw_forced = factory_quality.get("repair_target_files")
         if isinstance(raw_forced, list):
             factory_forced_targets = _dedupe_preserve_order(
                 [str(item or "").strip().replace("\\", "/") for item in raw_forced if str(item or "").strip()]
             )
+        raw_regression_guards = factory_quality.get("regression_guard_errors")
+        if isinstance(raw_regression_guards, list | tuple):
+            regression_guard_errors = [
+                str(item or "").strip() for item in raw_regression_guards if str(item or "").strip()
+            ][:6]
+    factory_forced_targets_refreshed = False
     if factory_forced_targets or repair_attempt >= 2:
         # Repeat attempt for a residual the narrow diagnostic batch failed to
         # resolve: widen authorization to the claimed task's own materialized
@@ -629,7 +637,31 @@ async def _run_materialization_quality_repair_retry(
             # every changed .java (unittest staging MelodyModel/Plant/Season),
             # so eight rounds leased the source-modules set and edited the
             # wrong sibling. Keep rebound batches on the factory-forced set.
-            widened_candidates = list(factory_forced_targets)
+            current_in_scope_candidates, _ = _partition_paths_by_task_write_scope(
+                repair_target_candidates,
+                task=task,
+            )
+            forced_target_set = set(factory_forced_targets)
+            current_candidate_set = set(current_in_scope_candidates)
+            if current_in_scope_candidates and forced_target_set.isdisjoint(current_candidate_set):
+                # Live L3-22 TASK-3: Factory initially rebound the test owner to
+                # engine/engine_test.go. Physical edits cleared every failure in
+                # that file, while verifier revalidation exposed residuals in
+                # main_test.go and models/model_test.go — both owned by the same
+                # immutable CE task. Reusing the first Factory target forced the
+                # next provider request back onto the now-green engine test; an
+                # attempted edit of the current residual then failed closed as
+                # deo_path_scope_denied.
+                #
+                # Refresh only from CURRENT diagnostic-derived candidates that
+                # remain inside this task's write scope. Never widen from the
+                # changed-file inventory, and retain the Factory target when the
+                # current diagnostic points only at an out-of-scope use site
+                # (the declaration-owner rebind cases below).
+                widened_candidates = list(current_in_scope_candidates)
+                factory_forced_targets_refreshed = True
+            else:
+                widened_candidates = list(factory_forced_targets)
             joined_forced_errors = "\n".join(str(item or "") for item in repair_quality_errors).lower()
             if "panicked at" in joined_forced_errors and "src/engine/" in joined_forced_errors:
                 # Live L2-14: factory-forced stayed on treasure_runner.rs
@@ -901,6 +933,7 @@ async def _run_materialization_quality_repair_retry(
             "explicit_quality_target_files": explicit_quality_target_files[:12],
             "repair_target_files": repair_target_files[:12],
             "rotated_repair_targets": rotate_repair_targets,
+            "factory_forced_targets_refreshed": factory_forced_targets_refreshed,
             "deadline_decision": deadline_decision,
         }
     deterministic_quality_tool_results: list[dict[str, Any]] = []
@@ -1024,6 +1057,7 @@ async def _run_materialization_quality_repair_retry(
         repair_target_files=existing_repair_target_files,
         workspace_full=workspace_full,
         interface_discrepancy_evidence=task_boundary_discrepancy_evidence,
+        regression_guard_errors=regression_guard_errors,
     )
     failed_gate_evidence = _build_materialization_quality_failure_evidence_context(
         artifact_quality_errors=prompt_artifact_quality_errors,
@@ -1062,6 +1096,10 @@ async def _run_materialization_quality_repair_retry(
             "workspace_quality_evidence": workspace_quality_evidence,
         },
     }
+    if regression_guard_errors:
+        repair_context["director_quality_repair"]["regression_guard_errors"] = [
+            _format_quality_error_for_repair_prompt(error) for error in regression_guard_errors
+        ]
     rebind_dependency_artifact = getattr(adapter, "_rebind_director_dependency_artifact_for_dialogue", None)
     if callable(rebind_dependency_artifact) and isinstance(task, dict):
         rebind_dependency_artifact(repair_context)
@@ -1316,6 +1354,7 @@ async def _run_materialization_quality_repair_retry(
             "explicit_quality_target_files": explicit_quality_target_files[:12],
             "repair_target_files": repair_target_files[:12],
             "rotated_repair_targets": rotate_repair_targets,
+            "factory_forced_targets_refreshed": factory_forced_targets_refreshed,
             "deadline_decision": deadline_decision,
         }
         if task_scope_filter_evidence:
@@ -1394,6 +1433,7 @@ async def _run_materialization_quality_repair_retry(
             "explicit_quality_target_files": explicit_quality_target_files[:12],
             "repair_target_files": repair_target_files[:12],
             "rotated_repair_targets": rotate_repair_targets,
+            "factory_forced_targets_refreshed": factory_forced_targets_refreshed,
             "deadline_decision": deadline_decision,
         }
     )
@@ -1428,7 +1468,7 @@ _QUALITY_REPAIR_ATTEMPT_HARD_CAP = 5
 _QUALITY_REPAIR_TARGET_BATCH_LIMIT = 12
 
 
-_DEFAULT_QUALITY_REPAIR_TIMEOUT_SECONDS = 180.0
+_DEFAULT_QUALITY_REPAIR_TIMEOUT_SECONDS = DIRECTOR_QUALITY_REPAIR_TIMEOUT_SECONDS
 _QUALITY_REPAIR_DEADLINE_MIN_LLM_SECONDS = 30.0
 _QUALITY_REPAIR_DEADLINE_DEFAULT_SAFETY_SECONDS = 35.0
 

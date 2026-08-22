@@ -51,6 +51,27 @@ def test_same_run_retry_keeps_still_viable_factory_deadline() -> None:
     assert result is None
 
 
+def test_same_run_ce_retry_remints_shrunken_pre_director_budget() -> None:
+    """A CE retry needs a full epoch, not the generic 180-second floor."""
+
+    now = 2_000_000.0
+    result = extend_factory_run_deadline_for_same_run_retry(
+        now_epoch=now,
+        metadata={
+            "factory_run_deadline_epoch_seconds": now + 455.0,
+            "factory_run_timeout_seconds": 1800.0,
+            "factory_run_deadline_safety_seconds": 30.0,
+            "factory_run_deadline_extension_count": 2,
+        },
+        retry_stage="chief_engineer_review",
+    )
+
+    assert result is not None
+    assert result["factory_run_deadline_extension_count"] == 3
+    remaining = float(result["factory_run_deadline_epoch_seconds"]) - now
+    assert remaining >= 1770.0
+
+
 def test_l217_implementation_remint_when_remaining_cannot_admit_director() -> None:
     """Live L2-17 remint-2: rem=259 skipped, then dispatch_deadline_blocker."""
 

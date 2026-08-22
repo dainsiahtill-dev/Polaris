@@ -1,0 +1,73 @@
+card_id: vc-20260821-director-quality-target-refresh
+bug_summary: >
+  A same-task quality-repair loop keeps the Factory-selected first diagnostic
+  target after verifier revalidation moves all residual failures to different
+  files owned by the same CE task. The final provider request then authorizes
+  only the stale path, so a correct edit of the current residual is denied.
+
+classification: structural
+
+bug_path:
+  file: polaris/cells/roles/adapters/internal/director/quality_gate/_repair_loop.py
+  method: _run_materialization_quality_repair_retry
+  symptom: >
+    L3-22 TASK-3 cleared engine/engine_test.go failures, but later requests
+    continued to force that file while current Go diagnostics named
+    main_test.go and models/model_test.go; the final effect failed with
+    deo_path_scope_denied.
+
+assumptions:
+  - id: A1
+    statement: Factory repair_target_files remain authoritative for every inner repair attempt.
+    status: verified_false
+    evidence: >
+      Exact-run verifier output changed after physical edits, while the
+      immutable Factory target remained engine/engine_test.go.
+  - id: A2
+    statement: The remaining files require a different PM or CE owner.
+    status: verified_false
+    evidence: >
+      CE blueprint ce_TASK-3_20260821010912565807 owns main_test.go,
+      engine/engine_test.go, and models/model_test.go in one task boundary.
+  - id: A3
+    statement: Reauthorizing every changed file is safe.
+    status: verified_false
+    evidence: >
+      Existing L1-06 and L2-16 regressions prove broad changed-file widening
+      can reopen unrelated siblings; refresh must use current diagnostic
+      targets intersected with the current task write scope.
+
+pre_mortem:
+  failure_point: >
+    Replacing the forced target too eagerly could abandon a declaration-owner
+    rebind when diagnostics still point only at an out-of-scope use site.
+  risk_zone:
+    - polaris/cells/roles/adapters/internal/director/quality_gate/_repair_loop.py
+    - polaris/cells/roles/adapters/tests/test_director_repair_repeat_attempt_widening.py
+
+verification_plan:
+  - command: >
+      PYTHONPATH=src/backend PYTHONUTF8=1 pytest -q
+      src/backend/polaris/cells/roles/adapters/tests/test_director_repair_repeat_attempt_widening.py
+    expected: >
+      Current same-task diagnostics replace a stale Factory target, while
+      declaration-owner and Java failing-TU rebind tests remain green.
+  - command: >
+      PYTHONPATH=src/backend PYTHONUTF8=1 pytest -q
+      src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_quality_repair_a.py
+      src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_quality_repair_b.py
+      src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_quality_repair_c.py
+    expected: Quality-repair regression suites pass.
+  - command: ruff check <touched paths>
+    expected: No lint violations.
+  - command: mypy <touched Python paths>
+    expected: No new type errors.
+  - command: same-run quality_gate recovery for factory_a9812b43a06a
+    expected: >
+      PM and CE hashes remain unchanged; the next Director request authorizes
+      current TASK-3 residual files rather than engine/engine_test.go.
+
+rollback:
+  strategy: >
+    Revert the target-refresh predicate and regression test together. Do not
+    restore broad changed-file widening or permit cross-task writes.

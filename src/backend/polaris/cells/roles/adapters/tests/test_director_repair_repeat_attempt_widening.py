@@ -398,6 +398,70 @@ async def test_factory_forced_rebind_targets_do_not_reopen_sibling_models(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_factory_forced_target_refreshes_to_current_same_task_diagnostics(tmp_path: Path) -> None:
+    """A cleared first target must not pin later same-owner verifier residuals.
+
+    Live L3-22 TASK-3 first repaired ``engine/engine_test.go``. Revalidation
+    then named only ``main_test.go`` and ``models/model_test.go``, but the
+    immutable Factory target kept authorizing the green engine test and denied
+    the model edit. All three files are owned by the same CE task, so this is a
+    target refresh, not a cross-task scope expansion.
+    """
+
+    (tmp_path / "engine").mkdir()
+    (tmp_path / "models").mkdir()
+    (tmp_path / "engine" / "engine_test.go").write_text(
+        "package engine\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "main_test.go").write_text(
+        "package main\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "models" / "model_test.go").write_text(
+        "package models_test\n",
+        encoding="utf-8",
+    )
+    captured: dict[str, Any] = {}
+    adapter = _recording_adapter(tmp_path, captured)
+    errors = [
+        "./main_test.go:112:15: cannot convert totalTime / dt + 0.5 to type int",
+        "models/model_test.go:68:14: b.Validate undefined (type models.Bubble has no field or method Validate)",
+    ]
+
+    _results, summary = await _run_materialization_quality_repair_retry(
+        adapter,
+        task={
+            "task_id": "TASK-3",
+            "target_files": [
+                "main_test.go",
+                "engine/engine_test.go",
+                "models/model_test.go",
+            ],
+            "metadata": {"external_task_id": "TASK-3", "factory_run_id": "factory_l3_22"},
+        },
+        target_task_id="TASK-3",
+        run_id="factory_l3_22",
+        context={
+            "run_id": "factory_l3_22",
+            "director_quality_repair": {"repair_target_files": ["engine/engine_test.go"]},
+        },
+        original_message="Repair the current Go verifier failures.",
+        llm_call_timeout=30.0,
+        artifact_quality_errors=errors,
+        changed_files=["main_test.go", "engine/engine_test.go", "models/model_test.go"],
+        repair_attempt=2,
+    )
+
+    assert captured.get("invoked") is True
+    assert summary["factory_forced_targets_refreshed"] is True
+    assert summary["repair_target_files"] == ["main_test.go", "models/model_test.go"]
+    assert "engine/engine_test.go" not in summary["repair_target_files"]
+    repair_context = captured["context"]["director_quality_repair"]
+    assert repair_context["authorized_tool_target_files"] == ["main_test.go", "models/model_test.go"]
+
+
+@pytest.mark.asyncio
 async def test_factory_forced_java_failing_tus_do_not_widen_to_source_modules(
     tmp_path: Path,
 ) -> None:

@@ -1,0 +1,70 @@
+card_id: vc-20260821-go-verifier-function-context
+bug_summary: >
+  Go quality-repair prompts projected only four source lines around a failing
+  *_test.go assertion. The Director could see the assertion but not the
+  enclosing fixture, loop count, timestep, or call under test, causing real
+  but ineffective production edits and same-signature verifier stagnation.
+
+classification: pattern
+
+bug_path:
+  file: polaris/cells/roles/adapters/internal/director/quality_gate/_prompt_and_targets.py
+  method: _verifier_source_context_block
+  symptom: >
+    Exact L3-22 run factory_a9812b43a06a retained two Go behavior failures.
+    Snapshot a04ea73f23f207a73a182e0d contained only lines 108-116 around
+    engine_test.go:112, while TestStepClampsOnFloor setup began near line 75.
+    MiniMax-M3 made two non-no-op engine/engine.go edits but preserved the
+    wrong velocity-sign guard and go test ./... remained 2 -> 2.
+
+assumptions:
+  - id: A1
+    statement: The mutation retry discarded the read-only verifier context.
+    status: verified_false
+    evidence: >
+      Retry snapshot ac816353fc627addb4f547cd retained the 16901-character
+      quality-repair user message and engine/engine_test.go evidence.
+  - id: A2
+    statement: Four lines around a Go assertion are enough to infer behavior.
+    status: verified_false
+    evidence: >
+      The omitted enclosing test carried world setup, restitution=0, dt=0.02,
+      and 500 Step calls. Nearby comments also conflicted with the executable
+      greater-than assertion.
+  - id: A3
+    statement: Showing test source must authorize edits to tests.
+    status: verified_false
+    evidence: >
+      Existing quality-repair contracts separate read-only verifier evidence
+      from repair_target_files and authorized tool target paths.
+
+pre_mortem:
+  failure_point: >
+    A naive whole-file projection could waste context or expose unrelated
+    verifier functions, while brace counting would behave like an incomplete
+    Go parser.
+  risk_zone:
+    - polaris/cells/roles/adapters/internal/director/quality_gate/_prompt_and_targets.py
+    - polaris/cells/roles/adapters/tests/test_director_quality_repair_verifier_context.py
+
+verification_plan:
+  - command: >
+      PYTHONPATH=src/backend PYTHONUTF8=1 pytest -q
+      src/backend/polaris/cells/roles/adapters/tests/test_director_quality_repair_verifier_context.py
+    expected: >
+      The complete enclosing Go Test function is projected, the next verifier
+      function is excluded, and test files remain outside write authorization.
+  - command: ruff check <touched paths>
+    expected: No lint violations.
+  - command: mypy <touched Python paths>
+    expected: No new type errors.
+  - command: same-run quality_gate recovery for factory_a9812b43a06a
+    expected: >
+      Final Director provider request contains the complete Go verifier
+      function, edits only engine/engine.go, and go test ./... reduces the
+      two residual failures without rerunning PM or Chief Engineer.
+
+rollback:
+  strategy: >
+    Revert the Go verifier-function window and its regression together. Keep
+    unique package-local path resolution and read-only write-scope isolation.

@@ -1211,6 +1211,158 @@ class TestChiefEngineerHandoffGuards:
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    def test_chief_engineer_schema_valid_depth_deficit_uses_bounded_repair(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A schema-valid but infeasible completion contract gets one CE-local repair."""
+
+        executor = _executor(tmp_path)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-CANCEL",
+                        "title": "Implement cancellation coverage",
+                        "goal": "Exercise the Chief Engineer cancellation path.",
+                        "target_files": [
+                            "src/cancel.py",
+                            "src/cancel_policy.py",
+                            "tests/test_cancel.py",
+                        ],
+                        "scope_paths": ["src", "tests"],
+                        "acceptance_criteria": ["cancellation is observable"],
+                        "execution_checklist": ["Suspend the claimed attempt"],
+                        "delivery_depth_contract": {"minimums": {"min_prod_files": 2, "min_test_files": 1}},
+                        "metadata": {
+                            "topology_authority": "chief_engineer",
+                            "required_source_kinds": ["domain_modules", "tests"],
+                        },
+                    }
+                ]
+            },
+        )
+        primary = _single_task_chief_engineer_result()
+        repaired = _single_task_chief_engineer_result()
+        repaired_payload = dict(repaired.metadata["structured_output"])
+        repaired_payload["scope_for_apply"] = ["src/cancel.py", "src/cancel_policy.py"]
+        repaired_payload["project_completion_contract"] = _library_completion_requirements(
+            "src/cancel.py",
+            "src/cancel_policy.py",
+            owner_task_ids=("TASK-CANCEL", "TASK-CANCEL"),
+            test_path="tests/test_cancel.py",
+            test_owner_task_id="TASK-CANCEL",
+        )
+        repaired.metadata["structured_output"] = repaired_payload
+        repaired.output = json.dumps(repaired_payload)
+        results = [primary, repaired]
+        commands: list[Any] = []
+
+        class _RepairingRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                commands.append(command)
+                return results.pop(0)
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _RepairingRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-semantic-depth-repair",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-21T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "success", result.output
+        assert [command.task_id for command in commands] == [
+            f"CE-PORTFOLIO-{run.id}",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
+        ]
+        feedback = commands[1].context["failure_feedback"]
+        assert feedback["failure_class"] == "output_validation_failed"
+        assert "delivery depth infeasible: prod_files=1 < 2" in feedback["detail"]
+        assert (
+            "verification modality must be exactly one of: environment_prep, build, test, lint, entrypoint"
+            in commands[1].objective
+        )
+        assert "Use test for QA/domain/behavior verification" in commands[1].objective
+        review = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert review["generated_blueprints"] == 1
+        assert review["llm_call_count"] == 2
+        assert review["signals"][0]["code"] == "chief_engineer.output_contract_repair_started"
+        assert len(keepers) == 2
+        assert all(keeper.is_alive is False for keeper in keepers)
+        _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_chief_engineer_semantic_repair_budget_is_one_call(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-CANCEL",
+                        "title": "Implement cancellation coverage",
+                        "goal": "Exercise the Chief Engineer cancellation path.",
+                        "target_files": ["src/cancel.py", "tests/test_cancel.py"],
+                        "scope_paths": ["src", "tests"],
+                        "acceptance_criteria": ["cancellation is observable"],
+                        "execution_checklist": ["Suspend the claimed attempt"],
+                        "delivery_depth_contract": {"minimums": {"min_prod_files": 2, "min_test_files": 1}},
+                        "metadata": {
+                            "topology_authority": "chief_engineer",
+                            "required_source_kinds": ["domain_modules", "tests"],
+                        },
+                    }
+                ]
+            },
+        )
+        commands: list[Any] = []
+
+        class _StillInfeasibleRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                commands.append(command)
+                return _single_task_chief_engineer_result()
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _StillInfeasibleRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-semantic-depth-repair-bounded",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-21T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "failed"
+        assert len(commands) == 2
+        assert result.metadata["error_code"] == "chief_engineer.portfolio_output_invalid"
+        review = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert review["llm_call_count"] == 2
+        assert [signal["code"] for signal in review["signals"]] == [
+            "chief_engineer.output_contract_repair_started",
+            "chief_engineer.portfolio_output_invalid",
+        ]
+        assert len(keepers) == 2
+        assert all(keeper.is_alive is False for keeper in keepers)
+        _assert_no_chief_engineer_lease_keeper_threads()
+
     def test_chief_engineer_thinking_only_repair_falls_back_to_pm_authority_after_one_attempt(
         self,
         tmp_path: Path,

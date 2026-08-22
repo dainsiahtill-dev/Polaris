@@ -369,6 +369,13 @@ _NODE_TAP_LOCATION_RE = re.compile(
 _NODE_STACK_FRAME_RE = re.compile(
     r"\((?:file://)?(?P<path>[^()\s'\"]+?\.(?:js|mjs|cjs|ts|tsx|mts|cts)):(?P<line>\d+)(?::\d+)?\)"
 )
+_GO_TEST_ASSERTION_LOCATION_RE = re.compile(
+    r"(?m)^\s*(?P<path>(?:[A-Za-z]:)?[^\s:\n]*_test\.go):(?P<line>\d+):",
+    re.IGNORECASE,
+)
+_GO_TEST_FUNCTION_DECL_RE = re.compile(
+    r"^\s*func\s+(?:Test|Benchmark|Fuzz|Example)[A-Za-z0-9_]*\s*\(",
+)
 _JS_TAP_RESERVED_CALLS = frozenset(
     {
         "assert",
@@ -416,11 +423,43 @@ def _is_verifier_source_path(rel_path: str) -> bool:
     )
 
 
+def _go_verifier_function_window(lines: list[str], line_number: int) -> tuple[int, int] | None:
+    """Return the whole Go verifier function containing ``line_number``.
+
+    ``go test`` normally reports only ``file_test.go:line``. A tiny window
+    around that assertion hides fixture setup, loop counts, time steps, and
+    the call under test. Project the enclosing Test/Benchmark/Fuzz/Example
+    function instead. The next verifier declaration is a stable, syntax-light
+    boundary that avoids pretending this prompt layer owns a Go parser.
+    """
+
+    if not lines:
+        return None
+    anchor = min(max(0, line_number - 1), len(lines) - 1)
+    start: int | None = None
+    for index in range(anchor, -1, -1):
+        if _GO_TEST_FUNCTION_DECL_RE.match(lines[index]):
+            start = index
+            break
+    if start is None:
+        return None
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if _GO_TEST_FUNCTION_DECL_RE.match(lines[index]):
+            end = index
+            break
+    if not (start <= anchor < end):
+        return None
+    return start, end
+
+
 def _verifier_source_context_block(
     *,
     workspace_full: str,
     artifact_quality_errors: list[str],
     repair_target_files: list[str],
+    heading: str = "FAILING VERIFIER SOURCE CONTEXT",
+    include_go_sibling_contract: bool = True,
 ) -> str:
     """Project failing verifier source around traceback lines as read-only context.
 
@@ -437,8 +476,38 @@ def _verifier_source_context_block(
     repair_targets = {
         _normalize_declared_task_path(item) for item in repair_target_files if _normalize_declared_task_path(item)
     }
+
+    def _resolve_reference(raw_path: Path) -> tuple[Path, str] | None:
+        try:
+            absolute = raw_path.resolve() if raw_path.is_absolute() else (workspace / raw_path).resolve()
+            rel = absolute.relative_to(workspace).as_posix()
+            if absolute.is_file():
+                return absolute, rel
+        except (OSError, RuntimeError, ValueError):
+            return None
+        # ``go test ./...`` prints package-local basenames such as
+        # ``engine_test.go:112`` even when the file lives under ``engine/``.
+        # Resolve only a unique workspace match; duplicate basenames remain
+        # ambiguous and therefore fail closed instead of leaking wrong context.
+        if raw_path.is_absolute() or len(raw_path.parts) != 1:
+            return None
+        try:
+            candidates = [
+                candidate.resolve()
+                for candidate in workspace.rglob(raw_path.name)
+                if candidate.is_file() and "node_modules" not in candidate.parts
+            ]
+            unique = {candidate.relative_to(workspace).as_posix(): candidate for candidate in candidates}
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if len(unique) != 1:
+            return None
+        rel, absolute = next(iter(unique.items()))
+        return absolute, rel
+
     refs: list[tuple[str, int]] = []
     tap_refs: set[tuple[str, int]] = set()
+    go_refs: set[tuple[str, int]] = set()
     for error in artifact_quality_errors:
         for match in _PYTHON_TRACEBACK_SOURCE_RE.finditer(str(error or "")):
             raw_path = Path(str(match.group("path") or ""))
@@ -453,6 +522,27 @@ def _verifier_source_context_block(
             ref = (rel, line_number)
             if ref not in refs:
                 refs.append(ref)
+        # Standard ``go test`` assertion output commonly omits the command and
+        # package path after Factory splits one verifier result into individual
+        # failures.  Keep the referenced ``*_test.go`` window as read-only
+        # evidence so a production-owner repair can see concrete inputs and
+        # coordinate/sign conventions without gaining permission to edit tests.
+        for match in _GO_TEST_ASSERTION_LOCATION_RE.finditer(str(error or "")):
+            raw_path = Path(str(match.group("path") or ""))
+            try:
+                line_number = max(1, int(match.group("line")))
+            except (TypeError, ValueError):
+                continue
+            resolved = _resolve_reference(raw_path)
+            if resolved is None:
+                continue
+            _, rel = resolved
+            if rel in repair_targets or not _is_verifier_source_path(rel):
+                continue
+            ref = (rel, line_number)
+            if ref not in refs:
+                refs.append(ref)
+            go_refs.add(ref)
         error_text = str(error or "")
         tap_is_suite = "type: 'suite'" in error_text.lower() or 'type: "suite"' in error_text.lower()
         for match in (*_NODE_TAP_LOCATION_RE.finditer(error_text), *_NODE_STACK_FRAME_RE.finditer(error_text)):
@@ -482,11 +572,15 @@ def _verifier_source_context_block(
             lines = source_path.read_text(encoding="utf-8").splitlines()
         except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
             continue
-        # Node TAP `location` is the test() header, not the assertion/call.
-        # Live L2-18 remint-5: location 206 hid grantWish(...) at 211.
-        after = 24 if (rel, line_number) in tap_refs else 4
-        start = max(0, line_number - 5)
-        end = min(len(lines), line_number + after)
+        go_window = _go_verifier_function_window(lines, line_number) if (rel, line_number) in go_refs else None
+        if go_window is not None:
+            start, end = go_window
+        else:
+            # Node TAP `location` is the test() header, not the assertion/call.
+            # Live L2-18 remint-5: location 206 hid grantWish(...) at 211.
+            after = 24 if (rel, line_number) in tap_refs else 4
+            start = max(0, line_number - 5)
+            end = min(len(lines), line_number + after)
         excerpt = "\n".join(f"{index + 1}: {lines[index]}" for index in range(start, end))
         remaining = max(0, total_budget - used)
         if remaining <= 0:
@@ -494,11 +588,79 @@ def _verifier_source_context_block(
         excerpt = excerpt[:remaining]
         used += len(excerpt)
         blocks.append(f"--- {rel} around line {line_number} (READ-ONLY) ---\n```text\n{excerpt}\n```")
+
+    # A single Go behavior failure does not define the whole public contract.
+    # Fixing only the failing test function can make another sibling test fail
+    # on the next round (live L3-22: floor clamp, gravity direction, and bounce
+    # sign alternated across real edits). Project a bounded family of sibling
+    # tests (``TestStep*`` for a failing ``TestStepClamps*``), not the whole
+    # verifier file. This keeps prompts small while making the first repair
+    # preserve related behavior instead of learning it through regression.
+    # Evidence stays read-only and never expands authorized tool paths.
+    if include_go_sibling_contract and go_refs:
+        sibling_total_budget = 18000
+        sibling_per_file_budget = 9000
+        sibling_used = 0
+        family_anchors: set[str] = set()
+        for error in artifact_quality_errors:
+            for match in re.finditer(r"---\s+FAIL:\s+(?P<title>Test[A-Za-z0-9_]+)", str(error or "")):
+                title = str(match.group("title") or "")
+                camel_tokens = re.findall(r"[A-Z]+(?=[A-Z][a-z]|$)|[A-Z]?[a-z]+|[0-9]+", title)
+                if len(camel_tokens) >= 2:
+                    family_anchors.add("".join(camel_tokens[:2]))
+                elif title:
+                    family_anchors.add(title)
+        sibling_files = list(dict.fromkeys(rel for rel, _ in refs if (rel, _) in go_refs))
+        for rel in sibling_files[:4]:
+            if sibling_used >= sibling_total_budget:
+                break
+            try:
+                source_path = (workspace / rel).resolve()
+                source_path.relative_to(workspace)
+                lines = source_path.read_text(encoding="utf-8").splitlines()
+            except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+                continue
+            remaining = min(
+                sibling_per_file_budget,
+                sibling_total_budget - sibling_used,
+            )
+            excerpt_lines: list[str] = []
+            excerpt_size = 0
+            for index, line in enumerate(lines):
+                function_match = re.match(r"\s*func\s+(?P<name>Test[A-Za-z0-9_]+)\s*\(", line)
+                if function_match is None:
+                    continue
+                function_name = str(function_match.group("name") or "")
+                if family_anchors and not any(function_name.startswith(anchor) for anchor in family_anchors):
+                    continue
+                window = _go_verifier_function_window(lines, index + 1)
+                if window is None:
+                    continue
+                start, end = window
+                rendered_lines = [f"{line_index + 1}: {lines[line_index]}" for line_index in range(start, end)]
+                rendered = "\n".join(rendered_lines)
+                added = len(rendered) + (2 if excerpt_lines else 0)
+                if excerpt_size + added > remaining:
+                    break
+                if excerpt_lines:
+                    excerpt_lines.append("")
+                excerpt_lines.extend(rendered_lines)
+                excerpt_size += added
+            if not excerpt_lines:
+                continue
+            sibling_used += excerpt_size
+            blocks.append(
+                f"--- {rel} GO SIBLING VERIFIER CONTRACT (READ-ONLY; BOUNDED PREFIX) ---\n"
+                "```text\n"
+                + "\n".join(excerpt_lines)
+                + "\n```"
+            )
     if not blocks:
         return ""
     return (
-        "FAILING VERIFIER SOURCE CONTEXT (READ-ONLY EVIDENCE; NEVER EDIT THESE FILES):\n"
+        f"{heading} (READ-ONLY EVIDENCE; NEVER EDIT THESE FILES):\n"
         "Use the concrete setup/call inputs below to repair the authorized product target. "
+        "Executable setup, calls, and assertions are authoritative when nearby comments conflict. "
         "This evidence does not expand write scope.\n" + "\n".join(blocks) + "\n"
     )
 
@@ -2317,6 +2479,7 @@ def _build_materialization_quality_repair_message(
     repair_target_files: list[str] | None = None,
     workspace_full: str = "",
     interface_discrepancy_evidence: dict[str, Any] | None = None,
+    regression_guard_errors: list[str] | None = None,
 ) -> str:
     directive_quality_errors = (
         directive_artifact_quality_errors if directive_artifact_quality_errors is not None else artifact_quality_errors
@@ -2395,6 +2558,29 @@ def _build_materialization_quality_repair_message(
         artifact_quality_errors=artifact_quality_errors,
         repair_target_files=prompt_repair_target_files,
     )
+    normalized_regression_guards = [
+        str(item or "").strip() for item in (regression_guard_errors or []) if str(item or "").strip()
+    ][:6]
+    regression_guard_block = ""
+    regression_guard_source_context_block = ""
+    if normalized_regression_guards:
+        guard_lines = "\n".join(
+            f"- {_format_quality_error_for_repair_prompt(item)}" for item in normalized_regression_guards
+        )
+        regression_guard_block = (
+            "REGRESSION GUARDS FROM THE PREVIOUS REPAIR ROUND:\n"
+            "These diagnostics failed before the previous edit and then disappeared. "
+            "Keep them fixed while resolving the current Quality errors. They are read-only "
+            "behavior constraints and do not expand authorized tool paths.\n"
+            f"{guard_lines}\n"
+        )
+        regression_guard_source_context_block = _verifier_source_context_block(
+            workspace_full=workspace_full,
+            artifact_quality_errors=normalized_regression_guards,
+            repair_target_files=prompt_repair_target_files,
+            heading="REGRESSION GUARD VERIFIER SOURCE CONTEXT",
+            include_go_sibling_contract=False,
+        )
     referenced_definition_context_block = _diagnostic_referenced_definition_context_block(
         workspace_full=workspace_full,
         artifact_quality_errors=artifact_quality_errors,
@@ -2734,6 +2920,8 @@ def _build_materialization_quality_repair_message(
         f"{authorized_tool_path_block}"
         f"{repair_context_block}"
         f"{verifier_source_context_block}"
+        f"{regression_guard_block}"
+        f"{regression_guard_source_context_block}"
         f"{referenced_definition_context_block}"
         f"{cpp_included_api_block}"
         f"{leftover_cmake_include_block}"
@@ -2759,6 +2947,12 @@ def _build_materialization_quality_repair_message(
         "Only edit authorized write targets.\n"
         "- Cover every listed verifier diagnostic, preserve already-passing behavior, and do not trade one failure "
         "for a new unresolved symbol or runtime exception.\n"
+        "- A verifier failure guard `if <condition> { fail(...) }` passes only when `<condition>` becomes false. "
+        "Derive the required result from the executable condition and its setup/calls; comments are secondary and "
+        "must never override the executable assertion.\n"
+        "- The edit must change behavior on the failing execution path. Comment/whitespace-only edits, self-assignment, "
+        "`x += 0`, `x -= 0`, `x *= 1`, and `x /= 1` are semantic no-ops: they do not satisfy mutation authority and "
+        "must not be emitted.\n"
         "Do not repeat the same package/script/test scaffold. Replace the bad artifact with concrete runnable code, "
         "source files, and executable tests required by the task contract.\n"
         "If the npm manifest has a test script, it must run a real local test/check and must not contain "

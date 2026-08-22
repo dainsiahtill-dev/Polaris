@@ -78,6 +78,53 @@ class TestEmptyArgsProvisional:
 
 
 class TestCompletedCallEmittedOnce:
+    def test_nested_anthropic_arguments_preserve_shape_and_report_assembly_provenance(self) -> None:
+        executor = StreamExecutor()
+        pending: dict[str, _ToolCallAccumulator] = {}
+
+        placeholder = executor._accumulate_stream_tool_call(
+            pending,
+            {
+                "tool": "submit_structured_role_output",
+                "call_id": "ce-result",
+                "content_block_index": 0,
+                "arguments": {},
+                "arguments_text": "{}",
+                "arguments_complete": True,
+            },
+            ordinal=1,
+            provider_type="anthropic_compat",
+        )
+        emitted = executor._accumulate_stream_tool_call(
+            pending,
+            {
+                "tool": "",
+                "call_id": "",
+                "content_block_index": 0,
+                "arguments": {},
+                "arguments_text": (
+                    '{"construction_plan":{"task_plans":{"TASK-1":'
+                    '{"provider_declarations":[]}}},'
+                    '"project_completion_contract":{},"risk_flags":[]}'
+                ),
+                "arguments_complete": False,
+            },
+            ordinal=2,
+            provider_type="anthropic_compat",
+        )
+
+        assert placeholder is None
+        assert emitted is not None
+        assert emitted["arguments"]["construction_plan"]["task_plans"]["TASK-1"] == {"provider_declarations": []}
+        assert emitted["provider_meta"]["assembly"] == {
+            "argument_source": "stream_fragments",
+            "complete_snapshot_count": 0,
+            "delta_count": 2,
+            "explicit_complete_count": 0,
+            "fragment_count": 1,
+            "provisional_placeholder_count": 1,
+        }
+
     def test_placeholder_then_completed_emits_exactly_once(self) -> None:
         executor = StreamExecutor()
         pending: dict[str, _ToolCallAccumulator] = {}

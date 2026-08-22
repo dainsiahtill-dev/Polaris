@@ -70,6 +70,7 @@ _FILE_DEFICIT_PATTERN = re.compile(
     r"(?:=|:)\s*(?P<actual>\d+)\s*<\s*(?P<required>\d+)\b",
     re.IGNORECASE,
 )
+_MACHINE_ERROR_PREFIX_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]{2,127}$")
 
 
 def _event_correlated_run_ids(value: object, *, max_depth: int = 12) -> set[str]:
@@ -111,6 +112,34 @@ def _offline_journal_events(runtime_root: Path, *, limit: int) -> list[dict[str,
     events: list[dict[str, Any]] = []
     for run_dir in _discover_journal_run_dirs(runtime_root):
         events.extend(load_journal_events(run_dir, limit=limit))
+    events.sort(key=lambda event: (float(event.get("ts_epoch") or 0.0), str(event.get("ts") or "")))
+    return events[-limit:]
+
+
+def _diagnosis_event_identity(event: Mapping[str, Any]) -> tuple[str, str]:
+    """Return a stable identity without assuming every evidence source has an event id."""
+
+    event_id = str(event.get("event_id") or "").strip()
+    if event_id:
+        return ("event_id", event_id)
+    return (
+        "payload",
+        json.dumps(dict(event), ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str),
+    )
+
+
+def _merge_diagnosis_events(
+    *sources: Sequence[Mapping[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Merge AuditStore and physical journals without letting either hide evidence."""
+
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for source in sources:
+        for event in source:
+            payload = dict(event)
+            merged.setdefault(_diagnosis_event_identity(payload), payload)
+    events = list(merged.values())
     events.sort(key=lambda event: (float(event.get("ts_epoch") or 0.0), str(event.get("ts") or "")))
     return events[-limit:]
 
@@ -223,21 +252,22 @@ def query_audit_diagnosis_trail(query: QueryAuditDiagnosisTrailV1) -> AuditDiagn
                 runtime_root=runtime_root,
                 reason="audit_store_factory_unregistered_without_artifacts",
             )
+        store_events: list[dict[str, Any]] = []
         if has_audit_store_factory():
             facade = AuditUseCaseFacade(runtime_root=runtime_root)
             events = facade.query_logs(
                 task_id=query.task_id,
                 limit=query.limit,
             )
-            payload_events = [event.to_dict() for event in events]
-        else:
-            payload_events = _offline_journal_events(runtime_root, limit=query.limit)
-            if query.task_id:
-                payload_events = [
-                    event
-                    for event in payload_events
-                    if str(_mapping_value(event, "task_id") or "").strip() == query.task_id
-                ]
+            store_events = [event.to_dict() for event in events]
+        journal_events = _offline_journal_events(runtime_root, limit=query.limit)
+        payload_events = _merge_diagnosis_events(store_events, journal_events, limit=query.limit)
+        if query.task_id:
+            payload_events = [
+                event
+                for event in payload_events
+                if str(_mapping_value(event, "task_id") or "").strip() == query.task_id
+            ]
         if query.run_id:
             payload_events = [event for event in payload_events if _event_matches_run_id(event, query.run_id)]
         return AuditDiagnosisResultV1(
@@ -363,36 +393,60 @@ def _mapping_value(value: object, key: str, *, max_depth: int = 10) -> object | 
 def _structured_failure_signals(events: Sequence[Mapping[str, Any]], *, limit: int = 64) -> list[dict[str, str]]:
     """Project typed failure signals without parsing human prose."""
 
-    signals: list[dict[str, str]] = []
-    seen: set[tuple[str, str, str, str]] = set()
+    latest_by_identity: dict[tuple[str, str, str, str], dict[str, str]] = {}
     for event in events:
+        error_message = str(_mapping_value(event, "error_message") or "").strip()
+        error_category = str(_mapping_value(event, "error_category") or "").strip()
+        message_prefix = error_message.partition(":")[0].strip().casefold()
+        machine_error_code = (
+            message_prefix if error_message and _MACHINE_ERROR_PREFIX_PATTERN.fullmatch(message_prefix) else ""
+        )
         error_code = str(_mapping_value(event, "error_code") or _mapping_value(event, "failure_class") or "").strip()
         event_kind = str(event.get("event") or event.get("type") or event.get("kind") or "").strip()
+        if machine_error_code and error_code.casefold() in {
+            "",
+            "error",
+            "failed",
+            "failure",
+            "none",
+            "null",
+            "ok",
+            "output_validation_failed",
+            "success",
+        }:
+            error_code = machine_error_code
         if error_code.casefold() in {"", "none", "null", "ok", "success"}:
+            if machine_error_code:
+                error_code = machine_error_code
             normalized_kind = event_kind.casefold()
-            if not any(token in normalized_kind for token in ("error", "fail", "timeout", "blocked")):
+            if not error_code and not any(
+                token in normalized_kind for token in ("error", "fail", "timeout", "blocked")
+            ):
                 continue
-            error_code = event_kind
+            if not error_code:
+                error_code = event_kind
         role = str(_mapping_value(event, "role") or _mapping_value(event, "agent_role") or "").strip()
         stage = str(_mapping_value(event, "stage") or _mapping_value(event, "failure_stage") or "").strip()
         task_id = str(_mapping_value(event, "task_id") or _mapping_value(event, "external_task_id") or "").strip()
         context_refs = _context_snapshot_refs([event], limit=2)
         context_ref = context_refs[-1] if context_refs else ""
         identity = (error_code, role, stage, task_id)
-        if identity in seen:
-            continue
-        seen.add(identity)
-        signals.append(
-            {
-                "error_code": error_code,
-                "event_kind": event_kind,
-                "role": role,
-                "stage": stage,
-                "task_id": task_id,
-                "context_snapshot_ref": context_ref,
-                "timestamp": str(event.get("ts") or event.get("timestamp") or "").strip(),
-            }
-        )
+        signal = {
+            "error_code": error_code,
+            "event_kind": event_kind,
+            "role": role,
+            "stage": stage,
+            "task_id": task_id,
+            "context_snapshot_ref": context_ref,
+            "timestamp": str(event.get("ts") or event.get("timestamp") or "").strip(),
+        }
+        if error_category:
+            signal["error_category"] = error_category
+        if error_message:
+            signal["error_message"] = error_message
+        latest_by_identity[identity] = signal
+    signals = list(latest_by_identity.values())
+    signals.sort(key=lambda item: item.get("timestamp", ""))
     return signals[-limit:]
 
 

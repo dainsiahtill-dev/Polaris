@@ -1,0 +1,61 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "defect-20260821-l3-22-go-cross-file-redeclaration",
+  "status": "IMPLEMENTED_UNIT_AND_SHADOW_VERIFIED_PENDING_LIVE",
+  "severity": "P0",
+  "classification": "pattern",
+  "project_id": "L3-22",
+  "factory_run_id": "factory_a9812b43a06a",
+  "owner_cell": "director.runtime",
+  "symptom": "Same-run Go repair could mutate one file but could not plan compiler-proven equivalent declarations across package files, causing repeated verifier failures.",
+  "physical_evidence": {
+    "verifier": "go test -count=0 ./...",
+    "exit_code": 1,
+    "primary": "engine/physics.go and engine/rules.go compiler-primary redeclarations",
+    "companion": "engine/engine.go compiler companion declarations",
+    "latest_effect_receipt": "director-physical-effect-e57a25e80c95dd69c0c5cf04",
+    "latest_effect_path": "models/seed.go",
+    "latest_effect_non_noop": true
+  },
+  "coverage_evidence": {
+    "source_tool": "deterministic_go_dedup_repair",
+    "covered_diagnostics": 2,
+    "uncovered_diagnostics": 0,
+    "plan_probe_status": "covered_plannable",
+    "planner_status": "planned",
+    "patch_count": 2,
+    "changed_paths": [
+      "engine/physics.go",
+      "engine/rules.go"
+    ]
+  },
+  "root_cause": "The registry covered only one diagnostic spelling and the planner only handled generated intra-file lines. It could neither parse all compiler pairs from one receipt nor locate equivalent cross-file functions, methods, structs, variables, and declaration groups. A second span bug let single-line var declarations consume a later brace and overlap.",
+  "repair_strategy": "Bind primary, companion, and method-already-declared diagnostics to one runtime source tool; parse every compiler-located pair in one receipt; emit precise primary-only text replacements only for same-directory, same-package, build-tag-free, token-equivalent complete declarations; reject semantic differences.",
+  "forbidden_actions": [
+    "manual generated-project edits",
+    "PM replay",
+    "Chief Engineer replay",
+    "semantic choice between different function bodies"
+  ],
+  "required_tests": [
+    "paired coverage",
+    "plan probe plannability",
+    "precise primary-path patch",
+    "different-body fail closed",
+    "missing-companion fail closed",
+    "equivalent receiver-method repair",
+    "different receiver-method fail closed",
+    "grouped const repair",
+    "multi-pair compiler receipt batching",
+    "non-overlapping text spans",
+    "same-run go test revalidation"
+  ],
+  "verification": {
+    "targeted_tests": "76 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "live_workspace_shadow_wave_1": "two patches removed initial type/function/var/const duplicates without touching source workspace",
+    "live_workspace_shadow_wave_2": "two patches removed equivalent methods/functions; residual narrowed to non-equivalent Engine.Step, undefined applyPhysics, unused imports, and Bubble.Validate"
+  },
+  "next_action": "Restart only the isolated L3-22 backend onto current Polaris code, retry the failed quality boundary without PM/CE replay, then require authoritative effect receipts and go test revalidation."
+}

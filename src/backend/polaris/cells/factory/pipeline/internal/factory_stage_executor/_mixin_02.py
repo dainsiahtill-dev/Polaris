@@ -279,6 +279,12 @@ class _Mixin02:
             "prior_output_chars": len(prior_output),
             "evidence_refs": [],
         }
+        prior_metadata = dict(prior_result.metadata or {})
+        post_validation_errors = prior_metadata.get("chief_engineer_post_validation_errors")
+        if isinstance(post_validation_errors, list):
+            repair_failure_feedback["contract_validation_errors"] = [
+                str(item).strip() for item in post_validation_errors if str(item).strip()
+            ]
         repair_profile_identity = self._ce_prompt_profile_identity(prior_result)
         required_profile_fields = {"language", "task_type", "prompt_stage", "artifact"}
         missing_profile_fields = sorted(required_profile_fields.difference(repair_profile_identity))
@@ -832,6 +838,70 @@ class _Mixin02:
                                     deadline_decision=deadline_decision,
                                 )
                                 llm_call_count = 2
+                    if ce_result is not None and ce_result.ok and llm_call_count == 1:
+                        primary_structured_output = dict(ce_result.metadata or {}).get("structured_output")
+                        if isinstance(primary_structured_output, Mapping):
+                            primary_output_errors = self._chief_engineer_portfolio_output_errors(
+                                primary_structured_output,
+                                tasks=portfolio_tasks,
+                            )
+                            if primary_output_errors:
+                                primary_evidence = self._ce_extract_llm_evidence(
+                                    ce_result,
+                                    task_id=portfolio_task_id,
+                                    run_id=run.id,
+                                )
+                                repair_signal = {
+                                    "code": "chief_engineer.output_contract_repair_started",
+                                    "severity": "warning",
+                                    "detail": "; ".join(primary_output_errors),
+                                    "task_id": portfolio_task_id,
+                                    "repair_task_id": f"{portfolio_task_id}-SCHEMA-REPAIR",
+                                    "prior_error_code": "output_validation_failed",
+                                    "prior_failure_class": "output_validation_failed",
+                                    "validation_errors": list(primary_output_errors),
+                                    "pm_authority_preserved": True,
+                                    "provider_calls_capped": 2,
+                                }
+                                self._attach_ce_llm_evidence(repair_signal, primary_evidence)
+                                stage_signals.append(repair_signal)
+                                semantic_failure = self._chief_engineer_post_validation_repair_result(
+                                    prior_result=ce_result,
+                                    output_errors=primary_output_errors,
+                                )
+                                self._settle_chief_engineer_attempt_before_schema_repair(lease_scope=lease_scope)
+                                semantic_deadline_decision = self._chief_engineer_deadline_projection_decision(
+                                    context,
+                                    requested_timeout_seconds=requested_timeout_seconds,
+                                    dependency_schedule=dependency_schedule,
+                                    output_tokens=_CHIEF_ENGINEER_SCHEMA_REPAIR_MAX_TOKENS,
+                                )
+                                if semantic_deadline_decision.disposition is FactoryDeadlineDispositionV1.BLOCK:
+                                    stage_signals.append(
+                                        {
+                                            "code": "chief_engineer.output_contract_repair_deadline_blocked",
+                                            "severity": "error",
+                                            "detail": (
+                                                "The CE output-contract repair was not admitted because the "
+                                                "remaining Factory lease cannot preserve mandatory downstream budgets."
+                                            ),
+                                            "task_id": portfolio_task_id,
+                                            "deadline_decision": semantic_deadline_decision.to_dict(),
+                                            "reason": semantic_deadline_decision.reason,
+                                        }
+                                    )
+                                    ce_result = semantic_failure
+                                else:
+                                    ce_result = await self._run_chief_engineer_schema_repair(
+                                        run=run,
+                                        authority_port=authority_port,
+                                        authority_binding=authority_binding,
+                                        prior_result=semantic_failure,
+                                        portfolio_context=portfolio_context,
+                                        portfolio_task_ids=tuple(task.task_id for task in portfolio_tasks),
+                                        deadline_decision=semantic_deadline_decision,
+                                    )
+                                    llm_call_count = 2
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # noqa: BLE001 — contain provider/http failures as stage signals
@@ -1850,6 +1920,38 @@ class _Mixin02:
         return "--- fail:" in after_folded
 
     @staticmethod
+    def _go_compile_barrier_unmasked_runnable_tests(
+        before_signature: Iterable[str],
+        after_signature: Iterable[str],
+    ) -> bool:
+        """True when a Go compile barrier clears and real tests become runnable.
+
+        ``go test ./...`` may report package assertion failures together with
+        one root-package compile error.  Fixing that compiler diagnostic can
+        reveal additional root-package assertions while leaving the total
+        diagnostic count unchanged.  That is a later verifier phase, not an
+        equal-count swap.  Require the compiler marker to disappear and real
+        ``--- FAIL:`` evidence to remain so ordinary assertion churn stays
+        conservative.
+        """
+
+        before_text = "\n".join(str(item or "") for item in before_signature).casefold()
+        after_text = "\n".join(str(item or "") for item in after_signature).casefold()
+        go_compile_markers = (
+            "cannot convert",
+            "undefined:",
+            "declared and not used",
+            "imported and not used",
+            "has no field or method",
+            "invalid operation:",
+            "not enough arguments in call",
+            "too many arguments in call",
+        )
+        before_has_compile_barrier = any(marker in before_text for marker in go_compile_markers)
+        after_has_compile_barrier = any(marker in after_text for marker in go_compile_markers)
+        return before_has_compile_barrier and not after_has_compile_barrier and "--- fail:" in after_text
+
+    @staticmethod
     def _python_import_barrier_unmasked_runnable_tests(
         before_signature: Iterable[str],
         after_signature: Iterable[str],
@@ -1903,6 +2005,8 @@ class _Mixin02:
         if after == before:
             return "stagnant"
         if cls._go_crash_unmasked_runnable_tests(before_signature, after_signature):
+            return "forward_unmask"
+        if cls._go_compile_barrier_unmasked_runnable_tests(before_signature, after_signature):
             return "forward_unmask"
         if cls._python_import_barrier_unmasked_runnable_tests(before_signature, after_signature):
             return "forward_unmask"
@@ -2173,27 +2277,28 @@ class _Mixin02:
         external_id = str(metadata.get("external_task_id") or candidate.get("external_task_id") or "").strip()
         if candidate_factory_run_id != run_id or not external_id or external_id.startswith("factory-"):
             return (-1, -1)
-        raw_paths: list[Any] = []
-        for key in ("target_files", "scope_paths"):
-            value = metadata.get(key)
-            if isinstance(value, str):
-                raw_paths.append(value)
-            elif isinstance(value, list | tuple | set):
-                raw_paths.extend(value)
-        raw_paths.extend(
-            workspace_quality_impl._workspace_quality_authoritative_owner_paths(
-                metadata,
-                run_id=run_id,
-            )
+        authoritative_paths = workspace_quality_impl._workspace_quality_authoritative_owner_paths(
+            metadata,
+            run_id=run_id,
         )
+        completion = metadata.get("task_completion_projection")
+        owned_artifacts = completion.get("owned_artifacts") if isinstance(completion, Mapping) else None
+        has_completion_ownership = bool(owned_artifacts) and str(completion.get("run_id") or "").strip() in {
+            "",
+            run_id,
+        }
+        raw_paths: list[Any] = list(authoritative_paths)
+        if not has_completion_ownership:
+            for key in ("target_files", "scope_paths"):
+                value = metadata.get(key)
+                if isinstance(value, str):
+                    raw_paths.append(value)
+                elif isinstance(value, list | tuple | set):
+                    raw_paths.extend(value)
         candidate_paths = {str(path or "").strip().replace("\\", "/") for path in raw_paths if str(path or "").strip()}
         overlaps = workspace_quality_impl._workspace_quality_repair_path_overlaps(normalized_targets, candidate_paths)
         source_overlap = sum(
-            1
-            for path in overlaps
-            if not path.startswith(("tests/", "test/", "__tests__/"))
-            and "/__tests__/" not in path
-            and not path.endswith((".test.js", ".test.ts", ".test.tsx", ".spec.js", ".spec.ts", ".spec.tsx"))
+            1 for path in overlaps if not workspace_quality_impl._is_workspace_quality_test_target(path)
         )
         # A verifier diagnostic often yields both the failing test path and
         # its imported implementation source. Prefer the implementation owner

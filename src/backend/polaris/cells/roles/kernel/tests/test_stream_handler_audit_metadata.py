@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 import pytest
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
 from polaris.cells.roles.kernel.internal.llm_caller.stream_engine import StreamEngine
+from polaris.cells.roles.kernel.internal.llm_caller.stream_handler import normalize_stream_chunk
 from polaris.cells.roles.kernel.internal.structured_output_transport import (
     STRUCTURED_OUTPUT_TOOL_NAME,
     StructuredOutputStreamNormalizer,
@@ -23,6 +24,38 @@ from polaris.cells.roles.kernel.public.structured_output_contracts import (
     STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
     RoleStructuredOutputContractV1,
 )
+
+
+def test_normalize_stream_chunk_preserves_safe_tool_assembly_provenance() -> None:
+    normalized = normalize_stream_chunk(
+        {
+            "type": "tool_call",
+            "tool_call": {
+                "tool": "submit_structured_role_output",
+                "arguments": {"risk_flags": []},
+                "call_id": "call-a",
+                "provider_meta": {
+                    "provider": "anthropic_compat",
+                    "content_block_index": 0,
+                    "assembly": {
+                        "argument_source": "complete_snapshot",
+                        "delta_count": 1,
+                    },
+                },
+            },
+        },
+        native_tool_mode="native_tools_streaming",
+        tool_protocol="structured_native_tools",
+    )
+
+    assert normalized.metadata["tool_call_assembly"] == {
+        "provider": "anthropic_compat",
+        "content_block_index": 0,
+        "assembly": {
+            "argument_source": "complete_snapshot",
+            "delta_count": 1,
+        },
+    }
 
 
 @pytest.mark.asyncio

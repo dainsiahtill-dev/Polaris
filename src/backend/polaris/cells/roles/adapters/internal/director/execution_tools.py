@@ -324,6 +324,39 @@ def _precommit_source_syntax_guard(
     }
 
 
+def _precommit_source_compile_guard(
+    *,
+    workspace: Path,
+    rel_path: str,
+    after_content: str,
+) -> dict[str, Any]:
+    """Reject a candidate that introduces a definite workspace compile failure."""
+
+    from polaris.kernelone.quality import check_candidate_workspace_compile
+
+    result = check_candidate_workspace_compile(workspace, rel_path, after_content)
+    if not result.checked or not result.regression:
+        return {"ok": True}
+    command = " ".join(result.command)
+    return {
+        "ok": False,
+        "blocked": True,
+        "retryable": True,
+        "error_type": "source_compile_regression",
+        "error": (
+            f"Edit rejected before commit because it introduces a compile regression in {rel_path}: "
+            f"{str(result.error or 'compile failure')[:600]}"
+        ),
+        "suggestion": (
+            "Read the current file and the affected declaration/use sites, then issue a narrower edit. "
+            "The candidate failed the workspace compile check and the original file was not changed."
+        ),
+        "file": rel_path,
+        "compile_check": "failed_precommit",
+        "verifier_command": command,
+    }
+
+
 def _validate_or_repair_json_config_content(
     *,
     rel_path: str,
@@ -644,6 +677,13 @@ class DirectorToolExecutor:
             )
             if not syntax_guard.get("ok"):
                 return syntax_guard
+            compile_guard = _precommit_source_compile_guard(
+                workspace=workspace,
+                rel_path=rel_path,
+                after_content=text,
+            )
+            if not compile_guard.get("ok"):
+                return compile_guard
 
             policy_result = self._validate_director_policy_for_write(
                 workspace=workspace,
@@ -858,6 +898,13 @@ class DirectorToolExecutor:
             )
             if not syntax_guard.get("ok"):
                 return syntax_guard
+            compile_guard = _precommit_source_compile_guard(
+                workspace=workspace,
+                rel_path=rel_path,
+                after_content=final_content,
+            )
+            if not compile_guard.get("ok"):
+                return compile_guard
             policy_result = self._validate_director_policy_for_write(
                 workspace=workspace,
                 rel_path=rel_path,
@@ -1023,6 +1070,13 @@ class DirectorToolExecutor:
             )
             if not syntax_guard.get("ok"):
                 return syntax_guard
+            compile_guard = _precommit_source_compile_guard(
+                workspace=workspace,
+                rel_path=rel_path,
+                after_content=final_content,
+            )
+            if not compile_guard.get("ok"):
+                return compile_guard
             policy_result = self._validate_director_policy_for_write(
                 workspace=workspace,
                 rel_path=rel_path,

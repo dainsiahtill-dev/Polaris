@@ -26,6 +26,11 @@ class _ToolCallAccumulator:
     arguments_buffer: str = ""
     explicit_arguments: dict[str, Any] | None = None
     explicit_arguments_provisional: bool = False
+    delta_count: int = 0
+    fragment_count: int = 0
+    complete_snapshot_count: int = 0
+    explicit_complete_count: int = 0
+    provisional_placeholder_count: int = 0
     emitted_signature: str = ""
     provider_meta: dict[str, Any] = field(default_factory=dict)
 

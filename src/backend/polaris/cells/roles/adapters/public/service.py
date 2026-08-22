@@ -424,6 +424,63 @@ def resolve_director_semantic_quality_repair_target_files(
     )
 
 
+def resolve_director_causal_quality_repair_target_files(
+    *,
+    artifact_quality_errors: list[str],
+    changed_files: list[str],
+    workspace_full: str,
+) -> list[str]:
+    """Resolve causal implementation targets before a Factory owner claim.
+
+    Factory must select the canonical TaskRuntime owner before invoking the
+    Director adapter.  Language-aware target discovery used to run only after
+    that claim, so verifier paths such as ``engine/engine_test.go`` leased the
+    test task even when the same diagnostic identified ``engine/engine.go`` as
+    the implementation home.  Expose the adapter's existing read-only target
+    discovery through its public Cell boundary; callers receive paths only and
+    still rely on CE/JobToken authority for ownership and mutation scope.
+    """
+
+    from ..internal.director.quality_gate import (
+        _go_runtime_smoke_repair_target_files,
+        _javascript_runtime_smoke_repair_target_files,
+        _python_runtime_smoke_repair_target_files,
+        _semantic_quality_repair_target_files,
+    )
+
+    errors = list(artifact_quality_errors)
+    changed = list(changed_files)
+    candidates = [
+        *_python_runtime_smoke_repair_target_files(
+            artifact_quality_errors=errors,
+            changed_files=changed,
+            workspace_full=workspace_full,
+        ),
+        *_javascript_runtime_smoke_repair_target_files(
+            artifact_quality_errors=errors,
+            changed_files=changed,
+            workspace_full=workspace_full,
+        ),
+        *_go_runtime_smoke_repair_target_files(
+            artifact_quality_errors=errors,
+            changed_files=changed,
+            workspace_full=workspace_full,
+        ),
+        *_semantic_quality_repair_target_files(
+            artifact_quality_errors=errors,
+            changed_files=changed,
+            workspace_full=workspace_full,
+        ),
+    ]
+    return list(
+        dict.fromkeys(
+            str(path or "").strip().replace("\\", "/")
+            for path in candidates
+            if str(path or "").strip()
+        )
+    )
+
+
 def build_director_materialization_quality_repair_message(
     *,
     original_message: str,

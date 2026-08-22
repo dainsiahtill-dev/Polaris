@@ -243,6 +243,38 @@ class _Mixin03:
                     # Python tracebacks also name stdlib/site-package frames.
                     # Never turn those external files into Director write scope.
                     return
+            elif path:
+                direct = workspace_root / diagnostic_path
+                try:
+                    direct_exists = direct.is_file()
+                except OSError:
+                    direct_exists = False
+                if not direct_exists:
+                    # Package-scoped verifiers often report paths relative to
+                    # the package cwd (Go: ``engine_test.go``) rather than the
+                    # project root (``engine/engine_test.go``). Resolve only a
+                    # unique on-disk suffix match; ambiguity stays fail-closed
+                    # instead of inventing write authority.
+                    normalized_suffix = diagnostic_path.as_posix().casefold()
+                    basename = diagnostic_path.name
+                    matches: list[Path] = []
+                    if basename:
+                        try:
+                            matches = [
+                                candidate
+                                for candidate in workspace_root.rglob(basename)
+                                if candidate.is_file()
+                                and candidate.relative_to(workspace_root).as_posix().casefold().endswith(normalized_suffix)
+                                and not set(candidate.relative_to(workspace_root).parts).intersection(
+                                    {".git", ".polaris", "node_modules", "build", "dist"}
+                                )
+                            ]
+                        except (OSError, ValueError):
+                            matches = []
+                    if len(matches) == 1:
+                        path = matches[0].relative_to(workspace_root).as_posix()
+                    elif matches:
+                        return
             if path and _is_workspace_quality_repair_path(path):
                 (target if target is not None else candidates).append(path)
 
@@ -701,7 +733,9 @@ class _Mixin03:
                     evidence.append(text[:500])
                 if len(evidence) >= 2:
                     break
-        for item in payload.get("commands") or ():
+        raw_effective_commands = payload.get("effective_commands")
+        raw_commands = raw_effective_commands if isinstance(raw_effective_commands, list) else payload.get("commands")
+        for item in raw_commands or ():
             if len(evidence) >= 3:
                 break
             if not isinstance(item, dict) or bool(item.get("passed")):

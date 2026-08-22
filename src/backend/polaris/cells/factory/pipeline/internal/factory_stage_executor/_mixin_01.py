@@ -760,9 +760,7 @@ class _Mixin01:
                 else ()
             )
             raw_depth_contract = task.get("delivery_depth_contract") or metadata.get("delivery_depth_contract")
-            delivery_depth_contract = (
-                dict(raw_depth_contract) if isinstance(raw_depth_contract, Mapping) else {}
-            )
+            delivery_depth_contract = dict(raw_depth_contract) if isinstance(raw_depth_contract, Mapping) else {}
             portfolio_tasks.append(
                 ChiefEngineerPortfolioTaskV1(
                     task_id=self._task_id(task, index),
@@ -897,10 +895,7 @@ class _Mixin01:
             "Produce one coherent Chief Engineer project blueprint portfolio for the validated PM task graph. "
             "Define shared module boundaries and cross-file interfaces before projecting concrete plans for every "
             "task. Preserve PM target/scope authority and make each task independently executable by Director.\n\n"
-            "Validated PM tasks:\n"
-            + "\n".join(task_lines)
-            + depth_clause
-            + _CE_BLUEPRINT_OUTPUT_CONTRACT
+            "Validated PM tasks:\n" + "\n".join(task_lines) + depth_clause + _CE_BLUEPRINT_OUTPUT_CONTRACT
         )
 
     def _chief_engineer_project_kind_authority(
@@ -1522,11 +1517,52 @@ class _Mixin01:
             "and, when delivery_depth_contract is present, enough distinct task-owned production/test source "
             "artifacts to satisfy min_prod_files and min_test_files. Arrays may be empty only when the authoritative "
             "PM/depth/application contract has no obligation of that kind\n"
+            "- every verification modality must be exactly one of: environment_prep, build, test, lint, entrypoint. "
+            "Use test for QA/domain/behavior verification; never emit qa, domain, verify, check, smoke, or other "
+            "semantic aliases as modality values\n"
             "- risk_flags: array; optional scope_for_apply, when present: array\n\n"
             f"Validated PM task ids: {json.dumps(list(portfolio_task_ids), ensure_ascii=False)}\n"
             f"Prior validation failure: {prior_error}\n"
             f"Excluded prior output SHA-256: {prior_output_sha256}\n"
             f"Excluded prior output UTF-8 character count: {len(prior_output)}"
+        )
+
+    def _chief_engineer_post_validation_repair_result(
+        self,
+        *,
+        prior_result: RoleExecutionResultV1,
+        output_errors: list[str],
+    ) -> RoleExecutionResultV1:
+        """Project a schema-valid CE contract deficit into the bounded repair path.
+
+        The provider call itself succeeded, but its candidate failed an
+        authoritative post-transport contract check.  The existing repair
+        runner consumes a failed ``RoleExecutionResultV1``; project only that
+        verdict while preserving original provider/final-request evidence.
+        """
+
+        normalized_errors = tuple(str(item).strip() for item in output_errors if str(item).strip())
+        if not normalized_errors:
+            raise ValueError("chief_engineer_post_validation_repair_errors_required")
+        metadata = dict(getattr(prior_result, "metadata", {}) or {})
+        metadata["chief_engineer_post_validation_errors"] = list(normalized_errors)
+        return RoleExecutionResultV1(
+            ok=False,
+            status="failed",
+            role=str(getattr(prior_result, "role", "") or "chief_engineer"),
+            workspace=str(getattr(prior_result, "workspace", "") or self.workspace),
+            task_id=getattr(prior_result, "task_id", None),
+            session_id=getattr(prior_result, "session_id", None),
+            run_id=getattr(prior_result, "run_id", None),
+            output=str(getattr(prior_result, "output", "") or ""),
+            thinking=getattr(prior_result, "thinking", None),
+            tool_calls=tuple(getattr(prior_result, "tool_calls", ()) or ()),
+            artifacts=tuple(getattr(prior_result, "artifacts", ()) or ()),
+            usage=dict(getattr(prior_result, "usage", {}) or {}),
+            metadata=metadata,
+            error_code="output_validation_failed",
+            error_message="; ".join(normalized_errors),
+            turn_history=list(getattr(prior_result, "turn_history", ()) or ()),
         )
 
     def _settle_chief_engineer_attempt_before_schema_repair(

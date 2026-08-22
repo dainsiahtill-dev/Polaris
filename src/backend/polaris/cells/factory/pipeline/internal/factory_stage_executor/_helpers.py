@@ -27,6 +27,7 @@ from polaris.kernelone.constants import (
     MAX_LLM_PROVIDER_TIMEOUT_SECONDS,  # noqa: F401 — re-exported for characterization-test surface
 )
 from polaris.kernelone.llm.budget_policy import (
+    DIRECTOR_QUALITY_REPAIR_TIMEOUT_SECONDS,
     FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS,
 )
 from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
@@ -153,7 +154,7 @@ _LANGUAGE_NEUTRAL_FILENAMES: frozenset[str] = frozenset(
 
 _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 3
 _WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_ENV = "KERNELONE_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_SECONDS"
-_DEFAULT_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_SECONDS = 90.0
+_DEFAULT_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_SECONDS = DIRECTOR_QUALITY_REPAIR_TIMEOUT_SECONDS
 # Shares the single budget_policy constant with the chief-engineer copy below.
 # Bench r46 lowered the CE min start budget 45.0 -> 40.0; this sibling had
 # silently kept 45.0 (EXECUTION_BUDGET_POLICY_BLUEPRINT_20260703 §1) — now both
