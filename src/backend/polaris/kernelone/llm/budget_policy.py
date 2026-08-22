@@ -140,11 +140,13 @@ FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS: Final[float] = 40.0
 #: Default timeout for one bounded Director quality-repair provider turn.
 #:
 #: This is shared by the Director repair loop and Factory's workspace-quality
-#: child dispatch.  Live L3-22 proved that a Factory-local 90-second default
-#: silently overrode Director's 180-second repair budget even while the exact
-#: run still had more than 27 minutes available.  Both callers retain their
-#: own absolute-deadline safety cap; this constant only prevents policy drift.
-DIRECTOR_QUALITY_REPAIR_TIMEOUT_SECONDS: Final[float] = 180.0
+#: child dispatch.  Live L3-22 first proved that a Factory-local 90-second
+#: default silently overrode Director's repair budget, then exact same-run
+#: rounds 3/4 both reached the 180-second provider boundary with zero tool
+#: receipt while more than 23 minutes remained.  The repair adapter already
+#: clamps this value to 300 seconds and both callers retain their absolute-
+#: deadline safety cap, so use that bounded ceiling for slow tool-forced turns.
+DIRECTOR_QUALITY_REPAIR_TIMEOUT_SECONDS: Final[float] = 300.0
 
 #: Default timeout for the Factory Director dispatch stage. This value is
 #: injected into the stage context as both stage timeout and LLM-call timeout.

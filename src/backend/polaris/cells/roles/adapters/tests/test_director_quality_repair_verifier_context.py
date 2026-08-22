@@ -117,6 +117,59 @@ def test_quality_repair_includes_bounded_go_sibling_verifier_contract(tmp_path: 
     assert "Authorized tool target paths:\n- engine/engine_test.go" not in message
 
 
+def test_quality_repair_includes_workspace_local_go_fixture_definition(tmp_path: Path) -> None:
+    """Verifier calls must expose the fixture body that owns semantic conventions."""
+
+    (tmp_path / "go.mod").write_text("module musicbubble\n\ngo 1.22\n", encoding="utf-8")
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    models = tmp_path / "models"
+    models.mkdir()
+    (engine / "engine.go").write_text("package engine\nfunc Step() {}\n", encoding="utf-8")
+    (models / "seed.go").write_text(
+        "package models\n\n"
+        "type Vector struct { X, Y float64 }\n"
+        "type World struct { Gravity Vector }\n\n"
+        "func SeedCMajorChord() World {\n"
+        "    // Positive Y is the project's downward gravity convention.\n"
+        "    return World{Gravity: Vector{X: 0, Y: 9.81}}\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (engine / "engine_test.go").write_text(
+        "package engine_test\n\n"
+        "import (\n"
+        '    "testing"\n'
+        '    "musicbubble/models"\n'
+        ")\n\n"
+        "func TestStepClampsOnFloor(t *testing.T) {\n"
+        "    world := models.SeedCMajorChord()\n"
+        "    _ = world\n"
+        '    t.Fatal("still moving downward: 98.1")\n'
+        "}\n",
+        encoding="utf-8",
+    )
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair the Go floor behavior failure.",
+        artifact_quality_errors=[
+            "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+            "    engine_test.go:11: still moving downward: 98.1\n"
+            "FAIL\tmusicbubble/engine\t0.006s"
+        ],
+        changed_files=["engine/engine.go", "engine/engine_test.go", "models/seed.go"],
+        repair_target_files=["engine/engine.go"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "GO REFERENCED FIXTURE CONTRACT: models.SeedCMajorChord" in message
+    assert "models/seed.go" in message
+    assert "Positive Y is the project's downward gravity convention" in message
+    assert "Gravity: Vector{X: 0, Y: 9.81}" in message
+    assert "Authorized tool target paths:\n- engine/engine.go" in message
+    assert "Authorized tool target paths:\n- models/seed.go" not in message
+
+
 def test_quality_repair_includes_previous_go_failure_as_regression_guard(tmp_path: Path) -> None:
     """A repair that swaps Go test failures must see both behavior contracts."""
 
@@ -162,6 +215,40 @@ def test_quality_repair_includes_previous_go_failure_as_regression_guard(tmp_pat
     assert "do not expand authorized tool paths" in message
     assert "Authorized tool target paths:\n- engine/engine.go" in message
     assert "Authorized tool target paths:\n- engine/engine_test.go" not in message
+
+
+def test_quality_repair_causal_reanalysis_rejects_another_unreachable_branch_edit(tmp_path: Path) -> None:
+    """Stable named tests after real edits require a causal-path rethink."""
+
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    (engine / "engine.go").write_text("package engine\nfunc Step() {}\n", encoding="utf-8")
+    (engine / "engine_test.go").write_text(
+        "package engine\n\n"
+        "func TestStepClampsOnFloor(t *testing.T) {\n"
+        "    world := worldWithGravityY(9.81)\n"
+        "    got := Step(world)\n"
+        '    if got.Velocity.Y > 0 { t.Fatalf("still moving downward: %v", got.Velocity.Y) }\n'
+        "}\n",
+        encoding="utf-8",
+    )
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair the Go behavior failure.",
+        artifact_quality_errors=[
+            "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+            "    engine_test.go:6: still moving downward: 98.1"
+        ],
+        changed_files=["engine/engine.go"],
+        repair_target_files=["engine/engine.go"],
+        workspace_full=str(tmp_path),
+        causal_reanalysis_required=True,
+    )
+
+    assert "CAUSAL REANALYSIS REQUIRED AFTER VERIFIED STAGNATION" in message
+    assert "edited branch may be unreachable" in message
+    assert "test setup, fixture initial state, state update, and branch predicate" in message
+    assert "Authorized tool target paths:\n- engine/engine.go" in message
 
 
 def test_quality_repair_includes_complete_go_verifier_function(tmp_path: Path) -> None:

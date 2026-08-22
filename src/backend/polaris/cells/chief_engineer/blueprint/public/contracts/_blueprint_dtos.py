@@ -12,6 +12,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from polaris.cells.chief_engineer.blueprint.public.contracts._behavior import (
+    ChiefEngineerSharedBehaviorContractV1,
+)
 from polaris.cells.chief_engineer.blueprint.public.contracts._completion import (
     ProjectCompletionContractV1,
     VerificationCommandAuthorityV1,
@@ -516,6 +519,9 @@ class ChiefEngineerBlueprintPortfolioV1:
     risk_flags: tuple[str, ...]
     llm_blueprint_consumed: bool
     usage_mode: Literal["advisory_overlay", "offline_diagnostic_only"]
+    shared_behavior_contract: ChiefEngineerSharedBehaviorContractV1 | None = None
+    shared_behavior_contract_ref: str | None = None
+    shared_behavior_contract_hash: str | None = None
     authority: Literal["advisory_only"] = "advisory_only"
     immutable: bool = True
     handoff_ready: Literal[False] = False
@@ -570,6 +576,9 @@ class ChiefEngineerBlueprintPortfolioV1:
         completion_contract = self.project_completion_contract
         completion_ref = self.project_completion_contract_ref
         completion_hash = self.project_completion_contract_hash
+        behavior_contract = self.shared_behavior_contract
+        behavior_ref = self.shared_behavior_contract_ref
+        behavior_hash = self.shared_behavior_contract_hash
         if self.llm_blueprint_consumed:
             if type(completion_contract) is not ProjectCompletionContractV1:
                 raise TypeError("advisory portfolio requires exact ProjectCompletionContractV1")
@@ -583,8 +592,32 @@ class ChiefEngineerBlueprintPortfolioV1:
                 raise ValueError("project completion contract run_id must match portfolio run_id")
             if completion_contract_v1.covered_task_ids != tuple(sorted(task_ids)):
                 raise ValueError("project completion contract must cover the exact portfolio task set")
-        elif completion_contract is not None or completion_ref is not None or completion_hash is not None:
-            raise ValueError("offline diagnostic portfolio cannot bind a project completion contract")
+            behavior_values = (behavior_contract, behavior_ref, behavior_hash)
+            if any(value is not None for value in behavior_values):
+                if not all(value is not None for value in behavior_values):
+                    raise ValueError("shared behavior contract identity must be complete when present")
+                if type(behavior_contract) is not ChiefEngineerSharedBehaviorContractV1:
+                    raise TypeError("shared_behavior_contract must be exact ChiefEngineerSharedBehaviorContractV1")
+                behavior_contract_v1 = cast(ChiefEngineerSharedBehaviorContractV1, behavior_contract)
+                expected_behavior_ref = f"{portfolio_path}#shared_behavior_contract"
+                if behavior_ref != expected_behavior_ref:
+                    raise ValueError("shared_behavior_contract_ref must target the portfolio contract fragment")
+                if behavior_hash != behavior_contract_v1.contract_hash:
+                    raise ValueError("shared_behavior_contract_hash must match the shared behavior contract")
+                if set(behavior_contract_v1.task_bindings) != expected_task_ids:
+                    raise ValueError("shared behavior task bindings must cover the exact portfolio task set")
+        elif any(
+            value is not None
+            for value in (
+                completion_contract,
+                completion_ref,
+                completion_hash,
+                behavior_contract,
+                behavior_ref,
+                behavior_hash,
+            )
+        ):
+            raise ValueError("offline diagnostic portfolio cannot bind completion or behavior contracts")
 
         task_overlays: dict[str, dict[str, Any]] = {}
         scope_advisory: dict[str, dict[str, Any]] = {}
@@ -601,6 +634,8 @@ class ChiefEngineerBlueprintPortfolioV1:
             "project_interface_contract_ref",
             "project_completion_contract_hash",
             "project_completion_contract_ref",
+            "shared_behavior_contract_hash",
+            "shared_behavior_contract_ref",
             "reference",
             "risk_flags",
             "scope_for_apply",
@@ -629,6 +664,10 @@ class ChiefEngineerBlueprintPortfolioV1:
                 raise ValueError(f"task_overlays[{task_id!r}] completion ref binding mismatch")
             if overlay.get("project_completion_contract_hash") != completion_hash:
                 raise ValueError(f"task_overlays[{task_id!r}] completion hash binding mismatch")
+            if overlay.get("shared_behavior_contract_ref") != behavior_ref:
+                raise ValueError(f"task_overlays[{task_id!r}] behavior ref binding mismatch")
+            if overlay.get("shared_behavior_contract_hash") != behavior_hash:
+                raise ValueError(f"task_overlays[{task_id!r}] behavior hash binding mismatch")
             if overlay.get("authority") != "advisory_only":
                 raise ValueError(f"task_overlays[{task_id!r}] authority must be advisory_only")
             if overlay.get("llm_blueprint_consumed") is not self.llm_blueprint_consumed:
@@ -653,6 +692,8 @@ class ChiefEngineerBlueprintPortfolioV1:
                 "project_interface_contract_hash": interface_hash,
                 "project_completion_contract_ref": completion_ref,
                 "project_completion_contract_hash": completion_hash,
+                "shared_behavior_contract_ref": behavior_ref,
+                "shared_behavior_contract_hash": behavior_hash,
             }
             if dict(reference) != expected_reference:
                 raise ValueError(f"task_overlays[{task_id!r}].reference binding mismatch")
@@ -678,6 +719,8 @@ class ChiefEngineerBlueprintPortfolioV1:
                 "project_interface_contract_hash": interface_hash,
                 "project_completion_contract_ref": completion_ref,
                 "project_completion_contract_hash": completion_hash,
+                "shared_behavior_contract_ref": behavior_ref,
+                "shared_behavior_contract_hash": behavior_hash,
                 "reference": expected_reference,
                 "llm_blueprint_consumed": self.llm_blueprint_consumed,
                 "usage_mode": self.usage_mode,
@@ -712,12 +755,14 @@ class ChiefEngineerBlueprintPortfolioV1:
         object.__setattr__(self, "project_interface_contract_hash", interface_hash)
         object.__setattr__(self, "project_completion_contract_ref", completion_ref)
         object.__setattr__(self, "project_completion_contract_hash", completion_hash)
+        object.__setattr__(self, "shared_behavior_contract_ref", behavior_ref)
+        object.__setattr__(self, "shared_behavior_contract_hash", behavior_hash)
         object.__setattr__(self, "risk_flags", _strict_unique_string_tuple("risk_flags", self.risk_flags))
 
     def to_reference(self) -> dict[str, Any]:
         """Return the durable identity needed by downstream projections."""
 
-        return {
+        context = {
             "schema_version": "chief_engineer.blueprint_portfolio.reference.v1",
             "portfolio_id": self.portfolio_id,
             "portfolio_path": self.portfolio_path,
@@ -726,7 +771,10 @@ class ChiefEngineerBlueprintPortfolioV1:
             "project_interface_contract_hash": self.project_interface_contract_hash,
             "project_completion_contract_ref": self.project_completion_contract_ref,
             "project_completion_contract_hash": self.project_completion_contract_hash,
+            "shared_behavior_contract_ref": self.shared_behavior_contract_ref,
+            "shared_behavior_contract_hash": self.shared_behavior_contract_hash,
         }
+        return context
 
     @property
     def reference(self) -> dict[str, Any]:
@@ -737,7 +785,7 @@ class ChiefEngineerBlueprintPortfolioV1:
     def to_task_blueprint_context(self) -> dict[str, Any]:
         """Return canonical evidence fields for ``generate_task_blueprint`` context."""
 
-        return {
+        context = {
             "blueprint_portfolio_ref": self.portfolio_path,
             "blueprint_portfolio_hash": self.portfolio_hash,
             "project_interface_contract_ref": self.project_interface_contract_ref,
@@ -749,6 +797,15 @@ class ChiefEngineerBlueprintPortfolioV1:
                 self.project_completion_contract.to_dict() if self.project_completion_contract is not None else None
             ),
         }
+        if self.shared_behavior_contract is not None:
+            context.update(
+                {
+                    "shared_behavior_contract_ref": self.shared_behavior_contract_ref,
+                    "shared_behavior_contract_hash": self.shared_behavior_contract_hash,
+                    "shared_behavior_contract": self.shared_behavior_contract.to_dict(),
+                }
+            )
+        return context
 
     def to_dict(self) -> dict[str, Any]:
         """Return the canonical JSON payload persisted by the public service."""
@@ -772,6 +829,11 @@ class ChiefEngineerBlueprintPortfolioV1:
             ),
             "project_completion_contract_ref": self.project_completion_contract_ref,
             "project_completion_contract_hash": self.project_completion_contract_hash,
+            "shared_behavior_contract": (
+                self.shared_behavior_contract.to_dict() if self.shared_behavior_contract is not None else None
+            ),
+            "shared_behavior_contract_ref": self.shared_behavior_contract_ref,
+            "shared_behavior_contract_hash": self.shared_behavior_contract_hash,
             "risk_flags": list(self.risk_flags),
             "llm_blueprint_consumed": self.llm_blueprint_consumed,
             "usage_mode": self.usage_mode,

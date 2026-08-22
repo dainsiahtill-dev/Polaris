@@ -10,6 +10,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from polaris.cells.chief_engineer.blueprint.public.contracts import (
+    ChiefEngineerBehaviorExampleV1,
+    ChiefEngineerBehaviorInvariantV1,
+)
+
 
 def ce_extract_llm_evidence(ce_result: Any, *, task_id: str, run_id: str) -> dict[str, Any]:
     def _walk_values(root: Any, keys: set[str]) -> Any:
@@ -222,6 +227,7 @@ def chief_engineer_authoritative_pm_projection_candidate() -> dict[str, Any]:
                 "provider_declarations": [],
                 "consumer_declarations": [],
             },
+            "shared_behavior_contract": {"invariants": []},
         },
         "project_completion_contract": {
             "obligations": {
@@ -326,6 +332,11 @@ def chief_engineer_portfolio_output_errors(
         unknown_task_ids = sorted(declared_task_ids - set(task_ids))
         if unknown_task_ids:
             errors.append("task_plans contains unknown task ids: " + ", ".join(unknown_task_ids))
+        for task_id, task_plan in task_plans.items():
+            if not isinstance(task_plan, Mapping):
+                errors.append(f"task_plans[{task_id!r}] must be an object")
+            elif not isinstance(task_plan.get("behavior_invariant_refs"), list):
+                errors.append(f"task_plans[{task_id!r}].behavior_invariant_refs must be an array")
     interface_contract = construction_plan.get("project_interface_contract")
     if not isinstance(interface_contract, Mapping):
         errors.append("construction_plan.project_interface_contract must be an object")
@@ -342,6 +353,52 @@ def chief_engineer_portfolio_output_errors(
             errors.append("project_interface_contract.provider_declarations must be an array")
         if not isinstance(consumers, list):
             errors.append("project_interface_contract.consumer_declarations must be an array")
+    behavior_contract = construction_plan.get("shared_behavior_contract")
+    if not isinstance(behavior_contract, Mapping):
+        errors.append("construction_plan.shared_behavior_contract must be an object")
+    else:
+        invariants = behavior_contract.get("invariants")
+        if not isinstance(invariants, list):
+            errors.append("shared_behavior_contract.invariants must be an array")
+        else:
+            for index, invariant in enumerate(invariants):
+                if not isinstance(invariant, Mapping):
+                    errors.append(f"shared_behavior_contract.invariants[{index}] must be an object")
+                    continue
+                raw_examples = invariant.get("verification_examples")
+                if not isinstance(raw_examples, list):
+                    errors.append(
+                        f"shared_behavior_contract.invariants[{index}].verification_examples must be an array"
+                    )
+                    continue
+                try:
+                    examples = tuple(
+                        ChiefEngineerBehaviorExampleV1(
+                            given=str(example.get("given") or ""),
+                            when=str(example.get("when") or ""),
+                            then=str(example.get("then") or ""),
+                        )
+                        for example in raw_examples
+                        if isinstance(example, Mapping)
+                    )
+                    ChiefEngineerBehaviorInvariantV1(
+                        invariant_id=str(invariant.get("invariant_id") or ""),
+                        statement=str(invariant.get("statement") or ""),
+                        owner_task_id=str(invariant.get("owner_task_id") or ""),
+                        consumer_task_ids=tuple(
+                            str(item or "").strip()
+                            for item in invariant.get("consumer_task_ids") or ()
+                            if str(item or "").strip()
+                        ),
+                        covered_obligation_ids=tuple(
+                            str(item or "").strip()
+                            for item in invariant.get("covered_obligation_ids") or ()
+                            if str(item or "").strip()
+                        ),
+                        verification_examples=examples,
+                    )
+                except (TypeError, ValueError) as exc:
+                    errors.append(f"shared_behavior_contract.invariants[{index}] invalid: {exc}")
     if "scope_for_apply" in payload and not isinstance(payload.get("scope_for_apply"), list):
         errors.append("scope_for_apply must be an array")
     if not isinstance(payload.get("risk_flags"), list):

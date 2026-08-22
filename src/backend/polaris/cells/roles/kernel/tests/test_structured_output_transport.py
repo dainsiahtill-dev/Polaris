@@ -45,10 +45,34 @@ def _real_ce_contract_and_payload() -> tuple[RoleStructuredOutputContractV1, dic
     contract = OrchestrationStageExecutor._chief_engineer_structured_output_contract(task_ids)
     payload: dict[str, object] = {
         "construction_plan": {
-            "task_plans": {task_id: {"summary": f"Blueprint for {task_id}"} for task_id in task_ids},
+            "task_plans": {
+                task_id: {
+                    "summary": f"Blueprint for {task_id}",
+                    "behavior_invariant_refs": ["INV-1"],
+                }
+                for task_id in task_ids
+            },
             "project_interface_contract": {
                 "provider_declarations": [],
                 "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {
+                "invariants": [
+                    {
+                        "invariant_id": "INV-1",
+                        "statement": "The entrypoint and verification tasks observe the same result.",
+                        "owner_task_id": "TASK-1",
+                        "consumer_task_ids": ["TASK-2", "TASK-3"],
+                        "covered_obligation_ids": ["artifact-main", "verify-build"],
+                        "verification_examples": [
+                            {
+                                "given": "the entrypoint is built",
+                                "when": "the verifier runs it",
+                                "then": "the declared result is observed",
+                            }
+                        ],
+                    }
+                ]
             },
         },
         "project_completion_contract": {
@@ -193,6 +217,249 @@ def test_result_tool_payload_is_validated_against_caller_schema() -> None:
             },
             plan,
         )
+
+
+def _displaced_portfolio_contract() -> RoleStructuredOutputContractV1:
+    return RoleStructuredOutputContractV1(
+        schema_name="displaced_portfolio",
+        description="Submit one nested portfolio.",
+        json_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "construction_plan": {
+                    "type": "object",
+                    "additionalProperties": True,
+                    "properties": {
+                        "task_plans": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "TASK-1": {"type": "object"},
+                                "TASK-2": {"type": "object"},
+                            },
+                            "required": ["TASK-1", "TASK-2"],
+                        },
+                        "project_interface_contract": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "provider_declarations": {"type": "array"},
+                                "consumer_declarations": {"type": "array"},
+                            },
+                            "required": ["provider_declarations", "consumer_declarations"],
+                        },
+                        "shared_behavior_contract": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {"invariants": {"type": "array"}},
+                            "required": ["invariants"],
+                        },
+                    },
+                    "required": ["task_plans", "project_interface_contract", "shared_behavior_contract"],
+                },
+                "risk_flags": {"type": "array"},
+            },
+            "required": ["construction_plan", "risk_flags"],
+        },
+    )
+
+
+def test_schema_proven_displaced_root_members_recover_without_provider_retry() -> None:
+    """L3-22: preserve and rehome complete CE members leaked from a nested object."""
+
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _displaced_portfolio_contract().to_context_projection()}
+    )
+    assert plan is not None
+    malformed = {
+        "construction_plan": {
+            "project_interface_contract": {"consumer_declarations": [{"consumer_file": "main.go"}]}
+        },
+        "task_plans": {"TASK-1": {"summary": "models"}},
+        "TASK-2": {"summary": "tests"},
+        "provider_declarations": [{"owner_file": "models/model.go"}],
+        "shared_behavior_contract": {"invariants": [{"invariant_id": "INV-1"}]},
+        "risk_flags": [],
+    }
+
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "args": malformed,
+                    "call_id": "call-displaced-root",
+                }
+            ],
+        },
+        plan,
+    )
+
+    payload = json.loads(normalized["content"])
+    construction_plan = payload["construction_plan"]
+    assert construction_plan["task_plans"] == {
+        "TASK-1": {"summary": "models"},
+        "TASK-2": {"summary": "tests"},
+    }
+    assert construction_plan["project_interface_contract"] == {
+        "consumer_declarations": [{"consumer_file": "main.go"}],
+        "provider_declarations": [{"owner_file": "models/model.go"}],
+    }
+    assert construction_plan["shared_behavior_contract"] == {
+        "invariants": [{"invariant_id": "INV-1"}]
+    }
+    evidence = normalized["structured_output_transport"]
+    assert evidence["schema_normalization_policy"] == "schema_proven_displaced_root_members_v1"
+    assert evidence["schema_normalization_details"]["displaced_root_relocations"] == [
+        "TASK-2->construction_plan.task_plans.TASK-2",
+        "provider_declarations->construction_plan.project_interface_contract.provider_declarations",
+        "shared_behavior_contract->construction_plan.shared_behavior_contract",
+        "task_plans->construction_plan.task_plans",
+    ]
+
+
+def test_displaced_root_member_collision_remains_fail_closed() -> None:
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _displaced_portfolio_contract().to_context_projection()}
+    )
+    assert plan is not None
+    malformed = {
+        "construction_plan": {
+            "task_plans": {"TASK-1": {}, "TASK-2": {}},
+            "project_interface_contract": {
+                "provider_declarations": [{"owner_file": "canonical.go"}],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {"invariants": []},
+        },
+        "provider_declarations": [{"owner_file": "conflict.go"}],
+        "risk_flags": [],
+    }
+
+    with pytest.raises(ValueError, match="structured_output_payload_schema_mismatch"):
+        normalize_structured_output_response(
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                        "args": malformed,
+                        "call_id": "call-displaced-collision",
+                    }
+                ],
+            },
+            plan,
+        )
+
+
+def test_unknown_root_noise_without_schema_proven_relocation_remains_fail_closed() -> None:
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _displaced_portfolio_contract().to_context_projection()}
+    )
+    assert plan is not None
+    malformed = {
+        "construction_plan": {
+            "task_plans": {"TASK-1": {}, "TASK-2": {}},
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {"invariants": []},
+        },
+        "untrusted_bypass": True,
+        "risk_flags": [],
+    }
+
+    with pytest.raises(ValueError, match="structured_output_payload_schema_mismatch"):
+        normalize_structured_output_response(
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                        "args": malformed,
+                        "call_id": "call-unknown-root-noise",
+                    }
+                ],
+            },
+            plan,
+        )
+
+
+def test_displaced_root_member_plus_arbitrary_residual_remains_fail_closed() -> None:
+    """A valid relocation must not smuggle an unrelated member into an open object."""
+
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _displaced_portfolio_contract().to_context_projection()}
+    )
+    assert plan is not None
+    malformed = {
+        "construction_plan": {
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {"invariants": []},
+        },
+        "task_plans": {"TASK-1": {}, "TASK-2": {}},
+        "untrusted_bypass": {"scope_for_apply": ["outside/**"]},
+        "risk_flags": [],
+    }
+
+    with pytest.raises(ValueError, match="structured_output_payload_schema_mismatch"):
+        normalize_structured_output_response(
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                        "args": malformed,
+                        "call_id": "call-displaced-plus-residual",
+                    }
+                ],
+            },
+            plan,
+        )
+
+
+def test_required_defaults_compose_with_displaced_root_recovery() -> None:
+    """Missing empty root containers are defaulted before strict relocation proof."""
+
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _displaced_portfolio_contract().to_context_projection()}
+    )
+    assert plan is not None
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "args": {
+                        "construction_plan": {
+                            "project_interface_contract": {
+                                "provider_declarations": [],
+                                "consumer_declarations": [],
+                            },
+                            "shared_behavior_contract": {"invariants": []},
+                        },
+                        "task_plans": {"TASK-1": {}, "TASK-2": {}},
+                    },
+                    "call_id": "call-displaced-with-defaults",
+                }
+            ],
+        },
+        plan,
+    )
+
+    payload = json.loads(normalized["content"])
+    assert payload["risk_flags"] == []
+    assert payload["construction_plan"]["task_plans"] == {"TASK-1": {}, "TASK-2": {}}
+    assert normalized["structured_output_transport"]["schema_normalization_policy"] == (
+        "schema_proven_displaced_root_members_v1+required_empty_container_defaults_v1"
+    )
 
 
 def test_missing_required_empty_arrays_are_coerced_before_schema_validation() -> None:
@@ -897,7 +1164,7 @@ def test_real_ce_schema_unwraps_minimax_item_wrapper_on_declared_arrays() -> Non
     ]
     evidence = normalized["structured_output_transport"]
     assert evidence["schema_normalization_applied"] is True
-    assert evidence["schema_normalization_policy"] == "schema_proven_singleton_item_wrapper_v1"
+    assert "schema_proven_singleton_item_wrapper_v1" in evidence["schema_normalization_policy"]
 
 
 def test_item_wrapper_with_extra_keys_remains_fail_closed() -> None:
@@ -940,7 +1207,12 @@ def test_item_wrapper_is_not_applied_to_object_fields() -> None:
     )
     assert plan is not None
     original_plan = payload["construction_plan"]
-    payload["construction_plan"] = {"item": original_plan}
+    assert isinstance(original_plan, dict)
+    payload["construction_plan"] = {
+        "item": original_plan,
+        "project_interface_contract": original_plan["project_interface_contract"],
+        "shared_behavior_contract": original_plan["shared_behavior_contract"],
+    }
 
     normalized = normalize_structured_output_response(
         {

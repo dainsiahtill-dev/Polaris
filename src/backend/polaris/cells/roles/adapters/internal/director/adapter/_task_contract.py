@@ -446,6 +446,40 @@ def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -
         for rule in rules:
             lines.append(f"  - interface rule: {rule}")
 
+    shared_behavior_contract = payload.get("shared_behavior_contract")
+    if isinstance(shared_behavior_contract, dict) and shared_behavior_contract:
+        behavior_hash = str(shared_behavior_contract.get("shared_behavior_contract_hash") or "").strip()
+        lines.append(f"- shared_behavior_contract: authority=chief_engineer hash={behavior_hash}")
+        blueprint_task_id = str(payload.get("task_id") or payload.get("pm_task_id") or "").strip()
+        task_bindings = shared_behavior_contract.get("task_bindings")
+        bound_ids = set(
+            _string_list_payload(
+                task_bindings.get(blueprint_task_id) if isinstance(task_bindings, dict) else [],
+                limit=12,
+            )
+        )
+        invariants = shared_behavior_contract.get("invariants")
+        if isinstance(invariants, list):
+            for invariant in invariants:
+                if not isinstance(invariant, dict):
+                    continue
+                invariant_id = str(invariant.get("invariant_id") or "").strip()
+                if invariant_id not in bound_ids:
+                    continue
+                statement = str(invariant.get("statement") or "").strip()
+                lines.append(f"  - behavior invariant {invariant_id}: {statement}")
+                examples = invariant.get("verification_examples")
+                if isinstance(examples, list) and examples and isinstance(examples[0], dict):
+                    example = examples[0]
+                    lines.append(
+                        "    example: given="
+                        + str(example.get("given") or "").strip()
+                        + "; when="
+                        + str(example.get("when") or "").strip()
+                        + "; then="
+                        + str(example.get("then") or "").strip()
+                    )
+
     llm_blueprint = payload.get("llm_blueprint")
     if isinstance(llm_blueprint, dict) and llm_blueprint:
         authority = str(llm_blueprint.get("authority") or "advisory_only").strip()
@@ -481,4 +515,4 @@ def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -
             if advisory:
                 lines.append(_join_limited_values("blueprint advisory", advisory))
 
-    return lines[:40]
+    return lines[:60]

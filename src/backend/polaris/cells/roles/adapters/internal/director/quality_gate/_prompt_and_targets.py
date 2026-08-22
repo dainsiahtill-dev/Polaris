@@ -376,6 +376,12 @@ _GO_TEST_ASSERTION_LOCATION_RE = re.compile(
 _GO_TEST_FUNCTION_DECL_RE = re.compile(
     r"^\s*func\s+(?:Test|Benchmark|Fuzz|Example)[A-Za-z0-9_]*\s*\(",
 )
+_GO_SELECTOR_CALL_RE = re.compile(
+    r"\b(?P<qualifier>[A-Za-z_][A-Za-z0-9_]*)\.(?P<symbol>[A-Z][A-Za-z0-9_]*)\s*\(",
+)
+_GO_FIXTURE_IMPORT_SPEC_RE = re.compile(
+    r'^\s*(?:(?P<alias>[A-Za-z_][A-Za-z0-9_]*)\s+)?"(?P<path>[^"]+)"\s*$'
+)
 _JS_TAP_RESERVED_CALLS = frozenset(
     {
         "assert",
@@ -451,6 +457,115 @@ def _go_verifier_function_window(lines: list[str], line_number: int) -> tuple[in
     if not (start <= anchor < end):
         return None
     return start, end
+
+
+def _go_referenced_fixture_contract_blocks(
+    *,
+    workspace: Path,
+    verifier_contexts: list[tuple[str, str]],
+    repair_targets: set[str],
+) -> list[str]:
+    """Project workspace-local Go fixture definitions referenced by verifier functions.
+
+    A failing test body can call an exported fixture whose implementation owns
+    the decisive semantic convention. Live L3-22 called
+    ``models.SeedCMajorChord()`` while the fixture encoded positive Y as
+    downward gravity; showing only the test call left Director to trust a
+    contradictory target-file comment and make repeated real but ineffective
+    edits. Resolve one bounded workspace-local call layer as read-only evidence.
+    This never expands repair scope and never follows external modules.
+    """
+
+    try:
+        go_mod = (workspace / "go.mod").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    module_match = re.search(r"(?m)^\s*module\s+(?P<module>\S+)\s*$", go_mod)
+    if module_match is None:
+        return []
+    module_path = str(module_match.group("module") or "").strip().rstrip("/")
+    if not module_path:
+        return []
+
+    blocks: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    total_budget = 7000
+    used = 0
+    for verifier_rel, context in verifier_contexts:
+        if used >= total_budget or len(blocks) >= 6:
+            break
+        try:
+            verifier_lines = (workspace / verifier_rel).read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        imports: dict[str, Path] = {}
+        for line in verifier_lines:
+            match = _GO_FIXTURE_IMPORT_SPEC_RE.match(line)
+            if match is None:
+                continue
+            import_path = str(match.group("path") or "").strip()
+            if import_path == module_path:
+                relative_package = ""
+            elif import_path.startswith(module_path + "/"):
+                relative_package = import_path[len(module_path) + 1 :]
+            else:
+                continue
+            alias = str(match.group("alias") or import_path.rsplit("/", 1)[-1]).strip()
+            if alias in {"", "_", "."}:
+                continue
+            package_dir = (workspace / relative_package).resolve()
+            try:
+                package_dir.relative_to(workspace)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if package_dir.is_dir():
+                imports[alias] = package_dir
+
+        for call in _GO_SELECTOR_CALL_RE.finditer(context):
+            qualifier = str(call.group("qualifier") or "")
+            symbol = str(call.group("symbol") or "")
+            referenced_package_dir = imports.get(qualifier)
+            if referenced_package_dir is None or not symbol:
+                continue
+            for source_path in sorted(referenced_package_dir.glob("*.go")):
+                if source_path.name.endswith("_test.go"):
+                    continue
+                try:
+                    rel = source_path.relative_to(workspace).as_posix()
+                except ValueError:
+                    continue
+                if rel in repair_targets or (rel, symbol) in seen:
+                    continue
+                try:
+                    source_lines = source_path.read_text(encoding="utf-8").splitlines()
+                except (OSError, UnicodeDecodeError):
+                    continue
+                declaration = re.compile(rf"^\s*func\s+{re.escape(symbol)}\s*\(")
+                start = next((index for index, line in enumerate(source_lines) if declaration.match(line)), None)
+                if start is None:
+                    continue
+                end = len(source_lines)
+                for index in range(start + 1, len(source_lines)):
+                    if re.match(r"^\s*func\s+", source_lines[index]):
+                        end = index
+                        break
+                rendered = "\n".join(f"{index + 1}: {source_lines[index]}" for index in range(start, end))
+                remaining = total_budget - used
+                if remaining <= 0:
+                    break
+                rendered = rendered[:remaining]
+                if not rendered:
+                    continue
+                seen.add((rel, symbol))
+                used += len(rendered)
+                blocks.append(
+                    f"--- {rel} GO REFERENCED FIXTURE CONTRACT: {qualifier}.{symbol} "
+                    "(READ-ONLY; BOUNDED DEFINITION) ---\n```text\n"
+                    + rendered
+                    + "\n```"
+                )
+                break
+    return blocks
 
 
 def _verifier_source_context_block(
@@ -563,6 +678,7 @@ def _verifier_source_context_block(
             tap_refs.add(ref)
 
     blocks: list[str] = []
+    go_verifier_contexts: list[tuple[str, str]] = []
     total_budget = 8000
     used = 0
     for rel, line_number in refs[:6]:
@@ -588,6 +704,8 @@ def _verifier_source_context_block(
         excerpt = excerpt[:remaining]
         used += len(excerpt)
         blocks.append(f"--- {rel} around line {line_number} (READ-ONLY) ---\n```text\n{excerpt}\n```")
+        if go_window is not None:
+            go_verifier_contexts.append((rel, "\n".join(lines[start:end])))
 
     # A single Go behavior failure does not define the whole public contract.
     # Fixing only the failing test function can make another sibling test fail
@@ -649,12 +767,20 @@ def _verifier_source_context_block(
             if not excerpt_lines:
                 continue
             sibling_used += excerpt_size
+            go_verifier_contexts.append((rel, "\n".join(excerpt_lines)))
             blocks.append(
                 f"--- {rel} GO SIBLING VERIFIER CONTRACT (READ-ONLY; BOUNDED PREFIX) ---\n"
                 "```text\n"
                 + "\n".join(excerpt_lines)
                 + "\n```"
             )
+        blocks.extend(
+            _go_referenced_fixture_contract_blocks(
+                workspace=workspace,
+                verifier_contexts=go_verifier_contexts,
+                repair_targets=repair_targets,
+            )
+        )
     if not blocks:
         return ""
     return (
@@ -2480,6 +2606,7 @@ def _build_materialization_quality_repair_message(
     workspace_full: str = "",
     interface_discrepancy_evidence: dict[str, Any] | None = None,
     regression_guard_errors: list[str] | None = None,
+    causal_reanalysis_required: bool = False,
 ) -> str:
     directive_quality_errors = (
         directive_artifact_quality_errors if directive_artifact_quality_errors is not None else artifact_quality_errors
@@ -2580,6 +2707,18 @@ def _build_materialization_quality_repair_message(
             repair_target_files=prompt_repair_target_files,
             heading="REGRESSION GUARD VERIFIER SOURCE CONTEXT",
             include_go_sibling_contract=False,
+        )
+    causal_reanalysis_block = ""
+    if causal_reanalysis_required:
+        causal_reanalysis_block = (
+            "CAUSAL REANALYSIS REQUIRED AFTER VERIFIED STAGNATION:\n"
+            "Previous authorized physical edits changed the target file hashes, but the exact same named "
+            "verifier tests still failed. Treat this as evidence that the edited branch may be unreachable "
+            "or is not the causal state transition. Before choosing SEARCH/REPLACE, derive the executed path "
+            "from the test setup, fixture initial state, state update, and branch predicate shown below. "
+            "Repair the first causative update or predicate that prevents the expected transition; do not "
+            "make another cosmetic or terminal-branch-only edit. This is one bounded same-owner reanalysis "
+            "round and does not expand authorized tool paths.\n"
         )
     referenced_definition_context_block = _diagnostic_referenced_definition_context_block(
         workspace_full=workspace_full,
@@ -2922,6 +3061,7 @@ def _build_materialization_quality_repair_message(
         f"{verifier_source_context_block}"
         f"{regression_guard_block}"
         f"{regression_guard_source_context_block}"
+        f"{causal_reanalysis_block}"
         f"{referenced_definition_context_block}"
         f"{cpp_included_api_block}"
         f"{leftover_cmake_include_block}"

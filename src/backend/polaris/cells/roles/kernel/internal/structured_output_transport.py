@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -218,14 +219,18 @@ def _transport_evidence(
     payload_json: str,
     call_id: str,
     schema_normalization_policy: str = "none",
+    schema_normalization_details: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    evidence = {
         **plan.audit,
         "call_id": call_id,
         "payload_sha256": hashlib.sha256(payload_json.encode("utf-8")).hexdigest(),
         "schema_normalization_applied": schema_normalization_policy != "none",
         "schema_normalization_policy": schema_normalization_policy,
     }
+    if schema_normalization_details:
+        evidence["schema_normalization_details"] = dict(schema_normalization_details)
+    return evidence
 
 
 def is_canonical_structured_output_stream_chunk(event: Mapping[str, Any]) -> bool:
@@ -556,6 +561,130 @@ def _normalize_schema_proven_json_containers(
     return result, "+".join(policies) if policies else "none"
 
 
+def _declared_object_property_paths(
+    schema: Mapping[str, Any],
+    property_name: str,
+    *,
+    path: tuple[str, ...] = (),
+) -> tuple[tuple[str, ...], ...]:
+    """Return descendant object-property paths with one exact declared name.
+
+    Array item paths are intentionally excluded: a displaced root member does
+    not carry an authoritative array index, so relocating it into an array
+    would invent structure rather than normalize a Provider envelope.
+    """
+
+    if not _schema_type_includes(schema, "object"):
+        return ()
+    properties = schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return ()
+    matches: list[tuple[str, ...]] = []
+    for raw_key, child_schema in properties.items():
+        if not isinstance(raw_key, str) or not isinstance(child_schema, Mapping):
+            continue
+        child_path = (*path, raw_key)
+        if path and raw_key == property_name:
+            matches.append(child_path)
+        if _schema_type_includes(child_schema, "object"):
+            matches.extend(
+                _declared_object_property_paths(
+                    child_schema,
+                    property_name,
+                    path=child_path,
+                )
+            )
+    return tuple(matches)
+
+
+def _insert_displaced_object_member(
+    payload: dict[str, Any],
+    path: tuple[str, ...],
+    value: Any,
+) -> bool:
+    """Insert one displaced member without overwriting an existing value."""
+
+    if len(path) < 2:
+        return False
+    cursor: dict[str, Any] = payload
+    for key in path[:-1]:
+        current = cursor.get(key)
+        if not isinstance(current, Mapping):
+            return False
+        if not isinstance(current, dict):
+            current = dict(current)
+            cursor[key] = current
+        cursor = current
+    leaf = path[-1]
+    if leaf in cursor:
+        return _canonical_json_value(cursor[leaf]) == _canonical_json_value(value)
+    cursor[leaf] = deepcopy(value)
+    return True
+
+
+def _normalize_schema_proven_displaced_root_members(
+    payload: Mapping[str, Any],
+    json_schema: Mapping[str, Any],
+) -> tuple[dict[str, Any], bool, tuple[str, ...], bool]:
+    """Recover one strict Provider result whose nested members leaked to root.
+
+    Some Anthropic-compatible models return a complete result-tool payload but
+    close a nested object too early, leaving later members at the schema-closed
+    root. Recover only structure proven by the caller schema:
+
+    * a leaked name must have exactly one declared descendant object path;
+    * collisions reject recovery instead of overwriting either value;
+    * every unknown root member must have one unique declared destination;
+      arbitrary residual members reject recovery instead of being hidden in an
+      open advisory object;
+    * the full original strict schema must validate the reconstructed payload.
+
+    No semantic field is invented or discarded. If any condition is
+    ambiguous, return the original payload so normal validation fails closed.
+    """
+
+    if json_schema.get("additionalProperties") is not False:
+        return dict(payload), False, (), False
+    properties = json_schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return dict(payload), False, (), False
+    declared_root = {str(key) for key in properties}
+    unknown_root = [str(key) for key in payload if str(key) not in declared_root]
+    if not unknown_root:
+        return dict(payload), False, (), False
+
+    candidate = deepcopy(dict(payload))
+    relocations: list[tuple[str, tuple[str, ...]]] = []
+    for key in unknown_root:
+        paths = _declared_object_property_paths(json_schema, key)
+        if len(paths) == 1:
+            relocations.append((key, paths[0]))
+    if len(relocations) != len(unknown_root):
+        return dict(payload), False, (), False
+
+    # Parents such as ``task_plans`` must move before children such as
+    # ``TASK-2`` so later inserts merge into the preserved object.
+    for key, path in sorted(relocations, key=lambda item: len(item[1])):
+        if key not in candidate or not _insert_displaced_object_member(candidate, path, candidate[key]):
+            return dict(payload), False, (), False
+        candidate.pop(key, None)
+
+    residual = [str(key) for key in candidate if str(key) not in declared_root]
+    if residual:
+        return dict(payload), False, (), False
+
+    coerced_candidate = _coerce_structured_output_payload_defaults(candidate, json_schema)
+    defaults_applied = coerced_candidate != candidate
+    if not _payload_matches_schema(coerced_candidate, json_schema):
+        return dict(payload), False, (), False
+    relocation_evidence = tuple(sorted(f"{key}->{'.'.join(path)}" for key, path in relocations))
+    logger.warning(
+        "structured_output_displaced_root_members_recovered: relocated=%s residual_rejected=[]",
+        list(relocation_evidence),
+    )
+    return coerced_candidate, True, relocation_evidence, defaults_applied
+
+
 def _normalize_schema_closed_object_text_noise(
     value: Any,
     schema: Mapping[str, Any],
@@ -614,7 +743,7 @@ def _normalize_schema_closed_object_text_noise(
 def _validate_payload_with_normalization(
     payload: Mapping[str, Any],
     plan: StructuredOutputTransportPlan,
-) -> tuple[dict[str, Any], str]:
+) -> tuple[dict[str, Any], str, dict[str, Any]]:
     schema = plan.contract.json_schema
     if not isinstance(schema, Mapping):
         raise ValueError("structured_output_json_schema_must_be_object")
@@ -642,8 +771,28 @@ def _validate_payload_with_normalization(
             if normalization_policy != "none"
             else "schema_proven_closed_object_text_noise_v1"
         )
+    normalization_details: dict[str, Any] = {}
+    (
+        normalized_displaced,
+        displaced_changed,
+        relocation_evidence,
+        displaced_defaults_applied,
+    ) = _normalize_schema_proven_displaced_root_members(normalized, schema)
+    normalized = normalized_displaced
+    if displaced_changed:
+        normalization_policy = (
+            f"{normalization_policy}+schema_proven_displaced_root_members_v1"
+            if normalization_policy != "none"
+            else "schema_proven_displaced_root_members_v1"
+        )
+        normalization_details["displaced_root_relocations"] = list(relocation_evidence)
+        if displaced_defaults_applied:
+            normalization_policy += "+required_empty_container_defaults_v1"
     coerced = _coerce_structured_output_payload_defaults(normalized, schema)
-    if coerced != normalized:
+    if (
+        coerced != normalized
+        and "required_empty_container_defaults_v1" not in normalization_policy.split("+")
+    ):
         normalization_policy = (
             f"{normalization_policy}+required_empty_container_defaults_v1"
             if normalization_policy != "none"
@@ -654,7 +803,7 @@ def _validate_payload_with_normalization(
         key=lambda item: tuple(str(part) for part in item.absolute_path),
     )
     if not errors:
-        return coerced, normalization_policy
+        return coerced, normalization_policy, normalization_details
     first = errors[0]
     path = ".".join(str(part) for part in first.absolute_path) or "$"
     properties = schema.get("properties")
@@ -742,13 +891,14 @@ def normalize_structured_output_response(
         raise ValueError("structured_output_tool_must_be_called_exactly_once")
     result_call = result_calls[0]
     payload = _tool_call_arguments(result_call)
-    payload, normalization_policy = _validate_payload_with_normalization(payload, plan)
+    payload, normalization_policy, normalization_details = _validate_payload_with_normalization(payload, plan)
     payload_json = _canonical_json(payload)
     evidence = _transport_evidence(
         plan,
         payload_json=payload_json,
         call_id=_tool_call_id(result_call),
         schema_normalization_policy=normalization_policy,
+        schema_normalization_details=normalization_details,
     )
     normalized = dict(response)
     normalized["content"] = payload_json
@@ -769,6 +919,7 @@ class StructuredOutputStreamNormalizer:
         "_call_id",
         "_payload_json",
         "_plan",
+        "_schema_normalization_details",
         "_schema_normalization_policy",
     )
 
@@ -777,6 +928,7 @@ class StructuredOutputStreamNormalizer:
         self._buffered_chunks: list[dict[str, Any]] = []
         self._payload_json: str | None = None
         self._call_id = ""
+        self._schema_normalization_details: dict[str, Any] = {}
         self._schema_normalization_policy = "none"
 
     def project(self, event: dict[str, Any]) -> tuple[dict[str, Any], ...]:
@@ -791,7 +943,11 @@ class StructuredOutputStreamNormalizer:
             args = sanitized_event.get("args")
             if not isinstance(args, Mapping):
                 raise ValueError("structured_output_tool_arguments_must_be_object")
-            coerced, self._schema_normalization_policy = _validate_payload_with_normalization(args, self._plan)
+            (
+                coerced,
+                self._schema_normalization_policy,
+                self._schema_normalization_details,
+            ) = _validate_payload_with_normalization(args, self._plan)
             self._payload_json = _canonical_json(coerced)
             self._call_id = str(sanitized_event.get("call_id") or "").strip()
             return ()
@@ -806,6 +962,7 @@ class StructuredOutputStreamNormalizer:
             payload_json=self._payload_json,
             call_id=self._call_id,
             schema_normalization_policy=self._schema_normalization_policy,
+            schema_normalization_details=self._schema_normalization_details,
         )
         metadata = dict(sanitized_event.get("metadata") or {})
         metadata[_STRUCTURED_OUTPUT_METADATA_KEY] = evidence

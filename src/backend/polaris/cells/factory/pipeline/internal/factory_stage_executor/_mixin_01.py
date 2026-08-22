@@ -1131,9 +1131,14 @@ class _Mixin01:
                 "type": "object",
                 "minProperties": 1,
                 "properties": {
+                    "behavior_invariant_refs": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                    },
                     "scope_for_apply": {"type": "array", "items": {}},
                     "risk_flags": {"type": "array", "items": {}},
                 },
+                "required": ["behavior_invariant_refs"],
                 "additionalProperties": True,
             }
             for task_id in portfolio_task_ids
@@ -1255,7 +1260,9 @@ class _Mixin01:
             schema_name="chief_engineer_blueprint_portfolio",
             description=(
                 "Submit the complete Chief Engineer portfolio for every validated PM task id, "
-                "including the shared project interface contract."
+                "including shared interface and cross-task behavior contracts. When source and tests have "
+                "different task owners, define concrete sign/unit/boundary/order/rounding semantics as needed, "
+                "bind owner and consumer tasks, cover their completion obligations, and include given/when/then examples."
             ),
             json_schema={
                 "type": "object",
@@ -1282,9 +1289,61 @@ class _Mixin01:
                                 },
                                 "additionalProperties": False,
                             },
+                            "shared_behavior_contract": {
+                                "type": "object",
+                                "properties": {
+                                    "invariants": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "invariant_id": {"type": "string", "minLength": 1},
+                                                "statement": {"type": "string", "minLength": 1},
+                                                "owner_task_id": {"type": "string", "minLength": 1},
+                                                "consumer_task_ids": {
+                                                    "type": "array",
+                                                    "minItems": 1,
+                                                    "items": {"type": "string", "minLength": 1},
+                                                },
+                                                "covered_obligation_ids": {
+                                                    "type": "array",
+                                                    "minItems": 1,
+                                                    "items": {"type": "string", "minLength": 1},
+                                                },
+                                                "verification_examples": {
+                                                    "type": "array",
+                                                    "minItems": 1,
+                                                    "items": {
+                                                        "type": "object",
+                                                        "properties": {
+                                                            "given": {"type": "string", "minLength": 1},
+                                                            "when": {"type": "string", "minLength": 1},
+                                                            "then": {"type": "string", "minLength": 1},
+                                                        },
+                                                        "required": ["given", "when", "then"],
+                                                        "additionalProperties": False,
+                                                    },
+                                                },
+                                            },
+                                            "required": [
+                                                "invariant_id",
+                                                "statement",
+                                                "owner_task_id",
+                                                "consumer_task_ids",
+                                                "covered_obligation_ids",
+                                                "verification_examples",
+                                            ],
+                                            "additionalProperties": False,
+                                        },
+                                    },
+                                },
+                                "required": ["invariants"],
+                                "additionalProperties": False,
+                            },
                         },
                         "required": [
                             "project_interface_contract",
+                            "shared_behavior_contract",
                         ],
                         "additionalProperties": True,
                     },
@@ -1319,9 +1378,15 @@ class _Mixin01:
         """
 
         task_runtime = pkg().TaskRuntimeService(str(self.workspace))
+        primary_portfolio_task_id = f"CE-PORTFOLIO-{run_id}"
+        subject = (
+            "Chief Engineer portfolio review"
+            if portfolio_task_id == primary_portfolio_task_id
+            else f"Chief Engineer portfolio repair [{portfolio_task_id}]"
+        )
         row = task_runtime.ensure_task_row(
             external_task_id=portfolio_task_id,
-            subject="Chief Engineer portfolio review",
+            subject=subject,
             description=objective,
             metadata={
                 "factory_run_id": run_id,
@@ -1510,6 +1575,10 @@ class _Mixin01:
             "projected deterministically after schema validation\n"
             "- construction_plan.project_interface_contract: object containing provider_declarations and "
             "consumer_declarations arrays; either array may be empty when no cross-task interface is required\n"
+            "- construction_plan.shared_behavior_contract: object containing invariants. Every invariant must bind "
+            "an owner task, consumer tasks, covered completion obligation ids, and concrete given/when/then examples. "
+            "Each linked task plan must list the invariant id in behavior_invariant_refs. Use an empty invariants array "
+            "only when no required source/test behavior crosses task ownership\n"
             "- task-plan overlays are advisory only; do not invent alternate task ids, target files, scope, "
             "dependencies, or entrypoints\n"
             "- project_completion_contract.obligations: object containing artifacts, entrypoints, and verification "

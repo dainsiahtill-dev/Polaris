@@ -69,6 +69,11 @@ _TEST_MODALITY_SHORTFALL_RE = re.compile(
 _PYTEST_COUNT_RE = re.compile(r"\b(?P<count>\d+)\s+(?P<kind>failed|error|errors)\b", re.IGNORECASE)
 _DIAGNOSTIC_LINE_LABEL_RE = re.compile(r"\bline\s+\d+\b", re.IGNORECASE)
 _DIAGNOSTIC_FILE_LOCATION_RE = re.compile(r"(?P<path>(?:[A-Za-z]:)?[^\s:\n]+\.[A-Za-z0-9_+-]+):\d+(?::\d+)?")
+_NAMED_TEST_FAILURE_RES = (
+    ("go", re.compile(r"(?m)^---\s+FAIL:\s+(?P<test>[^\s(]+)", re.IGNORECASE)),
+    ("unittest", re.compile(r"(?m)^(?:FAIL|ERROR):\s+(?P<test>[^\s(]+)", re.IGNORECASE)),
+    ("pytest", re.compile(r"(?m)^(?P<test>\S+::\S+)\s+(?:FAILED|ERROR)\b", re.IGNORECASE)),
+)
 _GO_COMPILER_DIAGNOSTIC_RE = re.compile(
     r"(?:^|\s)(?:[A-Za-z]:)?[^\s:\n]+\.go:\d+(?::\d+)?:[^\n]*(?:"
     r"cannot\s+convert|undefined|declared\s+and\s+not\s+used|imported\s+and\s+not\s+used|"
@@ -126,6 +131,40 @@ def _workspace_quality_deterministic_probe_signature(errors: Sequence[str]) -> t
         text = _DIAGNOSTIC_FILE_LOCATION_RE.sub(lambda match: f"{match.group('path')}:#", text)
         normalized.add(text)
     return tuple(sorted(normalized))
+
+
+def _workspace_quality_failing_test_identities(errors: Sequence[str]) -> set[str]:
+    """Extract stable named-test identities from verifier diagnostics.
+
+    Runner duration, package footer, cache state, and assertion values may
+    legitimately vary between identical failing-test runs.  Those volatile
+    strings must not masquerade as a new diagnostic set or duplicate a
+    regression guard.  Keep this conservative: only explicit runner test-name
+    anchors count; compiler/prose diagnostics continue using full signatures.
+    """
+
+    identities: set[str] = set()
+    for error in errors:
+        text = str(error or "")
+        for framework, pattern in _NAMED_TEST_FAILURE_RES:
+            identities.update(
+                f"{framework}:{match.group('test').casefold()}"
+                for match in pattern.finditer(text)
+                if str(match.group("test") or "").strip()
+            )
+    return identities
+
+
+def _workspace_quality_is_pure_named_test_surface(errors: Sequence[str]) -> bool:
+    """Return true only when every diagnostic item names a failing test.
+
+    This intentionally rejects mixed compiler/test surfaces.  A stable test
+    identity must not hide removal of an independent compile barrier, which is
+    real forward progress even while the test remains red.
+    """
+
+    normalized = [str(error or "").strip() for error in errors if str(error or "").strip()]
+    return bool(normalized) and all(_workspace_quality_failing_test_identities([error]) for error in normalized)
 
 
 def _workspace_quality_test_failure_counts(result: Mapping[str, Any]) -> tuple[int, int] | None:
@@ -1561,12 +1600,21 @@ async def _apply_workspace_quality_llm_repairs(
     target_files = claim_target_files or materialized_declared_targets or changed_files
     inbound_quality_context = context.get("director_quality_repair")
     inbound_regression_guards: list[str] = []
+    inbound_causal_reanalysis_required = False
     if isinstance(inbound_quality_context, Mapping):
         raw_guards = inbound_quality_context.get("regression_guard_errors")
         if isinstance(raw_guards, list | tuple):
             inbound_regression_guards = [
                 str(item or "").strip() for item in raw_guards if str(item or "").strip()
             ][:6]
+        # This wrapper intentionally rebuilds the Director context from a
+        # whitelist so inbound data cannot override paths/tool policy. Preserve
+        # the one bounded Factory-owned escalation bit explicitly. Live L3-22
+        # set it after verified stagnation, but dropping it here meant the
+        # final provider request never received the causal-path directive.
+        inbound_causal_reanalysis_required = (
+            inbound_quality_context.get("causal_reanalysis_required") is True
+        )
     repair_context: dict[str, Any] = {
         "delivery_mode": "materialize_changes",
         "run_id": run_id,
@@ -1592,6 +1640,8 @@ async def _apply_workspace_quality_llm_repairs(
     }
     if inbound_regression_guards:
         repair_context["director_quality_repair"]["regression_guard_errors"] = inbound_regression_guards
+    if inbound_causal_reanalysis_required:
+        repair_context["director_quality_repair"]["causal_reanalysis_required"] = True
     catalog = executor._read_catalog_contract()
     primary_language = str(catalog.get("primary_language") or "").strip()
     project_type = str(catalog.get("project_type") or "").strip()
@@ -1736,12 +1786,18 @@ async def _apply_workspace_quality_llm_repairs(
             repair_attempt=repair_attempt,
         )
     except Exception as exc:  # noqa: BLE001 - fail closed around external LLM repair boundary.
+        error_text = str(exc)
         results = []
         summary = {
             "attempted": True,
             "repair_mode": "director_llm",
             "success": False,
-            "error": str(exc),
+            "error": error_text,
+            "error_code": (
+                "quality_repair_provider_timeout"
+                if "request timeout" in error_text.casefold()
+                else "quality_repair_invoke_failed"
+            ),
             "source_tools": ["director_materialization_quality_repair_error"],
             "tool_results": 0,
         }
@@ -1750,6 +1806,20 @@ async def _apply_workspace_quality_llm_repairs(
     # fast-provider-response race exercised by the direct adapter tests.
     await asyncio.sleep(0)
     normalized_summary = dict(summary)
+    if not str(normalized_summary.get("error_code") or "").strip():
+        returned_error = str(normalized_summary.get("error") or "").strip()
+        returned_error_folded = returned_error.casefold()
+        if (
+            "request timeout" in returned_error_folded
+            or "provider_stream_timeout" in returned_error_folded
+            or "llm_timeout" in returned_error_folded
+        ):
+            # The Director adapter can return a structured failed summary
+            # instead of raising across the Factory boundary. Live L3-22 did
+            # this twice: TransactionKernel Request timeout, then
+            # director_quality_repair_2_llm_timeout. Normalize both here so a
+            # transport failure cannot masquerade as semantic no-mutation.
+            normalized_summary["error_code"] = "quality_repair_provider_timeout"
     if heartbeat_failures:
         normalized_summary["execution_attempt_heartbeat_failures"] = heartbeat_failures
         normalized_summary.setdefault(
@@ -2009,6 +2079,14 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
         seen_diagnostic_error_codes: set[str] = set()
         seen_plannable_source_tools: set[str] = set()
         regression_guard_errors: list[str] = []
+        regression_synthesis_round_granted = False
+        regression_synthesis_round_pending = False
+        regression_synthesis_union_test_identities: set[str] = set()
+        semantic_contract_conflict_candidate: dict[str, Any] = {}
+        causal_reanalysis_round_granted = False
+        causal_reanalysis_round_pending = False
+        provider_transport_retry_granted = False
+        provider_transport_retry_pending = False
         # One diagnostic signature gets at most one materialization-schedule
         # probe that reaches the canonical TaskRuntime claim boundary.  The
         # materialization schedule contains callback labels which are not
@@ -2019,17 +2097,20 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
         # unchanged verifier signature only reopens/settles the same task and
         # burns CPU/attempt epochs.  Route subsequent identical diagnostics
         # directly to the same-owner LLM edit path instead.
-        deterministic_no_commit_signatures: set[tuple[str, ...]] = set()
+        deterministic_no_commit_contexts: dict[tuple[str, ...], dict[str, Any]] = {}
 
         def llm_repair_context() -> dict[str, Any]:
             """Attach bounded prior-round failures without changing write authority."""
 
-            if not regression_guard_errors:
+            if not regression_guard_errors and not causal_reanalysis_this_round:
                 return context
             projected = dict(context)
             raw_quality = projected.get("director_quality_repair")
             quality = dict(raw_quality) if isinstance(raw_quality, Mapping) else {}
-            quality["regression_guard_errors"] = list(regression_guard_errors[:6])
+            if regression_guard_errors:
+                quality["regression_guard_errors"] = list(regression_guard_errors[:6])
+            if causal_reanalysis_this_round:
+                quality["causal_reanalysis_required"] = True
             projected["director_quality_repair"] = quality
             return projected
 
@@ -2058,7 +2139,14 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 "consecutive_stagnant_rounds": consecutive_stagnant_rounds,
                 "nonprogress_rounds_since_last_progress": nonprogress_rounds_since_last_progress,
                 "convergence_stop_reason": convergence_stop_reason,
+                "regression_synthesis_round_granted": regression_synthesis_round_granted,
+                "causal_reanalysis_round_granted": causal_reanalysis_round_granted,
+                "provider_transport_retry_granted": provider_transport_retry_granted,
             }
+            if semantic_contract_conflict_candidate:
+                partial_summary["semantic_contract_conflict_candidate"] = dict(
+                    semantic_contract_conflict_candidate
+                )
             if deadline_detail:
                 partial_summary["deadline_blocker"] = deadline_detail
             scope_filter = workspace_quality_latest_task_boundary_scope_filter(partial_summary)
@@ -2083,10 +2171,13 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             if not leftover_rotate_allows_quality_extra_round(
                 round_index=round_index,
                 max_rounds=max_rounds,
-                leftover_extra_pending=leftover_extra_pending,
+                leftover_extra_pending=(leftover_extra_pending or provider_transport_retry_pending),
             ):
                 break
             leftover_extra_pending = False
+            provider_transport_retry_pending = False
+            causal_reanalysis_this_round = causal_reanalysis_round_pending
+            causal_reanalysis_round_pending = False
             owner_override = list(forced_next_owner_targets) or None
             forced_next_owner_targets = []
             if latest_check_results and all(bool(item.get("passed")) for item in latest_check_results):
@@ -2126,9 +2217,8 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             # forward_unmask (undeclared -> missing-member, kinds still
             # overlapping) look like a return to an already-seen code and
             # tripped the breaker after two real unmasks (live L1-06).
-            deterministic_skipped_repeated_no_commit = (
-                deterministic_probe_signature in deterministic_no_commit_signatures
-            )
+            cached_deterministic_context = deterministic_no_commit_contexts.get(deterministic_probe_signature)
+            deterministic_skipped_repeated_no_commit = cached_deterministic_context is not None
             round_repair_results: list[dict[str, Any]]
             round_summary: dict[str, Any]
             if deterministic_skipped_repeated_no_commit:
@@ -2143,6 +2233,27 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     "write_tool_evidence": False,
                     "evidence": ["deterministic_no_commit_signature_cache_hit"],
                 }
+                # The cache suppresses only the repeated deterministic
+                # execution.  Preserve the current read-only plan probe and
+                # immutable TaskRuntime owner evidence so a recognized-but-
+                # unplannable diagnostic can still route to the same Director
+                # LLM owner.  Live L3-22 lost this evidence on cache hit:
+                # rounds 5/6 returned no tool results and were incorrectly
+                # charged as convergence failures after round 3 had already
+                # reduced the verifier set from two tests to one.
+                round_summary["plan_probe_preaudit"] = dict(round_plan_probe)
+                if isinstance(cached_deterministic_context, Mapping):
+                    for key in ("task_id", "task_boundary_owner_evidence"):
+                        value = cached_deterministic_context.get(key)
+                        if value is not None:
+                            round_summary[key] = value
+                if str(round_plan_probe.get("status") or "") == "coverage_matched_but_unplannable":
+                    round_summary.update(
+                        {
+                            "stage": "runtime_plan_probe_unplannable",
+                            "success_reason": "task_boundary_interface_discrepancy_required",
+                        }
+                    )
             else:
                 round_repair_results, round_summary = await executor._apply_workspace_quality_deterministic_repairs(
                     run=run,
@@ -2157,7 +2268,11 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 executor._workspace_quality_repair_result_has_mutation(item) for item in round_repair_results
             ) or bool(round_summary.get("write_tool_evidence"))
             if not deterministic_skipped_repeated_no_commit and not round_write_tool_evidence:
-                deterministic_no_commit_signatures.add(deterministic_probe_signature)
+                deterministic_no_commit_contexts[deterministic_probe_signature] = {
+                    key: round_summary.get(key)
+                    for key in ("task_id", "task_boundary_owner_evidence")
+                    if round_summary.get(key) is not None
+                }
             raw_round_summary_evidence = round_summary.get("evidence")
             llm_repair_attempted_in_round = False
             claimed_round_owner_targets = _workspace_quality_claimed_owner_diagnostic_targets(round_summary)
@@ -2424,6 +2539,8 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 "write_tool_evidence": round_write_tool_evidence,
                 "evidence": round_evidence,
             }
+            if causal_reanalysis_this_round:
+                round_payload["causal_reanalysis_required"] = True
             if summary_projection:
                 round_payload["repair_summary"] = summary_projection
                 if round_requires_task_boundary_triage:
@@ -2482,6 +2599,46 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     projected_summary["success"] = False
                     projected_summary["success_authority"] = "post_repair_verifier"
                     projected_summary["verifier_effect"] = "no_op"
+                round_error_code = (
+                    str(projected_summary_raw.get("error_code") or "").strip()
+                    if isinstance(projected_summary_raw, dict)
+                    else ""
+                )
+                if not round_error_code and isinstance(projected_summary_raw, dict):
+                    round_error_folded = str(projected_summary_raw.get("error") or "").casefold()
+                    if (
+                        "request timeout" in round_error_folded
+                        or "provider_stream_timeout" in round_error_folded
+                        or "llm_timeout" in round_error_folded
+                    ):
+                        round_error_code = "quality_repair_provider_timeout"
+                        projected_summary_raw["error_code"] = round_error_code
+                if round_error_code == "quality_repair_provider_timeout":
+                    # A provider transport timeout has no semantic repair
+                    # effect. Live L3-22 reached five real edits, then a 300s
+                    # timeout was counted as the third semantic non-progress
+                    # round and tripped the global fuse. Preserve the existing
+                    # diagnostic budget and allow exactly one same-owner
+                    # transport retry; a second timeout stops explicitly.
+                    round_payload["verifier_effect"] = "provider_timeout"
+                    if isinstance(projected_summary_raw, dict):
+                        projected_summary_raw["verifier_effect"] = "provider_timeout"
+                    settled_attempt = await _settle_pending_workspace_quality_repair_attempt(
+                        executor,
+                        pending_round_attempt,
+                        accepted=False,
+                        reason="workspace_quality_repair_provider_timeout",
+                    )
+                    if settled_attempt is not None and isinstance(projected_summary_raw, dict):
+                        projected_summary_raw["task_runtime_repair_attempt"] = settled_attempt
+                    if not provider_transport_retry_granted:
+                        provider_transport_retry_granted = True
+                        provider_transport_retry_pending = True
+                        round_payload["provider_transport_retry_granted"] = True
+                        convergence_stop_reason = "quality_repair_provider_timeout_retry_same_director_task"
+                        continue
+                    convergence_stop_reason = "quality_repair_provider_timeout_exhausted"
+                    break
                 settled_attempt = await _settle_pending_workspace_quality_repair_attempt(
                     executor,
                     pending_round_attempt,
@@ -2621,24 +2778,139 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 before_results=before_check_results,
                 after_results=latest_check_results,
             )
-            if repair_effect == "equal_count_swap":
+            synthesis_verification_round = regression_synthesis_round_pending
+            regression_synthesis_round_pending = False
+            before_test_identities = _workspace_quality_failing_test_identities(repair_errors)
+            current_test_identities = _workspace_quality_failing_test_identities(after_errors)
+            if not verifier_passed and repair_effect in {
+                "equal_count_swap",
+                "forward_unmask",
+                "progress",
+                "regression",
+            }:
+                prior_regression_guard_errors = list(regression_guard_errors)
                 after_signature_set = set(after_signature)
+
+                def still_current(
+                    error: str,
+                    *,
+                    _current_test_identities: set[str] = current_test_identities,
+                    _after_signature_set: set[str] = after_signature_set,
+                ) -> bool:
+                    identities = _workspace_quality_failing_test_identities([error])
+                    if identities and _current_test_identities:
+                        return bool(identities & _current_test_identities)
+                    return bool(
+                        set(executor._workspace_quality_diagnostic_signature([error])).intersection(
+                            _after_signature_set
+                        )
+                    )
+
                 replaced_errors = [
                     error
                     for error in repair_errors
-                    if not set(executor._workspace_quality_diagnostic_signature([error])).intersection(
-                        after_signature_set
-                    )
+                    if not still_current(error)
                 ]
+                reintroduced_regression_guard_errors = [
+                    error
+                    for error in prior_regression_guard_errors
+                    if still_current(error)
+                ]
+                if (
+                    replaced_errors
+                    and reintroduced_regression_guard_errors
+                    and not regression_synthesis_round_granted
+                ):
+                    # Live L3-22: A -> B -> A can change cardinality (one
+                    # gravity test versus two floor tests).  Regression guards
+                    # therefore belong to every real diagnostic transition,
+                    # not only equal-count swaps.  Grant one synthesis request
+                    # containing current A plus prior B.  Do not reset either
+                    # stagnation counter: A/B ping-pong cannot renew budget.
+                    regression_synthesis_round_granted = True
+                    regression_synthesis_round_pending = True
+                    round_payload["regression_synthesis_round_granted"] = True
+                    round_payload["reintroduced_regression_guard_errors"] = (
+                        reintroduced_regression_guard_errors[:6]
+                    )
                 current_error_set = {str(item or "").strip() for item in after_errors if str(item or "").strip()}
                 merged_guards: list[str] = []
+                merged_guard_test_identities: set[str] = set()
                 for item in [*regression_guard_errors, *replaced_errors]:
                     normalized = str(item or "").strip()
-                    if not normalized or normalized in current_error_set or normalized in merged_guards:
+                    identities = _workspace_quality_failing_test_identities([normalized])
+                    if (
+                        not normalized
+                        or normalized in current_error_set
+                        or normalized in merged_guards
+                        or bool(identities & current_test_identities)
+                        or bool(identities & merged_guard_test_identities)
+                    ):
                         continue
                     merged_guards.append(normalized[:6000])
+                    merged_guard_test_identities.update(identities)
                 regression_guard_errors = merged_guards[-6:]
                 round_payload["regression_guard_errors_for_next_round"] = regression_guard_errors
+                if bool(round_payload.get("regression_synthesis_round_granted")):
+                    # Freeze the contract that the synthesis request will
+                    # actually receive: current residual A plus newly carried
+                    # guard B.  ``reintroduced_regression_guard_errors`` is the
+                    # old A guard and cannot represent the A/B union.
+                    regression_synthesis_union_test_identities = set(current_test_identities)
+                    for guard_error in regression_guard_errors:
+                        regression_synthesis_union_test_identities.update(
+                            _workspace_quality_failing_test_identities([guard_error])
+                        )
+            semantic_contract_conflict_this_round = False
+            if (
+                synthesis_verification_round
+                and not verifier_passed
+                and regression_synthesis_union_test_identities
+                and not current_test_identities < regression_synthesis_union_test_identities
+            ):
+                owner_task_id = str(round_summary.get("task_id") or "").strip() or "__unknown_owner__"
+                semantic_contract_conflict_candidate = {
+                    "schema_version": "factory.workspace_quality.semantic_contract_conflict_candidate.v1",
+                    "reason": "bounded_regression_synthesis_did_not_reduce_named_test_union",
+                    "owner_task_id": owner_task_id,
+                    "synthesis_union_test_identities": sorted(regression_synthesis_union_test_identities),
+                    "residual_test_identities": sorted(current_test_identities),
+                    "pm_ce_restart_allowed": False,
+                    "recommended_route": "same_ce_stage_contract_feasibility_review",
+                }
+                round_payload["semantic_contract_conflict_candidate"] = dict(
+                    semantic_contract_conflict_candidate
+                )
+                semantic_contract_conflict_this_round = True
+            elif (
+                causal_reanalysis_this_round
+                and not verifier_passed
+                and before_test_identities
+                and current_test_identities
+                and not current_test_identities < before_test_identities
+                and _workspace_quality_is_pure_named_test_surface(after_signature)
+            ):
+                # A -> A -> A is the non-oscillating sibling of the A -> B -> A
+                # contract-conflict signature above.  After two real edits keep
+                # the same named tests red, Factory grants exactly one causal
+                # reanalysis request.  If that bounded request still cannot
+                # strictly reduce the named-test set, another local edit is not
+                # new evidence: route the immutable CE behavior contract for a
+                # feasibility review instead of burning the generic hard cap.
+                owner_task_id = str(round_summary.get("task_id") or "").strip() or "__unknown_owner__"
+                semantic_contract_conflict_candidate = {
+                    "schema_version": "factory.workspace_quality.semantic_contract_conflict_candidate.v1",
+                    "reason": "bounded_causal_reanalysis_did_not_reduce_named_test_set",
+                    "owner_task_id": owner_task_id,
+                    "synthesis_union_test_identities": sorted(before_test_identities),
+                    "residual_test_identities": sorted(current_test_identities),
+                    "pm_ce_restart_allowed": False,
+                    "recommended_route": "same_ce_stage_contract_feasibility_review",
+                }
+                round_payload["semantic_contract_conflict_candidate"] = dict(
+                    semantic_contract_conflict_candidate
+                )
+                semantic_contract_conflict_this_round = True
             settled_attempt = await _settle_pending_workspace_quality_repair_attempt(
                 executor,
                 pending_round_attempt,
@@ -2727,6 +2999,31 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             if round_prepare_failed:
                 convergence_stop_reason = "prepare_after_repair_failed"
                 break
+            if semantic_contract_conflict_this_round:
+                convergence_stop_reason = "named_test_semantic_contract_conflict_candidate"
+                break
+            if regression_synthesis_round_pending:
+                # One same-Director continuation only. Factory neither writes
+                # target files nor restarts PM/CE; the next normal round
+                # consumes the now-complete current+guard diagnostic context.
+                continue
+            if (
+                repair_effect == "stagnant"
+                and consecutive_stagnant_rounds >= 2
+                and not causal_reanalysis_round_granted
+                and _workspace_quality_is_pure_named_test_surface(after_signature)
+            ):
+                # Live L3-22: two authoritative engine.go edits changed file
+                # hashes but the exact same named Go tests remained red.  That
+                # is evidence the edited branch did not participate in the
+                # failing execution path, not permission to repeat the same
+                # local patch.  Grant one same-owner causal reanalysis round;
+                # keep the global non-progress count so a third stagnant edit
+                # still terminates at the existing hard cap.
+                causal_reanalysis_round_granted = True
+                causal_reanalysis_round_pending = True
+                round_payload["causal_reanalysis_round_granted"] = True
+                continue
             # Global fuse must precede every owner-rotation ``continue``.
             # A real edit with no verifier reduction is still non-progress.
             # Live L3-21 repeatedly produced equal-count swaps, discovered a
@@ -2805,7 +3102,12 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             "consecutive_stagnant_rounds": consecutive_stagnant_rounds,
             "nonprogress_rounds_since_last_progress": nonprogress_rounds_since_last_progress,
             "convergence_stop_reason": convergence_stop_reason,
+            "provider_transport_retry_granted": provider_transport_retry_granted,
         }
+        if semantic_contract_conflict_candidate:
+            repair_summary["semantic_contract_conflict_candidate"] = dict(
+                semantic_contract_conflict_candidate
+            )
         scope_filter = workspace_quality_latest_task_boundary_scope_filter(repair_summary)
         if scope_filter:
             repair_summary["task_boundary_scope_filter"] = scope_filter

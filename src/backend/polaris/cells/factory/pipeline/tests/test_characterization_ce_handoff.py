@@ -165,7 +165,9 @@ class TestChiefEngineerHandoffGuards:
     def test_portfolio_validation_still_rejects_unknown_task_plan_overlay(self) -> None:
         payload = dict(_single_task_chief_engineer_result().metadata["structured_output"])
         construction_plan = dict(payload["construction_plan"])
-        construction_plan["task_plans"] = {"TASK-UNKNOWN": {"implementation": ["Do not execute"]}}
+        construction_plan["task_plans"] = {
+            "TASK-UNKNOWN": {"behavior_invariant_refs": [], "implementation": ["Do not execute"]}
+        }
         payload["construction_plan"] = construction_plan
 
         errors = OrchestrationStageExecutor._chief_engineer_portfolio_output_errors(
@@ -174,6 +176,61 @@ class TestChiefEngineerHandoffGuards:
         )
 
         assert errors == ["task_plans contains unknown task ids: TASK-UNKNOWN"]
+
+    def test_portfolio_schema_requires_shared_behavior_contract_and_task_refs(self) -> None:
+        contract = OrchestrationStageExecutor._chief_engineer_structured_output_contract(("TASK-A", "TASK-B"))
+        schema = contract.json_schema
+        construction = schema["properties"]["construction_plan"]
+
+        assert "shared_behavior_contract" in construction["required"]
+        assert construction["properties"]["shared_behavior_contract"]["required"] == ["invariants"]
+        task_plans = construction["properties"]["task_plans"]["properties"]
+        assert task_plans["TASK-A"]["required"] == ["behavior_invariant_refs"]
+        assert task_plans["TASK-B"]["required"] == ["behavior_invariant_refs"]
+
+    def test_portfolio_transport_rejects_missing_shared_behavior_contract(self) -> None:
+        payload = dict(_single_task_chief_engineer_result().metadata["structured_output"])
+        construction_plan = dict(payload["construction_plan"])
+        construction_plan.pop("shared_behavior_contract")
+        payload["construction_plan"] = construction_plan
+
+        errors = OrchestrationStageExecutor._chief_engineer_portfolio_output_errors(
+            payload,
+            task_ids=("TASK-CANCEL",),
+        )
+
+        assert errors == ["construction_plan.shared_behavior_contract must be an object"]
+
+    def test_portfolio_output_rejects_behavior_owner_repeated_as_consumer(self) -> None:
+        payload = json.loads(json.dumps(_single_task_chief_engineer_result().metadata["structured_output"]))
+        payload["construction_plan"]["shared_behavior_contract"] = {
+            "invariants": [
+                {
+                    "invariant_id": "INV-CANCEL",
+                    "statement": "Cancellation remains observable across task boundaries.",
+                    "owner_task_id": "TASK-CANCEL",
+                    "consumer_task_ids": ["TASK-CANCEL"],
+                    "covered_obligation_ids": ["artifact-source"],
+                    "verification_examples": [
+                        {
+                            "given": "an active task",
+                            "when": "cancellation is requested",
+                            "then": "the task reports cancellation",
+                        }
+                    ],
+                }
+            ]
+        }
+
+        errors = OrchestrationStageExecutor._chief_engineer_portfolio_output_errors(
+            payload,
+            task_ids=("TASK-CANCEL",),
+        )
+
+        assert errors == [
+            "shared_behavior_contract.invariants[0] invalid: "
+            "consumer_task_ids must not contain owner_task_id"
+        ]
 
     def test_portfolio_validation_rejects_delivery_depth_authority_deficit(self) -> None:
         payload = dict(_single_task_chief_engineer_result().metadata["structured_output"])
@@ -375,8 +432,10 @@ class TestChiefEngineerHandoffGuards:
                                 }
                             ],
                         },
+                        "shared_behavior_contract": {"invariants": []},
                         "task_plans": {
                             "TASK-1": {
+                                "behavior_invariant_refs": [],
                                 "preparation": ["Confirm Go module boundary"],
                                 "implementation": ["Model mood palette", "Render wheel report"],
                                 "verification": ["go test ./...", "go run ."],
@@ -459,7 +518,8 @@ class TestChiefEngineerHandoffGuards:
         assert task_plans_schema.get("required", []) == []
         assert task_plans_schema["additionalProperties"] is False
         assert command.structured_output_contract.json_schema["properties"]["construction_plan"]["required"] == [
-            "project_interface_contract"
+            "project_interface_contract",
+            "shared_behavior_contract",
         ]
         project_interface_schema = command.structured_output_contract.json_schema["properties"]["construction_plan"][
             "properties"
@@ -1062,6 +1122,14 @@ class TestChiefEngineerHandoffGuards:
             "prior_output_sha256": hashlib.sha256(invalid_output.encode("utf-8")).hexdigest(),
             "prior_output_chars": len(invalid_output),
             "evidence_refs": [],
+            "delivery_depth_minimums": {},
+            "observed_invalid_root_members": [],
+            "expected_root_members": [
+                "construction_plan",
+                "project_completion_contract",
+                "risk_flags",
+                "scope_for_apply",
+            ],
         }
         assert invalid_output not in repair_command.objective
         assert "Do not copy, quote, continue, or textually repair" in repair_command.objective
@@ -1146,6 +1214,14 @@ class TestChiefEngineerHandoffGuards:
             "prior_output_sha256": hashlib.sha256(b"").hexdigest(),
             "prior_output_chars": 0,
             "evidence_refs": [],
+            "delivery_depth_minimums": {},
+            "observed_invalid_root_members": [],
+            "expected_root_members": [
+                "construction_plan",
+                "project_completion_contract",
+                "risk_flags",
+                "scope_for_apply",
+            ],
         }
         review = json.loads(
             Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
@@ -1301,7 +1377,148 @@ class TestChiefEngineerHandoffGuards:
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
-    def test_chief_engineer_semantic_repair_budget_is_one_call(
+    def test_chief_engineer_final_contract_repair_closes_remaining_depth_deficit(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-CANCEL",
+                        "title": "Implement cancellation coverage",
+                        "goal": "Exercise the Chief Engineer cancellation path.",
+                        "target_files": ["src/cancel.py", "tests/test_cancel.py"],
+                        "scope_paths": ["src", "tests"],
+                        "acceptance_criteria": ["cancellation is observable"],
+                        "execution_checklist": ["Suspend the claimed attempt"],
+                        "delivery_depth_contract": {"minimums": {"min_prod_files": 2, "min_test_files": 1}},
+                        "metadata": {
+                            "topology_authority": "chief_engineer",
+                            "required_source_kinds": ["domain_modules", "tests"],
+                        },
+                    }
+                ]
+            },
+        )
+        first = _single_task_chief_engineer_result()
+        second = _single_task_chief_engineer_result()
+        fixed = _single_task_chief_engineer_result()
+        fixed_payload = json.loads(json.dumps(fixed.metadata["structured_output"]))
+        fixed_payload["project_completion_contract"]["obligations"]["artifacts"].append(
+            {
+                "obligation_id": "artifact-support",
+                "path": "src/support.py",
+                "semantic_role": "source",
+                "owner_task_id": "TASK-CANCEL",
+                "applicability": "required",
+            }
+        )
+        fixed.output = json.dumps(fixed_payload)
+        fixed.metadata["structured_output"] = fixed_payload
+        results = [first, second, fixed]
+        commands: list[Any] = []
+
+        class _EventuallyFeasibleRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                commands.append(command)
+                return results.pop(0)
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _EventuallyFeasibleRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-semantic-depth-final-repair",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-23T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "success", result.output
+        assert [command.task_id for command in commands] == [
+            f"CE-PORTFOLIO-{run.id}",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
+            f"CE-PORTFOLIO-{run.id}-CONTRACT-REPAIR-2",
+        ]
+        review = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert review["generated_blueprints"] == 1
+        assert review["llm_call_count"] == 3
+        assert [signal["code"] for signal in review["signals"][:2]] == [
+            "chief_engineer.output_contract_repair_started",
+            "chief_engineer.output_contract_final_repair_started",
+        ]
+        assert len(keepers) == 3
+        assert all(keeper.is_alive is False for keeper in keepers)
+        _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_chief_engineer_final_repair_recovers_second_schema_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        _write_minimal_chief_engineer_plan(executor)
+        first = _invalid_chief_engineer_stream_result()
+        second = _invalid_chief_engineer_stream_result()
+        second.error_message = (
+            "structured_output_payload_schema_mismatch:$:"
+            "'project_completion_contract' is a required property"
+        )
+        results = [first, second, _single_task_chief_engineer_result()]
+        commands: list[Any] = []
+
+        class _EventuallySchemaValidRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                commands.append(command)
+                return results.pop(0)
+
+        monkeypatch.setattr(
+            stage_executor_module,
+            "RoleRuntimeService",
+            _EventuallySchemaValidRoleRuntimeService,
+        )
+        run = FactoryRun(
+            id="factory-run-second-schema-failure-final-repair",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-23T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "success", result.output
+        assert [command.task_id for command in commands] == [
+            f"CE-PORTFOLIO-{run.id}",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
+            f"CE-PORTFOLIO-{run.id}-CONTRACT-REPAIR-2",
+        ]
+        final_feedback = commands[-1].context["failure_feedback"]
+        assert "'project_completion_contract' is a required property" in final_feedback["detail"]
+        review = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert review["generated_blueprints"] == 1
+        assert review["llm_call_count"] == 3
+        assert [signal["code"] for signal in review["signals"][:2]] == [
+            "chief_engineer.output_schema_repair_started",
+            "chief_engineer.output_contract_final_repair_started",
+        ]
+        assert len(keepers) == 3
+        assert all(keeper.is_alive is False for keeper in keepers)
+        _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_chief_engineer_semantic_repair_budget_is_two_bounded_calls(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -1347,19 +1564,26 @@ class TestChiefEngineerHandoffGuards:
         result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
 
         assert result.status == "failed"
-        assert len(commands) == 2
+        assert [command.task_id for command in commands] == [
+            f"CE-PORTFOLIO-{run.id}",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
+            f"CE-PORTFOLIO-{run.id}-CONTRACT-REPAIR-2",
+        ]
+        assert commands[-1].context["chief_engineer_repair_round"] == 2
+        assert "prod_files=1 < 2" in commands[-1].context["failure_feedback"]["detail"]
         assert result.metadata["error_code"] == "chief_engineer.portfolio_output_invalid"
         review = json.loads(
             Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
                 encoding="utf-8"
             )
         )
-        assert review["llm_call_count"] == 2
+        assert review["llm_call_count"] == 3
         assert [signal["code"] for signal in review["signals"]] == [
             "chief_engineer.output_contract_repair_started",
+            "chief_engineer.output_contract_final_repair_started",
             "chief_engineer.portfolio_output_invalid",
         ]
-        assert len(keepers) == 2
+        assert len(keepers) == 3
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 

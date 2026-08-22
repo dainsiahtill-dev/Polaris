@@ -928,9 +928,7 @@ class TestChiefEngineerBlueprintPortfolio:
 
         completion = portfolio.project_completion_contract
         assert completion is not None
-        test_artifact = next(
-            item for item in completion.obligations.artifacts if item.path == "tests/test_main.py"
-        )
+        test_artifact = next(item for item in completion.obligations.artifacts if item.path == "tests/test_main.py")
         assert test_artifact.owner_task_id == "TASK-C"
         assert [item.obligation_id for item in completion.obligations.entrypoints] == ["entrypoint-cli"]
         build_verifier = next(item for item in completion.obligations.verification if item.modality == "build")
@@ -3706,3 +3704,101 @@ class TestChiefEngineerBlueprintErrorV1:
     def test_empty_code_raises(self) -> None:
         with pytest.raises(ValueError, match="code"):
             ChiefEngineerBlueprintErrorV1("error", code="  ")
+
+
+def _cross_task_behavior_tasks() -> tuple[ChiefEngineerPortfolioTaskV1, ...]:
+    return (
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-A",
+            objective="Implement domain behavior",
+            target_files=("src/main.py",),
+        ),
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-B",
+            objective="Verify domain behavior",
+            target_files=("tests/test_main.py",),
+            dependencies=("TASK-A",),
+        ),
+    )
+
+
+def _cross_task_behavior_blueprint(*, include_invariant: bool) -> dict:
+    invariant = {
+        "invariant_id": "behavior-coordinate-floor",
+        "statement": "Increasing Y moves downward; a floor blocks positions whose Y exceeds the floor Y.",
+        "owner_task_id": "TASK-A",
+        "consumer_task_ids": ["TASK-B"],
+        "covered_obligation_ids": ["artifact-main", "artifact-tests"],
+        "verification_examples": [
+            {
+                "given": "a body at Y=0 with floor Y=10 and positive gravity",
+                "when": "one simulation step runs",
+                "then": "Y increases without crossing 10",
+            }
+        ],
+    }
+    refs = [invariant["invariant_id"]] if include_invariant else []
+    return {
+        "construction_plan": {
+            "task_plans": {
+                "TASK-A": {"behavior_invariant_refs": refs},
+                "TASK-B": {"behavior_invariant_refs": refs},
+            },
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {"invariants": [invariant] if include_invariant else []},
+        },
+        "project_completion_contract": _application_completion_requirements(),
+        "risk_flags": [],
+    }
+
+
+def test_cross_task_source_test_portfolio_requires_shared_behavior_before_persistence(tmp_path: Path) -> None:
+    tasks = _cross_task_behavior_tasks()
+    command = BuildChiefEngineerBlueprintPortfolioCommandV1(
+        workspace=str(tmp_path),
+        run_id="run-behavior-missing",
+        tasks=tasks,
+        **_portfolio_command_authority(
+            tasks=tasks,
+            workspace=tmp_path,
+            run_id="run-behavior-missing",
+        ),
+        llm_blueprint=_cross_task_behavior_blueprint(include_invariant=False),
+    )
+
+    with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+        build_chief_engineer_blueprint_portfolio(command)
+
+    assert exc_info.value.code == "blueprint_portfolio_behavior_contract_infeasible"
+    assert BlueprintPersistence(str(tmp_path), ensure_directory=False).list_all() == []
+
+
+def test_shared_behavior_contract_is_hashed_and_projected_to_every_linked_task(tmp_path: Path) -> None:
+    tasks = _cross_task_behavior_tasks()
+    command = BuildChiefEngineerBlueprintPortfolioCommandV1(
+        workspace=str(tmp_path),
+        run_id="run-behavior-valid",
+        tasks=tasks,
+        **_portfolio_command_authority(
+            tasks=tasks,
+            workspace=tmp_path,
+            run_id="run-behavior-valid",
+        ),
+        llm_blueprint=_cross_task_behavior_blueprint(include_invariant=True),
+    )
+
+    portfolio = build_chief_engineer_blueprint_portfolio(command)
+    contract = portfolio.shared_behavior_contract
+
+    assert contract is not None
+    assert contract.task_bindings == {
+        "TASK-A": ("behavior-coordinate-floor",),
+        "TASK-B": ("behavior-coordinate-floor",),
+    }
+    assert portfolio.shared_behavior_contract_hash == contract.contract_hash
+    context = portfolio.to_task_blueprint_context()
+    assert context["shared_behavior_contract"] == contract.to_dict()
+    assert context["shared_behavior_contract_ref"].endswith("#shared_behavior_contract")

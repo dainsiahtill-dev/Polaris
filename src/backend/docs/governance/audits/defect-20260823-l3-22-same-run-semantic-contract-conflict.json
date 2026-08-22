@@ -1,0 +1,146 @@
+{
+  "schema_version": "polaris.defect-manifest.v1",
+  "defect_id": "DEFECT-20260823-L3-22-SAME-RUN-SEMANTIC-CONTRACT-CONFLICT",
+  "status": "CLOSED_EXACT_LIVE_REVALIDATED",
+  "severity": "P0",
+  "exact_run": {
+    "factory_run_id": "factory_a9812b43a06a",
+    "project_id": "L3-22",
+    "workspace": "/tmp/factory-bench-l3-22-audit-r01/workspaces/af07ec60fa38-b7b9e23e5b6d4e08/L3-22-5aaab9a81e5e829d/dc3c9f897f499583929b8714",
+    "recovery_scope": "qa_gate_only",
+    "sealed_stages": [
+      "pm_planning",
+      "chief_engineer_review",
+      "director_dispatch"
+    ]
+  },
+  "symptoms": [
+    "Adapter timeout summaries omitted error_code and were misclassified as semantic no-op rounds.",
+    "Three authorized engine/engine.go edits produced physical receipts but did not reduce the same two named Go tests.",
+    "A bounded causal-reanalysis round fell through to the generic three-nonprogress stop instead of a CE contract-feasibility candidate."
+  ],
+  "final_request_evidence": {
+    "role": "director",
+    "model": "MiniMax-M3",
+    "forced_tool": "edit_file",
+    "target_file": "engine/engine.go",
+    "workspace_binding_match": true,
+    "verifier_context_present": true,
+    "provider_long_response": "HTTP 200 after 292918ms; no usable tool call; mutation-contract retry emitted"
+  },
+  "runtime_evidence": {
+    "initial_named_tests": [
+      "go:teststepappliesgravity",
+      "go:teststepwithrestitutionbounces"
+    ],
+    "final_named_tests": [
+      "go:teststepappliesgravity",
+      "go:teststepwithrestitutionbounces"
+    ],
+    "pre_fix_stop_reason": "three_nonprogress_repairs_without_verified_progress",
+    "physical_write_evidence": true,
+    "syntax_gate_passed": true,
+    "verifier_reduction": false
+  },
+  "root_causes": [
+    {
+      "code": "factory.workspace_quality.returned_timeout_summary_projection_missing",
+      "owner": "factory.pipeline"
+    },
+    {
+      "code": "factory.workspace_quality.causal_reanalysis_conflict_projection_missing",
+      "owner": "factory.pipeline"
+    },
+    {
+      "code": "chief_engineer.blueprint.named_test_behavior_contract_conflict_candidate",
+      "owner": "chief_engineer.blueprint",
+      "evidence": "Independent audit found mutually inconsistent Y-axis, floor, gravity, and bounce expectations."
+    }
+  ],
+  "repair": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ],
+    "rules": [
+      "Normalize returned adapter timeout text into provider_timeout before semantic classification.",
+      "Grant at most one same-owner transport retry without spending semantic counters.",
+      "After bounded causal reanalysis, a named-test set that does not strictly shrink becomes named_test_semantic_contract_conflict_candidate.",
+      "Never restart PM; route to same_ce_stage_contract_feasibility_review."
+    ]
+  },
+  "validation": {
+    "workspace_quality_characterization": "64 passed",
+    "focused_timeout_and_conflict_tests": "passed",
+    "ruff": "clean for seven relevant changed implementation/test files",
+    "mypy": "clean for five changed source files",
+    "exact_live": {
+      "generated_at": "2026-08-22T16:51:01.659247+00:00",
+      "round_count": 3,
+      "effects": [
+        "stagnant",
+        "stagnant",
+        "stagnant"
+      ],
+      "convergence_stop_reason": "named_test_semantic_contract_conflict_candidate",
+      "reason": "bounded_causal_reanalysis_did_not_reduce_named_test_set",
+      "owner_task_id": "TASK-1",
+      "synthesis_union_test_identities": [
+        "go:teststepappliesgravity",
+        "go:teststepwithrestitutionbounces"
+      ],
+      "residual_test_identities": [
+        "go:teststepappliesgravity",
+        "go:teststepwithrestitutionbounces"
+      ],
+      "pm_ce_restart_allowed": false,
+      "recommended_route": "same_ce_stage_contract_feasibility_review"
+    }
+  },
+  "prevention_hardening": {
+    "status": "TARGETED_AND_EXACT_OFFLINE_REPLAY_GREEN_FRESH_BENCH_PENDING",
+    "owner": "chief_engineer.blueprint",
+    "error_code": "blueprint_portfolio_behavior_contract_infeasible",
+    "contract": "ChiefEngineerSharedBehaviorContractV1",
+    "rules": [
+      "Fresh Factory CE provider requests require shared_behavior_contract and task-local behavior_invariant_refs.",
+      "Cross-task source/test ownership must share an owner-consumer invariant covering both completion obligations.",
+      "The behavior contract is independently hashed and projected to every linked Director handoff.",
+      "Single-task advisory fallback remains bounded and compatible; cross-task fallback cannot bypass feasibility."
+    ],
+    "files": [
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/contracts/_behavior.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/internal/portfolio_behavior_feasibility.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_ce_evidence.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_01.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "src/backend/polaris/cells/roles/adapters/internal/director/adapter/_task_contract.py"
+    ],
+    "exact_offline_replay": {
+      "factory_run_id": "factory_a9812b43a06a",
+      "historical_contract_present": false,
+      "ok": false,
+      "error_code": "blueprint_portfolio_behavior_contract_infeasible",
+      "message": "cross-task test ownership lacks a shared production behavior invariant",
+      "task_ids": [
+        "TASK-1",
+        "TASK-2",
+        "TASK-3"
+      ],
+      "target_project_modified": false
+    },
+    "tests": {
+      "ce_public_and_feasibility": "208 passed",
+      "factory_ce_characterization": "55 passed",
+      "ruff": "clean for changed production and new-test surface",
+      "mypy": "clean for eight changed source files"
+    },
+    "fresh_isolated_bench": "pending"
+  },
+  "constraints": [
+    "Do not modify generated L3-22 files.",
+    "Do not rerun PM, Chief Engineer, or initial Director materialization.",
+    "A conflict candidate is not a success verdict; CE authority must be reviewed and reissued only at the same CE stage."
+  ]
+}

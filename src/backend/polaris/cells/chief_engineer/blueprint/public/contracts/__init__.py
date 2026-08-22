@@ -27,6 +27,13 @@ from enum import Enum
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
+from polaris.cells.chief_engineer.blueprint.public.contracts._behavior import (
+    ChiefEngineerBehaviorExampleV1,
+    ChiefEngineerBehaviorInvariantV1,
+    ChiefEngineerSharedBehaviorContractV1,
+    shared_behavior_contract_hash,
+    shared_behavior_contract_seed,
+)
 from polaris.cells.chief_engineer.blueprint.public.contracts._blueprint_dtos import (
     ArchitectureDecisionV1,
     BuildChiefEngineerBlueprintPortfolioCommandV1,
@@ -165,11 +172,14 @@ __all__ = [
     "BuildChiefEngineerBlueprintPortfolioCommandV1",
     "CeHandoffDecisionBindingsV1",
     "CeHandoffDecisionV1",
+    "ChiefEngineerBehaviorExampleV1",
+    "ChiefEngineerBehaviorInvariantV1",
     "ChiefEngineerBlueprintError",
     "ChiefEngineerBlueprintErrorV1",
     "ChiefEngineerBlueprintPortfolioV1",
     "ChiefEngineerPortfolioTaskV1",
     "ChiefEngineerProjectInterfaceContractV1",
+    "ChiefEngineerSharedBehaviorContractV1",
     "EntrypointKindV1",
     "EntrypointObligationV1",
     "GenerateTaskBlueprintCommandV1",
@@ -226,4 +236,6 @@ __all__ = [
     "VerificationModalityV1",
     "VerificationObligationV1",
     "project_completion_verifier_policy_snapshot_hash",
+    "shared_behavior_contract_hash",
+    "shared_behavior_contract_seed",
 ]

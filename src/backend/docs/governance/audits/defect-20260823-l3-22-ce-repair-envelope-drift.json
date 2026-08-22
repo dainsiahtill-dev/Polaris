@@ -1,0 +1,74 @@
+{
+  "schema_version": "polaris.defect-manifest.v1",
+  "defect_id": "DEFECT-20260823-L3-22-CE-REPAIR-ENVELOPE-DRIFT",
+  "status": "OPEN_INCREMENTAL_REPAIR_REQUIRED",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "generated_project_modified": false,
+  "exact_runs": [
+    {
+      "factory_run_id": "factory_1d8521d1ae19",
+      "attempt": "r03",
+      "terminal_stage": "chief_engineer_review",
+      "root_cause": "delivery_depth_contract_infeasible_prod_files_4_lt_7"
+    },
+    {
+      "factory_run_id": "factory_39c6a74ecfe3",
+      "attempt": "r04",
+      "terminal_stage": "chief_engineer_review",
+      "root_cause": "behavior_owner_repeated_in_consumer_task_ids"
+    },
+    {
+      "factory_run_id": "factory_ef271ece40a9",
+      "attempt": "r05",
+      "terminal_stage": "chief_engineer_review",
+      "root_cause": "second_schema_failure_not_admitted_to_distinct_final_repair"
+    },
+    {
+      "factory_run_id": "factory_578960eba640",
+      "attempt": "r06",
+      "terminal_stage": "chief_engineer_review",
+      "root_cause": "full_portfolio_repair_regenerated_valid_fields_and_omitted_required_artifact_fields"
+    }
+  ],
+  "closed_root_causes": [
+    "schema_proven displaced-root members are relocated only to one unambiguous declared descendant",
+    "arbitrary residual root keys remain fail-closed",
+    "required empty-container defaults compose after safe relocation",
+    "behavior invariant DTO constraints are checked before immutable portfolio construction",
+    "three physical CE calls use distinct TaskRuntime identities",
+    "a changed schema diagnostic or residual semantic deficit may consume one final bounded repair",
+    "an unchanged schema diagnostic stops after the first repair"
+  ],
+  "remaining_root_cause": {
+    "code": "chief_engineer.full_portfolio_repair_causes_envelope_drift",
+    "owner": "chief_engineer.blueprint",
+    "evidence": {
+      "call_2": "schema valid; prod_files=6 < 7",
+      "call_3": "seven production and three test paths, but artifact[11] only contained obligation_id and applicability",
+      "terminal_error": "structured_output_payload_schema_mismatch:project_completion_contract.obligations.artifacts.11:'path' is a required property"
+    }
+  },
+  "required_architecture_change": [
+    "persist the last schema-valid CE candidate before semantic repair",
+    "request a typed incremental semantic patch instead of a full portfolio replacement",
+    "compose the patch under CE-owned scope and identity rules",
+    "revalidate schema, behavior, delivery depth, and immutable authority after composition",
+    "emit before/after candidate hashes and diagnostic reduction evidence",
+    "retain the three-call cap and reject unchanged schema diagnostics"
+  ],
+  "validation": {
+    "factory_ce_characterization": "60 passed",
+    "structured_output_transport": "34 passed",
+    "ruff": "clean",
+    "mypy": "clean",
+    "git_diff_check": "clean",
+    "fresh_isolated_bench": "failed honestly at chief_engineer_review; Director and QA not reached"
+  },
+  "constraints": [
+    "Never modify the generated L3-22 project.",
+    "Do not add a fourth blind Provider retry.",
+    "Do not infer missing artifact identity from an obligation_id string.",
+    "Do not weaken strict portfolio schema or delivery-depth authority."
+  ]
+}

@@ -603,6 +603,7 @@ async def _run_materialization_quality_repair_retry(
     factory_quality = context.get("director_quality_repair") if isinstance(context, Mapping) else None
     factory_forced_targets: list[str] = []
     regression_guard_errors: list[str] = []
+    causal_reanalysis_required = False
     if isinstance(factory_quality, Mapping):
         raw_forced = factory_quality.get("repair_target_files")
         if isinstance(raw_forced, list):
@@ -614,6 +615,7 @@ async def _run_materialization_quality_repair_retry(
             regression_guard_errors = [
                 str(item or "").strip() for item in raw_regression_guards if str(item or "").strip()
             ][:6]
+        causal_reanalysis_required = bool(factory_quality.get("causal_reanalysis_required"))
     factory_forced_targets_refreshed = False
     if factory_forced_targets or repair_attempt >= 2:
         # Repeat attempt for a residual the narrow diagnostic batch failed to
@@ -1058,6 +1060,7 @@ async def _run_materialization_quality_repair_retry(
         workspace_full=workspace_full,
         interface_discrepancy_evidence=task_boundary_discrepancy_evidence,
         regression_guard_errors=regression_guard_errors,
+        causal_reanalysis_required=causal_reanalysis_required,
     )
     failed_gate_evidence = _build_materialization_quality_failure_evidence_context(
         artifact_quality_errors=prompt_artifact_quality_errors,
@@ -1100,6 +1103,8 @@ async def _run_materialization_quality_repair_retry(
         repair_context["director_quality_repair"]["regression_guard_errors"] = [
             _format_quality_error_for_repair_prompt(error) for error in regression_guard_errors
         ]
+    if causal_reanalysis_required:
+        repair_context["director_quality_repair"]["causal_reanalysis_required"] = True
     rebind_dependency_artifact = getattr(adapter, "_rebind_director_dependency_artifact_for_dialogue", None)
     if callable(rebind_dependency_artifact) and isinstance(task, dict):
         rebind_dependency_artifact(repair_context)
@@ -1114,10 +1119,10 @@ async def _run_materialization_quality_repair_retry(
         snapshot = repair_context.get(DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY)
         # Live L2-16 remint-23: _prepare admitted five receipt paths including
         # empty melodymodel.java (body=""). Coverage rejects empty bodies.
-        if type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2 and (
-            not sibling_export_payload_is_coverage_ready(snapshot.payload())
-        ):
-            snapshot = None
+        if type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2:
+            trusted_snapshot = cast(TrustedDirectorDependencyArtifactSnapshotV2, snapshot)
+            if not sibling_export_payload_is_coverage_ready(trusted_snapshot.payload()):
+                snapshot = None
         if type(snapshot) is not TrustedDirectorDependencyArtifactSnapshotV2:
             # Live L2-16 remint-18: official javac already passed. Test-task
             # quality repair still required actual_sibling_exports, but the
@@ -1132,7 +1137,8 @@ async def _run_materialization_quality_repair_retry(
                 repair_context[DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY] = snapshot
                 project_director_dependency_artifact_snapshot(repair_context, snapshot)
         if type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2:
-            sibling_block = "\n".join(snapshot.message_lines())
+            trusted_snapshot = cast(TrustedDirectorDependencyArtifactSnapshotV2, snapshot)
+            sibling_block = "\n".join(trusted_snapshot.message_lines())
             if sibling_block.strip():
                 # Live L2-16 remint-17: quality-repair used a separate prompt
                 # builder, so rebound sibling exports stayed on context only.
@@ -1319,6 +1325,12 @@ async def _run_materialization_quality_repair_retry(
             stage_label="quality_repair" if repair_attempt <= 1 else f"quality_repair_{repair_attempt}",
         )
     except Exception as exc:  # noqa: BLE001 - quality repair is a structured fallback boundary.
+        error_text = str(exc)
+        error_code = (
+            "quality_repair_provider_timeout"
+            if "request timeout" in error_text.casefold()
+            else "quality_repair_invoke_failed"
+        )
         repair_tool_results: list[dict[str, Any]] = []
         repair_tool_results.extend(
             _deterministic_single_missing_quality_repair_to_write_file(
@@ -1345,7 +1357,8 @@ async def _run_materialization_quality_repair_retry(
             "attempted": True,
             "attempt": repair_attempt,
             "success": False,
-            "error": str(exc),
+            "error": error_text,
+            "error_code": error_code,
             "tool_results": len(repair_tool_results),
             "write_tool_evidence": has_successful_write_tool(repair_tool_results),
             "missing_target_files": missing_target_files[:12],

@@ -655,7 +655,51 @@ class TestQualityRepairMissingTargetContractB:
             changed_files=["package.json"],
         )
 
-        assert adapter.timeout_seconds == 180.0
+        assert adapter.timeout_seconds == 300.0
+
+    @pytest.mark.asyncio
+    async def test_quality_repair_provider_timeout_is_structured(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                del result
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            @staticmethod
+            async def _invoke_role_dialogue_with_timeout(
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                raise RuntimeError("TransactionKernel execution failed: Request timeout (300.0s)")
+
+        _tool_results, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["package.json"]},
+            target_task_id="PM-0001-1",
+            run_id="run-quality-repair-timeout-evidence",
+            context={},
+            original_message="Repair package manifest.",
+            llm_call_timeout=900,
+            artifact_quality_errors=["Artifact quality scan failed: npm placeholder test script in package.json"],
+            changed_files=["package.json"],
+        )
+
+        assert summary["error_code"] == "quality_repair_provider_timeout"
+        assert "Request timeout (300.0s)" in summary["error"]
+        assert summary["write_tool_evidence"] is False
 
     @pytest.mark.asyncio
     async def test_existing_python_runtime_smoke_failure_repair_forces_write_context(self, tmp_path) -> None:

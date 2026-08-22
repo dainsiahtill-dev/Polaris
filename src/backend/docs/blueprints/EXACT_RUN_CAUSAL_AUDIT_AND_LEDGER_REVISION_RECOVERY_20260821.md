@@ -669,3 +669,79 @@ identifiable failing tests on both sides, disjoint old/new test identities,
 the new set is no larger, and the full new diagnostic signature was not seen
 earlier in this loop. A repeated A -> B -> A signature cannot renew the budget;
 the existing five-attempt hard cap remains authoritative.
+
+## L3-22 transport failure isolation and named-test contract conflict
+
+The next exact same-run recovery exposed two distinct stop classes that must
+not share one retry counter:
+
+1. A `Request timeout (300.0s)` occurred after the forced Director request.
+   This is Provider transport failure, not evidence that Director inspected the
+   verifier and produced a semantic no-op. The quality loop now grants at most
+   one same-owner transport retry. It does not increment semantic stagnation or
+   non-progress counters; a second timeout stops as
+   `quality_repair_provider_timeout_exhausted`. Adapter summaries may expose
+   this failure only through their human-readable `error` field (for example
+   `TransactionKernel execution failed: Request timeout (300.0s)` or
+   `director_quality_repair_2_llm_timeout`); Factory normalizes those returned
+   summaries before classifying the round, rather than trusting `error_code`
+   alone.
+2. Successful `edit_file` effects alternated the Go failures between gravity,
+   floor/end-to-end, and restitution conventions. One bounded regression
+   synthesis request carries the current named-test residual plus every
+   displaced named-test guard. If that request does not strictly reduce the
+   frozen test-identity union, the loop stops as
+   `named_test_semantic_contract_conflict_candidate` and routes to a same-CE
+   contract-feasibility review. PM replay remains forbidden.
+3. The non-oscillating sibling is equally bounded: after two real mutations
+   keep the exact same named tests red, Factory grants one causal-reanalysis
+   request. If its residual named-test set is not a strict subset of the set it
+   received, it emits the same conflict candidate with reason
+   `bounded_causal_reanalysis_did_not_reduce_named_test_set`. It must not fall
+   through to the generic non-progress fuse.
+
+The stable identity source is real runner output (`--- FAIL: TestName` for Go),
+not arbitrary prose containing a `Test*` token. This avoids inventing test
+identities from compiler messages or comments. Physical writes, Provider
+timeouts, and semantic contract feasibility now have separate evidence and
+separate budgets.
+
+Exact live replay `factory_a9812b43a06a` on 2026-08-22 preserved completed PM,
+Chief Engineer, and Director stages and retried only QA. Three authorized
+`engine/engine.go` edits passed syntax validation but did not reduce
+`TestStepAppliesGravity` plus `TestStepWithRestitutionBounces`. One Provider
+response took 292.9 seconds and returned HTTP 200 with no usable tool call;
+the mutation-contract retry then produced an edit. This proves the remaining
+red state is neither a missing tool schema nor a physical no-effect. The
+pre-fix live artifact still used `three_nonprogress_repairs_without_verified_progress`,
+which directly motivated the symmetric causal-reanalysis conflict projection.
+After backend reload, the final same-run QA-only replay closed in exactly three
+stagnant rounds with `named_test_semantic_contract_conflict_candidate`, reason
+`bounded_causal_reanalysis_did_not_reduce_named_test_set`, owner `TASK-1`, and
+the identical two-test input/residual set. The machine projection explicitly
+forbids PM/CE restart and routes to `same_ce_stage_contract_feasibility_review`.
+
+## L3-22 pre-freeze prevention: CE shared behavior authority
+
+The same-run conflict detector correctly stopped Director repair, but detection
+alone still spent source/test generation and repair tokens. The prevention
+owner is `chief_engineer.blueprint`: new Factory CE requests now require an
+independent `shared_behavior_contract`, and every task plan binds the exact
+invariants it implements or verifies.
+
+The contract is intentionally separate from the advisory-only project
+interface declarations. It has its own hash/ref, owner and consumer task ids,
+covered completion obligations, and concrete given/when/then examples. Before
+any immutable portfolio is persisted, a pure feasibility gate checks exact
+task/reference closure and rejects cross-task source/test ownership without a
+shared invariant. The exact error remains machine-readable as
+`blueprint_portfolio_behavior_contract_infeasible` through the Factory stage;
+it is no longer collapsed into generic portfolio generation failure.
+
+Preserved L3-22 portfolio evidence was replayed offline against the new gate.
+With the historical empty behavior contract, the gate rejected TASK-1,
+TASK-2, and TASK-3 because the required test owner lacked a shared production
+behavior invariant. No generated-project file was modified. Targeted evidence:
+`208 passed` CE contract/feasibility tests, `55 passed` Factory CE tests, Ruff
+clean, and Mypy clean for eight source files. A fresh isolated Bench is still
+required before claiming live completion.

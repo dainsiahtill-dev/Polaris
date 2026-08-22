@@ -46,6 +46,28 @@ assumptions:
       and two previously unseen gravity/restitution tests became the only
       residuals. Signature history and the five-attempt hard cap prevent
       oscillation from renewing budget.
+  - id: A5
+    statement: A Provider timeout is another semantic no-progress repair.
+    status: verified_false
+    evidence: >
+      The exact run timed out inside the forced physical request after 300s,
+      before an authoritative write/effect verdict. Transport failure now has
+      one separate retry and cannot increment semantic stagnation.
+  - id: A6
+    statement: More unbounded Director edits can solve every named-test oscillation.
+    status: verified_false
+    evidence: >
+      Exact-workspace audit found contradictory Y-axis, floor, and bounce
+      expectations. After one current-plus-regression-guard synthesis round,
+      failure to strictly reduce the frozen named-test union becomes a
+      same-CE semantic-contract feasibility candidate.
+  - id: A7
+    statement: Provider transport failures always arrive in a structured error_code.
+    status: verified_false
+    evidence: >
+      Exact same-run replay returned TransactionKernel and LLM timeout text in
+      the adapter summary error field while error_code was absent. Factory now
+      normalizes the returned summary before round classification.
 
 pre_mortem:
   failure_point: >
@@ -72,8 +94,10 @@ verification_plan:
   - command: same-run quality_gate recovery for factory_a9812b43a06a
     expected: >
       PM and Chief Engineer remain sealed, Director edits only engine/engine.go,
-      and go test diagnostics decrease or the attempt is explicitly classified
-      semantic-noop/stalled without restarting the project.
+      and go test diagnostics decrease, transport timeout is isolated from the
+      semantic budget, or a non-reducing named-test synthesis/causal-reanalysis
+      is explicitly classified as a same-CE contract-conflict candidate without
+      restarting PM.
 
 rollback:
   strategy: >

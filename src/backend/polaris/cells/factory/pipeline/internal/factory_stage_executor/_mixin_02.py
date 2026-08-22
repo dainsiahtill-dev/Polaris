@@ -29,6 +29,7 @@ from polaris.cells.chief_engineer.blueprint.public import (
     GenerateTaskBlueprintCommandV1,
     build_chief_engineer_blueprint_portfolio,
     generate_task_blueprint,
+    project_chief_engineer_delivery_depth_feasibility_from_pm_tasks,
     project_chief_engineer_task_blueprint,
     validate_director_handoff_from_payload,
 )
@@ -255,11 +256,18 @@ class _Mixin02:
         portfolio_context: Mapping[str, Any],
         portfolio_task_ids: tuple[str, ...],
         deadline_decision: FactoryDeadlineAdmissionV1,
+        repair_round: int = 1,
     ) -> RoleExecutionResultV1:
-        """Run exactly one separately claimed, deadline-admitted CE schema repair."""
+        """Run one separately claimed, deadline-admitted CE contract repair."""
 
+        if repair_round < 1:
+            raise ValueError("chief_engineer_repair_round_must_be_positive")
         repair_scope = _ChiefEngineerExecutionAttemptLeaseScope()
-        repair_task_id = f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR"
+        repair_task_id = (
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR"
+            if repair_round == 1
+            else f"CE-PORTFOLIO-{run.id}-CONTRACT-REPAIR-{repair_round}"
+        )
         repair_timeout_seconds = int(deadline_decision.timeout_seconds)
         repair_lease_budget = self._chief_engineer_execution_attempt_lease_budget(repair_timeout_seconds)
         repair_objective = self._chief_engineer_schema_repair_objective(
@@ -269,6 +277,41 @@ class _Mixin02:
         prior_error = str(prior_result.error_message or prior_result.error_code or "output validation failed").strip()[
             :_CHIEF_ENGINEER_SCHEMA_REPAIR_ERROR_MAX_CHARS
         ]
+        root_member_match = re.search(
+            r"Additional properties are not allowed \((?P<members>.+?)\s+(?:was|were) unexpected\)",
+            prior_error,
+        )
+        observed_invalid_root_members = (
+            sorted(set(re.findall(r"'([^']+)'", root_member_match.group("members"))))
+            if root_member_match is not None
+            else []
+        )
+        raw_pm_tasks = portfolio_context.get("pm_task_contracts")
+        pm_task_payloads = (
+            [dict(item) for item in raw_pm_tasks if isinstance(item, Mapping)]
+            if isinstance(raw_pm_tasks, list)
+            else []
+        )
+        depth_projection = project_chief_engineer_delivery_depth_feasibility_from_pm_tasks(
+            {},
+            pm_tasks=pm_task_payloads,
+        )
+        delivery_depth_minimums = {
+            str(key): int(value)
+            for key, value in dict(depth_projection.get("minimums") or {}).items()
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        }
+        if delivery_depth_minimums:
+            repair_objective += (
+                "\nAuthoritative delivery-depth minimums (exact values): "
+                + json.dumps(delivery_depth_minimums, ensure_ascii=False, sort_keys=True)
+            )
+        if observed_invalid_root_members:
+            repair_objective += (
+                "\nObserved invalid root members from the prior result envelope (names only; relocate them under "
+                "their schema-declared parents): "
+                + json.dumps(observed_invalid_root_members, ensure_ascii=False)
+            )
         prior_output = str(prior_result.output or "")
         repair_failure_feedback = {
             "schema_version": "factory.chief_engineer_schema_repair.failure_evidence.v1",
@@ -278,6 +321,14 @@ class _Mixin02:
             "prior_output_sha256": hashlib.sha256(prior_output.encode("utf-8")).hexdigest(),
             "prior_output_chars": len(prior_output),
             "evidence_refs": [],
+            "delivery_depth_minimums": delivery_depth_minimums,
+            "observed_invalid_root_members": observed_invalid_root_members,
+            "expected_root_members": [
+                "construction_plan",
+                "project_completion_contract",
+                "risk_flags",
+                "scope_for_apply",
+            ],
         }
         prior_metadata = dict(prior_result.metadata or {})
         post_validation_errors = prior_metadata.get("chief_engineer_post_validation_errors")
@@ -314,6 +365,7 @@ class _Mixin02:
                     **repair_profile_identity,
                     "chief_engineer_schema_repair_prompt_profile_source": ("primary_final_request_context_audit"),
                     "chief_engineer_schema_repair": True,
+                    "chief_engineer_repair_round": repair_round,
                     "chief_engineer_schema_repair_of_task_id": f"CE-PORTFOLIO-{run.id}",
                     "chief_engineer_prior_error_code": str(prior_result.error_code or ""),
                     "chief_engineer_prior_error_message": prior_error,
@@ -348,6 +400,7 @@ class _Mixin02:
                     "scope_paths": list(repair_context["scope_paths"]),
                     "source": "factory_stage_executor.chief_engineer_schema_repair",
                     "schema_repair_of_task_id": f"CE-PORTFOLIO-{run.id}",
+                    "chief_engineer_repair_round": repair_round,
                     "inherited_prompt_profile_identity": dict(repair_profile_identity),
                     "cognitive_runtime_mode": "off",
                     "cognitive_runtime_enabled": False,
@@ -386,7 +439,7 @@ class _Mixin02:
                     else str(result.error_code or "chief_engineer_schema_repair_failed")
                 ),
             )
-            if result.ok:
+            if result.ok and repair_round == 1:
                 self._complete_chief_engineer_attempt_after_schema_repair(
                     run_id=run.id,
                     objective=repair_objective,
@@ -709,6 +762,7 @@ class _Mixin02:
                     }
                 )
                 portfolio_task_id = f"CE-PORTFOLIO-{run.id}"
+                previous_repair_diagnostic = ""
                 try:
                     objective = self._chief_engineer_portfolio_objective(pm_tasks)
                     ce_runtime_task_id, ce_execution_attempt = self._claim_chief_engineer_execution_attempt(
@@ -774,6 +828,9 @@ class _Mixin02:
                         ),
                     )
                     if self._ce_portfolio_result_allows_schema_repair(ce_result):
+                        previous_repair_diagnostic = str(
+                            ce_result.error_message or ce_result.error_code or "output validation failed"
+                        ).strip()
                         initial_evidence = self._ce_extract_llm_evidence(
                             ce_result,
                             task_id=portfolio_task_id,
@@ -846,6 +903,7 @@ class _Mixin02:
                                 tasks=portfolio_tasks,
                             )
                             if primary_output_errors:
+                                previous_repair_diagnostic = "; ".join(primary_output_errors)
                                 primary_evidence = self._ce_extract_llm_evidence(
                                     ce_result,
                                     task_id=portfolio_task_id,
@@ -902,6 +960,93 @@ class _Mixin02:
                                         deadline_decision=semantic_deadline_decision,
                                     )
                                     llm_call_count = 2
+                    # One repair can still leave either a protocol/schema error
+                    # (for example, omit project_completion_contract) or a
+                    # schema-valid immutable owner-contract deficit. Give both
+                    # cases one final same-role, same-run repair carrying the
+                    # exact new diagnostic. This remains bounded to three total
+                    # physical calls, uses a distinct TaskRuntime claim, and
+                    # preserves downstream Director/QA deadline reserves.
+                    if ce_result is not None and llm_call_count == 2:
+                        repaired_output_errors: list[str] = []
+                        if ce_result.ok:
+                            repaired_structured_output = dict(ce_result.metadata or {}).get("structured_output")
+                            if isinstance(repaired_structured_output, Mapping):
+                                repaired_output_errors = self._chief_engineer_portfolio_output_errors(
+                                    repaired_structured_output,
+                                    tasks=portfolio_tasks,
+                                )
+                        elif self._ce_portfolio_result_allows_schema_repair(ce_result):
+                            repaired_error = str(
+                                ce_result.error_message or ce_result.error_code or "output validation failed"
+                            ).strip()
+                            if repaired_error:
+                                repaired_output_errors = [repaired_error]
+                        final_repair_diagnostic = "; ".join(repaired_output_errors).strip()
+                        final_repair_has_progress = ce_result.ok or (
+                            final_repair_diagnostic != previous_repair_diagnostic
+                        )
+                        if repaired_output_errors and final_repair_has_progress:
+                                repaired_evidence = self._ce_extract_llm_evidence(
+                                    ce_result,
+                                    task_id=portfolio_task_id,
+                                    run_id=run.id,
+                                )
+                                final_repair_signal: dict[str, Any] = {
+                                    "code": "chief_engineer.output_contract_final_repair_started",
+                                    "severity": "warning",
+                                    "detail": "; ".join(repaired_output_errors),
+                                    "task_id": portfolio_task_id,
+                                    "repair_task_id": f"{portfolio_task_id}-CONTRACT-REPAIR-2",
+                                    "prior_error_code": str(ce_result.error_code or "output_validation_failed"),
+                                    "prior_failure_class": self._ce_schema_repair_failure_class(ce_result),
+                                    "validation_errors": list(repaired_output_errors),
+                                    "pm_authority_preserved": True,
+                                    "provider_calls_capped": 3,
+                                }
+                                self._attach_ce_llm_evidence(final_repair_signal, repaired_evidence)
+                                stage_signals.append(final_repair_signal)
+                                final_semantic_failure = (
+                                    self._chief_engineer_post_validation_repair_result(
+                                        prior_result=ce_result,
+                                        output_errors=repaired_output_errors,
+                                    )
+                                    if ce_result.ok
+                                    else ce_result
+                                )
+                                final_semantic_deadline = self._chief_engineer_deadline_projection_decision(
+                                    context,
+                                    requested_timeout_seconds=requested_timeout_seconds,
+                                    dependency_schedule=dependency_schedule,
+                                    output_tokens=_CHIEF_ENGINEER_SCHEMA_REPAIR_MAX_TOKENS,
+                                )
+                                if final_semantic_deadline.disposition is FactoryDeadlineDispositionV1.BLOCK:
+                                    stage_signals.append(
+                                        {
+                                            "code": "chief_engineer.output_contract_final_repair_deadline_blocked",
+                                            "severity": "error",
+                                            "detail": (
+                                                "The final CE owner-contract repair was not admitted because the "
+                                                "remaining Factory lease cannot preserve mandatory downstream budgets."
+                                            ),
+                                            "task_id": portfolio_task_id,
+                                            "deadline_decision": final_semantic_deadline.to_dict(),
+                                            "reason": final_semantic_deadline.reason,
+                                        }
+                                    )
+                                    ce_result = final_semantic_failure
+                                else:
+                                    ce_result = await self._run_chief_engineer_schema_repair(
+                                        run=run,
+                                        authority_port=authority_port,
+                                        authority_binding=authority_binding,
+                                        prior_result=final_semantic_failure,
+                                        portfolio_context=portfolio_context,
+                                        portfolio_task_ids=tuple(task.task_id for task in portfolio_tasks),
+                                        deadline_decision=final_semantic_deadline,
+                                        repair_round=2,
+                                    )
+                                    llm_call_count = 3
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # noqa: BLE001 — contain provider/http failures as stage signals
@@ -941,26 +1086,60 @@ class _Mixin02:
                     and portfolio_authority is not None
                 )
                 if advisory_projection_allowed:
-                    ce_llm_blueprint = self._chief_engineer_authoritative_pm_projection_candidate()
-                    fallback_signal: dict[str, Any] = {
-                        "code": "chief_engineer.advisory_projection_fallback",
-                        "severity": "warning",
-                        "detail": (
-                            "Primary plus bounded repair did not produce a valid CE result-protocol payload; "
-                            "continued with the minimal advisory candidate and projected all delivery authority "
-                            "from the validated PM contract."
-                        ),
-                        "task_id": portfolio_task_id,
-                        "provider": ce_provider,
-                        "model": ce_model,
-                        "failure_class": self._ce_schema_repair_failure_class(ce_result),
-                        "provider_error": str(ce_result.error_message or ce_result.error_code or "")[:512],
-                        "pm_authority_preserved": True,
-                        "scope_expansion_allowed": False,
-                        "provider_calls_capped": 2,
-                    }
-                    self._attach_ce_llm_evidence(fallback_signal, ce_evidence)
-                    stage_signals.append(fallback_signal)
+                    fallback_candidate = self._chief_engineer_authoritative_pm_projection_candidate()
+                    try:
+                        portfolio = self._build_chief_engineer_portfolio_from_candidate(
+                            run_id=run.id,
+                            tasks=portfolio_tasks,
+                            authority=portfolio_authority,
+                            structured_output=fallback_candidate,
+                        )
+                    except (OSError, RuntimeError, TypeError, ValueError) as fallback_exc:
+                        fallback_code = str(getattr(fallback_exc, "code", "") or "").strip()
+                        fallback_details = getattr(fallback_exc, "details", None)
+                        rejected_signal: dict[str, Any] = {
+                            "code": "chief_engineer.advisory_projection_fallback_infeasible",
+                            "severity": "error",
+                            "detail": (
+                                "The minimal PM-authority advisory projection cannot satisfy the immutable "
+                                "project completion contract; preserve the physical Provider failure instead "
+                                "of projecting misleading empty delivery authority."
+                            ),
+                            "task_id": portfolio_task_id,
+                            "provider": ce_provider,
+                            "model": ce_model,
+                            "failure_class": self._ce_schema_repair_failure_class(ce_result),
+                            "provider_error": str(ce_result.error_message or ce_result.error_code or "")[:512],
+                            "fallback_error_code": fallback_code,
+                            "fallback_validation_errors": [f"{type(fallback_exc).__name__}: {fallback_exc}"],
+                            "pm_authority_preserved": True,
+                            "scope_expansion_allowed": False,
+                            "provider_calls_capped": llm_call_count,
+                        }
+                        if isinstance(fallback_details, Mapping) and fallback_details:
+                            rejected_signal["fallback_contract_error_details"] = dict(fallback_details)
+                        self._attach_ce_llm_evidence(rejected_signal, ce_evidence)
+                        stage_signals.append(rejected_signal)
+                    else:
+                        fallback_signal: dict[str, Any] = {
+                            "code": "chief_engineer.advisory_projection_fallback",
+                            "severity": "warning",
+                            "detail": (
+                                "Primary plus bounded repair did not produce a valid CE result-protocol payload; "
+                                "continued with the owner-finalized PM projection after its immutable delivery "
+                                "contract passed validation."
+                            ),
+                            "task_id": portfolio_task_id,
+                            "provider": ce_provider,
+                            "model": ce_model,
+                            "failure_class": self._ce_schema_repair_failure_class(ce_result),
+                            "provider_error": str(ce_result.error_message or ce_result.error_code or "")[:512],
+                            "pm_authority_preserved": True,
+                            "scope_expansion_allowed": False,
+                            "provider_calls_capped": llm_call_count,
+                        }
+                        self._attach_ce_llm_evidence(fallback_signal, ce_evidence)
+                        stage_signals.append(fallback_signal)
                 else:
                     error_signal: dict[str, Any] = {
                         "code": "chief_engineer.llm_review_failed",
@@ -1016,7 +1195,7 @@ class _Mixin02:
             call_error_count = sum(
                 1 for signal in stage_signals if str(signal.get("severity") or "").strip().lower() == "error"
             )
-            if not ce_llm_blueprint:
+            if not ce_llm_blueprint and portfolio is None:
                 structured_output = ce_result_metadata.get("structured_output")
                 if isinstance(structured_output, Mapping):
                     ce_llm_blueprint = dict(structured_output)
@@ -1131,7 +1310,7 @@ class _Mixin02:
                             "pm_contract_hash": portfolio_authority.pm_contract_hash,
                         }
                     )
-            elif not ce_llm_blueprint and call_error_count == 0:
+            elif not ce_llm_blueprint and portfolio is None and call_error_count == 0:
                 stage_signals.append(
                     {
                         "code": "chief_engineer.output_schema_invalid",
@@ -1161,13 +1340,16 @@ class _Mixin02:
                     structured_output=ce_llm_blueprint,
                 )
             except (OSError, RuntimeError, TypeError, ValueError) as exc:
-                stage_signals.append(
-                    {
-                        "code": "chief_engineer.portfolio_generation_failed",
-                        "severity": "error",
-                        "detail": f"{type(exc).__name__}: {exc}",
-                    }
-                )
+                contract_error_code = str(getattr(exc, "code", "") or "").strip()
+                signal: dict[str, Any] = {
+                    "code": contract_error_code or "chief_engineer.portfolio_generation_failed",
+                    "severity": "error",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                }
+                contract_error_details = getattr(exc, "details", None)
+                if isinstance(contract_error_details, Mapping) and contract_error_details:
+                    signal["contract_error_details"] = dict(contract_error_details)
+                stage_signals.append(signal)
 
         if portfolio is not None:
             portfolio_reference = portfolio.to_reference()
@@ -2004,6 +2186,25 @@ class _Mixin02:
         after = set(after_signature)
         if after == before:
             return "stagnant"
+        before_test_identities = workspace_quality_impl._workspace_quality_failing_test_identities(
+            before_signature
+        )
+        after_test_identities = workspace_quality_impl._workspace_quality_failing_test_identities(
+            after_signature
+        )
+        if (
+            before_test_identities
+            and after_test_identities
+            and before_test_identities == after_test_identities
+            and workspace_quality_impl._workspace_quality_is_pure_named_test_surface(before_signature)
+            and workspace_quality_impl._workspace_quality_is_pure_named_test_surface(after_signature)
+        ):
+            # Live L3-22: the same two Go tests emitted different package
+            # durations/cache footers, so whole-text signatures differed and
+            # the loop invented an equal-count swap plus duplicate regression
+            # guards. Named failing tests are the stable verifier identity;
+            # changed assertion values remain useful context but not progress.
+            return "stagnant"
         if cls._go_crash_unmasked_runnable_tests(before_signature, after_signature):
             return "forward_unmask"
         if cls._go_compile_barrier_unmasked_runnable_tests(before_signature, after_signature):
@@ -2283,7 +2484,8 @@ class _Mixin02:
         )
         completion = metadata.get("task_completion_projection")
         owned_artifacts = completion.get("owned_artifacts") if isinstance(completion, Mapping) else None
-        has_completion_ownership = bool(owned_artifacts) and str(completion.get("run_id") or "").strip() in {
+        completion_run_id = str(completion.get("run_id") or "").strip() if isinstance(completion, Mapping) else ""
+        has_completion_ownership = bool(owned_artifacts) and completion_run_id in {
             "",
             run_id,
         }

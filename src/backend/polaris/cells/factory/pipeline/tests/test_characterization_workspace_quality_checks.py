@@ -1653,6 +1653,70 @@ class TestRunWorkspaceQualityChecks:
             == "no_op"
         )
 
+    def test_workspace_quality_same_go_failures_ignore_runner_timing_jitter(self) -> None:
+        """The same named tests stay stagnant when only Go runner noise changes."""
+
+        before = OrchestrationStageExecutor._workspace_quality_diagnostic_signature(
+            [
+                "--- FAIL: TestRunEndToEndViaLibraryAPI (0.00s)\n"
+                "    main_test.go:137: bubble still moving downward\n"
+                "FAIL\nFAIL\tmusicbubble\t0.359s",
+                "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+                "    engine_test.go:112: bubble still moving downward\n"
+                "FAIL\nFAIL\tmusicbubble/engine\t0.006s\n"
+                "ok  \tmusicbubble/models\t(cached)",
+            ]
+        )
+        after = OrchestrationStageExecutor._workspace_quality_diagnostic_signature(
+            [
+                "--- FAIL: TestRunEndToEndViaLibraryAPI (0.00s)\n"
+                "    main_test.go:137: bubble still moving downward\n"
+                "FAIL\nFAIL\tmusicbubble\t0.330s",
+                "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+                "    engine_test.go:112: bubble still moving downward\n"
+                "FAIL\nFAIL\tmusicbubble/engine\t0.005s\n"
+                "ok  \tmusicbubble/models\t(cached)",
+            ]
+        )
+
+        assert before != after
+        assert (
+            OrchestrationStageExecutor._workspace_quality_repair_effect(
+                before_signature=before,
+                after_signature=after,
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "stagnant"
+        )
+
+    def test_workspace_quality_named_test_identity_does_not_hide_compile_forward_unmask(self) -> None:
+        """A stable failing test cannot hide removal of a compiler barrier."""
+
+        before = OrchestrationStageExecutor._workspace_quality_diagnostic_signature(
+            [
+                "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+                "    engine_test.go:112: bubble still moving downward",
+                "engine/engine.go:71:19: cannot convert gravity to float64",
+            ]
+        )
+        after = OrchestrationStageExecutor._workspace_quality_diagnostic_signature(
+            [
+                "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+                "    engine_test.go:112: bubble still moving downward"
+            ]
+        )
+
+        assert (
+            OrchestrationStageExecutor._workspace_quality_repair_effect(
+                before_signature=before,
+                after_signature=after,
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "forward_unmask"
+        )
+
     def test_workspace_quality_repair_effect_rejects_test_failure_fanout_compression(self) -> None:
         """One common exception cannot masquerade as fewer diagnostics.
 
@@ -2545,6 +2609,110 @@ class TestRunWorkspaceQualityChecks:
             assert item["repair_summary"]["success_authority"] == "post_repair_verifier"
 
     @pytest.mark.asyncio
+    async def test_workspace_quality_same_named_test_timing_jitter_stops_without_regression_guards(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Timing-only verifier noise is stagnant and never becomes a guard."""
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-go-timing-jitter",
+            config=FactoryConfig(name="quality-go-timing-jitter"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-22T00:00:00+00:00",
+        )
+        diagnostics = (
+            "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+            "    engine_test.go:112: bubble still moving downward\n"
+            "FAIL\nFAIL\tmusicbubble/engine\t0.359s",
+            "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+            "    engine_test.go:112: bubble still moving downward\n"
+            "FAIL\nFAIL\tmusicbubble/engine\t0.339s",
+            "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+            "    engine_test.go:112: bubble still moving downward\n"
+            "FAIL\nFAIL\tmusicbubble/engine\t0.330s",
+        )
+        command_calls = 0
+        repair_calls = 0
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            nonlocal command_calls
+            del timeout_seconds
+            diagnostic = diagnostics[min(command_calls, len(diagnostics) - 1)]
+            command_calls += 1
+            return {
+                "command": command,
+                "exit_code": 1,
+                "passed": False,
+                "stdout_tail": diagnostic,
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def mutating_repair(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal repair_calls
+            del kwargs
+            repair_calls += 1
+            return (
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {
+                            "file": "engine/engine.go",
+                            "operation": "modify",
+                            "before_hash": f"before-{repair_calls}",
+                            "after_hash": f"after-{repair_calls}",
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "task_id": "TASK-3",
+                    "repair_target_files": ["engine/engine.go"],
+                    "write_tool_evidence": True,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["go", "test", "./..."]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_deterministic_repairs", mutating_repair)
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 3},
+        )
+
+        assert passed is False
+        assert command_calls == 4
+        assert repair_calls == 3
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        repair = payload["repair"]
+        assert repair["convergence_stop_reason"] == "named_test_semantic_contract_conflict_candidate"
+        assert [item["verifier_effect"] for item in repair["rounds"]] == [
+            "stagnant",
+            "stagnant",
+            "stagnant",
+        ]
+        assert repair["rounds"][1]["causal_reanalysis_round_granted"] is True
+        assert repair["rounds"][2]["causal_reanalysis_required"] is True
+        conflict = repair["semantic_contract_conflict_candidate"]
+        assert conflict["reason"] == "bounded_causal_reanalysis_did_not_reduce_named_test_set"
+        assert conflict["owner_task_id"] == "TASK-3"
+        assert conflict["synthesis_union_test_identities"] == ["go:teststepclampsonfloor"]
+        assert conflict["residual_test_identities"] == ["go:teststepclampsonfloor"]
+        assert conflict["pm_ce_restart_allowed"] is False
+        assert conflict["recommended_route"] == "same_ce_stage_contract_feasibility_review"
+        assert all(item["regression_guard_errors"] == [] for item in repair["rounds"])
+        assert all(not item.get("regression_guard_errors_for_next_round") for item in repair["rounds"])
+
+    @pytest.mark.asyncio
     async def test_workspace_quality_equal_count_swap_carries_prior_failure_as_llm_regression_guard(
         self,
         tmp_path: Path,
@@ -2639,7 +2807,7 @@ class TestRunWorkspaceQualityChecks:
         )
 
         assert passed is False
-        assert len(llm_contexts) == 2
+        assert len(llm_contexts) == 3
         first_quality = llm_contexts[0].get("director_quality_repair")
         assert not isinstance(first_quality, dict) or not first_quality.get("regression_guard_errors")
         second_quality = llm_contexts[1]["director_quality_repair"]
@@ -2648,6 +2816,12 @@ class TestRunWorkspaceQualityChecks:
         assert isinstance(guards, list)
         assert any("TestStepClampsOnFloor" in str(item) for item in guards)
         assert all("TestStepAppliesGravity" not in str(item) for item in guards)
+        synthesis_quality = llm_contexts[2]["director_quality_repair"]
+        assert isinstance(synthesis_quality, dict)
+        synthesis_guards = synthesis_quality["regression_guard_errors"]
+        assert isinstance(synthesis_guards, list)
+        assert any("TestStepAppliesGravity" in str(item) for item in synthesis_guards)
+        assert all("TestStepClampsOnFloor" not in str(item) for item in synthesis_guards)
         payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
         rounds = payload["repair"]["rounds"]
         assert rounds[0]["regression_guard_errors"] == []
@@ -2656,6 +2830,290 @@ class TestRunWorkspaceQualityChecks:
             for item in rounds[0]["regression_guard_errors_for_next_round"]
         )
         assert any("TestStepClampsOnFloor" in str(item) for item in rounds[1]["regression_guard_errors"])
+        assert rounds[1]["regression_synthesis_round_granted"] is True
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_aba_oscillation_gets_one_regression_synthesis_round(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A -> B -> A earns one bounded round with current A plus prior B guards.
+
+        Live L3-22 first consumed one no-effect Provider attempt, then two
+        physical edits ping-ponged the Go verifier from failure set A to B and
+        back to A.  The global non-progress fuse stopped immediately after the
+        third round, exactly when the next Director request would first carry
+        both the current A residual and the prior B regression guards.  That
+        synthesis round must run once, without resetting or renewing the hard
+        non-progress budget.
+        """
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-aba-regression-synthesis",
+            config=FactoryConfig(name="quality-aba-regression-synthesis"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-22T00:00:00+00:00",
+        )
+        failure_a = (
+            "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
+            "    engine_test.go:112: still moving downward"
+        )
+        failure_b = (
+            "--- FAIL: TestStepAppliesGravity (0.00s)\n"
+            "    engine_test.go:69: velocity=-4.905 want 4.905"
+        )
+        failure_c = (
+            "--- FAIL: TestStepWithRestitutionBounces (0.00s)\n"
+            "    engine_test.go:87: velocity=-1 want positive"
+        )
+        command_calls = 0
+        llm_contexts: list[dict[str, object]] = []
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            nonlocal command_calls
+            del timeout_seconds
+            diagnostics_by_repair_attempt = (failure_a, failure_a, failure_b, failure_a, failure_c)
+            diagnostic = diagnostics_by_repair_attempt[min(len(llm_contexts), 4)]
+            command_calls += 1
+            return {
+                "command": command,
+                "exit_code": 1,
+                "passed": False,
+                "stdout_tail": diagnostic,
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def no_deterministic_effect(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            del kwargs
+            return [], {"attempted": True, "success": False, "write_tool_evidence": False}
+
+        async def staged_llm_effect(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            llm_contexts.append(dict(kwargs["context"]))
+            attempt = len(llm_contexts)
+            if attempt == 1:
+                return [], {
+                    "attempted": True,
+                    "success": False,
+                    "task_id": "TASK-3",
+                    "repair_target_files": ["engine/engine.go"],
+                    "write_tool_evidence": False,
+                }
+            return (
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {
+                            "file": "engine/engine.go",
+                            "operation": "modify",
+                            "before_hash": f"before-{attempt}",
+                            "after_hash": f"after-{attempt}",
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "task_id": "TASK-3",
+                    "repair_target_files": ["engine/engine.go"],
+                    "write_tool_evidence": True,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["go", "test", "./..."]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_deterministic_repairs", no_deterministic_effect)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", staged_llm_effect)
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "workspace_quality_unclaimed_failing_tu_targets",
+            lambda *_args, **_kwargs: [],
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "workspace_quality_unclaimed_residual_targets",
+            lambda *_args, **_kwargs: [],
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "leftover_targets_should_force_owner_rotate",
+            lambda *_args, **_kwargs: False,
+        )
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 6},
+        )
+
+        assert passed is False
+        assert len(llm_contexts) == 4
+        synthesis_quality = llm_contexts[3]["director_quality_repair"]
+        assert isinstance(synthesis_quality, dict)
+        synthesis_guards = synthesis_quality["regression_guard_errors"]
+        assert isinstance(synthesis_guards, list)
+        assert any("TestStepAppliesGravity" in str(item) for item in synthesis_guards)
+        assert all("TestStepClampsOnFloor" not in str(item) for item in synthesis_guards)
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        repair = payload["repair"]
+        assert len(repair["rounds"]) == 4
+        assert repair["rounds"][2]["regression_synthesis_round_granted"] is True
+        assert any(
+            "TestStepClampsOnFloor" in str(item)
+            for item in repair["rounds"][2]["reintroduced_regression_guard_errors"]
+        )
+        assert (
+            repair["convergence_stop_reason"] == "named_test_semantic_contract_conflict_candidate"
+        ), repair
+        conflict = repair["semantic_contract_conflict_candidate"]
+        assert conflict["owner_task_id"] == "TASK-3"
+        assert conflict["synthesis_union_test_identities"] == [
+            "go:teststepappliesgravity",
+            "go:teststepclampsonfloor",
+        ]
+        assert conflict["residual_test_identities"] == ["go:teststepwithrestitutionbounces"]
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_count_changing_aba_carries_regression_guards(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A 1 -> 2 -> 1 verifier trade must preserve every resolved named test.
+
+        Live L3-22 alternated one gravity failure with two floor failures.  The
+        old guard projection only handled equal-count swaps, so each Director
+        request forgot the tests fixed by the immediately preceding edit.
+        """
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-count-changing-aba",
+            config=FactoryConfig(name="quality-count-changing-aba"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-22T00:00:00+00:00",
+        )
+        failure_a = "engine_test.go:69: TestStepAppliesGravity velocity=-4.905 want 4.905"
+        failure_b1 = "engine_test.go:112: TestStepClampsOnFloor still moving downward"
+        failure_b2 = "main_test.go:137: TestRunEndToEndViaLibraryAPI still moving downward"
+        llm_contexts: list[dict[str, object]] = []
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            if len(llm_contexts) >= 3:
+                return {
+                    "command": command,
+                    "exit_code": 0,
+                    "passed": True,
+                    "stdout_tail": "ok",
+                    "stderr_tail": "",
+                    "error": "",
+                }
+            diagnostic = failure_a if len(llm_contexts) in {0, 2} else f"{failure_b1}\n{failure_b2}"
+            return {
+                "command": command,
+                "exit_code": 1,
+                "passed": False,
+                "stdout_tail": diagnostic,
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def no_deterministic_effect(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            del kwargs
+            return [], {
+                "attempted": True,
+                "success": False,
+                "write_tool_evidence": False,
+                "stage": "runtime_plan_probe_unplannable",
+                "success_reason": "task_boundary_interface_discrepancy_required",
+                "task_id": "TASK-1",
+                "task_boundary_owner_evidence": {
+                    "schema_version": "factory.workspace_quality_task_owner.v1",
+                    "source": "task_runtime_execution_attempt",
+                    "task_id": "TASK-1",
+                    "owner_target_files": ["engine/engine.go"],
+                    "diagnostic_target_files": ["engine/engine.go"],
+                    "in_scope_diagnostic_target_files": ["engine/engine.go"],
+                    "out_of_scope_diagnostic_target_files": [],
+                    "director_local_repair_allowed": True,
+                },
+                "plan_probe_preaudit": {
+                    "status": "coverage_matched_but_unplannable",
+                    "plannable_source_tools": [],
+                    "covered_unplannable_source_tools": ["deterministic_go_test_assertion_align_repair"],
+                    "covered_unplannable_diagnostic_count": 1,
+                },
+            }
+
+        async def mutating_llm_effect(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            llm_contexts.append(dict(kwargs["context"]))
+            attempt = len(llm_contexts)
+            return (
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {
+                            "file": "engine/engine.go",
+                            "operation": "modify",
+                            "before_hash": f"before-{attempt}",
+                            "after_hash": f"after-{attempt}",
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "task_id": "TASK-1",
+                    "repair_target_files": ["engine/engine.go"],
+                    "write_tool_evidence": True,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["go", "test", "./..."]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_deterministic_repairs", no_deterministic_effect)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", mutating_llm_effect)
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "workspace_quality_unclaimed_failing_tu_targets",
+            lambda *_args, **_kwargs: [],
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "workspace_quality_unclaimed_residual_targets",
+            lambda *_args, **_kwargs: [],
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "leftover_targets_should_force_owner_rotate",
+            lambda *_args, **_kwargs: False,
+        )
+
+        passed, _artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 4},
+        )
+
+        assert passed is True
+        assert len(llm_contexts) == 3
+        second_quality = llm_contexts[1]["director_quality_repair"]
+        assert isinstance(second_quality, dict)
+        assert any("TestStepAppliesGravity" in str(item) for item in second_quality["regression_guard_errors"])
+        third_quality = llm_contexts[2]["director_quality_repair"]
+        assert isinstance(third_quality, dict)
+        assert any("TestStepClampsOnFloor" in str(item) for item in third_quality["regression_guard_errors"])
+        assert any("TestRunEndToEndViaLibraryAPI" in str(item) for item in third_quality["regression_guard_errors"])
+        assert all("TestStepAppliesGravity" not in str(item) for item in third_quality["regression_guard_errors"])
 
     @pytest.mark.asyncio
     async def test_workspace_quality_new_plannable_repair_gets_next_bounded_round(
@@ -3217,6 +3675,174 @@ class TestRunWorkspaceQualityChecks:
         assert "deterministic_no_commit_signature_cache_hit" in repair["rounds"][1]["evidence"]
 
     @pytest.mark.asyncio
+    async def test_workspace_quality_provider_timeout_gets_one_transport_retry_without_spending_semantic_budget(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A transient provider timeout is not a semantic no-op repair."""
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-provider-timeout-retry",
+            config=FactoryConfig(name="quality-provider-timeout-retry"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-22T00:00:00+00:00",
+        )
+        command_calls = 0
+        llm_calls = 0
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            nonlocal command_calls
+            del timeout_seconds
+            command_calls += 1
+            passed = command_calls >= 2
+            return {
+                "command": command,
+                "exit_code": 0 if passed else 1,
+                "passed": passed,
+                "stdout_tail": "" if passed else "--- FAIL: TestPhysicsContract (0.00s)",
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def fake_deterministic_repairs(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            del kwargs
+            return [], {
+                "attempted": True,
+                "success": False,
+                "task_id": "TASK-1",
+                "write_tool_evidence": False,
+            }
+
+        async def fake_llm_repairs(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal llm_calls
+            del kwargs
+            llm_calls += 1
+            if llm_calls == 1:
+                return [], {
+                    "attempted": True,
+                    "success": False,
+                    "task_id": "TASK-1",
+                    "error": "TransactionKernel execution failed: Request timeout (300.0s)",
+                    "write_tool_evidence": False,
+                }
+            return (
+                [{"tool": "edit_file", "success": True, "result": {"file": "src/product.go"}}],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "task_id": "TASK-1",
+                    "write_tool_evidence": True,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["go", "test", "./..."]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_deterministic_repairs", fake_deterministic_repairs)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", fake_llm_repairs)
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 8},
+        )
+
+        assert passed is True
+        assert command_calls == 2
+        assert llm_calls == 2
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        repair = payload["repair"]
+        assert repair["success"] is True
+        assert repair["provider_transport_retry_granted"] is True
+        assert repair["nonprogress_rounds_since_last_progress"] == 0
+        assert [item["verifier_effect"] for item in repair["rounds"]] == [
+            "provider_timeout",
+            "resolved",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_second_provider_timeout_stops_without_semantic_nonprogress(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The transport retry is bounded and cannot burn semantic repair rounds forever."""
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-provider-timeout-exhausted",
+            config=FactoryConfig(name="quality-provider-timeout-exhausted"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-22T00:00:00+00:00",
+        )
+        llm_calls = 0
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            return {
+                "command": command,
+                "exit_code": 1,
+                "passed": False,
+                "stdout_tail": "--- FAIL: TestPhysicsContract (0.00s)",
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def fake_deterministic_repairs(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            del kwargs
+            return [], {
+                "attempted": True,
+                "success": False,
+                "task_id": "TASK-1",
+                "write_tool_evidence": False,
+            }
+
+        async def fake_llm_repairs(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal llm_calls
+            del kwargs
+            llm_calls += 1
+            error = (
+                "TransactionKernel execution failed: Request timeout (300.0s)"
+                if llm_calls == 1
+                else "director_quality_repair_2_llm_timeout"
+            )
+            return [], {
+                "attempted": True,
+                "success": False,
+                "task_id": "TASK-1",
+                "error": error,
+                "write_tool_evidence": False,
+            }
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["go", "test", "./..."]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_deterministic_repairs", fake_deterministic_repairs)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", fake_llm_repairs)
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 8},
+        )
+
+        assert passed is False
+        assert llm_calls == 2
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        repair = payload["repair"]
+        assert repair["provider_transport_retry_granted"] is True
+        assert repair["nonprogress_rounds_since_last_progress"] == 0
+        assert repair["convergence_stop_reason"] == "quality_repair_provider_timeout_exhausted"
+        assert [item["verifier_effect"] for item in repair["rounds"]] == [
+            "provider_timeout",
+            "provider_timeout",
+        ]
+
+    @pytest.mark.asyncio
     async def test_workspace_quality_llm_repair_context_includes_ce_blueprint_and_catalog(
         self,
         tmp_path: Path,
@@ -3388,6 +4014,11 @@ class TestRunWorkspaceQualityChecks:
                 "factory_run_timeout_seconds": 5400,
                 "factory_director_execution_deadline_epoch_seconds": 4_102_444_700.0,
                 "request_timeout_seconds": 600,
+                "director_quality_repair": {
+                    "regression_guard_errors": [f"prior verifier guard {index}" for index in range(8)],
+                    "causal_reanalysis_required": True,
+                    "untrusted_target_override": ["outside/scope.go"],
+                },
             },
             artifact_quality_errors=["npm run build failed"],
             repair_attempt=1,
@@ -3410,6 +4041,8 @@ class TestRunWorkspaceQualityChecks:
         assert repair_context["director_quality_repair"] == {
             "repair_target_files": ["src/engine/rules.js"],
             "write_only_single_target": {"target_file": "src/engine/rules.js"},
+            "regression_guard_errors": [f"prior verifier guard {index}" for index in range(6)],
+            "causal_reanalysis_required": True,
         }
         assert repair_context["ce_blueprint"]["artifact"] == "runtime/state/blueprints/factory-context.review.json"
         assert "Chief Engineer blueprint" in repair_context["chief_engineer_blueprint_evidence"]
@@ -3855,6 +4488,151 @@ class TestRunWorkspaceQualityChecks:
         assert payload["passed"] is True
         assert payload["repair"]["success"] is True
         assert payload["repair"]["rounds"][0]["repair_summary"]["stage"] == "quality_repair"
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_replays_interface_probe_after_deterministic_no_commit_cache_hit(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A cached deterministic no-commit must not erase Director retry authority."""
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-cached-interface-probe",
+            config=FactoryConfig(name="quality-cached-interface-probe"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-22T00:00:00+00:00",
+        )
+        state = {"llm_calls": 0, "deterministic_calls": 0}
+        interface_evidence: list[dict[str, Any]] = []
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            if state["llm_calls"] >= 2:
+                return {
+                    "command": command,
+                    "exit_code": 0,
+                    "passed": True,
+                    "stdout_tail": "ok",
+                    "stderr_tail": "",
+                    "error": "",
+                }
+            return {
+                "command": command,
+                "exit_code": 1,
+                "passed": False,
+                "stdout_tail": (
+                    "--- FAIL: TestStepAppliesGravity (0.00s)\n"
+                    "    engine_test.go:69: velocity=-4.905 want 4.905\n"
+                    "FAIL"
+                ),
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def fake_apply_workspace_quality_deterministic_repairs(
+            *,
+            run: FactoryRun,
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            del artifact_quality_errors, repair_attempt
+            assert run.id == "factory-quality-cached-interface-probe"
+            state["deterministic_calls"] += 1
+            return (
+                [],
+                {
+                    "stage": "runtime_plan_probe_unplannable",
+                    "attempted": True,
+                    "success": False,
+                    "success_reason": "task_boundary_interface_discrepancy_required",
+                    "tool_results": 0,
+                    "source_tools": [],
+                    "task_id": "TASK-1",
+                    "task_boundary_owner_evidence": {
+                        "schema_version": "factory.workspace_quality_task_owner.v1",
+                        "source": "task_runtime_execution_attempt",
+                        "task_id": "TASK-1",
+                        "owner_target_files": ["engine/engine.go"],
+                        "diagnostic_target_files": ["engine/engine.go"],
+                        "in_scope_diagnostic_target_files": ["engine/engine.go"],
+                        "out_of_scope_diagnostic_target_files": [],
+                        "director_local_repair_allowed": True,
+                    },
+                    "plan_probe_preaudit": {
+                        "status": "coverage_matched_but_unplannable",
+                        "plannable_source_tools": [],
+                        "covered_unplannable_source_tools": [
+                            "deterministic_go_test_assertion_align_repair"
+                        ],
+                        "covered_unplannable_diagnostic_count": 1,
+                    },
+                },
+            )
+
+        async def fake_apply_workspace_quality_llm_repairs(
+            *,
+            run: FactoryRun,
+            context: dict[str, Any],
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+            interface_discrepancy_evidence: dict[str, Any] | None = None,
+            owner_target_files: list[str] | None = None,
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            del run, context, artifact_quality_errors, repair_attempt
+            assert interface_discrepancy_evidence is not None
+            assert interface_discrepancy_evidence["recommended_owner"] == "director"
+            assert interface_discrepancy_evidence["director_retry_allowed"] is True
+            assert owner_target_files == ["engine/engine.go"]
+            interface_evidence.append(interface_discrepancy_evidence)
+            state["llm_calls"] += 1
+            return (
+                [
+                    {
+                        "success": True,
+                        "tool": "edit_file",
+                        "result": {
+                            "file": "engine/engine.go",
+                            "operation": "update",
+                            "before_sha256": f"{state['llm_calls']:064x}",
+                            "after_sha256": f"{state['llm_calls'] + 1:064x}",
+                        },
+                    }
+                ],
+                {
+                    "stage": "quality_repair",
+                    "attempted": True,
+                    "success": False,
+                    "tool_results": 1,
+                    "write_tool_evidence": True,
+                    "source_tools": ["director_materialization_quality_repair"],
+                    "interface_discrepancy_evidence": interface_discrepancy_evidence,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["go", "test", "./..."]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_deterministic_repairs",
+            fake_apply_workspace_quality_deterministic_repairs,
+        )
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", fake_apply_workspace_quality_llm_repairs)
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 2},
+        )
+
+        assert passed is True
+        assert state["deterministic_calls"] == 1
+        assert state["llm_calls"] == 2
+        assert len(interface_evidence) == 2
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        assert payload["repair"]["rounds"][1]["repair_summary"]["stage"] == "quality_repair"
 
     def test_workspace_quality_keeps_claimed_rust_diagnostic_owner_on_director(self) -> None:
         diagnostic = "cargo check :: error[E0432]: unresolved import `crate::engine::RecipeDraft` in src/lib.rs"

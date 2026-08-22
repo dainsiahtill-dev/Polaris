@@ -132,7 +132,11 @@ class TestChiefEngineerHandoffGuards:
 
         result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
 
-        assert result.status == "failed"
+        # The Provider budget remains bounded to the primary call plus one
+        # schema-repair call.  After both unusable advisory responses, the
+        # deterministic PM-authority projection may complete a single-task
+        # portfolio without inventing cross-task behavior semantics.
+        assert result.status == "success"
         assert len(commands) == 2
         assert commands[-1].task_id.endswith("-SCHEMA-REPAIR")
         review = json.loads(
@@ -141,13 +145,208 @@ class TestChiefEngineerHandoffGuards:
             )
         )
         assert review["llm_call_count"] == 2
-        assert [signal["code"] for signal in review["signals"]] == [
+        signal_codes = [signal["code"] for signal in review["signals"]]
+        assert signal_codes[:2] == [
             "chief_engineer.output_schema_repair_started",
-            "chief_engineer.llm_review_failed",
+            "chief_engineer.advisory_projection_fallback",
         ]
+        assert "chief_engineer.llm_review_failed" not in signal_codes
         assert len(keepers) == 2
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_chief_engineer_schema_fallback_cannot_bypass_cross_task_behavior_authority(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-SOURCE",
+                        "title": "Implement shared behavior",
+                        "goal": "Implement the reusable behavior source.",
+                        "target_files": ["src/behavior.py"],
+                        "scope_paths": ["src/behavior.py"],
+                        "acceptance_criteria": ["behavior is implemented"],
+                        "execution_checklist": ["Implement behavior"],
+                    },
+                    {
+                        "id": "TASK-TEST",
+                        "title": "Verify shared behavior",
+                        "goal": "Verify the reusable behavior contract.",
+                        "depends_on": ["TASK-SOURCE"],
+                        "target_files": ["tests/test_behavior.py"],
+                        "scope_paths": ["tests/test_behavior.py"],
+                        "acceptance_criteria": ["behavior is verified"],
+                        "execution_checklist": ["Implement behavior tests"],
+                    },
+                ]
+            },
+        )
+        commands: list[Any] = []
+
+        class _AlwaysInvalidRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                commands.append(command)
+                return _invalid_chief_engineer_stream_result()
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _AlwaysInvalidRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-schema-fallback-cross-task",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "failed"
+        assert len(commands) == 2
+        review = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert review["generated_blueprints"] == 0
+        signal_codes = [signal["code"] for signal in review["signals"]]
+        assert "chief_engineer.advisory_projection_fallback" not in signal_codes
+        assert "chief_engineer.advisory_projection_fallback_infeasible" in signal_codes
+        behavior_signal = next(
+            signal
+            for signal in review["signals"]
+            if signal["code"] == "chief_engineer.advisory_projection_fallback_infeasible"
+        )
+        assert behavior_signal["fallback_error_code"] == "blueprint_portfolio_behavior_contract_infeasible"
+        assert behavior_signal["fallback_contract_error_details"]["task_ids"] == ["TASK-SOURCE", "TASK-TEST"]
+
+    def test_chief_engineer_owner_finalized_fallback_satisfies_pm_delivery_depth(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-CANCEL",
+                        "title": "Implement cancellation coverage",
+                        "goal": "Exercise the Chief Engineer cancellation path.",
+                        "target_files": ["src/cancel.py", "tests/test_cancel.py"],
+                        "scope_paths": ["src/cancel.py", "tests/test_cancel.py"],
+                        "acceptance_criteria": ["cancellation is observable"],
+                        "execution_checklist": ["Suspend the claimed attempt"],
+                        "delivery_depth_contract": {
+                            "minimums": {"min_prod_files": 1, "min_test_files": 1}
+                        },
+                    }
+                ]
+            },
+        )
+        commands: list[Any] = []
+
+        class _AlwaysInvalidRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                commands.append(command)
+                result = _invalid_chief_engineer_stream_result()
+                if len(commands) == 1:
+                    result.error_message = (
+                        "structured_output_payload_schema_mismatch:$:Additional properties are not allowed "
+                        "('TASK-CANCEL' was unexpected)"
+                    )
+                return result
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _AlwaysInvalidRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-schema-fallback-depth",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "success", result.output
+        assert len(commands) == 3
+        repair_command = commands[1]
+        assert '"min_prod_files": 1' in repair_command.objective
+        assert '"min_test_files": 1' in repair_command.objective
+        assert repair_command.context["failure_feedback"]["delivery_depth_minimums"] == {
+            "min_prod_files": 1,
+            "min_test_files": 1,
+        }
+        assert repair_command.context["failure_feedback"]["observed_invalid_root_members"] == [
+            "TASK-CANCEL",
+        ]
+        assert "Observed invalid root members" in repair_command.objective
+        assert commands[-1].task_id.endswith("-CONTRACT-REPAIR-2")
+        review = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        signal_codes = [signal["code"] for signal in review["signals"]]
+        assert "chief_engineer.advisory_projection_fallback" in signal_codes
+        assert "chief_engineer.advisory_projection_fallback_infeasible" not in signal_codes
+        assert review["generated_blueprints"] == 1
+
+    def test_chief_engineer_owner_finalized_fallback_rejects_true_target_deficit(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-DELIVERY",
+                        "title": "Deliver insufficient source scope",
+                        "goal": "Expose an immutable target deficit.",
+                        "target_files": ["main.go", "main_test.go"],
+                        "scope_paths": ["main.go", "main_test.go"],
+                        "acceptance_criteria": ["go test ./... passes"],
+                        "execution_checklist": ["Implement source and test"],
+                        "delivery_depth_contract": {
+                            "minimums": {"min_prod_files": 2, "min_test_files": 1}
+                        },
+                    }
+                ]
+            },
+        )
+
+        class _AlwaysInvalidRoleRuntimeService:
+            async def execute_role_task(self, _command: Any) -> Any:
+                return _invalid_chief_engineer_stream_result()
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _AlwaysInvalidRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-schema-fallback-true-depth-deficit",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-23T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "failed"
+        review = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        signal = next(
+            signal
+            for signal in review["signals"]
+            if signal["code"] == "chief_engineer.advisory_projection_fallback_infeasible"
+        )
+        assert any("prod_files=1 < 2" in item for item in signal["fallback_validation_errors"])
 
     def test_chief_engineer_execution_attempt_reuses_claim_on_replay_and_rotates_after_requeue(
         self,
@@ -677,10 +876,36 @@ class TestChiefEngineerHandoffGuards:
                                 }
                             ],
                         },
+                        "shared_behavior_contract": {
+                            "invariants": [
+                                {
+                                    "invariant_id": "INV-WEATHER-REPORT",
+                                    "statement": (
+                                        "Forecast logic consumes the validated cloud and wind values "
+                                        "exposed by WeatherReport without changing their units."
+                                    ),
+                                    "owner_task_id": "TASK-1",
+                                    "consumer_task_ids": ["TASK-2"],
+                                    "covered_obligation_ids": [
+                                        "artifact-1",
+                                        "artifact-2",
+                                        "artifact-test",
+                                    ],
+                                    "verification_examples": [
+                                        {
+                                            "given": "WeatherReport(cloud=0.4, wind=12.0)",
+                                            "when": "the forecast engine consumes the report",
+                                            "then": "cloud remains 0.4 and wind remains 12.0",
+                                        }
+                                    ],
+                                }
+                            ]
+                        },
                         "task_plans": {
                             "TASK-1": {
                                 "implementation": ["Define WeatherReport and validation boundaries"],
                                 "verification": ["Validate cloud and wind boundaries"],
+                                "behavior_invariant_refs": ["INV-WEATHER-REPORT"],
                             },
                             "TASK-2": {
                                 "implementation": [
@@ -689,6 +914,7 @@ class TestChiefEngineerHandoffGuards:
                                 "verification": [
                                     "Exercise the planet weather provider-consumer contract for cloud and wind"
                                 ],
+                                "behavior_invariant_refs": ["INV-WEATHER-REPORT"],
                             },
                         },
                     },

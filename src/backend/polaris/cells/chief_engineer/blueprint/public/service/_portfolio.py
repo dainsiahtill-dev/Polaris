@@ -13,14 +13,21 @@ from typing import Any, Literal
 from polaris.cells.control_plane.run_ledger.public import stable_hash
 
 from ...internal.blueprint_persistence import BlueprintPersistence
+from ...internal.portfolio_behavior_feasibility import (
+    PortfolioBehaviorFeasibilityError,
+    validate_portfolio_behavior_feasibility,
+)
 from ...internal.project_completion_contract import build_project_completion_contract
 from ..contracts import (
     ArtifactObligationV1,
     BuildChiefEngineerBlueprintPortfolioCommandV1,
+    ChiefEngineerBehaviorExampleV1,
+    ChiefEngineerBehaviorInvariantV1,
     ChiefEngineerBlueprintErrorV1,
     ChiefEngineerBlueprintPortfolioV1,
     ChiefEngineerPortfolioTaskV1,
     ChiefEngineerProjectInterfaceContractV1,
+    ChiefEngineerSharedBehaviorContractV1,
     EntrypointObligationV1,
     ProjectCompletionContractV1,
     ProjectCompletionObligationsV1,
@@ -32,6 +39,7 @@ from ..contracts import (
     _portfolio_authority_receipt_hash,
     _verify_chief_engineer_portfolio_authority_carrier,
     project_completion_catalog_snapshot_hash,
+    shared_behavior_contract_hash,
 )
 from ._helpers import (
     _BLUEPRINT_FILE_CONTAINER_KEYS,
@@ -72,7 +80,9 @@ def project_chief_engineer_portfolio_delivery_depth_feasibility(
     completion = _mapping(payload.get("project_completion_contract"))
     obligations = _mapping(completion.get("obligations"))
     raw_artifacts = obligations.get("artifacts")
-    artifacts = [dict(item) for item in raw_artifacts if isinstance(item, Mapping)] if isinstance(raw_artifacts, list) else []
+    artifacts = (
+        [dict(item) for item in raw_artifacts if isinstance(item, Mapping)] if isinstance(raw_artifacts, list) else []
+    )
 
     required_paths: list[tuple[str, str]] = []
     for artifact in artifacts:
@@ -182,6 +192,9 @@ class _PortfolioLlmBlueprint:
     risk_flags: tuple[str, ...]
     provider_declarations: tuple[dict[str, Any], ...]
     consumer_declarations: tuple[dict[str, Any], ...]
+    behavior_invariants: tuple[dict[str, Any], ...]
+    task_behavior_bindings: dict[str, tuple[str, ...]]
+    behavior_contract_declared: bool
     project_completion_requirements: dict[str, Any] | None
     consumed: bool
 
@@ -904,9 +917,7 @@ def _build_portfolio_completion_contract(
         # delegation plus exact path/package/argv agreement above.
         normalized_pre_authority_entrypoints: list[dict[str, Any]] = []
         projected_entrypoint_paths = {
-            str(row.get("path") or "")
-            for row in artifact_rows
-            if row["applicability"] != "not_applicable"
+            str(row.get("path") or "") for row in artifact_rows if row["applicability"] != "not_applicable"
         }
         projected_entrypoint_index = 1
         for row in entrypoint_rows:
@@ -1156,8 +1167,7 @@ def _build_portfolio_completion_contract(
         )
         if depth_feasibility["ok"] is not True:
             deficits = ", ".join(
-                f"{item['metric']}={item['actual']} < {item['required']}"
-                for item in depth_feasibility["deficits"]
+                f"{item['metric']}={item['actual']} < {item['required']}" for item in depth_feasibility["deficits"]
             )
             raise _portfolio_contract_error(
                 "project completion contract cannot satisfy delivery depth before Director dispatch: " + deficits,
@@ -1786,7 +1796,20 @@ def _parse_portfolio_llm_blueprint(
 ) -> _PortfolioLlmBlueprint:
     raw = dict(command.llm_blueprint)
     if not raw:
-        return _PortfolioLlmBlueprint({}, {}, (), (), (), (), (), None, False)
+        return _PortfolioLlmBlueprint(
+            shared_plan={},
+            task_plans={},
+            scope_paths=(),
+            scope_rejections=(),
+            risk_flags=(),
+            provider_declarations=(),
+            consumer_declarations=(),
+            behavior_invariants=(),
+            task_behavior_bindings={},
+            behavior_contract_declared=False,
+            project_completion_requirements=None,
+            consumed=False,
+        )
 
     allowed_top_level = {
         "construction_plan",
@@ -1834,6 +1857,85 @@ def _parse_portfolio_llm_blueprint(
             field_name=f"construction_plan.task_plans[{task_id!r}]",
         )
 
+    task_behavior_bindings = {
+        task_id: tuple(_string_list(task_plans.get(task_id, {}).get("behavior_invariant_refs")))
+        for task_id in sorted(task_ids)
+    }
+    behavior_contract_declared = "shared_behavior_contract" in construction_plan
+    behavior_payload = _portfolio_mapping(
+        construction_plan.pop("shared_behavior_contract", {}),
+        field_name="construction_plan.shared_behavior_contract",
+    )
+    unknown_behavior_keys = sorted(set(behavior_payload) - {"invariants"})
+    if unknown_behavior_keys:
+        raise _portfolio_contract_error(
+            "shared_behavior_contract contains unsupported fields",
+            code="blueprint_portfolio_behavior_contract_infeasible",
+            details={"unknown_fields": unknown_behavior_keys},
+        )
+    raw_invariants = behavior_payload.get("invariants", [])
+    if not isinstance(raw_invariants, list):
+        raise _portfolio_contract_error(
+            "shared_behavior_contract.invariants must be an array",
+            code="blueprint_portfolio_behavior_contract_infeasible",
+        )
+    behavior_invariants: list[dict[str, Any]] = []
+    expected_invariant_fields = {
+        "consumer_task_ids",
+        "covered_obligation_ids",
+        "invariant_id",
+        "owner_task_id",
+        "statement",
+        "verification_examples",
+    }
+    for index, raw_invariant in enumerate(raw_invariants):
+        invariant = _portfolio_mapping(
+            raw_invariant,
+            field_name=f"shared_behavior_contract.invariants[{index}]",
+        )
+        unknown_fields = sorted(set(invariant) - expected_invariant_fields)
+        missing_fields = sorted(expected_invariant_fields - set(invariant))
+        if unknown_fields or missing_fields:
+            raise _portfolio_contract_error(
+                "shared behavior invariant has an invalid shape",
+                code="blueprint_portfolio_behavior_contract_infeasible",
+                details={
+                    "invariant_index": index,
+                    "unknown_fields": unknown_fields,
+                    "missing_fields": missing_fields,
+                },
+            )
+        examples = invariant.get("verification_examples")
+        if not isinstance(examples, list):
+            raise _portfolio_contract_error(
+                "shared behavior verification_examples must be an array",
+                code="blueprint_portfolio_behavior_contract_infeasible",
+                details={"invariant_index": index},
+            )
+        normalized_examples: list[dict[str, str]] = []
+        for example_index, raw_example in enumerate(examples):
+            example = _portfolio_mapping(
+                raw_example,
+                field_name=(f"shared_behavior_contract.invariants[{index}].verification_examples[{example_index}]"),
+            )
+            if set(example) != {"given", "when", "then"}:
+                raise _portfolio_contract_error(
+                    "shared behavior verification example must define exactly given/when/then",
+                    code="blueprint_portfolio_behavior_contract_infeasible",
+                    details={"invariant_index": index, "example_index": example_index},
+                )
+            normalized_examples.append({key: str(example.get(key) or "").strip() for key in ("given", "when", "then")})
+        behavior_invariants.append(
+            {
+                "invariant_id": str(invariant.get("invariant_id") or "").strip(),
+                "statement": str(invariant.get("statement") or "").strip(),
+                "owner_task_id": str(invariant.get("owner_task_id") or "").strip(),
+                "consumer_task_ids": _string_list(invariant.get("consumer_task_ids")),
+                "covered_obligation_ids": _string_list(invariant.get("covered_obligation_ids")),
+                "verification_examples": normalized_examples,
+            }
+        )
+
     interface_payload = _portfolio_mapping(
         construction_plan.pop("project_interface_contract", {}),
         field_name="construction_plan.project_interface_contract",
@@ -1877,6 +1979,9 @@ def _parse_portfolio_llm_blueprint(
         risk_flags=risk_flags,
         provider_declarations=providers,
         consumer_declarations=consumers,
+        behavior_invariants=tuple(behavior_invariants),
+        task_behavior_bindings=task_behavior_bindings,
+        behavior_contract_declared=behavior_contract_declared,
         project_completion_requirements=completion_requirements,
         consumed=consumed,
     )
@@ -2003,6 +2108,8 @@ def _bind_portfolio_task_overlays(
     project_interface_contract_hash: str,
     project_completion_contract_ref: str | None,
     project_completion_contract_hash: str | None,
+    shared_behavior_contract_ref: str | None,
+    shared_behavior_contract_hash: str | None,
     llm_blueprint_consumed: bool,
     usage_mode: Literal["advisory_overlay", "offline_diagnostic_only"],
 ) -> dict[str, dict[str, Any]]:
@@ -2018,6 +2125,8 @@ def _bind_portfolio_task_overlays(
             "project_interface_contract_hash": project_interface_contract_hash,
             "project_completion_contract_ref": project_completion_contract_ref,
             "project_completion_contract_hash": project_completion_contract_hash,
+            "shared_behavior_contract_ref": shared_behavior_contract_ref,
+            "shared_behavior_contract_hash": shared_behavior_contract_hash,
         }
         bound[task_id] = {
             "construction_plan": _mapping(overlay.get("construction_plan")),
@@ -2030,6 +2139,8 @@ def _bind_portfolio_task_overlays(
             "project_interface_contract_hash": project_interface_contract_hash,
             "project_completion_contract_ref": project_completion_contract_ref,
             "project_completion_contract_hash": project_completion_contract_hash,
+            "shared_behavior_contract_ref": shared_behavior_contract_ref,
+            "shared_behavior_contract_hash": shared_behavior_contract_hash,
             "reference": reference,
             "llm_blueprint_consumed": llm_blueprint_consumed,
             "usage_mode": usage_mode,
@@ -2252,6 +2363,51 @@ def build_chief_engineer_blueprint_portfolio(
         scope_advisory[task.task_id] = task_scope_advisory
         portfolio_risks = _merge_risk_flags(portfolio_risks, risks)
 
+    behavior_invariants: tuple[ChiefEngineerBehaviorInvariantV1, ...] = ()
+    task_behavior_bindings: dict[str, tuple[str, ...]] = {
+        task.task_id: tuple(parsed.task_behavior_bindings.get(task.task_id, ())) for task in command.tasks
+    }
+    behavior_hash: str | None = None
+    if parsed.consumed and parsed.behavior_contract_declared:
+        behavior_invariants = tuple(
+            ChiefEngineerBehaviorInvariantV1(
+                invariant_id=str(item.get("invariant_id") or ""),
+                statement=str(item.get("statement") or ""),
+                owner_task_id=str(item.get("owner_task_id") or ""),
+                consumer_task_ids=tuple(_string_list(item.get("consumer_task_ids"))),
+                covered_obligation_ids=tuple(_string_list(item.get("covered_obligation_ids"))),
+                verification_examples=tuple(
+                    ChiefEngineerBehaviorExampleV1(
+                        given=str(example.get("given") or ""),
+                        when=str(example.get("when") or ""),
+                        then=str(example.get("then") or ""),
+                    )
+                    for example in item.get("verification_examples") or ()
+                    if isinstance(example, Mapping)
+                ),
+            )
+            for item in parsed.behavior_invariants
+        )
+        if project_completion_contract is None:  # pragma: no cover - guarded by parser contract.
+            raise _portfolio_contract_error(
+                "advisory behavior contract requires project completion authority",
+                code="blueprint_portfolio_behavior_contract_infeasible",
+            )
+        try:
+            validate_portfolio_behavior_feasibility(
+                task_ids=tuple(task.task_id for task in command.tasks),
+                invariants=tuple(item.to_dict() for item in behavior_invariants),
+                task_bindings=task_behavior_bindings,
+                completion_contract=project_completion_contract,
+            )
+        except PortfolioBehaviorFeasibilityError as exc:
+            raise _portfolio_contract_error(
+                str(exc),
+                code="blueprint_portfolio_behavior_contract_infeasible",
+                details=exc.details,
+            ) from exc
+        behavior_hash = shared_behavior_contract_hash(behavior_invariants, task_behavior_bindings)
+
     interface_seed, task_file_ownership, file_task_ownership = _project_interface_seed(
         command.tasks,
         provider_declarations=parsed.provider_declarations,
@@ -2268,6 +2424,7 @@ def build_chief_engineer_blueprint_portfolio(
         "scope_advisory": scope_advisory,
         "risk_flags": list(portfolio_risks),
         "project_interface_contract_hash": interface_hash,
+        "shared_behavior_contract_hash": behavior_hash,
         "project_completion_contract_hash": (
             project_completion_contract.contract_hash if project_completion_contract is not None else None
         ),
@@ -2281,6 +2438,18 @@ def build_chief_engineer_blueprint_portfolio(
         f"{portfolio_path}#project_completion_contract" if project_completion_contract is not None else None
     )
     completion_hash = project_completion_contract.contract_hash if project_completion_contract is not None else None
+    behavior_ref = f"{portfolio_path}#shared_behavior_contract" if behavior_hash is not None else None
+    shared_behavior_contract = (
+        ChiefEngineerSharedBehaviorContractV1(
+            contract_id=f"ce_shared_behavior_{behavior_hash[:24]}",
+            contract_ref=behavior_ref or "",
+            contract_hash=behavior_hash,
+            invariants=behavior_invariants,
+            task_bindings=task_behavior_bindings,
+        )
+        if behavior_hash is not None
+        else None
+    )
     project_interface_contract = ChiefEngineerProjectInterfaceContractV1(
         contract_id=interface_id,
         contract_ref=interface_ref,
@@ -2308,6 +2477,8 @@ def build_chief_engineer_blueprint_portfolio(
             project_interface_contract_hash=interface_hash,
             project_completion_contract_ref=completion_ref,
             project_completion_contract_hash=completion_hash,
+            shared_behavior_contract_ref=behavior_ref,
+            shared_behavior_contract_hash=behavior_hash,
             llm_blueprint_consumed=parsed.consumed,
             usage_mode=usage_mode,
         ),
@@ -2318,6 +2489,9 @@ def build_chief_engineer_blueprint_portfolio(
         project_completion_contract=project_completion_contract,
         project_completion_contract_ref=completion_ref,
         project_completion_contract_hash=completion_hash,
+        shared_behavior_contract=shared_behavior_contract,
+        shared_behavior_contract_ref=behavior_ref,
+        shared_behavior_contract_hash=behavior_hash,
         risk_flags=portfolio_risks,
         llm_blueprint_consumed=parsed.consumed,
         usage_mode=usage_mode,
@@ -2339,6 +2513,8 @@ def build_chief_engineer_blueprint_portfolio(
             project_interface_contract_hash=interface_hash,
             project_completion_contract_ref=completion_ref,
             project_completion_contract_hash=completion_hash,
+            shared_behavior_contract_ref=behavior_ref,
+            shared_behavior_contract_hash=behavior_hash,
             llm_blueprint_consumed=parsed.consumed,
             usage_mode=usage_mode,
         ),
@@ -2349,6 +2525,9 @@ def build_chief_engineer_blueprint_portfolio(
         project_completion_contract=project_completion_contract,
         project_completion_contract_ref=completion_ref,
         project_completion_contract_hash=completion_hash,
+        shared_behavior_contract=shared_behavior_contract,
+        shared_behavior_contract_ref=behavior_ref,
+        shared_behavior_contract_hash=behavior_hash,
         risk_flags=portfolio_risks,
         llm_blueprint_consumed=parsed.consumed,
         usage_mode=usage_mode,
@@ -2431,17 +2610,37 @@ def _project_blueprint_portfolio_context(
             details={"task_id": task_id, "missing_fields": missing_fields},
         )
 
+    behavior_fields = (
+        "shared_behavior_contract_ref",
+        "shared_behavior_contract_hash",
+        "shared_behavior_contract",
+    )
+    present_behavior_fields = [field for field in behavior_fields if field in context]
+    if present_behavior_fields and len(present_behavior_fields) != len(behavior_fields):
+        raise _portfolio_contract_error(
+            "task blueprint shared behavior context is incomplete",
+            code="invalid_blueprint_portfolio_context",
+            details={
+                "task_id": task_id,
+                "missing_fields": [field for field in behavior_fields if field not in context],
+            },
+        )
+
     portfolio_ref = str(context.get("blueprint_portfolio_ref") or "").strip()
     portfolio_hash = str(context.get("blueprint_portfolio_hash") or "").strip()
     interface_ref = str(context.get("project_interface_contract_ref") or "").strip()
     interface_hash = str(context.get("project_interface_contract_hash") or "").strip()
     completion_ref = str(context.get("project_completion_contract_ref") or "").strip()
     completion_hash = str(context.get("project_completion_contract_hash") or "").strip()
+    behavior_ref = str(context.get("shared_behavior_contract_ref") or "").strip()
+    behavior_hash = str(context.get("shared_behavior_contract_hash") or "").strip()
     normalized_portfolio_ref, portfolio_ref_error = _normalize_portfolio_advisory_path(portfolio_ref)
     interface_path, separator, interface_fragment = interface_ref.partition("#")
     normalized_interface_path, interface_ref_error = _normalize_portfolio_advisory_path(interface_path)
     completion_path, completion_separator, completion_fragment = completion_ref.partition("#")
     normalized_completion_path, completion_ref_error = _normalize_portfolio_advisory_path(completion_path)
+    behavior_path, behavior_separator, behavior_fragment = behavior_ref.partition("#")
+    normalized_behavior_path, behavior_ref_error = _normalize_portfolio_advisory_path(behavior_path)
     if (
         portfolio_ref_error
         or normalized_portfolio_ref != portfolio_ref
@@ -2458,6 +2657,17 @@ def _project_blueprint_portfolio_context(
         or f"{normalized_completion_path}#project_completion_contract" != completion_ref
         or normalized_completion_path != portfolio_ref
         or not completion_hash
+        or (
+            bool(present_behavior_fields)
+            and (
+                behavior_ref_error
+                or behavior_separator != "#"
+                or behavior_fragment != "shared_behavior_contract"
+                or f"{normalized_behavior_path}#shared_behavior_contract" != behavior_ref
+                or normalized_behavior_path != portfolio_ref
+                or not behavior_hash
+            )
+        )
     ):
         raise _portfolio_contract_error(
             "task blueprint portfolio references are invalid",
@@ -2507,6 +2717,49 @@ def _project_blueprint_portfolio_context(
                 details={"task_id": task_id, "field": declarations_field},
             )
 
+    behavior_contract = (
+        _portfolio_mapping(context.get("shared_behavior_contract"), field_name="shared_behavior_contract")
+        if present_behavior_fields
+        else {}
+    )
+    if present_behavior_fields and behavior_contract.get("shared_behavior_contract_ref") != behavior_ref:
+        raise _portfolio_contract_error(
+            "shared behavior contract ref does not match its context binding",
+            code="invalid_blueprint_portfolio_context",
+            details={"task_id": task_id, "field": "shared_behavior_contract_ref"},
+        )
+    if present_behavior_fields and behavior_contract.get("shared_behavior_contract_hash") != behavior_hash:
+        raise _portfolio_contract_error(
+            "shared behavior contract hash does not match its context binding",
+            code="invalid_blueprint_portfolio_context",
+            details={"task_id": task_id, "field": "shared_behavior_contract_hash"},
+        )
+    behavior_hash_payload = {
+        key: item
+        for key, item in behavior_contract.items()
+        if key
+        not in {
+            "shared_behavior_contract_id",
+            "shared_behavior_contract_ref",
+            "shared_behavior_contract_hash",
+        }
+    }
+    if present_behavior_fields and stable_hash(behavior_hash_payload) != behavior_hash:
+        raise _portfolio_contract_error(
+            "shared behavior contract content hash is invalid",
+            code="invalid_blueprint_portfolio_context",
+            details={"task_id": task_id, "field": "shared_behavior_contract_hash"},
+        )
+    task_bindings = behavior_contract.get("task_bindings")
+    if present_behavior_fields and (
+        not isinstance(task_bindings, Mapping) or not isinstance(task_bindings.get(task_id), list)
+    ):
+        raise _portfolio_contract_error(
+            "shared behavior contract does not bind the current PM task",
+            code="blueprint_portfolio_pm_authority_mismatch",
+            details={"task_id": task_id, "field": "task_bindings"},
+        )
+
     task_file_ownership = interface_contract.get("task_file_ownership")
     if not isinstance(task_file_ownership, Mapping):
         raise _portfolio_contract_error(
@@ -2555,7 +2808,7 @@ def _project_blueprint_portfolio_context(
             },
         )
 
-    return {
+    projection = {
         "blueprint_portfolio_ref": portfolio_ref,
         "blueprint_portfolio_hash": portfolio_hash,
         "project_interface_contract_ref": interface_ref,
@@ -2565,3 +2818,12 @@ def _project_blueprint_portfolio_context(
         "project_completion_contract_hash": completion_hash,
         "project_completion_contract": completion_contract.to_dict(),
     }
+    if present_behavior_fields:
+        projection.update(
+            {
+                "shared_behavior_contract_ref": behavior_ref,
+                "shared_behavior_contract_hash": behavior_hash,
+                "shared_behavior_contract": behavior_contract,
+            }
+        )
+    return projection

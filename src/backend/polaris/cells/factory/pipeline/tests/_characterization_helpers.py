@@ -340,8 +340,10 @@ def _single_task_chief_engineer_result() -> SimpleNamespace:
                 ],
                 "consumer_declarations": [],
             },
+            "shared_behavior_contract": {"invariants": []},
             "task_plans": {
                 "TASK-CANCEL": {
+                    "behavior_invariant_refs": [],
                     "implementation": ["Implement cancellation behavior"],
                     "verification": ["Verify cancellation behavior"],
                 }

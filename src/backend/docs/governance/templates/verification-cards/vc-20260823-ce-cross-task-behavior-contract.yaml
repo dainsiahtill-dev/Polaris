@@ -1,0 +1,55 @@
+card_id: "vc-20260823-ce-cross-task-behavior-contract"
+bug_summary: >
+  An immutable CE portfolio assigned source and tests to separate Director
+  tasks without one shared behavior contract, allowing incompatible coordinate
+  and boundary semantics that same-run repair could not legally reconcile.
+classification: structural
+bug_path:
+  file: "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+  method: "build_chief_engineer_blueprint_portfolio"
+  symptom: "factory_a9812b43a06a retained the same two named Go failures after real same-task edits"
+assumptions:
+  - id: A1
+    statement: "Cross-task behavior semantics belong to CE shared authority before Director dispatch."
+    status: verified_true
+    evidence: "CE portfolio context already projects shared contracts into every task blueprint; behavior receives an independent hash/ref."
+  - id: A2
+    statement: "The preserved L3-22 source and tests used contradictory coordinate/floor conventions."
+    status: verified_true
+    evidence: "Gravity source uses positive Y downward while tests describe a negative floor as below and expect positive rebound velocity."
+  - id: A3
+    statement: "Structural owner/consumer/example validation can remain domain-neutral."
+    status: verified_true
+    evidence: "208 CE contract/feasibility tests and 55 Factory CE characterization tests pass without domain-specific rules."
+pre_mortem:
+  failure_point: >
+    CE emits vague or unreferenced invariants, or Director handoff truncates the
+    shared contract after it was correctly frozen.
+  risk_zone:
+    - "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py"
+    - "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    - "polaris/cells/roles/adapters/internal/director/adapter/_task_contract.py"
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/chief_engineer/blueprint/public/tests"
+      description: "Validate normalization, reference closure, cross-owner linkage, hashing, and projection."
+      expected: "Invalid advisory portfolios fail before persistence; valid ones project exact invariants."
+      status: passed_208_tests
+    - file: "polaris/cells/roles/adapters/tests"
+      description: "Render shared behavior invariants in Director handoff."
+      expected: "Invariant id, statement, and given/when/then example are present."
+      status: passed_targeted_characterization
+  integration_tests:
+    - description: "Offline L3-22 topology replay without modifying the target project."
+      command: "targeted CE portfolio characterization"
+      status: passed_blueprint_portfolio_behavior_contract_infeasible
+  manual_check:
+    - "Confirm PM/CE restart remains forbidden after Director execution begins."
+related_adrs:
+  - "ADR-0110"
+  - "ADR-0112"
+sign_off:
+  completed_by: "Codex"
+  completed_at: "2026-08-23"
+  verified_by: null
+  verified_at: null
