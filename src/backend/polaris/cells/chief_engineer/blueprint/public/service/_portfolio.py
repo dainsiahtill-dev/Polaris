@@ -44,8 +44,12 @@ from ..contracts import (
 from ._helpers import (
     _BLUEPRINT_FILE_CONTAINER_KEYS,
     _BLUEPRINT_FILE_PATH_KEYS,
+    _COMMON_EXTENSIONLESS_FILES,
     _PROJECT_COMPLETION_PREDICATE_VERSION,
+    _TOOLCHAIN_BASENAMES,
     _blueprint_path,
+    _ce_artifact_role_matches_path,
+    _ce_topology_authorizes_artifact,
     _compact_llm_blueprint_value,
     _delivery_depth_minimums,
     _is_ce_source_topology_path,
@@ -85,29 +89,33 @@ def project_chief_engineer_portfolio_delivery_depth_feasibility(
     )
 
     required_paths: list[tuple[str, str]] = []
+    tasks_by_id = {task.task_id: task for task in tasks}
     for artifact in artifacts:
         if str(artifact.get("applicability") or "required").strip() != "required":
             continue
         path = str(artifact.get("path") or "").strip().replace("\\", "/")
         role = str(artifact.get("semantic_role") or "").strip().lower()
-        if path:
-            required_paths.append((path, role))
+        owner = tasks_by_id.get(str(artifact.get("owner_task_id") or ""))
+        if not path or owner is None or not _ce_artifact_role_matches_path(
+            semantic_role=role,
+            path=path,
+            allowed_source_suffixes=owner.allowed_source_suffixes,
+        ):
+            continue
+        if not (
+            _task_authorizes_completion_path(task=owner, path=path)
+            or _ce_topology_authorizes_artifact(
+                topology_authority=owner.topology_authority,
+                required_source_kinds=owner.required_source_kinds,
+                allowed_source_suffixes=owner.allowed_source_suffixes,
+                semantic_role=role,
+                path=path,
+            )
+        ):
+            continue
+        required_paths.append((path, role))
 
-    def is_test_path(path: str, role: str) -> bool:
-        normalized = path.lower()
-        name = normalized.rsplit("/", 1)[-1]
-        return bool(
-            role == "test"
-            or normalized.startswith("tests/")
-            or "/tests/" in normalized
-            or name.startswith("test_")
-            or "_test." in name
-            or ".test." in name
-            or ".spec." in name
-            or name.endswith("test.java")
-        )
-
-    test_paths = {path for path, role in required_paths if is_test_path(path, role)}
+    test_paths = {path for path, role in required_paths if role == "test"}
     production_paths = {
         path
         for path, role in required_paths
@@ -580,6 +588,39 @@ def _completion_path_is_within_scope(*, path: str, scope_path: str) -> bool:
     return len(path_parts) >= len(scope_parts) and path_parts[: len(scope_parts)] == scope_parts
 
 
+def _task_expandable_scope_paths(task: ChiefEngineerPortfolioTaskV1) -> tuple[str, ...]:
+    """Return PM scopes that are directories rather than repeated exact targets.
+
+    PM normalization commonly repeats every ``target_files`` entry in
+    ``scope_paths`` so the JobToken always covers declared writes.  Such a
+    repeated file path is exact authority, not a directory capability.  Only
+    additional scope rows may authorize descendants.
+    """
+
+    exact_targets = set(task.target_files)
+    return tuple(
+        path
+        for path in task.scope_paths
+        if path not in exact_targets
+        and not (
+            bool(PurePosixPath(path).suffix)
+            or PurePosixPath(path).name.casefold() in _TOOLCHAIN_BASENAMES
+            or PurePosixPath(path).name.casefold() in _COMMON_EXTENSIONLESS_FILES
+        )
+    )
+
+
+def _task_authorizes_completion_path(*, task: ChiefEngineerPortfolioTaskV1, path: str) -> bool:
+    """Apply immutable PM exact-target and directory-scope authority."""
+
+    if path in task.target_files or path in task.scope_paths:
+        return True
+    return any(
+        _completion_path_is_within_scope(path=path, scope_path=scope_path)
+        for scope_path in _task_expandable_scope_paths(task)
+    )
+
+
 def _pm_target_semantic_role(*, path: str, entrypoint_paths: set[str]) -> str:
     """Classify one exact PM target without widening artifact authority."""
 
@@ -953,24 +994,29 @@ def _build_portfolio_completion_contract(
             path = str(row.get("path") or "")
             owner_task_id = str(row.get("owner_task_id") or "")
             task = delegated_topology_tasks.get(owner_task_id)
-            if task is None or not task.required_source_kinds or not _is_ce_source_topology_path(path):
+            semantic_role = str(row.get("semantic_role") or "")
+            if task is None or not _ce_topology_authorizes_artifact(
+                topology_authority=task.topology_authority,
+                required_source_kinds=task.required_source_kinds,
+                allowed_source_suffixes=task.allowed_source_suffixes,
+                semantic_role=semantic_role,
+                path=path,
+            ):
                 continue
             delegated_path_owners.setdefault(path, set()).add(owner_task_id)
 
         pm_target_owners: dict[str, set[str]] = {}
-        pm_scope_owners: list[tuple[str, str]] = []
         pm_dependencies = {task.task_id: set(task.dependencies) for task in command.tasks}
         for task in command.tasks:
             for path in task.target_files:
                 pm_target_owners.setdefault(path, set()).add(task.task_id)
-            pm_scope_owners.extend((path, task.task_id) for path in task.scope_paths)
 
         def owners_for_path(path: str) -> set[str]:
             owners = set(pm_target_owners.get(path, set()))
             owners.update(
-                task_id
-                for scope_path, task_id in pm_scope_owners
-                if _completion_path_is_within_scope(path=path, scope_path=scope_path)
+                task.task_id
+                for task in command.tasks
+                if _task_authorizes_completion_path(task=task, path=path)
             )
             owners.update(delegated_path_owners.get(path, set()))
             return owners

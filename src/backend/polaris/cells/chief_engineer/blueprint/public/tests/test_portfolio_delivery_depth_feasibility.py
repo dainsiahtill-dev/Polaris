@@ -7,6 +7,9 @@ from polaris.cells.chief_engineer.blueprint.public import (
     project_chief_engineer_delivery_depth_feasibility_from_pm_tasks,
     project_chief_engineer_portfolio_delivery_depth_feasibility,
 )
+from polaris.cells.chief_engineer.blueprint.public.service._portfolio import (
+    _task_authorizes_completion_path,
+)
 
 
 def _task() -> ChiefEngineerPortfolioTaskV1:
@@ -16,7 +19,9 @@ def _task() -> ChiefEngineerPortfolioTaskV1:
         target_files=("go.mod",),
         scope_paths=("go.mod",),
         topology_authority="chief_engineer",
-        required_source_kinds=("domain_modules", "entrypoint"),
+        required_source_kinds=("domain_modules", "entrypoint", "tests"),
+        primary_language="go",
+        allowed_source_suffixes=(".go",),
         delivery_depth_contract={
             "schema_version": "polaris.delivery_depth_contract.v1",
             "minimums": {"min_prod_files": 7, "min_test_files": 2},
@@ -83,6 +88,41 @@ def test_depth_feasibility_accepts_distinct_authorized_source_topology() -> None
     assert result["deficits"] == []
 
 
+def test_depth_feasibility_does_not_count_source_path_mislabeled_as_test() -> None:
+    result = project_chief_engineer_portfolio_delivery_depth_feasibility(
+        _payload([_artifact("src/fakecase.go", "test")]),
+        tasks=(_task(),),
+    )
+
+    assert result["actual"] == {"prod_files": 0, "test_files": 0}
+    assert result["ok"] is False
+
+
+def test_depth_feasibility_does_not_count_docs_or_fixture_under_tests() -> None:
+    result = project_chief_engineer_portfolio_delivery_depth_feasibility(
+        _payload(
+            [
+                _artifact("tests/README.md", "docs"),
+                _artifact("tests/fixture.json", "test"),
+            ]
+        ),
+        tasks=(_task(),),
+    )
+
+    assert result["actual"] == {"prod_files": 0, "test_files": 0}
+    assert result["ok"] is False
+
+
+def test_depth_feasibility_rejects_foreign_language_source_from_delegated_topology() -> None:
+    result = project_chief_engineer_portfolio_delivery_depth_feasibility(
+        _payload([_artifact("src/foreign.py", "source")]),
+        tasks=(_task(),),
+    )
+
+    assert result["actual"] == {"prod_files": 0, "test_files": 0}
+    assert result["ok"] is False
+
+
 def test_portfolio_task_serializes_delivery_depth_authority() -> None:
     payload = _task().to_dict()
 
@@ -106,6 +146,7 @@ def test_persisted_pm_task_projection_uses_same_ce_authority_rules() -> None:
             {
                 "id": "TASK-1",
                 "goal": "Deliver Go project",
+                "language": "go",
                 "target_files": ["main.go", "models/model.go", "engine/engine.go", "main_test.go"],
                 "project_declared_entrypoint_targets": ["main.go"],
                 "metadata": {
@@ -119,3 +160,15 @@ def test_persisted_pm_task_projection_uses_same_ce_authority_rules() -> None:
 
     assert result["ok"] is False
     assert result["actual"] == {"prod_files": 3, "test_files": 1}
+
+
+def test_file_like_scope_is_exact_even_when_not_repeated_in_targets() -> None:
+    task = ChiefEngineerPortfolioTaskV1(
+        task_id="TASK-1",
+        objective="Write documentation",
+        target_files=("go.mod",),
+        scope_paths=("README.md",),
+    )
+
+    assert _task_authorizes_completion_path(task=task, path="README.md") is True
+    assert _task_authorizes_completion_path(task=task, path="README.md/child.go") is False

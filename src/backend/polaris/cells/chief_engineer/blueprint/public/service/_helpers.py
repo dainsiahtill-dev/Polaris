@@ -73,6 +73,26 @@ _SOURCE_TOPOLOGY_SUFFIXES = frozenset(
         ".java",
     }
 )
+_LANGUAGE_SOURCE_SUFFIXES: dict[str, frozenset[str]] = {
+    "javascript": frozenset({".js", ".mjs", ".cjs", ".jsx"}),
+    "typescript": frozenset({".ts", ".tsx", ".mts", ".cts"}),
+    "python": frozenset({".py"}),
+    "rust": frozenset({".rs"}),
+    "go": frozenset({".go"}),
+    "java": frozenset({".java"}),
+    "cpp": frozenset({".cpp", ".cc", ".cxx", ".c", ".h", ".hpp", ".hxx"}),
+    "csharp": frozenset({".cs"}),
+    "ruby": frozenset({".rb"}),
+    "swift": frozenset({".swift"}),
+    "kotlin": frozenset({".kt", ".kts"}),
+    "scala": frozenset({".scala"}),
+}
+
+
+def chief_engineer_source_suffixes_for_language(primary_language: str) -> tuple[str, ...]:
+    """Return immutable CE-owned source suffix authority for one PM language."""
+
+    return tuple(sorted(_LANGUAGE_SOURCE_SUFFIXES.get(str(primary_language or "").strip().lower(), ())))
 
 
 def _pm_task_declares_ce_owned_topology(task: Mapping[str, Any]) -> bool:
@@ -82,7 +102,7 @@ def _pm_task_declares_ce_owned_topology(task: Mapping[str, Any]) -> bool:
     return str(metadata.get("topology_authority") or "").strip() == _CE_OWNED_TOPOLOGY_AUTHORITY
 
 
-def _is_ce_source_topology_path(path: str) -> bool:
+def _is_ce_source_topology_path(path: str, *, allowed_source_suffixes: tuple[str, ...] = ()) -> bool:
     normalized = str(path or "").strip().replace("\\", "/")
     if not normalized:
         return False
@@ -90,7 +110,79 @@ def _is_ce_source_topology_path(path: str) -> bool:
     if basename in _TOOLCHAIN_BASENAMES:
         return False
     suffix = f".{basename.rsplit('.', 1)[-1]}" if "." in basename else ""
-    return suffix in _SOURCE_TOPOLOGY_SUFFIXES
+    allowed = frozenset(str(value).strip().lower() for value in allowed_source_suffixes if str(value).strip())
+    return suffix in _SOURCE_TOPOLOGY_SUFFIXES and (not allowed or suffix in allowed)
+
+
+def _is_ce_test_topology_path(path: str) -> bool:
+    normalized = str(path or "").strip().replace("\\", "/")
+    parts = tuple(part.lower() for part in normalized.split("/") if part)
+    if not parts:
+        return False
+    basename = parts[-1]
+    return bool(
+        any(part in {"test", "tests", "__tests__", "spec", "specs"} for part in parts[:-1])
+        or basename.startswith("test_")
+        or "_test." in basename
+        or ".test." in basename
+        or ".spec." in basename
+    )
+
+
+def _is_ce_production_source_path(path: str, *, allowed_source_suffixes: tuple[str, ...] = ()) -> bool:
+    return _is_ce_source_topology_path(
+        path,
+        allowed_source_suffixes=allowed_source_suffixes,
+    ) and not _is_ce_test_topology_path(path)
+
+
+def _ce_delegated_artifact_roles(required_source_kinds: tuple[str, ...]) -> frozenset[str]:
+    kinds = set(required_source_kinds)
+    roles: set[str] = set()
+    if kinds.intersection({"domain_modules", "public_api", "public_headers"}):
+        roles.add("source")
+    if "entrypoint" in kinds:
+        roles.add("entrypoint")
+    if kinds.intersection({"test", "tests"}):
+        roles.add("test")
+    return frozenset(roles)
+
+
+def _ce_artifact_role_matches_path(
+    *,
+    semantic_role: str,
+    path: str,
+    allowed_source_suffixes: tuple[str, ...] = (),
+) -> bool:
+    if semantic_role == "test":
+        return _is_ce_test_topology_path(path) and _is_ce_source_topology_path(
+            path,
+            allowed_source_suffixes=allowed_source_suffixes,
+        )
+    if semantic_role in {"source", "entrypoint"}:
+        return _is_ce_production_source_path(path, allowed_source_suffixes=allowed_source_suffixes)
+    return True
+
+
+def _ce_topology_authorizes_artifact(
+    *,
+    topology_authority: str,
+    required_source_kinds: tuple[str, ...],
+    allowed_source_suffixes: tuple[str, ...],
+    semantic_role: str,
+    path: str,
+) -> bool:
+    if topology_authority != _CE_OWNED_TOPOLOGY_AUTHORITY:
+        return False
+    if semantic_role not in _ce_delegated_artifact_roles(required_source_kinds):
+        return False
+    if not allowed_source_suffixes:
+        return False
+    return _ce_artifact_role_matches_path(
+        semantic_role=semantic_role,
+        path=path,
+        allowed_source_suffixes=allowed_source_suffixes,
+    )
 
 
 _BLUEPRINT_FILE_PATH_KEYS = frozenset(

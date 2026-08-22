@@ -40,6 +40,7 @@ from ...internal.post_mortem import PostMortemLog, build_post_mortem_event
 from ...internal.project_completion_contract import build_project_completion_contract
 from ...internal.quality_gate import evaluate_quality_gate
 from ...internal.release_readiness import build_release_readiness
+from ...internal.review_store import persist_chief_engineer_review_document
 from ...internal.risks import RiskRegister, build_risk_event
 from ...internal.rollback_guard import create_rollback_guard
 from ...internal.rollback_link import build_rollback_link
@@ -187,6 +188,7 @@ from ._helpers import (
     _module_owner_terms,
     _module_role_from_path,
     _module_stem,
+    chief_engineer_source_suffixes_for_language,
     _needs_workspace_interface_snapshot,
     _normalize_blueprint_file_path,
     _normalize_delivery_depth_payload,
@@ -255,6 +257,14 @@ from ._portfolio import (
     project_chief_engineer_task_blueprint,
     query_project_completion_contract,
 )
+from ._semantic_repair import (
+    build_chief_engineer_semantic_repair_patch_schema,
+    compose_chief_engineer_semantic_repair,
+    load_chief_engineer_semantic_repair_candidate,
+    normalize_chief_engineer_portfolio_tool_arguments,
+    persist_chief_engineer_semantic_repair_candidate,
+    project_chief_engineer_semantic_repair_provider_context,
+)
 from ._task_blueprint import (
     generate_task_blueprint,
     get_blueprint_status,
@@ -273,7 +283,10 @@ __all__ = [
     "build_blueprint_governance",
     "build_ce_handoff_decision",
     "build_chief_engineer_blueprint_portfolio",
+    "build_chief_engineer_semantic_repair_patch_schema",
+    "chief_engineer_source_suffixes_for_language",
     "check_stack_policy",
+    "compose_chief_engineer_semantic_repair",
     "create_rollback_guard",
     "evaluate_ce_handoff_decision_for_blueprint",
     "evaluate_handoff_decision",
@@ -286,8 +299,13 @@ __all__ = [
     "list_risks",
     "list_tech_debt",
     "list_tech_radar",
+    "load_chief_engineer_semantic_repair_candidate",
+    "normalize_chief_engineer_portfolio_tool_arguments",
+    "persist_chief_engineer_review_document",
+    "persist_chief_engineer_semantic_repair_candidate",
     "project_chief_engineer_delivery_depth_feasibility_from_pm_tasks",
     "project_chief_engineer_portfolio_delivery_depth_feasibility",
+    "project_chief_engineer_semantic_repair_provider_context",
     "project_chief_engineer_task_blueprint",
     "query_blueprint_provenance",
     "register_adr",

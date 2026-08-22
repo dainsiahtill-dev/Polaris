@@ -161,6 +161,15 @@ from polaris.cells.chief_engineer.blueprint.public.contracts._helpers import (
     project_completion_catalog_snapshot_hash,
     project_completion_verifier_policy_snapshot_hash,
 )
+from polaris.cells.chief_engineer.blueprint.public.contracts._semantic_repair import (
+    ChiefEngineerPortfolioStructuralRecoveryV1,
+    ChiefEngineerSemanticRepairCandidateV1,
+    ChiefEngineerSemanticRepairDiagnosisV1,
+    ChiefEngineerSemanticRepairOperationV1,
+    ChiefEngineerSemanticRepairPatchV1,
+    ChiefEngineerSemanticRepairReceiptV1,
+    chief_engineer_semantic_repair_task_set_hash,
+)
 
 __all__ = [
     "ADREventV1",
@@ -178,7 +187,13 @@ __all__ = [
     "ChiefEngineerBlueprintErrorV1",
     "ChiefEngineerBlueprintPortfolioV1",
     "ChiefEngineerPortfolioTaskV1",
+    "ChiefEngineerPortfolioStructuralRecoveryV1",
     "ChiefEngineerProjectInterfaceContractV1",
+    "ChiefEngineerSemanticRepairCandidateV1",
+    "ChiefEngineerSemanticRepairDiagnosisV1",
+    "ChiefEngineerSemanticRepairOperationV1",
+    "ChiefEngineerSemanticRepairPatchV1",
+    "ChiefEngineerSemanticRepairReceiptV1",
     "ChiefEngineerSharedBehaviorContractV1",
     "EntrypointKindV1",
     "EntrypointObligationV1",
@@ -235,6 +250,7 @@ __all__ = [
     "VerificationCommandAuthorityV1",
     "VerificationModalityV1",
     "VerificationObligationV1",
+    "chief_engineer_semantic_repair_task_set_hash",
     "project_completion_verifier_policy_snapshot_hash",
     "shared_behavior_contract_hash",
     "shared_behavior_contract_seed",

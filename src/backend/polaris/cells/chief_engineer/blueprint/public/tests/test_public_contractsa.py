@@ -1430,6 +1430,70 @@ class TestChiefEngineerBlueprintPortfolio:
             )
         assert exc_info.value.code == "blueprint_provenance_completion_targets_mismatch"
 
+    def test_entrypoint_only_delegation_does_not_authorize_domain_source(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Choose only the executable entrypoint",
+                target_files=("requirements.txt",),
+                scope_paths=("requirements.txt",),
+                topology_authority="chief_engineer",
+                required_source_kinds=("entrypoint",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build tests",
+                target_files=("tests/test_main.py",),
+                scope_paths=("tests/test_main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        requirements["obligations"]["artifacts"][0].update(
+            {"path": "src/dream_subway/domain.py", "owner_task_id": "TASK-A"}
+        )
+        requirements["obligations"]["entrypoints"][0].update(
+            {
+                "source_path": "src/dream_subway/__main__.py",
+                "runtime_path": "src/dream_subway/__main__.py",
+                "owner_task_id": "TASK-A",
+                "command": "python -m dream_subway",
+            }
+        )
+
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-entrypoint-only-delegation",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-entrypoint-only-delegation",
+                    entrypoint_owner_task_ids=("TASK-NOT-PRESENT",),
+                ),
+                llm_blueprint={
+                    "construction_plan": {"project_interface_contract": {}},
+                    "project_completion_contract": requirements,
+                    "risk_flags": [],
+                },
+            )
+        )
+
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        assert "src/dream_subway/domain.py" not in {
+            item.path for item in completion.obligations.artifacts
+        }
+        assert any(
+            item.path == "src/dream_subway/__main__.py"
+            and item.semantic_role == "entrypoint"
+            for item in completion.obligations.artifacts
+        )
+
     def test_completion_contract_normalizes_split_delegated_python_entrypoint(
         self,
         tmp_path: Path,
@@ -2859,6 +2923,58 @@ class TestChiefEngineerBlueprintPortfolio:
         else:
             assert generated_path not in artifact_paths
             assert artifact_paths == {"pyproject.toml", "tests/test_generated.py"}
+
+    def test_exact_pm_file_scope_does_not_authorize_descendant_artifact(self, tmp_path: Path) -> None:
+        """A target file repeated in scope_paths remains exact-file authority."""
+
+        requirements = _library_completion_requirements(
+            "src/main.py",
+            "src/main.py/rogue.py",
+            owner_task_ids=("TASK-A", "TASK-A"),
+            test_path="tests/test_main.py",
+            test_owner_task_id="TASK-B",
+        )
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Implement one exact source file",
+                target_files=("src/main.py",),
+                scope_paths=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Verify the source",
+                target_files=("tests/test_main.py",),
+                scope_paths=("tests/test_main.py",),
+            ),
+        )
+        command = BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-exact-file-scope",
+            tasks=tasks,
+            **_portfolio_command_authority(
+                tasks=tasks,
+                project_kind="library",
+                workspace=tmp_path,
+                run_id="run-exact-file-scope",
+            ),
+            llm_blueprint={
+                "construction_plan": {
+                    "task_plans": {
+                        "TASK-A": {"implementation": ["Implement source"]},
+                        "TASK-B": {"implementation": ["Verify source"]},
+                    }
+                },
+                "risk_flags": [],
+                "project_completion_contract": requirements,
+            },
+        )
+
+        completion = build_chief_engineer_blueprint_portfolio(command).project_completion_contract
+        assert completion is not None
+        artifact_paths = {item.path for item in completion.obligations.artifacts}
+        assert "src/main.py/rogue.py" not in artifact_paths
+        assert artifact_paths == {"src/main.py", "tests/test_main.py"}
 
     def test_unknown_llm_task_plan_fails_closed(self, tmp_path: Path) -> None:
         command = BuildChiefEngineerBlueprintPortfolioCommandV1(

@@ -78,6 +78,8 @@ class ChiefEngineerPortfolioTaskV1:
     entrypoint_targets: tuple[str, ...] = field(default_factory=tuple)
     topology_authority: Literal["pm", "chief_engineer"] = "pm"
     required_source_kinds: tuple[str, ...] = field(default_factory=tuple)
+    primary_language: str = ""
+    allowed_source_suffixes: tuple[str, ...] = field(default_factory=tuple)
     delivery_depth_contract: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -111,8 +113,21 @@ class ChiefEngineerPortfolioTaskV1:
             raise ValueError("chief_engineer topology authority requires required_source_kinds")
         if topology_authority == "pm" and required_source_kinds:
             raise ValueError("PM topology authority must not declare delegated required_source_kinds")
+        primary_language = str(self.primary_language or "").strip().lower()
+        allowed_source_suffixes = _strict_unique_string_tuple(
+            "allowed_source_suffixes",
+            tuple(str(value or "").strip().lower() for value in self.allowed_source_suffixes),
+        )
+        if any(not suffix.startswith(".") or "/" in suffix or "\\" in suffix for suffix in allowed_source_suffixes):
+            raise ValueError("allowed_source_suffixes must contain normalized file suffixes")
+        if topology_authority == "chief_engineer" and (not primary_language or not allowed_source_suffixes):
+            raise ValueError("chief_engineer topology authority requires immutable language suffix authority")
+        if topology_authority == "pm" and allowed_source_suffixes:
+            raise ValueError("PM topology authority must not declare delegated source suffixes")
         object.__setattr__(self, "topology_authority", topology_authority)
         object.__setattr__(self, "required_source_kinds", required_source_kinds)
+        object.__setattr__(self, "primary_language", primary_language)
+        object.__setattr__(self, "allowed_source_suffixes", allowed_source_suffixes)
         object.__setattr__(
             self,
             "delivery_depth_contract",
@@ -131,6 +146,8 @@ class ChiefEngineerPortfolioTaskV1:
             "entrypoint_targets": list(self.entrypoint_targets),
             "topology_authority": self.topology_authority,
             "required_source_kinds": list(self.required_source_kinds),
+            "primary_language": self.primary_language,
+            "allowed_source_suffixes": list(self.allowed_source_suffixes),
             "delivery_depth_contract": dict(self.delivery_depth_contract),
         }
 

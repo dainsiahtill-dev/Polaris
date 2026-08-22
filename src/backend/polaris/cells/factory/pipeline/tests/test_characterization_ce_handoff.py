@@ -13,6 +13,8 @@ import pytest
 from polaris.cells.chief_engineer.blueprint.public import (
     BlueprintPersistence,
     ChiefEngineerPortfolioTaskV1,
+    ChiefEngineerSemanticRepairCandidateV1,
+    chief_engineer_semantic_repair_task_set_hash,
     project_completion_catalog_snapshot_hash,
 )
 from polaris.cells.factory.pipeline.internal import (
@@ -40,113 +42,134 @@ from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_logical_path
 
 
+def _semantic_artifact_patch_result(
+    command: Any,
+    *,
+    path: str,
+    obligation_id: str,
+) -> Any:
+    result = _single_task_chief_engineer_result()
+    payload = {
+        "base_candidate_hash": command.context["chief_engineer_semantic_repair_base_candidate_hash"],
+        "diagnosis_hash": command.context["chief_engineer_semantic_repair_diagnosis_hash"],
+        "artifact_upserts": [
+            {
+                "obligation_id": obligation_id,
+                "path": path,
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-CANCEL",
+            }
+        ],
+        "entrypoint_upserts": [],
+        "behavior_invariant_upserts": [],
+        "task_behavior_ref_replacements": {},
+    }
+    result.output = json.dumps(payload)
+    result.metadata["structured_output"] = payload
+    return result
+
+
 class TestChiefEngineerHandoffGuards:
-    def test_schema_valid_candidate_round_trips_only_for_exact_same_run_authority(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        executor = _executor(tmp_path)
-        structured_output = {
-            "construction_plan": {"task_plans": {}},
-            "project_completion_contract": {"obligations": {}},
-            "risk_flags": [],
+    def test_structural_recovery_saves_provider_call_and_emits_hash_only_signal(self, tmp_path: Path) -> None:
+        executor = OrchestrationStageExecutor(tmp_path)
+        valid = _single_task_chief_engineer_result().metadata["structured_output"]
+        malformed = json.loads(json.dumps(valid))
+        malformed["shared_behavior_contract"] = malformed["construction_plan"].pop(
+            "shared_behavior_contract"
+        )
+        failed = _invalid_structured_transport_chief_engineer_result()
+        failed.metadata["tool_call"] = {
+            "tool": "submit_structured_role_output",
+            "arguments": malformed,
         }
 
-        candidate_ref = executor._persist_chief_engineer_structured_candidate(
+        recovered = executor._recover_chief_engineer_portfolio_structural_result(
+            result=failed,
+            portfolio_task_ids=("TASK-CANCEL",),
+        )
+        signals: list[dict[str, Any]] = []
+        executor._append_chief_engineer_structural_recovery_signal(
+            result=recovered,
+            stage_signals=signals,
+            task_id="CE-PORTFOLIO-test",
+        )
+
+        assert recovered.ok is True
+        assert recovered.metadata["structured_output"] == valid
+        assert recovered.metadata["tool_call"]["arguments"] == valid
+        assert signals == [
+            {
+                "code": "chief_engineer.portfolio_structural_recovered",
+                "severity": "warning",
+                "detail": "Relocated CE tool arguments and revalidated the exact portfolio schema.",
+                "task_id": "CE-PORTFOLIO-test",
+                "source_hash": recovered.metadata["chief_engineer_portfolio_structural_recovery"]["source_hash"],
+                "recovered_hash": recovered.metadata["chief_engineer_portfolio_structural_recovery"][
+                    "recovered_hash"
+                ],
+                "repair_codes": ["move_root_shared_behavior_contract"],
+                "provider_call_consumed": False,
+            }
+        ]
+
+    def test_structural_recovery_refuses_payload_that_remains_schema_invalid(self, tmp_path: Path) -> None:
+        executor = OrchestrationStageExecutor(tmp_path)
+        failed = _invalid_structured_transport_chief_engineer_result()
+        failed.metadata["tool_call"] = {
+            "tool": "submit_structured_role_output",
+            "arguments": {
+                "construction_plan": {
+                    "task_plans": {},
+                    "project_interface_contract": {
+                        "provider_declarations": [],
+                        "consumer_declarations": [],
+                    },
+                },
+                "shared_behavior_contract": {"invariants": []},
+            },
+        }
+
+        recovered = executor._recover_chief_engineer_portfolio_structural_result(
+            result=failed,
+            portfolio_task_ids=("TASK-CANCEL",),
+        )
+
+        assert recovered is failed
+
+    def test_semantic_diagnosis_uses_stable_codes_and_minimal_operations(self, tmp_path: Path) -> None:
+        task_ids = ("TASK-1",)
+        candidate = ChiefEngineerSemanticRepairCandidateV1(
+            workspace=str(tmp_path),
+            project_id="project-1",
             run_id="factory-run-candidate",
             pm_contract_hash="a" * 64,
-            task_ids=("TASK-1", "TASK-2"),
-            structured_output=structured_output,
-            evidence={
-                "provider": "provider-a",
-                "model": "model-a",
-                "context_snapshot_ref": "a" * 24,
-                "request_hash": "b" * 64,
+            task_ids=task_ids,
+            task_set_hash=chief_engineer_semantic_repair_task_set_hash(task_ids),
+            candidate={
+                "construction_plan": {"task_plans": {}},
+                "project_completion_contract": {"obligations": {}},
+                "risk_flags": [],
             },
         )
 
-        assert candidate_ref.endswith("factory-run-candidate.ce-structured-candidate.json")
-        assert executor._load_chief_engineer_structured_candidate(
-            run_id="factory-run-candidate",
-            pm_contract_hash="a" * 64,
-            task_ids=("TASK-1", "TASK-2"),
-        ) == (structured_output, candidate_ref)
-        assert (
-            executor._load_chief_engineer_structured_candidate(
-                run_id="factory-run-candidate",
-                pm_contract_hash="c" * 64,
-                task_ids=("TASK-1", "TASK-2"),
-            )
-            is None
+        diagnosis = OrchestrationStageExecutor._chief_engineer_semantic_repair_diagnosis(
+            candidate=candidate,
+            output_errors=[
+                "project_completion_contract delivery depth infeasible: prod_files=1 < 2",
+                "shared_behavior_contract.invariants missing owner binding",
+            ],
         )
 
-    def test_schema_valid_candidate_hash_tamper_fails_closed(self, tmp_path: Path) -> None:
-        executor = _executor(tmp_path)
-        candidate_ref = executor._persist_chief_engineer_structured_candidate(
-            run_id="factory-run-candidate-tamper",
-            pm_contract_hash="a" * 64,
-            task_ids=("TASK-1",),
-            structured_output={"risk_flags": []},
-            evidence={},
+        assert diagnosis.diagnostic_codes == (
+            "chief_engineer.delivery_depth.prod_files_below_minimum",
+            "chief_engineer.shared_behavior_contract.invalid",
         )
-        candidate_path = Path(resolve_logical_path(tmp_path, candidate_ref))
-        payload = json.loads(candidate_path.read_text(encoding="utf-8"))
-        payload["structured_output"] = {"risk_flags": ["tampered"]}
-        candidate_path.write_text(json.dumps(payload), encoding="utf-8")
-
-        assert (
-            executor._load_chief_engineer_structured_candidate(
-                run_id="factory-run-candidate-tamper",
-                pm_contract_hash="a" * 64,
-                task_ids=("TASK-1",),
-            )
-            is None
+        assert diagnosis.allowed_operations == (
+            "artifact_upsert",
+            "behavior_invariant_upsert",
+            "task_behavior_ref_replace",
         )
-
-    def test_schema_valid_candidate_materializes_portfolio_without_provider_call(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Candidate recovery distinguishes missing portfolio from immutable conflict."""
-
-        executor = _executor(tmp_path)
-        _write_minimal_chief_engineer_plan(executor)
-        run = FactoryRun(
-            id="factory-run-candidate-materialize",
-            config=FactoryConfig(name="bench-run"),
-            status=FactoryRunStatus.RUNNING,
-            created_at="2026-06-25T00:00:00+00:00",
-        )
-        executor._persist_chief_engineer_structured_candidate(
-            run_id=run.id,
-            pm_contract_hash="a" * 64,
-            task_ids=("TASK-CANCEL",),
-            structured_output=executor._chief_engineer_authoritative_pm_projection_candidate(),
-            evidence={
-                "provider": "test-provider",
-                "model": "test-model",
-                "context_snapshot_ref": "a" * 24,
-            },
-        )
-
-        class _ProviderMustNotRun:
-            async def execute_role_task(self, command: Any) -> Any:
-                raise AssertionError(f"unexpected provider call: {command.task_id}")
-
-        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _ProviderMustNotRun)
-
-        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
-
-        assert result.status == "success", result.output
-        review = json.loads(
-            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
-                encoding="utf-8"
-            )
-        )
-        assert review["generated_blueprints"] == 1
-        assert review["llm_call_count"] == 0
-        assert "chief_engineer.structured_candidate_materialized" in {signal["code"] for signal in review["signals"]}
 
     def test_portfolio_validation_allows_missing_advisory_task_plan_overlays(self) -> None:
         payload = dict(_single_task_chief_engineer_result().metadata["structured_output"])
@@ -228,8 +251,7 @@ class TestChiefEngineerHandoffGuards:
         )
 
         assert errors == [
-            "shared_behavior_contract.invariants[0] invalid: "
-            "consumer_task_ids must not contain owner_task_id"
+            "shared_behavior_contract.invariants[0] invalid: consumer_task_ids must not contain owner_task_id"
         ]
 
     def test_portfolio_validation_rejects_delivery_depth_authority_deficit(self) -> None:
@@ -237,7 +259,8 @@ class TestChiefEngineerHandoffGuards:
         task = ChiefEngineerPortfolioTaskV1(
             task_id="TASK-CANCEL",
             objective="Deliver a real project",
-            target_files=("src/main.py",),
+            target_files=("src/cancel.py", "tests/test_cancel.py"),
+            scope_paths=("src/cancel.py", "tests/test_cancel.py"),
             delivery_depth_contract={"minimums": {"min_prod_files": 2, "min_test_files": 2}},
         )
 
@@ -1322,25 +1345,18 @@ class TestChiefEngineerHandoffGuards:
             },
         )
         primary = _single_task_chief_engineer_result()
-        repaired = _single_task_chief_engineer_result()
-        repaired_payload = dict(repaired.metadata["structured_output"])
-        repaired_payload["scope_for_apply"] = ["src/cancel.py", "src/cancel_policy.py"]
-        repaired_payload["project_completion_contract"] = _library_completion_requirements(
-            "src/cancel.py",
-            "src/cancel_policy.py",
-            owner_task_ids=("TASK-CANCEL", "TASK-CANCEL"),
-            test_path="tests/test_cancel.py",
-            test_owner_task_id="TASK-CANCEL",
-        )
-        repaired.metadata["structured_output"] = repaired_payload
-        repaired.output = json.dumps(repaired_payload)
-        results = [primary, repaired]
         commands: list[Any] = []
 
         class _RepairingRoleRuntimeService:
             async def execute_role_task(self, command: Any) -> Any:
                 commands.append(command)
-                return results.pop(0)
+                if len(commands) == 1:
+                    return primary
+                return _semantic_artifact_patch_result(
+                    command,
+                    path="src/cancel_policy.py",
+                    obligation_id="artifact-cancel-policy",
+                )
 
         monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _RepairingRoleRuntimeService)
         run = FactoryRun(
@@ -1355,16 +1371,17 @@ class TestChiefEngineerHandoffGuards:
         assert result.status == "success", result.output
         assert [command.task_id for command in commands] == [
             f"CE-PORTFOLIO-{run.id}",
-            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
+            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH",
         ]
         feedback = commands[1].context["failure_feedback"]
         assert feedback["failure_class"] == "output_validation_failed"
         assert "delivery depth infeasible: prod_files=1 < 2" in feedback["detail"]
-        assert (
-            "verification modality must be exactly one of: environment_prep, build, test, lint, entrypoint"
-            in commands[1].objective
-        )
-        assert "Use test for QA/domain/behavior verification" in commands[1].objective
+        assert commands[1].structured_output_contract.schema_name == "chief_engineer_semantic_repair_patch"
+        assert commands[1].context["chief_engineer_semantic_repair"] is True
+        assert commands[1].context["chief_engineer_semantic_repair_candidate"]["candidate_hash"]
+        assert commands[1].context["chief_engineer_semantic_repair_diagnosis"]["diagnostic_codes"] == [
+            "chief_engineer.delivery_depth.prod_files_below_minimum"
+        ]
         review = json.loads(
             Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
                 encoding="utf-8"
@@ -1374,6 +1391,67 @@ class TestChiefEngineerHandoffGuards:
         assert review["llm_call_count"] == 2
         assert review["signals"][0]["code"] == "chief_engineer.output_contract_repair_started"
         assert len(keepers) == 2
+        assert all(keeper.is_alive is False for keeper in keepers)
+        _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_chief_engineer_semantic_repair_fails_before_provider_when_pm_authority_is_infeasible(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An occupied exact-only PM scope cannot authorize a fabricated repair path."""
+
+        executor = _executor(tmp_path)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-CANCEL",
+                        "title": "Implement cancellation coverage",
+                        "goal": "Exercise the Chief Engineer cancellation path.",
+                        "target_files": ["src/cancel.py"],
+                        "scope_paths": ["src/cancel.py"],
+                        "acceptance_criteria": ["cancellation is observable"],
+                        "execution_checklist": ["Implement the exact target"],
+                        "delivery_depth_contract": {"minimums": {"min_prod_files": 2}},
+                        "metadata": {"topology_authority": "pm", "required_source_kinds": []},
+                    }
+                ]
+            },
+        )
+        commands: list[Any] = []
+
+        class _SingleProviderCallRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                commands.append(command)
+                return _single_task_chief_engineer_result()
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _SingleProviderCallRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-semantic-authority-infeasible",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-23T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "failed"
+        assert result.metadata["error_code"] == "chief_engineer.semantic_repair_authority_infeasible"
+        assert [command.task_id for command in commands] == [f"CE-PORTFOLIO-{run.id}"]
+        review = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert review["llm_call_count"] == 1
+        assert review["signals"][-1]["code"] == "chief_engineer.semantic_repair_authority_infeasible"
+        assert "chief_engineer.output_contract_repair_started" not in {
+            signal["code"] for signal in review["signals"]
+        }
+        assert len(keepers) == 1
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
@@ -1406,27 +1484,20 @@ class TestChiefEngineerHandoffGuards:
             },
         )
         first = _single_task_chief_engineer_result()
-        second = _single_task_chief_engineer_result()
-        fixed = _single_task_chief_engineer_result()
-        fixed_payload = json.loads(json.dumps(fixed.metadata["structured_output"]))
-        fixed_payload["project_completion_contract"]["obligations"]["artifacts"].append(
-            {
-                "obligation_id": "artifact-support",
-                "path": "src/support.py",
-                "semantic_role": "source",
-                "owner_task_id": "TASK-CANCEL",
-                "applicability": "required",
-            }
-        )
-        fixed.output = json.dumps(fixed_payload)
-        fixed.metadata["structured_output"] = fixed_payload
-        results = [first, second, fixed]
         commands: list[Any] = []
 
         class _EventuallyFeasibleRoleRuntimeService:
             async def execute_role_task(self, command: Any) -> Any:
                 commands.append(command)
-                return results.pop(0)
+                if len(commands) == 1:
+                    return first
+                if len(commands) == 2:
+                    return _single_task_chief_engineer_result()
+                return _semantic_artifact_patch_result(
+                    command,
+                    path="src/support.py",
+                    obligation_id="artifact-support",
+                )
 
         monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _EventuallyFeasibleRoleRuntimeService)
         run = FactoryRun(
@@ -1441,9 +1512,17 @@ class TestChiefEngineerHandoffGuards:
         assert result.status == "success", result.output
         assert [command.task_id for command in commands] == [
             f"CE-PORTFOLIO-{run.id}",
-            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
-            f"CE-PORTFOLIO-{run.id}-CONTRACT-REPAIR-2",
+            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH",
+            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH-REPAIR-2",
         ]
+        assert (
+            commands[1].context["chief_engineer_semantic_repair_base_candidate_hash"]
+            == commands[2].context["chief_engineer_semantic_repair_base_candidate_hash"]
+        )
+        assert (
+            commands[1].context["chief_engineer_semantic_repair_diagnosis_hash"]
+            == commands[2].context["chief_engineer_semantic_repair_diagnosis_hash"]
+        )
         review = json.loads(
             Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
                 encoding="utf-8"
@@ -1470,8 +1549,7 @@ class TestChiefEngineerHandoffGuards:
         first = _invalid_chief_engineer_stream_result()
         second = _invalid_chief_engineer_stream_result()
         second.error_message = (
-            "structured_output_payload_schema_mismatch:$:"
-            "'project_completion_contract' is a required property"
+            "structured_output_payload_schema_mismatch:$:'project_completion_contract' is a required property"
         )
         results = [first, second, _single_task_chief_engineer_result()]
         commands: list[Any] = []
@@ -1512,6 +1590,99 @@ class TestChiefEngineerHandoffGuards:
         assert review["llm_call_count"] == 3
         assert [signal["code"] for signal in review["signals"][:2]] == [
             "chief_engineer.output_schema_repair_started",
+            "chief_engineer.output_contract_final_repair_started",
+        ]
+        assert len(keepers) == 3
+        assert all(keeper.is_alive is False for keeper in keepers)
+        _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_schema_repair_semantic_deficit_uses_typed_final_patch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """L3-22 r06: schema-invalid -> schema-valid depth deficit -> typed patch."""
+
+        executor = _executor(tmp_path)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-CANCEL",
+                        "title": "Implement cancellation coverage",
+                        "goal": "Exercise the Chief Engineer cancellation path.",
+                        "target_files": ["src/cancel.py", "tests/test_cancel.py"],
+                        "scope_paths": ["src", "tests"],
+                        "acceptance_criteria": ["cancellation is observable"],
+                        "execution_checklist": ["Suspend the claimed attempt"],
+                        "delivery_depth_contract": {"minimums": {"min_prod_files": 2, "min_test_files": 1}},
+                        "metadata": {
+                            "topology_authority": "chief_engineer",
+                            "required_source_kinds": ["domain_modules", "tests"],
+                        },
+                    }
+                ]
+            },
+        )
+        commands: list[Any] = []
+
+        class _R06RoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                commands.append(command)
+                if len(commands) == 1:
+                    return _invalid_chief_engineer_stream_result()
+                if len(commands) == 2:
+                    return _single_task_chief_engineer_result()
+                return _semantic_artifact_patch_result(
+                    command,
+                    path="src/support.py",
+                    obligation_id="artifact-support",
+                )
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _R06RoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-r06-schema-then-semantic",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-23T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "success", result.output
+        assert [command.task_id for command in commands] == [
+            f"CE-PORTFOLIO-{run.id}",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
+            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH-REPAIR-2",
+        ]
+        assert commands[1].structured_output_contract.schema_name == "chief_engineer_blueprint_portfolio"
+        assert commands[2].structured_output_contract.schema_name == "chief_engineer_semantic_repair_patch"
+        assert commands[2].context["chief_engineer_semantic_repair_diagnosis"]["diagnostic_codes"] == [
+            "chief_engineer.delivery_depth.prod_files_below_minimum"
+        ]
+        provider_patch_context = commands[2].context["chief_engineer_semantic_repair_provider_context"]
+        assert provider_patch_context["current"]["artifacts"][0]["obligation_id"] == "artifact-1"
+        assert "artifact-1" in commands[2].objective
+        assert "Call the required result-submission tool exactly once" in commands[2].objective
+        assert "Return JSON only" not in commands[2].objective
+        task_authority = provider_patch_context["task_authority"]["TASK-CANCEL"]
+        assert task_authority["target_files"] == ["src/cancel.py", "tests/test_cancel.py"]
+        assert task_authority["expandable_scope_paths"] == ["src", "tests"]
+        assert task_authority["topology_authority"] == "chief_engineer"
+        review = json.loads(
+            Path(
+                resolve_logical_path(
+                    tmp_path,
+                    f"runtime/state/blueprints/{run.id}.review.json",
+                )
+            ).read_text(encoding="utf-8")
+        )
+        assert review["llm_call_count"] == 3
+        assert [signal["code"] for signal in review["signals"][:3]] == [
+            "chief_engineer.output_schema_repair_started",
+            "chief_engineer.schema_repair_candidate_frozen",
             "chief_engineer.output_contract_final_repair_started",
         ]
         assert len(keepers) == 3
@@ -1566,12 +1737,14 @@ class TestChiefEngineerHandoffGuards:
         assert result.status == "failed"
         assert [command.task_id for command in commands] == [
             f"CE-PORTFOLIO-{run.id}",
-            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
-            f"CE-PORTFOLIO-{run.id}-CONTRACT-REPAIR-2",
+            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH",
+            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH-REPAIR-2",
         ]
         assert commands[-1].context["chief_engineer_repair_round"] == 2
-        assert "prod_files=1 < 2" in commands[-1].context["failure_feedback"]["detail"]
-        assert result.metadata["error_code"] == "chief_engineer.portfolio_output_invalid"
+        assert commands[-1].context["chief_engineer_semantic_repair_diagnosis"]["diagnostic_codes"] == [
+            "chief_engineer.delivery_depth.prod_files_below_minimum"
+        ]
+        assert result.metadata["error_code"] == "chief_engineer.semantic_repair_exhausted"
         review = json.loads(
             Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
                 encoding="utf-8"
@@ -1581,7 +1754,7 @@ class TestChiefEngineerHandoffGuards:
         assert [signal["code"] for signal in review["signals"]] == [
             "chief_engineer.output_contract_repair_started",
             "chief_engineer.output_contract_final_repair_started",
-            "chief_engineer.portfolio_output_invalid",
+            "chief_engineer.semantic_repair_exhausted",
         ]
         assert len(keepers) == 3
         assert all(keeper.is_alive is False for keeper in keepers)

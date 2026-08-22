@@ -10,6 +10,9 @@ import json
 from typing import Any
 
 import pytest
+from polaris.cells.orchestration.pm_planning.internal.quality_gate.domain_contracts import (
+    _go_text_target_files_for_task,
+)
 from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
     _CARD3D_PM_REQUIRED_DOMAINS,
     _card3d_domains_for_task,
@@ -332,6 +335,94 @@ class TestAutofixPmContractForQuality:
         assert "pet.go" not in serialized
         assert payload["tasks"][0]["target_files"] == ["models/model.go", "engine/engine.go"]
         assert payload["tasks"][1]["target_files"] == ["src/models/model.go", "src/engine/engine.go"]
+
+    @pytest.mark.parametrize(
+        "negated_topology",
+        [
+            "禁止创建 models/ 与 engine/ 默认拓扑",
+            "不得创建 models/ 与 engine/ 默认拓扑",
+            "不要创建 models/ 与 engine/ 默认拓扑",
+            "do not create default models/ or engine/ topology",
+            "avoid creating default models/ or engine/ topology",
+            "work without default models/ or engine/ topology",
+        ],
+    )
+    def test_sanitizes_go_contract_does_not_infer_negated_topology_files(
+        self,
+        negated_topology: str,
+        tmp_path: Any,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "primary_language": "go",
+            "overall_goal": "实现一个 Go 命令行项目",
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "title": "Go implementation constraints",
+                    "goal": negated_topology,
+                    "description": negated_topology,
+                    "acceptance_criteria": ["go test ./... passes"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": [negated_topology],
+                    "scope_paths": [],
+                    "target_files": [],
+                }
+            ],
+        }
+
+        assert _go_text_target_files_for_task(payload["tasks"][0]) == []
+        autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+
+        assert "models/model.go" not in payload["tasks"][0]["target_files"]
+        assert "engine/engine.go" not in payload["tasks"][0]["target_files"]
+
+    def test_sanitizes_go_contract_does_not_extract_negated_exact_topology_files(self) -> None:
+        task: dict[str, Any] = {
+            "title": "Go topology constraint",
+            "goal": "Create main.go without models/model.go or engine/engine.go.",
+            "description": "Do not create models/model.go or engine/engine.go.",
+            "execution_checklist": ["Create main.go only"],
+            "target_files": [],
+            "scope_paths": [],
+        }
+
+        assert _go_text_target_files_for_task(task) == ["main.go"]
+
+    def test_sanitizes_go_contract_ce_topology_authority_does_not_infer_exact_files_from_text(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "primary_language": "go",
+            "overall_goal": "实现一个 Go 命令行项目",
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "title": "Implement domain topology",
+                    "goal": "Implement src/models and src/engine packages.",
+                    "description": "Create src/models and src/engine source topology.",
+                    "acceptance_criteria": ["go test ./... passes"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["Implement src/models", "Implement src/engine"],
+                    "scope_paths": [],
+                    "target_files": [],
+                    "metadata": {
+                        "topology_authority": "chief_engineer",
+                        "required_source_kinds": ["domain_modules"],
+                    },
+                }
+            ],
+        }
+
+        assert _go_text_target_files_for_task(payload["tasks"][0]) == []
+        autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+
+        assert "src/models/model.go" not in payload["tasks"][0]["target_files"]
+        assert "src/engine/engine.go" not in payload["tasks"][0]["target_files"]
 
     def test_sanitizes_go_contract_directory_evidence_without_typescript_drift(self) -> None:
         payload: dict[str, Any] = {

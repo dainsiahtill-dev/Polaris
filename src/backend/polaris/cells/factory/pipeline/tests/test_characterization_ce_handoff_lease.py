@@ -2,47 +2,19 @@
 
 from __future__ import annotations
 
-import ast
 import asyncio
-import contextlib
-import hashlib
-import inspect
 import json
 import logging
-import os
-import shutil
-import sys
-import textwrap
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
-from types import MethodType, SimpleNamespace
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from polaris.cells.chief_engineer.blueprint.public import (
     BlueprintPersistence,
-    BuildChiefEngineerBlueprintPortfolioCommandV1,
-    ChiefEngineerPortfolioTaskV1,
-    GenerateTaskBlueprintCommandV1,
-    VerificationCommandAuthorityV1,
-    build_chief_engineer_blueprint_portfolio,
-    derive_project_kind_authority_from_catalog_snapshot,
-    generate_task_blueprint,
-    project_chief_engineer_task_blueprint,
-    project_completion_catalog_snapshot_hash,
-    project_completion_verifier_policy_snapshot_hash,
-)
-from polaris.cells.chief_engineer.blueprint.public.contracts import (
-    TaskBlueprintResultV1,
-    _issue_chief_engineer_portfolio_authority_carrier,
-)
-from polaris.cells.control_plane.run_ledger.public import FailureClassV1
-from polaris.cells.events.fact_stream.public import (
-    BootstrapFactStreamWorkspaceCommandV1,
-    bootstrap_fact_stream_workspace,
-    fact_stream_bootstrap_streams,
 )
 from polaris.cells.events.fact_stream.public.service import (
     QueryFactEventsV1,
@@ -50,49 +22,18 @@ from polaris.cells.events.fact_stream.public.service import (
 )
 from polaris.cells.factory.pipeline.internal import (
     factory_stage_executor as stage_executor_module,
-    factory_workspace_quality as workspace_quality_module,
 )
 from polaris.cells.factory.pipeline.internal.factory_deadline_policy import (
-    FactoryDeadlineBudgetPolicyV1,
     FactoryDeadlineDispositionV1,
     build_task_dependency_schedule,
 )
-from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
-    FactoryRoleEvidenceAuthorityPort,
-)
-from polaris.cells.factory.pipeline.internal.factory_run_completion import RunCompletionWaiter
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
-    CommandResult,
     FactoryConfig,
     FactoryRun,
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
-from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import _fencing_token
-from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
-    evaluate_canonical_factory_authority,
-)
-from polaris.cells.factory.pipeline.internal.run_ledger import load_run_ledger_projection
-from polaris.cells.roles.adapters.public import (
-    build_director_materialization_quality_repair_message,
-    extract_workspace_quality_summary,
-    resolve_director_semantic_quality_repair_target_files,
-)
-from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
-    FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
-    FactoryRoleEvidenceAuthorityBindingV1,
-)
-from polaris.cells.runtime.task_runtime.public.contracts import (
-    ObservableTaskRowsProjectionV1,
-    SettleTaskRuntimeExecutionAttemptCommandV1,
-    TaskRuntimeExecutionAttemptHeartbeatVerdictV1,
-    TaskRuntimeExecutionAttemptIdentityV1,
-)
-from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
-from polaris.kernelone.storage import resolve_logical_path
-
-
-from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
+from polaris.cells.factory.pipeline.tests._characterization_helpers import (
     _assert_no_chief_engineer_lease_keeper_threads,
     _capture_chief_engineer_lease_keepers,
     _executor,
@@ -104,6 +45,13 @@ from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # 
     _write_minimal_chief_engineer_plan,
     _write_review_for_blueprint,
 )
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    SettleTaskRuntimeExecutionAttemptCommandV1,
+    TaskRuntimeExecutionAttemptHeartbeatVerdictV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+)
+from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
+from polaris.kernelone.storage import resolve_logical_path
 
 
 class TestChiefEngineerHandoffGuards:
@@ -140,9 +88,9 @@ class TestChiefEngineerHandoffGuards:
         assert len(commands) == 2
         assert commands[-1].task_id.endswith("-SCHEMA-REPAIR")
         review = json.loads(
-            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
-                encoding="utf-8"
-            )
+            Path(
+                resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")
+            ).read_text(encoding="utf-8")
         )
         assert review["llm_call_count"] == 2
         signal_codes = [signal["code"] for signal in review["signals"]]
@@ -207,9 +155,9 @@ class TestChiefEngineerHandoffGuards:
         assert result.status == "failed"
         assert len(commands) == 2
         review = json.loads(
-            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
-                encoding="utf-8"
-            )
+            Path(
+                resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")
+            ).read_text(encoding="utf-8")
         )
         assert review["generated_blueprints"] == 0
         signal_codes = [signal["code"] for signal in review["signals"]]
@@ -241,9 +189,7 @@ class TestChiefEngineerHandoffGuards:
                         "scope_paths": ["src/cancel.py", "tests/test_cancel.py"],
                         "acceptance_criteria": ["cancellation is observable"],
                         "execution_checklist": ["Suspend the claimed attempt"],
-                        "delivery_depth_contract": {
-                            "minimums": {"min_prod_files": 1, "min_test_files": 1}
-                        },
+                        "delivery_depth_contract": {"minimums": {"min_prod_files": 1, "min_test_files": 1}},
                     }
                 ]
             },
@@ -286,9 +232,9 @@ class TestChiefEngineerHandoffGuards:
         assert "Observed invalid root members" in repair_command.objective
         assert commands[-1].task_id.endswith("-CONTRACT-REPAIR-2")
         review = json.loads(
-            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
-                encoding="utf-8"
-            )
+            Path(
+                resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")
+            ).read_text(encoding="utf-8")
         )
         signal_codes = [signal["code"] for signal in review["signals"]]
         assert "chief_engineer.advisory_projection_fallback" in signal_codes
@@ -313,9 +259,7 @@ class TestChiefEngineerHandoffGuards:
                         "scope_paths": ["main.go", "main_test.go"],
                         "acceptance_criteria": ["go test ./... passes"],
                         "execution_checklist": ["Implement source and test"],
-                        "delivery_depth_contract": {
-                            "minimums": {"min_prod_files": 2, "min_test_files": 1}
-                        },
+                        "delivery_depth_contract": {"minimums": {"min_prod_files": 2, "min_test_files": 1}},
                     }
                 ]
             },
@@ -337,9 +281,9 @@ class TestChiefEngineerHandoffGuards:
 
         assert result.status == "failed"
         review = json.loads(
-            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
-                encoding="utf-8"
-            )
+            Path(
+                resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")
+            ).read_text(encoding="utf-8")
         )
         signal = next(
             signal
@@ -960,7 +904,11 @@ class TestChiefEngineerHandoffGuards:
         assert calls[0].context["llm_max_tokens"] == 16_384
         assert calls[0].context["task_count"] == 2
         assert len(calls[0].context["pm_task_contract"]["tasks"]) == 2
-        review_path = Path(resolve_logical_path(tmp_path, "runtime/state/blueprints/factory-run-portfolio.review.json"))
+        review_path = Path(
+            resolve_logical_path(
+                tmp_path, "runtime/state/blueprints/factory-run-portfolio.review.json"
+            )
+        )
         review = json.loads(review_path.read_text(encoding="utf-8"))
         assert review["llm_call_count"] == 1
         assert review["generated_blueprints"] == 2
@@ -1049,7 +997,9 @@ class TestChiefEngineerHandoffGuards:
 
         assert result.status == "failed"
         review_path = Path(
-            resolve_logical_path(tmp_path, "runtime/state/blueprints/factory-run-timeout-projection.review.json")
+            resolve_logical_path(
+                tmp_path, "runtime/state/blueprints/factory-run-timeout-projection.review.json"
+            )
         )
         review = json.loads(review_path.read_text(encoding="utf-8"))
         assert review["generated_blueprints"] == 0
@@ -1251,7 +1201,9 @@ class TestChiefEngineerHandoffGuards:
 
         assert result.status == "failed"
         review_path = Path(
-            resolve_logical_path(tmp_path, "runtime/state/blueprints/factory-run-projection.review.json")
+            resolve_logical_path(
+                tmp_path, "runtime/state/blueprints/factory-run-projection.review.json"
+            )
         )
         review = json.loads(review_path.read_text(encoding="utf-8"))
         assert [signal["code"] for signal in review["signals"]] == [

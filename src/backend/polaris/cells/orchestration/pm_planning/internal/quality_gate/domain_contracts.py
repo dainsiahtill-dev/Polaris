@@ -149,6 +149,12 @@ _GO_CONTRACT_PATH_REWRITES = {
 _GO_LANGUAGE_TEXT_RE = re.compile(
     r"(?i)(?:\bprimary_language\s*=\s*go\b|用\s*go\s*实现|\bgo\s+(?:build|test|mod)\b|\.go\b)"
 )
+_GO_TOPOLOGY_NEGATION_RE = re.compile(r"(?i)(?:禁止|不得|不要|\bdo\s+not\b|\bdon't\b|\bavoid\b|\bwithout\b)")
+_GO_TOPOLOGY_CLAUSE_BOUNDARY_RE = re.compile(r"[。！？；;\n]+")
+_GO_DEFAULT_TOPOLOGY_PATH_RE = re.compile(
+    r"^(?:src/)?(?:models/model\.go|engine/engine\.go)$",
+    re.IGNORECASE,
+)
 _CARD3D_PM_DOMAIN_SCOPE_PATHS = {
     "client3d": "src/client/three-scene.ts",
     "table": "src/client/card-table.ts",
@@ -815,9 +821,15 @@ def _go_representative_file_for_scope(
         "入口" in lowered or "cli" in lowered or "terminal" in lowered or "entrypoint" in lowered
     ) and not _go_task_is_verification_only(task):
         return "main.go"
-    if "engine" in lowered or "引擎" in lowered:
+    if not _task_declares_ce_owned_topology(task) and _go_task_has_affirmative_topology_hint(
+        task,
+        ("engine", "引擎"),
+    ):
         return _go_engine_representative_file(prefer_src_layout=prefer_src_layout)
-    if "model" in lowered or "模型" in lowered:
+    if not _task_declares_ce_owned_topology(task) and _go_task_has_affirmative_topology_hint(
+        task,
+        ("model", "模型"),
+    ):
         return _go_model_representative_file(prefer_src_layout=prefer_src_layout)
     return ""
 
@@ -840,7 +852,6 @@ def _go_contract_task_text(task: dict[str, Any], *, include_acceptance: bool = T
 
 def _go_text_target_files_for_task(task: dict[str, Any]) -> list[str]:
     lowered = _go_contract_task_text(task).lower()
-    implementation_lowered = _go_contract_task_text(task, include_acceptance=False).lower()
     targets: list[str] = _extract_go_contract_file_paths_from_text(_go_contract_task_text(task))
     known_targets = _dedupe_paths(
         [
@@ -850,6 +861,9 @@ def _go_text_target_files_for_task(task: dict[str, Any]) -> list[str]:
         ]
     )
     prefer_src_layout = _go_contract_prefers_src_layout(task, known_targets)
+    ce_owns_topology = _task_declares_ce_owned_topology(task)
+    if ce_owns_topology:
+        targets = [path for path in targets if not _GO_DEFAULT_TOPOLOGY_PATH_RE.fullmatch(path)]
     if "go.mod" in lowered or (
         "go" in lowered and ("module" in lowered or "bootstrap" in lowered or "骨架" in lowered)
     ):
@@ -864,14 +878,22 @@ def _go_text_target_files_for_task(task: dict[str, Any]) -> list[str]:
         targets.append("scripts/qa.sh")
     if "seed" in lowered and ("spell" in lowered or "spells" in lowered or "咒语" in lowered):
         targets.append("seed/spells.json")
-    if ("src/models" in implementation_lowered or "models/" in implementation_lowered) and not (
-        _go_scope_has_existing_target("src/models", known_targets)
-        or _go_scope_has_existing_target("models", known_targets)
+    if (
+        not ce_owns_topology
+        and _go_task_has_affirmative_topology_hint(task, ("src/models", "models/"))
+        and not (
+            _go_scope_has_existing_target("src/models", known_targets)
+            or _go_scope_has_existing_target("models", known_targets)
+        )
     ):
         targets.append(_go_model_representative_file(prefer_src_layout=prefer_src_layout))
-    if ("src/engine" in implementation_lowered or "engine/" in implementation_lowered) and not (
-        _go_scope_has_existing_target("src/engine", known_targets)
-        or _go_scope_has_existing_target("engine", known_targets)
+    if (
+        not ce_owns_topology
+        and _go_task_has_affirmative_topology_hint(task, ("src/engine", "engine/"))
+        and not (
+            _go_scope_has_existing_target("src/engine", known_targets)
+            or _go_scope_has_existing_target("engine", known_targets)
+        )
     ):
         targets.append(_go_engine_representative_file(prefer_src_layout=prefer_src_layout))
     if "readme" in lowered or "文档" in lowered:
@@ -892,8 +914,39 @@ def _extract_go_contract_file_paths_from_text(text: str) -> list[str]:
             _normalize_path(match.group(0))
             for match in pattern.finditer(normalized_text)
             if not _is_go_foreign_file_path(match.group(0))
+            and not (
+                _GO_DEFAULT_TOPOLOGY_PATH_RE.fullmatch(_normalize_path(match.group(0)))
+                and _go_text_match_is_negated(normalized_text, match.start(), match.end())
+            )
         ]
     )
+
+
+def _task_declares_ce_owned_topology(task: dict[str, Any]) -> bool:
+    metadata = task.get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    return str(metadata.get("topology_authority") or "").strip() == "chief_engineer"
+
+
+def _go_task_has_affirmative_topology_hint(task: dict[str, Any], hints: tuple[str, ...]) -> bool:
+    text = _go_contract_task_text(task, include_acceptance=False).lower()
+    for clause in _GO_TOPOLOGY_CLAUSE_BOUNDARY_RE.split(text):
+        if any(hint in clause for hint in hints) and not _GO_TOPOLOGY_NEGATION_RE.search(clause):
+            return True
+    return False
+
+
+def _go_text_match_is_negated(text: str, start: int, end: int) -> bool:
+    clause_start = max(
+        (text.rfind(boundary, 0, start) for boundary in ("。", "！", "？", "；", ";", "\n")),
+        default=-1,
+    )
+    clause_ends = [
+        position for boundary in ("。", "！", "？", "；", ";", "\n") if (position := text.find(boundary, end)) >= 0
+    ]
+    clause_end = min(clause_ends, default=len(text))
+    return bool(_GO_TOPOLOGY_NEGATION_RE.search(text[clause_start + 1 : clause_end]))
 
 
 def _go_task_is_verification_only(task: dict[str, Any]) -> bool:
