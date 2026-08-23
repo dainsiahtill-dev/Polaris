@@ -1,0 +1,42 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-22-R21-DIRECTOR-AUTHORITY-PROJECTION-GAP",
+  "status": "FIXED_UNIT_VERIFIED_AWAITING_FRESH_E2E",
+  "severity": "P0",
+  "factory_run_id": "factory_98eaa01d17a6",
+  "workspace": "/tmp/factory-bench-l3-22-r21/workspaces/473d4159f347-c8205c8e417a055d/L3-22-5aaab9a81e5e829d/4c6a308d7c5fca9fbb7d9b34",
+  "symptom": "TASK-2 failed with director_no_materialized_changes and TASK-3 was dependency-blocked after TASK-1 wrote overlapping entrypoint scope.",
+  "dynamic_evidence": {
+    "task_1": "completed; changed_files=8; wrote root main.go as package musicbubble",
+    "task_2_tool_batch": "write_file(go.mod) semantic no-op; write_file(main.go) rejected as source_compile_regression; third sibling aborted",
+    "compile_error": "found packages musicbubble (bubble.go) and main (main.go) in the same Go directory",
+    "completion_authority": "main.go owner_task_id=TASK-2, go.mod owner_task_id=TASK-1",
+    "capability_drift": "TASK-1 JobToken still allowed main.go; TASK-2 and TASK-3 still allowed sibling-owned go.mod",
+    "final_request_gap": "Director snapshots omitted project_interface_contract/provider_declarations; CE declaration requiring package main was absent from the physical provider request"
+  },
+  "root_cause": "Task JobToken target projection unioned raw overlapping PM targets with CE-owned artifacts instead of removing sibling-owned paths, while Director handoff rendering omitted the CE project interface contract and task-local completion projection.",
+  "fixes": [
+    "Narrow JobToken target_files to PM paths not assigned to a sibling plus CE-owned artifacts.",
+    "Project task-local completion ownership/verifier authority into the Director handoff prompt.",
+    "Project relevant CE provider/consumer interface declarations into the Director handoff prompt."
+  ],
+  "files": [
+    "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_task_blueprint.py",
+    "src/backend/polaris/cells/roles/adapters/internal/director/adapter/_task_contract.py",
+    "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_public_contractsa.py",
+    "src/backend/polaris/cells/roles/adapters/tests/test_director_task_authority_projection.py"
+  ],
+  "verification": {
+    "pytest": "259 unique tests passed across CE public contract and Director handoff suites",
+    "ruff": "passed",
+    "mypy": "passed",
+    "frozen_r21_replay": {
+      "TASK-1": ["go.mod", "bubble.go", "classify.go", "errors.go", "gravity.go", "note.go", "physics.go"],
+      "TASK-2": ["main.go", "seed.go"],
+      "TASK-3": ["main_test.go", "README.md", "classify_test.go"],
+      "interface_evidence": "TASK-1/TASK-2/TASK-3 now receive the relevant bubbletea_physics_v1 package-main declaration"
+    }
+  },
+  "next_action": "Run fresh isolated L3-22 r22 with full budgets and verify final provider requests, materialization, QA, and entrypoint.",
+  "target_project_modified": false
+}

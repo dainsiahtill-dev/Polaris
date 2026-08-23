@@ -764,7 +764,9 @@ class _Mixin01:
             )
             raw_depth_contract = task.get("delivery_depth_contract") or metadata.get("delivery_depth_contract")
             delivery_depth_contract = dict(raw_depth_contract) if isinstance(raw_depth_contract, Mapping) else {}
-            primary_language = str(task.get("language") or delivery_depth_contract.get("language") or "").strip().lower()
+            primary_language = (
+                str(task.get("language") or delivery_depth_contract.get("language") or "").strip().lower()
+            )
             allowed_source_suffixes = chief_engineer_source_suffixes_for_language(primary_language)
             if topology_authority == "chief_engineer" and not allowed_source_suffixes:
                 raise _ChiefEngineerPortfolioAuthorityError(
@@ -1533,7 +1535,10 @@ class _Mixin01:
             payload,
             task_ids=tuple(task.task_id for task in tasks) or tuple(task_ids or ()),
         )
-        if errors or not tasks:
+        depth_compatible_errors = tuple(
+            error for error in errors if ".covered_obligation_ids reference unknown completion obligations:" in error
+        )
+        if len(depth_compatible_errors) != len(errors) or not tasks:
             return errors
         feasibility = project_chief_engineer_portfolio_delivery_depth_feasibility(
             payload,
@@ -1607,9 +1612,11 @@ class _Mixin01:
             "authoritative validated PM contracts, target_files, and scope_paths already attached to this request. "
             "Do not copy, quote, continue, or textually repair the previous malformed output; its bytes are "
             "intentionally excluded so corrupt placeholders and duplicated stream fragments cannot be replayed. "
-            "Preserve every validated PM task id and remain inside PM-authoritative scope. Return JSON only: no "
-            "markdown, prose, SESSION_PATCH wrapper, placeholder syntax, angle-bracket metavariables, comments, or "
-            "trailing fragments. Keep the response under 8,000 output tokens.\n\n"
+            "Preserve every validated PM task id and remain inside PM-authoritative scope. Call the required "
+            "submit_structured_role_output result-submission tool exactly once, with the complete portfolio object "
+            "as its arguments. Emit no assistant prose or raw JSON outside that tool call: no markdown, "
+            "SESSION_PATCH wrapper, placeholder syntax, angle-bracket metavariables, comments, or trailing "
+            "fragments. Keep the tool arguments under 8,000 output tokens.\n\n"
             "Required shape:\n"
             "- required top-level keys: construction_plan, project_completion_contract, risk_flags\n"
             "- construction_plan.task_plans: an object; it may be empty because exact PM task authority is "

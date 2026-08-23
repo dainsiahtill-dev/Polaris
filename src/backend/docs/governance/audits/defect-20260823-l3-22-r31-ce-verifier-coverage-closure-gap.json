@@ -1,0 +1,58 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "l3-22-r31-ce-verifier-coverage-closure-gap",
+  "recorded_at": "2026-08-23T09:29:19+08:00",
+  "status": "FIXED_TARGETED_GATES_PASSED_AWAITING_FRESH_R32",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "attempt": "r31",
+  "factory_run_id": "factory_49692322e629",
+  "workspace": "/tmp/factory-bench-l3-22-r31/workspaces/3d4fed988584-6699a5b2ecabe57d/L3-22-5aaab9a81e5e829d/bc6eb3853305302ce690d1eb",
+  "stage": "chief_engineer_review",
+  "symptom": "CE completed four physical structured-output calls and produced a schema-valid depth-complete portfolio with seven production files, two test files, and five invariants, but pre-freeze feasibility rejected it as lacking a shared production behavior invariant for cross-task tests. Director and QA never ran.",
+  "dynamic_evidence": {
+    "terminal_error_code": "blueprint_portfolio_behavior_contract_infeasible",
+    "terminal_hint": "cross-task test ownership lacks a shared production behavior invariant",
+    "frozen_candidate": "runtime/state/blueprints/semantic-repair/L3-22/factory_49692322e629/69d51da216b31b627f45edd0c91afb82d592810ab652ee4dba4bd2843547e867.json",
+    "candidate_depth": {
+      "required_production_artifacts": 7,
+      "required_test_artifacts": 2,
+      "shared_invariants": 5
+    },
+    "authoritative_chain": {
+      "invariant": "INV-1-DOMAIN-CONTRACTS",
+      "owner_task_id": "TASK-1",
+      "consumer_task_ids": ["TASK-2", "TASK-3"],
+      "covered_obligation_ids": ["ART-MAIN", "ENT-CLI", "VER-GO-TEST", "VER-ENTRYPOINT"],
+      "test_verifier": "VER-GO-TEST",
+      "test_verifier_covers": ["ART-MAIN-TEST", "ART-MORE-TEST-1", "ART-MAIN"]
+    },
+    "before_fix": "The feasibility gate intersected invariant coverage only with direct test artifact ids and ignored the canonical required test verifier's covers_obligation_ids closure.",
+    "after_exact_replay": "The persisted r31 candidate passes behavior feasibility when required test verifier coverage is expanded; no candidate bytes or target project files were changed."
+  },
+  "root_cause_class": "chief_engineer_behavior_feasibility_ignored_required_test_verifier_coverage",
+  "root_cause": "The completion contract allows a behavior invariant to cover an exact verification obligation. The required test verifier is authoritative evidence and names the exact test artifacts it covers. Pre-freeze feasibility nevertheless required every invariant to duplicate direct test artifact ids, so a complete invariant -> required test verifier -> test artifacts chain was falsely treated as absent.",
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/chief_engineer/blueprint/internal/portfolio_behavior_feasibility.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/internal/tests/test_portfolio_behavior_feasibility.py"
+    ],
+    "behavior": [
+      "For cross-task test linkage only, expand an invariant's covered ids through canonical required test verifier covers_obligation_ids.",
+      "Do not expand build, lint, entrypoint, optional, or not-applicable verifiers as test evidence.",
+      "Continue rejecting unknown verifier ids and portfolios with no actual test artifact coverage."
+    ]
+  },
+  "verification": {
+    "tdd_red": "Required-test-verifier indirect coverage failed before implementation; non-test-verifier negative control passed.",
+    "tdd_green": "Both verifier closure tests and all behavior feasibility tests passed.",
+    "exact_r31_replay": "Persisted final candidate passes validate_portfolio_behavior_feasibility through VER-GO-TEST closure.",
+    "behavior_pytest": "6 passed",
+    "public_contract_pytest": "176 passed",
+    "semantic_repair_pytest": "52 passed",
+    "ruff": "All checks passed",
+    "mypy": "Success: no issues found in 1 source file"
+  },
+  "target_project_modified": false,
+  "next_action": "Stop the r31 isolated backend and run fresh isolated L3-22 r32. Dynamically attribute the first new residual before editing."
+}

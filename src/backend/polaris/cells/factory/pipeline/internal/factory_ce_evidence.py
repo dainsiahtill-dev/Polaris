@@ -353,6 +353,7 @@ def chief_engineer_portfolio_output_errors(
             errors.append("project_interface_contract.provider_declarations must be an array")
         if not isinstance(consumers, list):
             errors.append("project_interface_contract.consumer_declarations must be an array")
+    behavior_obligation_refs: list[tuple[int, tuple[str, ...]]] = []
     behavior_contract = construction_plan.get("shared_behavior_contract")
     if not isinstance(behavior_contract, Mapping):
         errors.append("construction_plan.shared_behavior_contract must be an object")
@@ -381,7 +382,7 @@ def chief_engineer_portfolio_output_errors(
                         for example in raw_examples
                         if isinstance(example, Mapping)
                     )
-                    ChiefEngineerBehaviorInvariantV1(
+                    parsed_invariant = ChiefEngineerBehaviorInvariantV1(
                         invariant_id=str(invariant.get("invariant_id") or ""),
                         statement=str(invariant.get("statement") or ""),
                         owner_task_id=str(invariant.get("owner_task_id") or ""),
@@ -397,6 +398,7 @@ def chief_engineer_portfolio_output_errors(
                         ),
                         verification_examples=examples,
                     )
+                    behavior_obligation_refs.append((index, parsed_invariant.covered_obligation_ids))
                 except (TypeError, ValueError) as exc:
                     errors.append(f"shared_behavior_contract.invariants[{index}] invalid: {exc}")
     if "scope_for_apply" in payload and not isinstance(payload.get("scope_for_apply"), list):
@@ -411,7 +413,30 @@ def chief_engineer_portfolio_output_errors(
         if not isinstance(obligations, Mapping):
             errors.append("project_completion_contract.obligations must be an object")
         else:
+            completion_obligation_ids: set[str] = set()
+            completion_cross_refs_valid = True
             for field in ("artifacts", "entrypoints", "verification"):
-                if not isinstance(obligations.get(field), list):
+                rows = obligations.get(field)
+                if not isinstance(rows, list):
                     errors.append(f"project_completion_contract.obligations.{field} must be an array")
+                    completion_cross_refs_valid = False
+                    continue
+                for row in rows:
+                    if not isinstance(row, Mapping):
+                        completion_cross_refs_valid = False
+                        continue
+                    obligation_id = str(row.get("obligation_id") or "").strip()
+                    if not obligation_id:
+                        completion_cross_refs_valid = False
+                        continue
+                    completion_obligation_ids.add(obligation_id)
+            if completion_cross_refs_valid:
+                for index, covered_ids in behavior_obligation_refs:
+                    unknown_ids = sorted(set(covered_ids) - completion_obligation_ids)
+                    if unknown_ids:
+                        errors.append(
+                            "shared_behavior_contract.invariants"
+                            f"[{index}].covered_obligation_ids reference unknown completion obligations: "
+                            + ", ".join(unknown_ids)
+                        )
     return errors

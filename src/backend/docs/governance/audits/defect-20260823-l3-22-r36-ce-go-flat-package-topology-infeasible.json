@@ -1,0 +1,71 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-22-r36-ce-go-flat-package-topology-infeasible",
+  "status": "FIX_STAGED_unit_verified_live_blocked_by_distinct_r37_ce_failure",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "factory_run_id": "factory_b89e3d50a27c",
+  "workspace": "/tmp/factory-bench-l3-22-r36/workspaces/faac37bb7b27-b97810fbe792f8ee/L3-22-5aaab9a81e5e829d/3319fc0aacd7567869c42798",
+  "context_snapshot_ref": "5cd14c6878ed1eedbe30e932",
+  "symptom": {
+    "factory_stage": "quality_gate",
+    "runner_exit_code": 1,
+    "prod_files": 7,
+    "prod_lines": 750,
+    "test_files": 2,
+    "go_test_errors": [
+      "main.go:12:2: package musicbubbles/sandbox is not in std",
+      "found packages main (bubble.go) and sandbox (note.go) in workspace"
+    ]
+  },
+  "exact_run_evidence": {
+    "pm_contract_present": true,
+    "chief_engineer_blueprints_generated": "3/3",
+    "director_final_request_role": "director",
+    "director_final_request_tools_present": true,
+    "director_final_request_pm_contract_present": true,
+    "director_final_request_ce_blueprint_present": true,
+    "director_final_request_actual_sibling_exports_present": true,
+    "director_task_3_physical_tool_calls": 4,
+    "director_materialized_tests_and_docs": true,
+    "taskruntime_event_stream_bounded": true,
+    "target_project_modified_by_auditor": false
+  },
+  "root_cause": {
+    "owner_cell": "chief_engineer.blueprint",
+    "classification": "immutable_ce_topology_contract_infeasible",
+    "detail": "The CE portfolio requires a flat root Go layout containing main.go and all production .go files while also declaring module musicbubbles/sandbox without an explicit same-directory package invariant. Director split the flat root into package main and package sandbox and made main.go import the module root, which Go rejects.",
+    "not_root_causes": [
+      "missing Director context",
+      "missing Director tools",
+      "QA strictness",
+      "weak model",
+      "target project baseline"
+    ]
+  },
+  "repair_behavior": {
+    "attempted": true,
+    "observed": "QA physically edited package declarations but alternated between package main and package sandbox without reducing the two-error topology contradiction.",
+    "convergence_stop_reason": "three_nonprogress_repairs_without_verified_progress",
+    "why_repair_cannot_author_topology": "Repair cannot safely choose between two contradictory layouts because CE immutable authority did not choose one executable package topology."
+  },
+  "repair_coverage": {
+    "module_import_error": "executable_runtime",
+    "mixed_package_error": "coverage_gap",
+    "decision": "Prevent the infeasible portfolio in chief_engineer.blueprint before adding any Director regex rule."
+  },
+  "planned_fix": {
+    "scope": [
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_public_contractsa.py"
+    ],
+    "invariant": "When PM-authoritative Go production targets and main.go share one directory, CE must project an explicit package-main/no-self-import topology constraint into the shared project interface contract consumed by every Director task.",
+    "unit_evidence": "178 CE public contract tests passed; ruff, mypy, diff-check passed",
+    "next_fresh_run": "L3-22-r37"
+  },
+  "secondary_residual": {
+    "classification": "taskruntime_owner_row_read_amplification",
+    "evidence": "TaskRuntime event file stayed bounded near 2 MB, but owner rows retained multi-megabyte audit payloads and backend reread volume approached 10 GB during the run.",
+    "blocking_current_fix": false
+  }
+}

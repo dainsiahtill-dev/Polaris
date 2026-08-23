@@ -176,6 +176,7 @@ async def execute_non_stream_role_turn(
                 max_retries=max_retries,
                 last_error=last_error,
                 has_tool_activity=bool(te_result.tool_calls or te_result.tool_results),
+                structured_output_context=request.context_override,
             )
             last_validation = quality_result
             if isinstance(quality_result.data, dict):

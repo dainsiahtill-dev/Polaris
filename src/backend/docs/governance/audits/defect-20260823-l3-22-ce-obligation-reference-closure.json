@@ -1,0 +1,79 @@
+{
+  "schema_version": "polaris.defect-manifest.v1",
+  "defect_id": "DEFECT-20260823-L3-22-CE-OBLIGATION-REFERENCE-CLOSURE",
+  "status": "FIXED_EXACT_REPLAY_GREEN_FRESH_R21_PENDING",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "generated_project_modified": false,
+  "exact_runs": [
+    {
+      "factory_run_id": "factory_03ef4179dce1",
+      "attempt": "r19",
+      "terminal_stage": "chief_engineer_review",
+      "root_cause": "declared behavior participants were missing from redundant task-local bindings"
+    },
+    {
+      "factory_run_id": "factory_c22024b8bad2",
+      "attempt": "r20",
+      "terminal_stage": "chief_engineer_review",
+      "root_cause": "schema-valid behavior invariants referenced completion obligation ids absent from artifacts and entrypoints"
+    }
+  ],
+  "symptom": {
+    "r20_terminal_error": "chief_engineer.semantic_patch_invalid:ValueError:behavior invariant references unknown completion obligations",
+    "director_reached": false,
+    "source_files_materialized": 0
+  },
+  "root_cause": {
+    "owner": "factory.pipeline",
+    "code": "chief_engineer_portfolio_output_cross_reference_validation_missing",
+    "details": [
+      "Transport validation checked invariant DTO shape but not covered_obligation_ids closure.",
+      "Delivery-depth diagnosis therefore authorized artifact_upsert only.",
+      "The composer preserved the invalid pre-existing invariants and failed after the provider patch."
+    ]
+  },
+  "repair": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_ce_evidence.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_01.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_ce_handoff.py"
+    ],
+    "rules": [
+      "Validate every behavior invariant covered_obligation_ids value against artifact and entrypoint obligation ids before semantic diagnosis.",
+      "Preserve simultaneous delivery-depth diagnostics when the only pre-existing output errors are repairable obligation-reference failures.",
+      "Authorize behavior_invariant_upsert, task_behavior_ref_replace, and artifact_upsert in one bounded typed patch when both defect classes exist."
+    ]
+  },
+  "exact_replay": {
+    "candidate_hash": "86d45f7c2263c13fe8d468b208ed5f33b74446a124b68cba08badf81d40c0454",
+    "unknown_obligation_ids": [
+      "OBL-BEHAVIOR-TESTS",
+      "OBL-CORE-RULES",
+      "OBL-ENTRYPOINT"
+    ],
+    "additional_depth_error": "project_completion_contract delivery depth infeasible: prod_files=5 < 7",
+    "diagnostic_codes": [
+      "chief_engineer.shared_behavior_contract.invalid",
+      "chief_engineer.delivery_depth.prod_files_below_minimum"
+    ],
+    "allowed_operations": [
+      "behavior_invariant_upsert",
+      "task_behavior_ref_replace",
+      "artifact_upsert"
+    ]
+  },
+  "validation": {
+    "tdd": "new regression test failed before implementation and passed after implementation",
+    "focused_tests": "351 passed",
+    "ruff": "clean",
+    "mypy": "clean",
+    "fresh_isolated_bench": "r21 pending"
+  },
+  "constraints": [
+    "Never modify the generated L3-22 project.",
+    "Do not map conceptual obligation ids to physical obligation ids without typed provider repair.",
+    "Do not weaken delivery-depth minimums or behavior-contract feasibility.",
+    "Do not restart closed earlier projects."
+  ]
+}

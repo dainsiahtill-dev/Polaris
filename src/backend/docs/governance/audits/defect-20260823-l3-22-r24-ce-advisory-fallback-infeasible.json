@@ -1,0 +1,54 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "l3-22-r24-ce-advisory-fallback-infeasible",
+  "recorded_at": "2026-08-23T07:55:00+08:00",
+  "status": "FIX_TARGETED_GATES_PASSED_AWAITING_FRESH_E2E",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "attempt": "r24",
+  "factory_run_id": "factory_b667609fcfad",
+  "workspace": "/tmp/factory-bench-l3-22-r24/workspaces/ade3f4b3c362-80d9828ef3a6d783/L3-22-5aaab9a81e5e829d/32e83b2548397abd0bb4a35a",
+  "stage": "chief_engineer_review",
+  "symptom": "chief_engineer.advisory_projection_fallback_infeasible after a final schema candidate entered semantic repair",
+  "signals": [
+    "primary structured output content was invalid JSON",
+    "schema repair omitted project_completion_contract",
+    "final schema candidate referenced hallucinated ART-main_test.go and valid VER-go-test obligations",
+    "Factory and semantic-repair authority sets omitted verification obligations and therefore falsely rejected VER-go-test",
+    "the schema-valid candidate normalizer did not remove a mixed unknown alias when valid completion obligations remained",
+    "the resulting fourth provider call returned prose instead of the forced submit_structured_role_output tool call",
+    "advisory fallback was correctly rejected as infeasible"
+  ],
+  "candidate_hash": "15fd8c7d0257aade7535736b2158d3cb49b075ad33bd2922f1f5e78c8e2490cb",
+  "diagnosis_hash": "6ee82df7255c01a90c25f0f07fc6c29d73d78984a536f201675b9476fb2283be",
+  "semantic_repair_context_snapshot_ref": "7c0895ec842523b314a3088d",
+  "fallback_context_snapshot_ref": "6581acaafe098019e907eea4",
+  "root_cause_class": "chief_engineer_completion_obligation_authority_and_structural_normalization",
+  "root_cause": "Verification obligations were excluded from two completion-obligation authority sets, so valid VER-go-test references were mislabeled unknown. The schema-valid portfolio normalizer also lacked a content-preserving rule for a mixed set containing valid artifact/verification refs plus a hallucinated alias. This forced an avoidable semantic-repair provider call; that call returned prose with no tool call and the fallback correctly failed closed.",
+  "fixes": [
+    {
+      "file": "src/backend/polaris/cells/factory/pipeline/internal/factory_ce_evidence.py",
+      "change": "Treat artifact, entrypoint, and verification obligation ids as one completion cross-reference authority set."
+    },
+    {
+      "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+      "change": "Include verification ids in semantic-repair composition and remove only unknown behavior obligation aliases when at least one valid reference remains; all-unknown sets remain unchanged for the semantic gate."
+    }
+  ],
+  "exact_candidate_replay": {
+    "repair_codes": [
+      "remove_unknown_behavior_obligation_refs"
+    ],
+    "semantic_errors_before": 4,
+    "semantic_errors_after": 0,
+    "removed_alias": "ART-main_test.go",
+    "preserved_valid_reference": "VER-go-test"
+  },
+  "validation": [
+    "92 passed: chief_engineer semantic repair plus Factory CE handoff characterization",
+    "ruff passed for four changed source/test files",
+    "mypy passed for the two changed source files"
+  ],
+  "target_project_modified": false,
+  "next_action": "Run fresh isolated L3-22 r25; confirm the final schema candidate no longer triggers the avoidable semantic repair and advance to the next exact boundary."
+}

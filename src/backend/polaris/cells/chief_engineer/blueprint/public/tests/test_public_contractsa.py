@@ -43,10 +43,76 @@ from polaris.cells.chief_engineer.blueprint.public.service import (
     query_project_completion_contract,
     validate_director_handoff_from_payload,
 )
+from polaris.cells.chief_engineer.blueprint.public.service._task_blueprint import (
+    _job_token_target_files,
+)
 from polaris.cells.control_plane.run_ledger.public import stable_hash
 
 _PM_CONTRACT_HASH = "a" * 64
 _VERIFIER_POLICY_HASH = "b" * 64
+
+
+def test_job_token_target_files_excludes_sibling_owned_pm_overlap(tmp_path: Path) -> None:
+    """Completion ownership narrows overlapping PM targets before Director writes."""
+
+    tasks = (
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-A",
+            objective="Implement the core package",
+            target_files=("go.mod", "main.go", "bubble.go"),
+        ),
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-B",
+            objective="Implement the executable entrypoint",
+            target_files=("go.mod", "main.go", "seed.go"),
+            dependencies=("TASK-A",),
+        ),
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-C",
+            objective="Verify the application",
+            target_files=("main_test.go", "go.mod"),
+            dependencies=("TASK-B",),
+        ),
+    )
+    requirements = _library_completion_requirements(
+        "go.mod",
+        "main.go",
+        "bubble.go",
+        "seed.go",
+        owner_task_ids=("TASK-A", "TASK-B", "TASK-A", "TASK-B"),
+        test_path="main_test.go",
+        test_owner_task_id="TASK-C",
+    )
+    portfolio = build_chief_engineer_blueprint_portfolio(
+        BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-overlapping-pm-targets",
+            tasks=tasks,
+            **_portfolio_command_authority(
+                tasks=tasks,
+                project_kind="library",
+                workspace=tmp_path,
+                run_id="run-overlapping-pm-targets",
+            ),
+            llm_blueprint={
+                "construction_plan": {"project_interface_contract": {}},
+                "project_completion_contract": requirements,
+                "risk_flags": [],
+            },
+        )
+    )
+    projection = portfolio.to_task_blueprint_context()
+
+    assert _job_token_target_files(
+        task_id="TASK-A",
+        pm_target_files=["go.mod", "main.go", "bubble.go"],
+        portfolio_projection=projection,
+    ) == ["go.mod", "bubble.go"]
+    assert _job_token_target_files(
+        task_id="TASK-B",
+        pm_target_files=["go.mod", "main.go", "seed.go"],
+        portfolio_projection=projection,
+    ) == ["main.go", "seed.go"]
 
 
 def _command_authority(
@@ -331,6 +397,52 @@ def _blueprint_provenance_snapshot_kwargs() -> dict:
         "pm_task_canonical_hash": stable_hash(_pm_task_payload()),
         "target_files": ("src/main.py", "tests/test_main.py"),
     }
+
+
+def _canonical_provenance_completion_contract(
+    tmp_path: Path,
+    *,
+    test_owner_task_id: str,
+) -> dict:
+    tasks = (
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-A",
+            objective="Implement the application source",
+            target_files=("src/main.py", "tests/test_main.py"),
+        ),
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-B",
+            objective="Verify the application",
+            target_files=("tests/test_main.py",),
+            dependencies=("TASK-A",),
+        ),
+    )
+    requirements = _library_completion_requirements(
+        "src/main.py",
+        owner_task_ids=("TASK-A",),
+        test_path="tests/test_main.py",
+        test_owner_task_id=test_owner_task_id,
+    )
+    portfolio = build_chief_engineer_blueprint_portfolio(
+        BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id=f"run-provenance-{test_owner_task_id.lower()}",
+            tasks=tasks,
+            **_portfolio_command_authority(
+                tasks=tasks,
+                project_kind="library",
+                workspace=tmp_path,
+                run_id=f"run-provenance-{test_owner_task_id.lower()}",
+            ),
+            llm_blueprint={
+                "construction_plan": {"project_interface_contract": {}},
+                "project_completion_contract": requirements,
+                "risk_flags": [],
+            },
+        )
+    )
+    assert portfolio.project_completion_contract is not None
+    return portfolio.project_completion_contract.to_dict()
 
 
 class TestGovernanceEnumFailClosed:
@@ -946,6 +1058,167 @@ class TestChiefEngineerBlueprintPortfolio:
         assert environment_verifier.applicability == "required"
         assert environment_verifier.command_authority_hash is not None
 
+    def test_all_filtered_ce_entrypoints_fall_back_to_pm_entrypoint_authority(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Invalid CE entrypoint advice must not erase the executable PM contract."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Build the application entrypoint",
+                target_files=("src/main.py",),
+                scope_paths=("src/main.py",),
+                entrypoint_targets=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build the application tests",
+                target_files=("tests/test_main.py",),
+                scope_paths=("tests/test_main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        requirements["obligations"]["entrypoints"] = [
+            {
+                "obligation_id": "entrypoint-unowned-ce-advisory",
+                "kind": "cli",
+                "applicability": "required",
+                "owner_task_id": "TASK-A",
+                "source_path": "cmd/generated/main.py",
+                "runtime_path": "cmd/generated/main.py",
+                "command": "python -m cmd.generated",
+            }
+        ]
+
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-filtered-entrypoint-fallback",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-filtered-entrypoint-fallback",
+                ),
+                llm_blueprint={
+                    "construction_plan": {"implementation": ["Build the application"]},
+                    "project_completion_contract": requirements,
+                },
+            )
+        )
+
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        assert [item.source_path for item in completion.obligations.entrypoints] == ["src/main.py"]
+        assert [item.command for item in completion.obligations.entrypoints] == ["python -m src.main"]
+
+    def test_flat_go_entrypoint_projects_one_package_topology_for_every_task(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A root Go CLI cannot split one directory across two packages."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Build the music bubble domain",
+                target_files=("go.mod", "bubble.go", "note.go"),
+                scope_paths=("go.mod", "bubble.go", "note.go"),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build the executable sandbox",
+                target_files=("main.go", "sandbox.go", "main_test.go"),
+                scope_paths=("main.go", "sandbox.go", "main_test.go"),
+                entrypoint_targets=("main.go",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        requirements["obligations"]["artifacts"] = [
+            {
+                "obligation_id": "artifact-main",
+                "path": "go.mod",
+                "semantic_role": "manifest",
+                "applicability": "required",
+                "owner_task_id": "TASK-A",
+            },
+            {
+                "obligation_id": "artifact-entrypoint",
+                "path": "main.go",
+                "semantic_role": "entrypoint",
+                "applicability": "required",
+                "owner_task_id": "TASK-B",
+            },
+            {
+                "obligation_id": "artifact-tests",
+                "path": "main_test.go",
+                "semantic_role": "test",
+                "applicability": "required",
+                "owner_task_id": "TASK-B",
+            },
+        ]
+        requirements["obligations"]["entrypoints"] = [
+            {
+                "obligation_id": "entrypoint-main",
+                "kind": "cli",
+                "applicability": "required",
+                "owner_task_id": "TASK-B",
+                "source_path": "main.go",
+                "runtime_path": "main.go",
+                "command": "go run .",
+            }
+        ]
+        requirements["obligations"]["verification"][2].update(
+            {
+                "owner_task_id": "TASK-B",
+                "command_authority_hash": _command_authority(
+                    "TASK-B", "entrypoint", ("python", "-m", "src.main")
+                ).authority_hash,
+            }
+        )
+
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-flat-go-package-topology",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-flat-go-package-topology",
+                ),
+                llm_blueprint={
+                    "construction_plan": {
+                        "project_interface_contract": {
+                            "provider_declarations": [
+                                {
+                                    "provider_file": "go.mod",
+                                    "semantic_role": "manifest",
+                                    "symbol": "module",
+                                    "symbol_kind": "declaration",
+                                    "signature": "module musicbubbles/sandbox",
+                                }
+                            ]
+                        }
+                    },
+                    "project_completion_contract": requirements,
+                },
+            )
+        )
+
+        declarations = portfolio.project_interface_contract.provider_declarations
+        topology = [item for item in declarations if item.get("semantic_role") == "package_topology"]
+        assert len(topology) == 1
+        assert topology[0]["provider_file"] == "main.go"
+        assert topology[0]["symbol"] == "package main"
+        assert "bubble.go" in topology[0]["signature"]
+        assert "sandbox.go" in topology[0]["signature"]
+        assert "must not import module root musicbubbles/sandbox" in topology[0]["signature"]
+
     def test_empty_ce_artifacts_project_exact_pm_targets(self, tmp_path: Path) -> None:
         """Empty CE artifact advice must not erase exact PM delivery authority."""
 
@@ -1496,12 +1769,9 @@ class TestChiefEngineerBlueprintPortfolio:
 
         completion = portfolio.project_completion_contract
         assert completion is not None
-        assert "src/dream_subway/domain.py" not in {
-            item.path for item in completion.obligations.artifacts
-        }
+        assert "src/dream_subway/domain.py" not in {item.path for item in completion.obligations.artifacts}
         assert any(
-            item.path == "src/dream_subway/__main__.py"
-            and item.semantic_role == "entrypoint"
+            item.path == "src/dream_subway/__main__.py" and item.semantic_role == "entrypoint"
             for item in completion.obligations.artifacts
         )
 
@@ -3456,6 +3726,72 @@ class TestQueryBlueprintProvenanceV1:
             "include/wind/entity.hpp",
         ]
 
+    def test_ce_topology_may_delegate_repeated_pm_target_to_sibling_owner(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        pm_task = _pm_task_payload()
+        pm_task["id"] = "TASK-A"
+        pm_task["metadata"] = {"topology_authority": "chief_engineer"}
+        completion_contract = _canonical_provenance_completion_contract(
+            tmp_path,
+            test_owner_task_id="TASK-B",
+        )
+        payload = _blueprint_provenance_payload()
+        payload["task_id"] = "TASK-A"
+        payload["blueprint_id"] = "ce_TASK-A_20260718010101000000"
+        payload["pm_task"] = pm_task
+        payload["pm_contract_hash"] = stable_hash(_producer_v1_hashable(pm_task))
+        payload["target_files"] = ["src/main.py"]
+        payload["project_completion_contract"] = completion_contract
+        payload["blueprint_hash"] = stable_hash(_producer_v1_hashable(payload))
+        query = QueryBlueprintProvenanceV1(
+            blueprint=payload,
+            expected_pm_task=pm_task,
+            expected_factory_run_id="factory-run-1",
+            expected_task_id="TASK-A",
+            expected_blueprint_id="ce_TASK-A_20260718010101000000",
+            expected_logical_path="runtime/blueprints/ce_TASK-A_20260718010101000000.json",
+        )
+
+        snapshot = query_blueprint_provenance(query)
+
+        assert snapshot.matches is True
+        assert list(snapshot.target_files) == ["src/main.py"]
+
+    def test_ce_topology_cannot_drop_pm_target_owned_by_current_task(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        pm_task = _pm_task_payload()
+        pm_task["id"] = "TASK-A"
+        pm_task["metadata"] = {"topology_authority": "chief_engineer"}
+        completion_contract = _canonical_provenance_completion_contract(
+            tmp_path,
+            test_owner_task_id="TASK-A",
+        )
+        payload = _blueprint_provenance_payload()
+        payload["task_id"] = "TASK-A"
+        payload["blueprint_id"] = "ce_TASK-A_20260718010101000000"
+        payload["pm_task"] = pm_task
+        payload["pm_contract_hash"] = stable_hash(_producer_v1_hashable(pm_task))
+        payload["target_files"] = ["src/main.py"]
+        payload["project_completion_contract"] = completion_contract
+        payload["blueprint_hash"] = stable_hash(_producer_v1_hashable(payload))
+        query = QueryBlueprintProvenanceV1(
+            blueprint=payload,
+            expected_pm_task=pm_task,
+            expected_factory_run_id="factory-run-1",
+            expected_task_id="TASK-A",
+            expected_blueprint_id="ce_TASK-A_20260718010101000000",
+            expected_logical_path="runtime/blueprints/ce_TASK-A_20260718010101000000.json",
+        )
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            query_blueprint_provenance(query)
+
+        assert exc_info.value.code == "blueprint_provenance_target_files_mismatch"
+
     def test_ce_owned_topology_requires_named_source_files(self) -> None:
         pm_task = _pm_task_payload()
         pm_task["target_files"] = ["CMakeLists.txt", "README.md"]
@@ -3937,3 +4273,36 @@ def test_shared_behavior_contract_is_hashed_and_projected_to_every_linked_task(t
     context = portfolio.to_task_blueprint_context()
     assert context["shared_behavior_contract"] == contract.to_dict()
     assert context["shared_behavior_contract_ref"].endswith("#shared_behavior_contract")
+
+
+def test_shared_behavior_participants_close_missing_task_local_refs(tmp_path: Path) -> None:
+    """Invariant owner/consumer authority closes an omitted redundant task ref.
+
+    The participant list is already the CE-authored semantic authority.  A
+    provider may omit a task-local advisory plan while still declaring that
+    task as an invariant consumer; the owner must project the declared binding
+    instead of rejecting the otherwise complete portfolio.
+    """
+
+    tasks = _cross_task_behavior_tasks()
+    blueprint = _cross_task_behavior_blueprint(include_invariant=True)
+    del blueprint["construction_plan"]["task_plans"]["TASK-B"]
+    command = BuildChiefEngineerBlueprintPortfolioCommandV1(
+        workspace=str(tmp_path),
+        run_id="run-behavior-participant-closure",
+        tasks=tasks,
+        **_portfolio_command_authority(
+            tasks=tasks,
+            workspace=tmp_path,
+            run_id="run-behavior-participant-closure",
+        ),
+        llm_blueprint=blueprint,
+    )
+
+    portfolio = build_chief_engineer_blueprint_portfolio(command)
+
+    assert portfolio.shared_behavior_contract is not None
+    assert portfolio.shared_behavior_contract.task_bindings == {
+        "TASK-A": ("behavior-coordinate-floor",),
+        "TASK-B": ("behavior-coordinate-floor",),
+    }

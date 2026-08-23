@@ -1,0 +1,39 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "l3-22-r25-ce-repair-composer-baseline-self-lock",
+  "recorded_at": "2026-08-23T08:22:00+08:00",
+  "status": "FIXED_TARGETED_GATES_PASSED_AWAITING_FRESH_R26",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "attempt": "r25",
+  "factory_run_id": "factory_365c8ac96786",
+  "workspace": "/tmp/factory-bench-l3-22-r25/workspaces/b151563ffa0c-a4f8455c15baf1d4/L3-22-5aaab9a81e5e829d/c1aeed47918040dcbcdbb4c9",
+  "stage": "chief_engineer_review",
+  "symptom": "chief_engineer.semantic_repair_exhausted after a schema-valid semantic patch was parsed",
+  "candidate_hash": "92c92016895f5d4bb4e38c378e0b9fddebda4b2a04156432efa1925856880df5",
+  "diagnosis_hash": "39349f719f641a979e7ee8ee18a19becf6ae7f0505347c8590729503299a2c35",
+  "final_context_snapshot_ref": "eb4741784b59284809fa6bdf",
+  "dynamic_evidence": [
+    "primary candidate contained semantic-invalid shared invariants but was structurally schema-valid",
+    "first semantic patch was rejected because an owner-only invariant became an empty consumer set",
+    "second semantic patch produced one native submit_structured_role_output tool call",
+    "ChiefEngineerSemanticRepairPatchV1.from_provider_dict removed owner self-references where external consumers remained",
+    "compose_chief_engineer_semantic_repair failed before applying upserts while strictly rehydrating the invalid baseline invariant rows"
+  ],
+  "root_cause_class": "chief_engineer_semantic_repair_composer_ordering",
+  "root_cause": "compose_chief_engineer_semantic_repair calls _behavior_from_row on every frozen baseline invariant before _replace_by_id applies diagnosis-authorized typed upserts. A semantic repair candidate is intentionally allowed to contain the diagnosed semantic defect, so strict baseline DTO construction makes the repair path unable to replace the defect it was created to repair.",
+  "required_fix": "Preserve baseline behavior rows as raw schema-valid mappings until diagnosis-authorized upserts replace matching ids, then validate the composed candidate through existing owner/task/obligation checks and the Factory semantic validator.",
+  "target_project_modified": false,
+  "fix": {
+    "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+    "behavior": "Preserve raw schema-valid baseline invariant rows until diagnosis-authorized typed upserts replace matching ids; strict owner/task/obligation validation still runs on the composed result."
+  },
+  "verification": {
+    "red_test": "test_behavior_patch_replaces_invalid_baseline_before_strict_rehydration failed with consumer_task_ids must not contain owner_task_id before the fix",
+    "exact_replay": "The exact r25 final provider patch advanced past baseline rehydration after the fix and exposed the next independent unknown-obligation residual.",
+    "targeted_pytest": "95 passed",
+    "ruff": "All checks passed",
+    "mypy": "Success: no issues found in 2 source files"
+  },
+  "next_action": "Fresh isolated L3-22 r26 after the separately recorded r25 structural-normalization residual is closed."
+}

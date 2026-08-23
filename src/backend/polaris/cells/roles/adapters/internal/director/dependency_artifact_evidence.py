@@ -106,14 +106,17 @@ def _normalized_relative_path(value: Any) -> str:
 def _dependency_task_ids(child_task: Mapping[str, Any]) -> list[str]:
     metadata = _mapping(child_task.get("metadata"))
     containers = (metadata, _mapping(metadata.get("task_context")), dict(child_task))
-    for container in containers:
-        for key in (
-            "resolved_depends_on_task_ids",
-            "depends_on_task_ids",
-            "depends_on_external",
-            "dependency_task_ids",
-            "depends_on",
-        ):
+    # Frozen PM/CE external ids are the durable dependency authority. Runtime
+    # ids can be reminted or drained between the initial Director turn and a
+    # quality-repair turn, so they are only a last-resort lookup alias.
+    for key in (
+        "depends_on_external",
+        "dependency_task_ids",
+        "depends_on",
+        "depends_on_task_ids",
+        "resolved_depends_on_task_ids",
+    ):
+        for container in containers:
             values = _text_list(container.get(key))
             if values:
                 if len(values) > _MAX_PARENT_TASKS:
@@ -500,16 +503,23 @@ def build_director_dependency_artifact_snapshot(
             "dependency artifact workspace must be a non-empty absolute path",
             workspace=workspace,
         )
-    dependency_ids = _dependency_task_ids(child_task)
-    if not dependency_ids:
+    direct_dependency_ids = _dependency_task_ids(child_task)
+    if not direct_dependency_ids:
         return None
 
     modules: list[dict[str, Any]] = []
     uncovered_artifacts: list[dict[str, str]] = []
+    dependency_ids: list[str] = []
     covered_parent_ids: list[str] = []
     zero_artifact_parent_ids: list[str] = []
+    visited_parent_aliases: set[str] = set()
+    module_paths_seen: set[str] = set()
+    pending_dependency_ids = list(direct_dependency_ids)
     total_bytes = 0
-    for dependency_id in dependency_ids:
+    while pending_dependency_ids:
+        dependency_id = pending_dependency_ids.pop(0)
+        if dependency_id in visited_parent_aliases:
+            continue
         parent = get_task(dependency_id)
         if not isinstance(parent, dict):
             raise _fail(
@@ -526,6 +536,22 @@ def build_director_dependency_artifact_snapshot(
                 runtime_task_id=runtime_id,
                 external_task_id=external_id,
             )
+        parent_aliases = {token for token in (dependency_id, runtime_id, external_id) if token}
+        if visited_parent_aliases.intersection(parent_aliases):
+            visited_parent_aliases.update(parent_aliases)
+            continue
+        if len(dependency_ids) >= _MAX_PARENT_TASKS:
+            raise _fail(
+                "dependency_artifact_parent_budget_exceeded",
+                "transitive dependency task count exceeds the hard parent budget",
+                count=len(dependency_ids) + 1,
+                maximum=_MAX_PARENT_TASKS,
+            )
+        dependency_ids.append(dependency_id)
+        visited_parent_aliases.update(parent_aliases)
+        for ancestor_id in _dependency_task_ids(parent):
+            if ancestor_id not in visited_parent_aliases and ancestor_id not in pending_dependency_ids:
+                pending_dependency_ids.append(ancestor_id)
         metadata = _mapping(parent.get("metadata"))
         adapter_result = _mapping(metadata.get("adapter_result"))
         receipts: dict[str, dict[str, str]] = {}
@@ -573,6 +599,11 @@ def build_director_dependency_artifact_snapshot(
             for path in missing_paths
         )
         for path in sorted(receipts):
+            # Breadth-first traversal makes the nearest owner authoritative.
+            # An ancestor receipt for the same physical path must not duplicate
+            # the body or let a stale ancestor hash override the nearer owner.
+            if path in module_paths_seen:
+                continue
             if len(modules) >= _MAX_MODULES:
                 raise _fail(
                     "dependency_artifact_module_budget_exceeded",
@@ -675,6 +706,7 @@ def build_director_dependency_artifact_snapshot(
                     },
                 }
             )
+            module_paths_seen.add(path)
         covered_parent_ids.append(dependency_id)
 
     payload: dict[str, Any] = {

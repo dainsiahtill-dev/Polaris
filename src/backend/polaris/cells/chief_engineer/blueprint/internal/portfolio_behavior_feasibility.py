@@ -89,6 +89,12 @@ def validate_portfolio_behavior_feasibility(
         elif artifact.semantic_role == "test":
             required_tests.setdefault(artifact.owner_task_id, set()).add(artifact.obligation_id)
 
+    required_test_coverage_by_verifier = {
+        verifier.obligation_id: set(verifier.covers_obligation_ids)
+        for verifier in completion_contract.obligations.verification
+        if verifier.applicability == "required" and verifier.modality == "test"
+    }
+
     for test_owner, test_obligations in required_tests.items():
         source_owners = set(required_sources) - {test_owner}
         if not source_owners:
@@ -98,11 +104,14 @@ def validate_portfolio_behavior_feasibility(
             owner = str(invariant.get("owner_task_id") or "")
             consumers = {str(item) for item in invariant.get("consumer_task_ids") or ()}
             covered = {str(item) for item in invariant.get("covered_obligation_ids") or ()}
+            expanded_covered = covered | set().union(
+                *(required_test_coverage_by_verifier.get(obligation_id, set()) for obligation_id in covered)
+            )
             if (
                 owner in source_owners
                 and test_owner in consumers
-                and bool(covered & required_sources[owner])
-                and bool(covered & test_obligations)
+                and bool(expanded_covered & required_sources[owner])
+                and bool(expanded_covered & test_obligations)
             ):
                 linked = True
                 break

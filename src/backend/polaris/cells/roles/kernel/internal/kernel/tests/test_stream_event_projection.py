@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -11,6 +12,10 @@ from polaris.cells.roles.kernel.internal.kernel.transaction_turn_completion impo
     record_missing_dispatch_lifecycle_receipt,
 )
 from polaris.cells.roles.kernel.internal.quality_checker import QualityResult
+from polaris.cells.roles.kernel.public.structured_output_contracts import (
+    STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
+    RoleStructuredOutputContractV1,
+)
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, ErrorEvent
 from polaris.cells.roles.profile.public.service import RoleTurnRequest
 
@@ -477,7 +482,7 @@ def test_stream_completion_projects_validated_structured_output(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    structured_output = {"blueprints": []}
+    structured_output: dict[str, Any] = {"blueprints": []}
 
     class _AcceptingQualityChecker:
         def validate_output(self, *_args: Any, **_kwargs: Any) -> QualityResult:
@@ -543,6 +548,106 @@ def test_stream_completion_projects_validated_structured_output(
     assert result.event["type"] == "complete"
     assert result.event["result"].structured_output == structured_output
     assert result.event["result"].metadata["output_validation"]["success"] is True
+
+
+def test_stream_completion_uses_caller_structured_contract_before_role_shape(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A CE semantic patch must not be reinterpreted as a full CE portfolio."""
+
+    contract = RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_semantic_repair_patch",
+        description="One typed CE semantic repair patch.",
+        json_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "base_candidate_hash": {"type": "string"},
+                "diagnosis_hash": {"type": "string"},
+                "artifact_upserts": {"type": "array"},
+                "entrypoint_upserts": {"type": "array"},
+                "behavior_invariant_upserts": {"type": "array"},
+                "task_behavior_ref_replacements": {"type": "object"},
+            },
+            "required": [
+                "base_candidate_hash",
+                "diagnosis_hash",
+                "artifact_upserts",
+                "entrypoint_upserts",
+                "behavior_invariant_upserts",
+                "task_behavior_ref_replacements",
+            ],
+        },
+    )
+    structured_output = {
+        "base_candidate_hash": "a" * 64,
+        "diagnosis_hash": "b" * 64,
+        "artifact_upserts": [],
+        "entrypoint_upserts": [],
+        "behavior_invariant_upserts": [],
+        "task_behavior_ref_replacements": {},
+    }
+    monkeypatch.setattr(
+        projection,
+        "append_role_turn_task_boundary_verdict",
+        lambda **_kwargs: {
+            "schema_version": "polaris.task_boundary_verdict.v1",
+            "ok": True,
+            "status": "complete",
+        },
+    )
+    publisher = _Publisher()
+    projector = projection.StreamEventProjector(
+        kernel=SimpleNamespace(workspace=str(tmp_path)),
+        role="chief_engineer",
+        profile=SimpleNamespace(role_id="chief_engineer", model="test-model", provider_id="test-provider"),
+        request=RoleTurnRequest(
+            workspace=str(tmp_path),
+            message="repair only the diagnosed CE semantic contract",
+            run_id="run-1",
+            task_id="CE-PORTFOLIO-run-1-SEMANTIC-PATCH-REPAIR-2",
+            context_override={
+                STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection(),
+            },
+            validate_output=True,
+            max_retries=0,
+        ),
+        fingerprint=SimpleNamespace(full_hash="fingerprint"),
+        context_gateway=SimpleNamespace(record_projection_outcome=lambda **_: None),
+        context_result=SimpleNamespace(token_estimate=11),
+        stream_run_id="run-1",
+        uep_publisher=publisher,
+        runtime_tool_policy_audit={"tool_policy_mode": "none"},
+        tool_filter_audit=None,
+        accumulated_content=[json.dumps(structured_output, sort_keys=True)],
+    )
+
+    result = asyncio.run(
+        projector.project(
+            CompletionEvent(
+                turn_id="turn-ce-semantic-patch",
+                status="success",
+                duration_ms=7,
+                llm_calls=1,
+                tool_calls=0,
+                batch_receipt={},
+            )
+        )
+    )
+
+    assert result is not None
+    assert result.should_stop is False
+    assert result.event["type"] == "complete"
+    assert result.event["result"].structured_output == structured_output
+    assert result.event["result"].metadata["output_validation"] == {
+        "success": True,
+        "errors": [],
+        "suggestions": [],
+        "quality_score": 100.0,
+        "schema_name": "chief_engineer_semantic_repair_patch",
+        "validation_source": "caller_structured_output_contract",
+    }
 
 
 def test_stream_completion_fails_closed_when_task_boundary_ledger_append_raises(

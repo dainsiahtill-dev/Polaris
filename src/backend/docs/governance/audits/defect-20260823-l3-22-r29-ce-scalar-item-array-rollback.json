@@ -1,0 +1,81 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "l3-22-r29-ce-scalar-item-array-rollback",
+  "recorded_at": "2026-08-23T09:08:54+08:00",
+  "status": "FIXED_TARGETED_GATES_PASSED_AWAITING_FRESH_R30",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "attempt": "r29",
+  "factory_run_id": "factory_55244d785ac1",
+  "workspace": "/tmp/factory-bench-l3-22-r29/workspaces/f7bbe7a1e449-df10c3ba74f9e414/L3-22-5aaab9a81e5e829d/0138f50ca0059e3b2b09e051",
+  "stage": "chief_engineer_review",
+  "symptom": "PM completed and CE made three physical structured-output calls, but generated 0/3 blueprints with blueprint_portfolio_behavior_contract_infeasible: task behavior bindings reference unknown invariants. Director and QA never ran.",
+  "final_request_audit": {
+    "role_identity_ok": true,
+    "required_refs_present": ["pm_contract", "target_files"],
+    "tool_surface": ["submit_structured_role_output"],
+    "primary_context_snapshot_ref": "31bacda538a5627faf5e8b67",
+    "final_repair_context_snapshot_ref": "090881359f5821947d6c1f9b"
+  },
+  "dynamic_evidence": {
+    "terminal_error_code": "blueprint_portfolio_behavior_contract_infeasible",
+    "reported_unknown_invariants": [
+      "INV-GRAVITY-STEP",
+      "INV-NOTE-CATEGORIZE",
+      "INV-SCORE-PERFORMANCE"
+    ],
+    "frozen_candidate": "runtime/state/blueprints/semantic-repair/L3-22/factory_55244d785ac1/136e316391a5a4e4c10bdd3570230262bd33d14fb3ea248167941682be23b28c.json",
+    "provider_shape": {
+      "construction_plan.TASK-2.scope_for_apply": {"item": "main.go"},
+      "construction_plan.item": "four complete behavior invariant objects",
+      "construction_plan.TASK-2_and_TASK-3": "complete lifted task plans"
+    },
+    "before_fix": {
+      "structural_recovery": false,
+      "canonical_task_plans": ["TASK-1"],
+      "canonical_invariants": ["INV-NOTE-VALIDATION"],
+      "effect": "One scalar item wrapper rolled back the whole otherwise lossless recovery transaction."
+    },
+    "after_exact_replay": {
+      "structural_recovery": true,
+      "repair_codes": [
+        "move_lifted_task_plans",
+        "move_construction_items_to_behavior_invariants",
+        "unwrap_behavior_invariant_array_items",
+        "remove_behavior_owner_from_consumers"
+      ],
+      "canonical_task_plans": ["TASK-1", "TASK-2", "TASK-3"],
+      "canonical_invariants": [
+        "INV-GRAVITY-STEP",
+        "INV-NOTE-CATEGORIZE",
+        "INV-NOTE-VALIDATION",
+        "INV-RUN-EXITCODE",
+        "INV-SCORE-PERFORMANCE"
+      ],
+      "unknown_invariant_refs": []
+    }
+  },
+  "root_cause_class": "chief_engineer_provider_scalar_item_array_caused_transactional_recovery_rollback",
+  "root_cause": "The provider transport collapsed a one-element string array to {item: \"main.go\"}. _unwrap_provider_item_array accepted list and object members but rejected a scalar string. Because CE structural recovery is deliberately transactional, that single lossless shape mismatch rolled back all independent safe relocations, hiding four complete invariant definitions and two complete task plans before semantic validation.",
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_semantic_repair.py"
+    ],
+    "behavior": [
+      "Treat an exact string scalar under a known array field's sole item wrapper as a one-element string array.",
+      "Continue rejecting null, number, boolean, multi-key mappings, and all other ambiguous scalar shapes.",
+      "Preserve transactional rollback for conflicts or lossy transformations."
+    ]
+  },
+  "verification": {
+    "tdd_red": "Existing provider-array-wrapper regression changed to the exact scalar item shape and failed with recovered=false before implementation.",
+    "tdd_green": "Focused regression passed after implementation.",
+    "exact_r29_replay": "Recovered all 3 task plans and all 5 invariant definitions; unknown refs reduced to zero.",
+    "semantic_repair_pytest": "51 passed",
+    "ruff": "All checks passed",
+    "mypy": "Success: no issues found in 1 source file"
+  },
+  "target_project_modified": false,
+  "next_action": "Stop the r29 isolated backend and run fresh isolated L3-22 r30. Dynamically attribute the first new residual before editing."
+}

@@ -1,0 +1,69 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "l3-22-r28-ce-provenance-sibling-ownership",
+  "recorded_at": "2026-08-23T09:01:00+08:00",
+  "status": "FIXED_TARGETED_GATES_PASSED_AWAITING_FRESH_R29",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "attempt": "r28",
+  "factory_run_id": "factory_b458fb8c19f1",
+  "workspace": "/tmp/factory-bench-l3-22-r28/workspaces/3df958b812c1-66d0749a2b978165/L3-22-5aaab9a81e5e829d/653c3b09fa869a685a5081d1",
+  "stage": "chief_engineer_review",
+  "symptom": "Chief Engineer generated 3/3 handoff-ready blueprints, but Factory rejected every exact public provenance query before Director dispatch. No Director or QA call occurred; source=0 and later Run Ledger errors were downstream symptoms.",
+  "dynamic_evidence": {
+    "generated_blueprints": 3,
+    "handoff_ready_blueprints": 3,
+    "llm_call_count": 3,
+    "terminal_error": "factory_stage_artifact_ce_blueprint_provenance_invalid",
+    "before_fix": {
+      "TASK-1": {
+        "expected_pm_targets": ["go.mod", "main.go"],
+        "observed_blueprint_targets": ["go.mod", "internal/bubble/bubble.go", "internal/note/chord.go", "internal/note/note.go"],
+        "missing_pm_targets": ["main.go"]
+      },
+      "TASK-2": {
+        "expected_pm_targets": ["go.mod", "main.go"],
+        "missing_pm_targets": ["go.mod"]
+      },
+      "TASK-3": {
+        "expected_pm_targets": ["main_test.go", "README.md", "go.mod"],
+        "missing_pm_targets": ["go.mod"]
+      }
+    },
+    "completion_ownership": {
+      "go.mod": "TASK-1",
+      "main.go": "TASK-2",
+      "main_test.go": "TASK-3",
+      "README.md": "TASK-3"
+    },
+    "after_exact_replay": {
+      "TASK-1": true,
+      "TASK-2": true,
+      "TASK-3": true
+    }
+  },
+  "root_cause_class": "chief_engineer_provenance_rejected_authoritative_sibling_ownership",
+  "root_cause": "PM legitimately repeated shared target paths across tasks and declared topology_authority=chief_engineer. CE then assigned each physical artifact to exactly one completion-contract owner so multiple Directors would not edit the same path. query_blueprint_provenance nevertheless required every per-task blueprint to repeat every PM target before it parsed project_completion_contract, so safe sibling delegation was indistinguishable from dropping a required artifact.",
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_helpers.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_public_contractsa.py"
+    ],
+    "behavior": [
+      "Parse and validate the canonical project completion contract before evaluating missing PM targets.",
+      "Allow an omitted repeated PM target only when PM explicitly grants CE topology authority and the exact path has a non-empty completion owner different from the current task.",
+      "Continue rejecting absent, unowned, current-task-owned, or ordinary-PM-authority omissions.",
+      "Continue requiring every artifact owned by the current task to appear in that task blueprint."
+    ]
+  },
+  "verification": {
+    "tdd_red": "Sibling-owned repeated PM target test failed with blueprint_provenance_target_files_mismatch before implementation; current-owner omission negative test passed.",
+    "tdd_green": "Both positive and negative focused tests passed after implementation.",
+    "exact_r28_replay": "All three persisted r28 blueprints returned matches=true through query_blueprint_provenance.",
+    "public_contract_pytest": "176 passed",
+    "ruff": "All checks passed",
+    "mypy": "Success: no issues found in 1 source file"
+  },
+  "target_project_modified": false,
+  "next_action": "Stop the r28 isolated backend and run fresh isolated L3-22 r29. Dynamically attribute the first new residual before any further edit."
+}

@@ -50,6 +50,51 @@ def _task_delegates_artifact(*, task: ChiefEngineerPortfolioTaskV1, semantic_rol
     )
 
 
+def _task_authorizes_artifact(
+    *,
+    task: ChiefEngineerPortfolioTaskV1,
+    artifact: ArtifactObligationV1,
+) -> bool:
+    return bool(
+        _ce_artifact_role_matches_path(
+            semantic_role=artifact.semantic_role,
+            path=artifact.path,
+            allowed_source_suffixes=task.allowed_source_suffixes,
+        )
+        and (
+            _task_authorizes_completion_path(task=task, path=artifact.path)
+            or _task_delegates_artifact(
+                task=task,
+                semantic_role=artifact.semantic_role,
+                path=artifact.path,
+            )
+        )
+    )
+
+
+def _normalize_unique_artifact_owner(
+    artifact: ArtifactObligationV1,
+    *,
+    tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
+) -> ArtifactObligationV1:
+    """Repair only a wrong known owner when immutable PM authority is unique."""
+
+    tasks_by_id = {task.task_id: task for task in tasks}
+    owner = tasks_by_id.get(str(artifact.owner_task_id or ""))
+    if owner is None or _task_authorizes_artifact(task=owner, artifact=artifact):
+        return artifact
+    authorized = tuple(task for task in tasks if _task_authorizes_artifact(task=task, artifact=artifact))
+    if len(authorized) != 1:
+        return artifact
+    return ArtifactObligationV1(
+        obligation_id=artifact.obligation_id,
+        path=artifact.path,
+        semantic_role=artifact.semantic_role,
+        applicability=artifact.applicability,
+        owner_task_id=authorized[0].task_id,
+    )
+
+
 def _hash(value: object) -> str:
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -71,6 +116,38 @@ class _UnsafePortfolioStructuralRecoveryError(ValueError):
     """Raised internally when a malformed payload cannot be relocated safely."""
 
 
+_MANIFEST_ARTIFACT_BASENAMES = frozenset(
+    {
+        "cargo.toml",
+        "cmakelists.txt",
+        "go.mod",
+        "package.json",
+        "pom.xml",
+        "pyproject.toml",
+        "requirements.txt",
+    }
+)
+_DOCUMENTATION_ARTIFACT_SUFFIXES = frozenset({".adoc", ".md", ".mdx", ".rst"})
+
+
+def _infer_artifact_semantic_role(*, path: str, entrypoint_paths: frozenset[str]) -> str | None:
+    normalized = str(path or "").strip().replace("\\", "/")
+    if not normalized:
+        return None
+    if normalized in entrypoint_paths:
+        return "entrypoint"
+    basename = normalized.rsplit("/", 1)[-1].lower()
+    if basename in _MANIFEST_ARTIFACT_BASENAMES:
+        return "manifest"
+    if _ce_artifact_role_matches_path(semantic_role="test", path=normalized):
+        return "test"
+    if any(basename.endswith(suffix) for suffix in _DOCUMENTATION_ARTIFACT_SUFFIXES):
+        return "docs"
+    if _is_ce_production_source_path(normalized):
+        return "source"
+    return None
+
+
 def _classify_interface_declaration(row: Mapping[str, Any]) -> str:
     keys = set(row)
     provider = {"symbol", "owner_task_id", "path"}.issubset(keys)
@@ -78,6 +155,100 @@ def _classify_interface_declaration(row: Mapping[str, Any]) -> str:
     if provider == consumer:
         raise _UnsafePortfolioStructuralRecoveryError("ambiguous interface declaration")
     return "provider_declarations" if provider else "consumer_declarations"
+
+
+_BEHAVIOR_INVARIANT_REQUIRED_KEYS = frozenset(
+    {
+        "invariant_id",
+        "owner_task_id",
+        "consumer_task_ids",
+        "covered_obligation_ids",
+        "statement",
+        "verification_examples",
+    }
+)
+_TASK_PLAN_ARRAY_FIELDS = frozenset(
+    {"behavior_invariant_refs", "scope_for_apply", "risk_flags"}
+)
+
+
+def _unwrap_provider_item_array(name: str, value: object) -> list[Any]:
+    """Unwrap a provider's ``{"item": ...}`` encoding for known array fields.
+
+    Provider tool transports may collapse a one-element string array to a
+    scalar ``item``.  Accept that exact lossless shape; other JSON scalars
+    remain ambiguous and fail closed.
+    """
+
+    if isinstance(value, list):
+        return deepcopy(value)
+    if not isinstance(value, Mapping) or set(value) != {"item"}:
+        raise _UnsafePortfolioStructuralRecoveryError(f"{name} is not an item-wrapped array")
+    item = value["item"]
+    if isinstance(item, list):
+        return deepcopy(item)
+    if isinstance(item, Mapping):
+        return [deepcopy(dict(item))]
+    if isinstance(item, str):
+        return [item]
+    raise _UnsafePortfolioStructuralRecoveryError(f"{name}.item is not an array member")
+
+
+def _normalize_behavior_invariant_row(
+    name: str,
+    value: object,
+    *,
+    require_shape: bool = True,
+) -> tuple[dict[str, Any], bool]:
+    row = _mapping(name, value)
+    if require_shape and not _BEHAVIOR_INVARIANT_REQUIRED_KEYS.issubset(row):
+        raise _UnsafePortfolioStructuralRecoveryError(f"{name} is not a behavior invariant")
+    changed = False
+    for field in ("consumer_task_ids", "covered_obligation_ids", "verification_examples"):
+        if field not in row:
+            continue
+        current = row.get(field)
+        normalized = _unwrap_provider_item_array(f"{name}.{field}", current)
+        if normalized != current:
+            row[field] = normalized
+            changed = True
+    return row, changed
+
+
+def _append_unique_behavior_invariant(
+    invariants: list[dict[str, Any]],
+    incoming: dict[str, Any],
+) -> bool:
+    invariant_id = incoming.get("invariant_id")
+    if not isinstance(invariant_id, str) or not invariant_id.strip():
+        raise _UnsafePortfolioStructuralRecoveryError("behavior invariant has no stable id")
+    matches = [row for row in invariants if row.get("invariant_id") == invariant_id]
+    if not matches:
+        invariants.append(incoming)
+        return True
+    if len(matches) != 1 or matches[0] != incoming:
+        raise _UnsafePortfolioStructuralRecoveryError(f"conflicting behavior invariant {invariant_id}")
+    return False
+
+
+def _normalize_lifted_task_plan(name: str, value: object) -> dict[str, Any]:
+    row = _mapping(name, value)
+    if "behavior_invariant_refs" not in row:
+        raise _UnsafePortfolioStructuralRecoveryError(f"{name} is not a known lifted task plan")
+    for field in _TASK_PLAN_ARRAY_FIELDS:
+        if field in row:
+            row[field] = _unwrap_provider_item_array(f"{name}.{field}", row[field])
+    return row
+
+
+def _lifted_task_plan_is_redundant(*, lifted: Mapping[str, Any], canonical: Mapping[str, Any]) -> bool:
+    for field, lifted_value in lifted.items():
+        canonical_value = canonical.get(field)
+        if not isinstance(lifted_value, list) or not isinstance(canonical_value, list):
+            return False
+        if any(item not in canonical_value for item in lifted_value):
+            return False
+    return True
 
 
 def normalize_chief_engineer_portfolio_tool_arguments(
@@ -117,6 +288,79 @@ def normalize_chief_engineer_portfolio_tool_arguments(
                 codes.append(f"move_root_{collection}")
             interface[collection] = destination
 
+        task_plans = _mapping("task_plans", construction.get("task_plans", {}))
+        construction["task_plans"] = task_plans
+        moved_lifted_task_plan = False
+        removed_lifted_task_plan = False
+        for task_id, lifted_raw in tuple(construction.items()):
+            if task_id in {
+                "item",
+                "project_interface_contract",
+                "shared_behavior_contract",
+                "task_plans",
+            } or not isinstance(lifted_raw, Mapping) or "behavior_invariant_refs" not in lifted_raw:
+                continue
+            lifted = _normalize_lifted_task_plan(f"construction_plan.{task_id}", lifted_raw)
+            canonical_raw = task_plans.get(task_id)
+            if canonical_raw is None:
+                task_plans[task_id] = lifted
+                moved_lifted_task_plan = True
+            else:
+                canonical = _mapping(f"task_plans.{task_id}", canonical_raw)
+                if not _lifted_task_plan_is_redundant(lifted=lifted, canonical=canonical):
+                    raise _UnsafePortfolioStructuralRecoveryError(f"conflicting lifted task plan {task_id}")
+                removed_lifted_task_plan = True
+            del construction[task_id]
+        if moved_lifted_task_plan:
+            codes.append("move_lifted_task_plans")
+        if removed_lifted_task_plan:
+            codes.append("remove_redundant_lifted_task_plan")
+
+        behavior_raw = construction.get("shared_behavior_contract")
+        if isinstance(behavior_raw, Mapping):
+            behavior = _mapping("shared_behavior_contract", behavior_raw)
+            source_invariants = _rows("shared_behavior_contract.invariants", behavior.get("invariants", []))
+            invariants: list[dict[str, Any]] = []
+            unwrapped_invariant_arrays = False
+            for index, source_invariant in enumerate(source_invariants):
+                invariant, changed = _normalize_behavior_invariant_row(
+                    f"shared_behavior_contract.invariants[{index}]",
+                    source_invariant,
+                    require_shape=False,
+                )
+                _append_unique_behavior_invariant(invariants, invariant)
+                unwrapped_invariant_arrays = unwrapped_invariant_arrays or changed
+
+            if "item" in behavior:
+                raw_items = (
+                    behavior["item"] if isinstance(behavior["item"], list) else [behavior["item"]]
+                )
+                for index, raw_item in enumerate(raw_items):
+                    invariant, changed = _normalize_behavior_invariant_row(
+                        f"shared_behavior_contract.item[{index}]",
+                        raw_item,
+                    )
+                    _append_unique_behavior_invariant(invariants, invariant)
+                    unwrapped_invariant_arrays = unwrapped_invariant_arrays or changed
+                del behavior["item"]
+                codes.append("move_shared_behavior_item_to_invariants")
+
+            if "item" in construction and isinstance(construction["item"], list):
+                for index, raw_item in enumerate(construction["item"]):
+                    invariant, changed = _normalize_behavior_invariant_row(
+                        f"construction_plan.item[{index}]",
+                        raw_item,
+                    )
+                    _append_unique_behavior_invariant(invariants, invariant)
+                    unwrapped_invariant_arrays = unwrapped_invariant_arrays or changed
+                del construction["item"]
+                codes.append("move_construction_items_to_behavior_invariants")
+
+            behavior["invariants"] = invariants
+            construction["shared_behavior_contract"] = behavior
+            if unwrapped_invariant_arrays:
+                codes.append("unwrap_behavior_invariant_array_items")
+
         for owner, container, code_prefix in (
             ("project_interface_contract", interface, "project_interface"),
             ("root", working, "root"),
@@ -131,6 +375,220 @@ def normalize_chief_engineer_portfolio_tool_arguments(
             del container["item"]
             kind = "provider" if collection == "provider_declarations" else "consumer"
             codes.append(f"classify_{code_prefix}_item_as_{kind}")
+
+        behavior_raw = construction.get("shared_behavior_contract")
+        if isinstance(behavior_raw, Mapping):
+            behavior = _mapping("shared_behavior_contract", behavior_raw)
+            invariants = _rows("shared_behavior_contract.invariants", behavior.get("invariants", []))
+            task_refs_by_invariant: dict[str, set[str]] = {}
+            for task_id, task_plan_raw in task_plans.items():
+                if not isinstance(task_id, str) or not isinstance(task_plan_raw, Mapping):
+                    continue
+                refs = task_plan_raw.get("behavior_invariant_refs")
+                if not isinstance(refs, list):
+                    continue
+                for invariant_id in refs:
+                    if isinstance(invariant_id, str) and invariant_id:
+                        task_refs_by_invariant.setdefault(invariant_id, set()).add(task_id)
+            removed_owner_ref = False
+            rebound_owner_only_ref = False
+            removed_task_local_invariant_ids: set[str] = set()
+            retained_invariants: list[dict[str, Any]] = []
+            for invariant in invariants:
+                invariant_id = invariant.get("invariant_id")
+                owner_task_id = invariant.get("owner_task_id")
+                consumer_task_ids = invariant.get("consumer_task_ids")
+                if not isinstance(owner_task_id, str) or not isinstance(consumer_task_ids, list):
+                    retained_invariants.append(invariant)
+                    continue
+                if owner_task_id not in consumer_task_ids:
+                    retained_invariants.append(invariant)
+                    continue
+                remaining_consumers = [task_id for task_id in consumer_task_ids if task_id != owner_task_id]
+                if not remaining_consumers:
+                    reverse_task_refs = set(
+                        task_refs_by_invariant.get(str(invariant_id or ""), set())
+                    )
+                    remaining_consumers = sorted(
+                        task_id for task_id in reverse_task_refs if task_id != owner_task_id
+                    )
+                    if not remaining_consumers:
+                        if (
+                            isinstance(invariant_id, str)
+                            and invariant_id
+                            and reverse_task_refs == {owner_task_id}
+                        ):
+                            # The row is proven task-local: its declared owner is
+                            # its sole consumer and the same owner is its sole
+                            # reverse task-plan reference.  It has no place in a
+                            # cross-task shared contract, so remove the advisory
+                            # row and its matching shared ref without inventing a
+                            # sibling consumer or changing PM authority.
+                            removed_task_local_invariant_ids.add(invariant_id)
+                            continue
+                        raise _UnsafePortfolioStructuralRecoveryError(
+                            "behavior invariant has no consumer after removing its owner"
+                        )
+                    rebound_owner_only_ref = True
+                else:
+                    removed_owner_ref = True
+                invariant["consumer_task_ids"] = remaining_consumers
+                retained_invariants.append(invariant)
+            if removed_task_local_invariant_ids:
+                for task_plan in task_plans.values():
+                    if not isinstance(task_plan, dict):
+                        continue
+                    refs = task_plan.get("behavior_invariant_refs")
+                    if not isinstance(refs, list):
+                        continue
+                    task_plan["behavior_invariant_refs"] = [
+                        ref for ref in refs if ref not in removed_task_local_invariant_ids
+                    ]
+            if removed_owner_ref or rebound_owner_only_ref or removed_task_local_invariant_ids:
+                behavior["invariants"] = retained_invariants
+                construction["shared_behavior_contract"] = behavior
+            if removed_owner_ref:
+                codes.append("remove_behavior_owner_from_consumers")
+            if rebound_owner_only_ref:
+                codes.append("rebind_behavior_consumers_from_task_refs")
+            if removed_task_local_invariant_ids:
+                codes.append("remove_task_local_invariant_from_shared_contract")
+
+        completion_raw = working.get("project_completion_contract")
+        if isinstance(completion_raw, Mapping):
+            completion = _mapping("project_completion_contract", completion_raw)
+            obligations_raw = completion.get("obligations")
+            if isinstance(obligations_raw, Mapping):
+                obligations = _mapping("project_completion_contract.obligations", obligations_raw)
+                artifacts = _rows(
+                    "project_completion_contract.obligations.artifacts",
+                    obligations.get("artifacts", []),
+                )
+                entrypoints = _rows(
+                    "project_completion_contract.obligations.entrypoints",
+                    obligations.get("entrypoints", []),
+                )
+                verification = _rows(
+                    "project_completion_contract.obligations.verification",
+                    obligations.get("verification", []),
+                )
+                entrypoint_paths = frozenset(
+                    str(value).strip().replace("\\", "/")
+                    for row in entrypoints
+                    for value in (row.get("source_path"), row.get("runtime_path"))
+                    if isinstance(value, str) and value.strip()
+                )
+                inferred_role = False
+                for artifact in artifacts:
+                    if "semantic_role" in artifact:
+                        continue
+                    role = _infer_artifact_semantic_role(
+                        path=str(artifact.get("path") or ""),
+                        entrypoint_paths=entrypoint_paths,
+                    )
+                    if role is None:
+                        raise _UnsafePortfolioStructuralRecoveryError("artifact semantic role is ambiguous")
+                    artifact["semantic_role"] = role
+                    inferred_role = True
+                if inferred_role:
+                    obligations["artifacts"] = artifacts
+                    completion["obligations"] = obligations
+                    working["project_completion_contract"] = completion
+                    codes.append("infer_missing_artifact_semantic_roles")
+
+                completion_obligation_ids = {
+                    obligation_id
+                    for row in (*artifacts, *entrypoints, *verification)
+                    if isinstance((obligation_id := row.get("obligation_id")), str)
+                    and obligation_id
+                    and obligation_id == obligation_id.strip()
+                }
+                verification_ids_by_covered_alias: dict[str, set[str]] = {}
+                for row in verification:
+                    verification_id = row.get("obligation_id")
+                    covered_aliases = row.get("covers_obligation_ids")
+                    if not isinstance(verification_id, str) or not isinstance(covered_aliases, list):
+                        continue
+                    for covered_alias in covered_aliases:
+                        if isinstance(covered_alias, str) and covered_alias:
+                            verification_ids_by_covered_alias.setdefault(covered_alias, set()).add(
+                                verification_id
+                            )
+                behavior_raw = construction.get("shared_behavior_contract")
+                if completion_obligation_ids and isinstance(behavior_raw, Mapping):
+                    behavior = _mapping("shared_behavior_contract", behavior_raw)
+                    invariants = _rows("shared_behavior_contract.invariants", behavior.get("invariants", []))
+                    removed_unknown_ref = False
+                    mapped_verifier_alias = False
+                    consumed_behavior_aliases: set[str] = set()
+                    for invariant in invariants:
+                        covered_ids = invariant.get("covered_obligation_ids")
+                        if not isinstance(covered_ids, list) or not covered_ids:
+                            continue
+                        if not all(
+                            isinstance(obligation_id, str)
+                            and obligation_id
+                            and obligation_id == obligation_id.strip()
+                            for obligation_id in covered_ids
+                        ):
+                            continue
+                        retained_ids: list[str] = []
+                        mapped_this_invariant = False
+                        removed_this_invariant = False
+                        for obligation_id in covered_ids:
+                            replacements = (
+                                (obligation_id,)
+                                if obligation_id in completion_obligation_ids
+                                else tuple(sorted(verification_ids_by_covered_alias.get(obligation_id, set())))
+                            )
+                            if replacements:
+                                mapped_this_invariant = mapped_this_invariant or obligation_id not in completion_obligation_ids
+                                if obligation_id not in completion_obligation_ids:
+                                    consumed_behavior_aliases.add(obligation_id)
+                                for replacement in replacements:
+                                    if replacement not in retained_ids:
+                                        retained_ids.append(replacement)
+                            else:
+                                removed_this_invariant = True
+                        if len(retained_ids) == len(covered_ids) and retained_ids == covered_ids:
+                            continue
+                        if not retained_ids:
+                            # Leave an all-unknown set intact for the semantic
+                            # gate; do not discard independent safe recovery.
+                            continue
+                        invariant["covered_obligation_ids"] = retained_ids
+                        mapped_verifier_alias = mapped_verifier_alias or mapped_this_invariant
+                        removed_unknown_ref = removed_unknown_ref or removed_this_invariant
+                    if removed_unknown_ref or mapped_verifier_alias:
+                        behavior["invariants"] = invariants
+                        construction["shared_behavior_contract"] = behavior
+                    if removed_unknown_ref:
+                        codes.append("remove_unknown_behavior_obligation_refs")
+                    if mapped_verifier_alias:
+                        codes.append("map_behavior_obligation_aliases_to_verification")
+                    removed_verifier_alias = False
+                    if consumed_behavior_aliases:
+                        for verifier in verification:
+                            covered_ids = verifier.get("covers_obligation_ids")
+                            if not isinstance(covered_ids, list) or not covered_ids:
+                                continue
+                            retained_ids = [
+                                obligation_id
+                                for obligation_id in covered_ids
+                                if obligation_id not in consumed_behavior_aliases
+                            ]
+                            # Do not turn an alias-only verifier into a hollow
+                            # verifier. It remains invalid so the strict contract
+                            # gate can reject it. The paired recovery is safe only
+                            # when canonical artifact/entrypoint coverage remains.
+                            if retained_ids and retained_ids != covered_ids:
+                                verifier["covers_obligation_ids"] = retained_ids
+                                removed_verifier_alias = True
+                    if removed_verifier_alias:
+                        obligations["verification"] = verification
+                        completion["obligations"] = obligations
+                        working["project_completion_contract"] = completion
+                        codes.append("remove_consumed_verifier_coverage_aliases")
     except (TypeError, ValueError):
         return ChiefEngineerPortfolioStructuralRecoveryV1(
             source_payload=source,
@@ -210,6 +668,28 @@ def _replace_by_id(
     return [indexed[key] for key in sorted(indexed)]
 
 
+def _introduces_duplicate_value(
+    before: list[dict[str, Any]],
+    after: list[dict[str, Any]],
+    *,
+    field: str,
+) -> bool:
+    """Whether an incremental patch increases an already-duplicate value count."""
+
+    before_counts: dict[str, int] = {}
+    after_counts: dict[str, int] = {}
+    for row in before:
+        value = str(row.get(field) or "")
+        before_counts[value] = before_counts.get(value, 0) + 1
+    for row in after:
+        value = str(row.get(field) or "")
+        after_counts[value] = after_counts.get(value, 0) + 1
+    return any(
+        count > 1 and count > before_counts.get(value, 0)
+        for value, count in after_counts.items()
+    )
+
+
 def _assert_upsert_identity_immutable(
     current: list[dict[str, Any]],
     upserts: tuple[Any, ...],
@@ -283,6 +763,7 @@ def project_chief_engineer_semantic_repair_provider_context(
         raise ValueError("semantic repair PM task ids do not match candidate task ids")
     current_artifacts = _rows("artifacts", sections["artifacts"])
     current_entrypoints = _rows("entrypoints", sections["entrypoints"])
+    current_verification = _rows("verification", sections["verification"])
     occupied_paths = {
         str(row.get(key) or "").strip()
         for row in (*current_artifacts, *current_entrypoints)
@@ -427,7 +908,15 @@ def project_chief_engineer_semantic_repair_provider_context(
     if "behavior_invariant_upsert" in allowed:
         current["artifacts"] = deepcopy(sections["artifacts"])
         current["entrypoints"] = deepcopy(sections["entrypoints"])
+        current["verification"] = deepcopy(sections["verification"])
         current["behavior_invariants"] = deepcopy(sections["behavior_invariants"])
+        projection["allowed_completion_obligation_ids"] = sorted(
+            {
+                str(row["obligation_id"])
+                for row in (*current_artifacts, *current_entrypoints, *current_verification)
+                if isinstance(row.get("obligation_id"), str) and str(row["obligation_id"]).strip()
+            }
+        )
     if "task_behavior_ref_replace" in allowed:
         current["behavior_invariants"] = deepcopy(sections["behavior_invariants"])
         current["task_behavior_refs"] = deepcopy(sections["task_behavior_refs"])
@@ -449,9 +938,41 @@ def compose_chief_engineer_semantic_repair(
         raise ValueError("patch base_candidate_hash does not match candidate")
     if patch.diagnosis_hash != diagnosis.diagnosis_hash:
         raise ValueError("patch diagnosis_hash does not match diagnosis")
-    unauthorized = set(patch.operations) - set(diagnosis.allowed_operations)
-    if unauthorized:
+    allowed_operations = set(diagnosis.allowed_operations)
+    unauthorized = set(patch.operations) - allowed_operations
+    authorized = set(patch.operations).intersection(allowed_operations)
+    if unauthorized and not authorized:
         raise ValueError(f"patch operations are not diagnosis-authorized: {sorted(unauthorized)}")
+
+    # Provider output is evidence, not execution authority. A useful typed
+    # repair may contain an extra operation group unrelated to the frozen
+    # diagnosis (exact L3-22 r14: valid artifact depth repair plus redundant
+    # entrypoint upserts). Execute only the diagnosis-authorized subset. If no
+    # authorized work remains, the guard above still fails closed. Rebuilding
+    # the patch also makes the receipt bind the effective operation set and any
+    # deterministic owner correction rather than the untrusted provider payload.
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=patch.base_candidate_hash,
+        diagnosis_hash=patch.diagnosis_hash,
+        artifact_upserts=(
+            tuple(_normalize_unique_artifact_owner(artifact, tasks=tasks) for artifact in patch.artifact_upserts)
+            if "artifact_upsert" in allowed_operations
+            else ()
+        ),
+        entrypoint_upserts=(
+            patch.entrypoint_upserts if "entrypoint_upsert" in allowed_operations else ()
+        ),
+        behavior_invariant_upserts=(
+            patch.behavior_invariant_upserts
+            if "behavior_invariant_upsert" in allowed_operations
+            else ()
+        ),
+        task_behavior_ref_replacements=(
+            patch.task_behavior_ref_replacements
+            if "task_behavior_ref_replace" in allowed_operations
+            else {}
+        ),
+    )
 
     payload = deepcopy(dict(candidate.candidate))
     completion = _mapping("project_completion_contract", payload["project_completion_contract"])
@@ -480,15 +1001,16 @@ def compose_chief_engineer_semantic_repair(
     tasks_by_id = {task.task_id: task for task in tasks}
     if tuple(task.task_id for task in tasks) != candidate.task_ids:
         raise ValueError("semantic repair PM task ids do not match candidate task ids")
+    artifact_upserts = patch.artifact_upserts
 
     for row in artifact_baseline_rows:
         owner_task_id = row.get("owner_task_id")
         if owner_task_id is not None and owner_task_id not in task_ids:
             raise ValueError(f"artifact owner_task_id is outside candidate task set: {owner_task_id}")
-    for artifact in patch.artifact_upserts:
+    for artifact in artifact_upserts:
         if artifact.owner_task_id is not None and artifact.owner_task_id not in task_ids:
             raise ValueError(f"artifact owner_task_id is outside candidate task set: {artifact.owner_task_id}")
-    for artifact in patch.artifact_upserts:
+    for artifact in artifact_upserts:
         owner = tasks_by_id.get(str(artifact.owner_task_id or ""))
         if not _ce_artifact_role_matches_path(
             semantic_role=artifact.semantic_role,
@@ -557,16 +1079,22 @@ def compose_chief_engineer_semantic_repair(
             )
 
     artifact_rows = _replace_by_id(
-        artifact_baseline_rows, patch.artifact_upserts, id_field="obligation_id"
+        artifact_baseline_rows, artifact_upserts, id_field="obligation_id"
     )
-    artifact_paths = [row["path"] for row in artifact_rows]
-    if len(artifact_paths) != len(set(artifact_paths)):
+    if _introduces_duplicate_value(
+        artifact_baseline_rows,
+        artifact_rows,
+        field="path",
+    ):
         raise ValueError("semantic repair would create duplicate artifact paths")
     entrypoint_rows = _replace_by_id(
         entrypoint_baseline_rows, patch.entrypoint_upserts, id_field="obligation_id"
     )
+    verification_rows = _rows("verification", obligations.get("verification"))
     all_obligation_ids = [row["obligation_id"] for row in artifact_rows] + [
         row["obligation_id"] for row in entrypoint_rows
+    ] + [
+        row["obligation_id"] for row in verification_rows
     ]
     if len(all_obligation_ids) != len(set(all_obligation_ids)):
         raise ValueError("semantic repair would create duplicate obligation ids")
@@ -580,11 +1108,16 @@ def compose_chief_engineer_semantic_repair(
         "construction_plan.shared_behavior_contract",
         construction.get("shared_behavior_contract") or {"invariants": []},
     )
-    existing_invariants = [
-        _behavior_from_row(row) for row in _rows("shared_behavior_contract.invariants", behavior.get("invariants"))
-    ]
+    # The frozen candidate is structurally valid but intentionally may contain
+    # the diagnosed semantic defect. Preserve its raw rows until authorized
+    # typed upserts replace matching ids; strict rehydration here would reject
+    # the baseline before the repair could fix it (exact L3-22 r25).
+    existing_invariants = _rows(
+        "shared_behavior_contract.invariants",
+        behavior.get("invariants"),
+    )
     invariants = _replace_by_id(
-        [item.to_dict() for item in existing_invariants],
+        existing_invariants,
         patch.behavior_invariant_upserts,
         id_field="invariant_id",
     )
@@ -632,7 +1165,7 @@ def compose_chief_engineer_semantic_repair(
     changed_ids = tuple(
         sorted(
             {
-                *(item.obligation_id for item in patch.artifact_upserts),
+                *(item.obligation_id for item in artifact_upserts),
                 *(item.obligation_id for item in patch.entrypoint_upserts),
                 *(item.invariant_id for item in patch.behavior_invariant_upserts),
                 *patch.task_behavior_ref_replacements.keys(),

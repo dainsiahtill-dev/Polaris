@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -52,6 +53,9 @@ _TASK_CONTRACT_MAPPING_KEYS = (
     "acceptance_contract",
     "manifest_entrypoint_contract",
     "module_interface_contract",
+    "project_interface_contract",
+    "shared_behavior_contract",
+    "task_completion_projection",
     "execution_profile",
     "execution_contract",
     "execution_envelope",
@@ -106,6 +110,9 @@ _STRUCTURED_TASK_CONTRACT_SLOT_KEYS = frozenset(
         "blueprint",
         "task_blueprint",
         "module_interface_contract",
+        "project_interface_contract",
+        "shared_behavior_contract",
+        "task_completion_projection",
     }
 )
 _ROLE_RUNTIME_METADATA_CONTEXT_EVIDENCE_KEYS = (
@@ -116,6 +123,9 @@ _ROLE_RUNTIME_METADATA_CONTEXT_EVIDENCE_KEYS = (
     "blueprint",
     "task_blueprint",
     "module_interface_contract",
+    "project_interface_contract",
+    "shared_behavior_contract",
+    "task_completion_projection",
     "failed_gate_evidence",
     "failure_evidence",
     "workspace_quality_evidence",
@@ -387,6 +397,37 @@ def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -
         if blockers:
             lines.append(_join_limited_values("handoff blockers", blockers))
 
+    task_completion_projection = validation.get("task_completion_projection")
+    if isinstance(task_completion_projection, dict) and task_completion_projection:
+        projection_hash = str(task_completion_projection.get("projection_hash") or "").strip()
+        lines.append(f"- task_completion_projection: authority=chief_engineer hash={projection_hash}")
+        for label, key in (
+            ("owned artifacts", "owned_artifacts"),
+            ("dependency artifacts", "dependency_artifacts"),
+        ):
+            artifacts = task_completion_projection.get(key)
+            if not isinstance(artifacts, list):
+                continue
+            rendered = []
+            for artifact in artifacts[:16]:
+                if not isinstance(artifact, dict):
+                    continue
+                path = str(artifact.get("path") or "").strip()
+                role = str(artifact.get("semantic_role") or "artifact").strip()
+                if path:
+                    rendered.append(f"{path} [{role}]")
+            if rendered:
+                lines.append(_join_limited_values(label, rendered))
+        verifier_rows = task_completion_projection.get("verification_execution_authority")
+        if isinstance(verifier_rows, list):
+            for verifier in verifier_rows[:6]:
+                if not isinstance(verifier, dict):
+                    continue
+                modality = str(verifier.get("modality") or "").strip()
+                command = str(verifier.get("command") or "").strip()
+                if modality and command:
+                    lines.append(f"  - owned verifier {modality}: {command}")
+
     for label, key, limit in (
         ("blueprint target_files", "target_files", 16),
         ("blueprint scope_paths", "scope_paths", 16),
@@ -408,6 +449,44 @@ def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -
     )
     if test_targets:
         lines.append(_join_limited_values("blueprint required test targets", test_targets[:12]))
+
+    project_interface_contract = payload.get("project_interface_contract")
+    if isinstance(project_interface_contract, dict) and project_interface_contract:
+        interface_authority = str(
+            project_interface_contract.get("ownership_authority")
+            or project_interface_contract.get("authority")
+            or "chief_engineer_advisory_interface"
+        ).strip()
+        lines.append(f"- project_interface_contract: authority={interface_authority}")
+        blueprint_task_id = str(payload.get("task_id") or payload.get("pm_task_id") or "").strip()
+        consumers = project_interface_contract.get("consumer_declarations")
+        task_consumers = [
+            item
+            for item in consumers if isinstance(item, dict) and str(item.get("task_id") or "").strip() == blueprint_task_id
+        ] if isinstance(consumers, list) else []
+        consumed_contract_ids = {
+            str(item.get("depends_on_contract") or "").strip() for item in task_consumers
+        }
+        providers = project_interface_contract.get("provider_declarations")
+        if isinstance(providers, list):
+            for provider in providers[:16]:
+                if not isinstance(provider, dict):
+                    continue
+                contract_id = str(provider.get("contract_id") or "").strip()
+                owner_task_id = str(provider.get("owner_task_id") or "").strip()
+                if owner_task_id != blueprint_task_id and contract_id not in consumed_contract_ids:
+                    continue
+                description = str(provider.get("description") or "").strip()
+                if contract_id:
+                    lines.append(f"  - {owner_task_id or 'project'} provides {contract_id}: {description}")
+                interface = provider.get("interface")
+                if isinstance(interface, dict) and interface:
+                    compact_interface = json.dumps(interface, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                    lines.append(f"    interface: {compact_interface[:1000]}")
+        for consumer in task_consumers[:12]:
+            contract_id = str(consumer.get("depends_on_contract") or "").strip()
+            if contract_id:
+                lines.append(f"  - {blueprint_task_id} consumes {contract_id}")
 
     module_interface_contract = payload.get("module_interface_contract")
     if isinstance(module_interface_contract, dict) and module_interface_contract:

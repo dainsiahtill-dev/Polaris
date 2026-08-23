@@ -127,6 +127,31 @@ def resolve_structured_output_transport(context_override: Any) -> StructuredOutp
     )
 
 
+def validate_structured_output_content(
+    content: str,
+    context_override: Any,
+) -> tuple[dict[str, Any], StructuredOutputTransportPlan] | None:
+    """Validate canonical result content against its caller-owned contract.
+
+    Role-level quality shapes are only defaults for free-form role output.
+    A typed result protocol owns a narrower caller schema (for example a CE
+    semantic-repair patch rather than a full CE portfolio), so validating that
+    payload again by role would reject a result already proven by the exact
+    provider-tool contract.
+    """
+
+    plan = resolve_structured_output_transport(context_override)
+    if plan is None:
+        return None
+    try:
+        payload = json.loads(content, object_pairs_hook=_reject_duplicate_json_object_pairs)
+    except json.JSONDecodeError as exc:
+        raise ValueError("structured_output_content_invalid_json") from exc
+    if not isinstance(payload, Mapping):
+        raise ValueError("structured_output_content_must_be_object")
+    return _validate_payload(payload, plan), plan
+
+
 def require_exact_structured_output_tool_surface(
     tool_definitions: list[dict[str, Any]],
 ) -> bool:
@@ -991,5 +1016,6 @@ __all__ = [
     "require_exact_structured_output_tool_surface",
     "resolve_structured_output_transport",
     "trusted_structured_output_stream_evidence",
+    "validate_structured_output_content",
     "validate_structured_output_stream_tool_call",
 ]

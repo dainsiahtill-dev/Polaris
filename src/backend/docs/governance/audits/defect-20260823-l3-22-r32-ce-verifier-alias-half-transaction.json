@@ -1,0 +1,48 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "L3-22-R32-CE-VERIFIER-ALIAS-HALF-TRANSACTION",
+  "recorded_at": "2026-08-23T09:44:00+08:00",
+  "status": "closed_verified",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "factory_run_id": "factory_cc0bc582f1c7",
+  "workspace": "/tmp/factory-bench-l3-22-r32/workspaces/c363b74b246c-869bf876aad7cc83/L3-22-5aaab9a81e5e829d/eb16ac8c01bab7d01f3677b2",
+  "stage": "chief_engineer_review",
+  "symptom": "CE generated a schema-valid portfolio and completed structural plus semantic repair, but project completion validation rejected VER-GO-BUILD because OBL-MODULE-COMPILE was not a canonical completion obligation.",
+  "error_code": "invalid_project_completion_contract",
+  "root_cause": "Structural recovery used model OBL-* behavior aliases to map shared invariants onto canonical VER-* obligation ids, but left the same consumed aliases inside verifier covers_obligation_ids. The paired normalization therefore committed only its behavior side and strict completion validation observed dangling verifier references.",
+  "authority_preservation": {
+    "safe_recovery": "Remove only unknown verifier aliases that were actually consumed while mapping a shared behavior invariant, and only when canonical coverage remains.",
+    "fail_closed": "Unknown refs not consumed by behavior mapping remain unchanged; alias-only verifiers remain invalid instead of becoming hollow."
+  },
+  "files_modified": [
+    "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+    "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_semantic_repair.py"
+  ],
+  "dynamic_evidence": {
+    "original_repair_codes": [
+      "remove_behavior_owner_from_consumers",
+      "rebind_behavior_consumers_from_task_refs",
+      "map_behavior_obligation_aliases_to_verification"
+    ],
+    "original_unknown_reference": "VER-GO-BUILD -> OBL-MODULE-COMPILE",
+    "exact_provider_candidate_replay": {
+      "recovered": true,
+      "repair_codes": [
+        "remove_behavior_owner_from_consumers",
+        "rebind_behavior_consumers_from_task_refs",
+        "map_behavior_obligation_aliases_to_verification",
+        "remove_consumed_verifier_coverage_aliases"
+      ],
+      "VER-GO-BUILD_unknown_ids": [],
+      "VER-GO-VET_unknown_ids": []
+    }
+  },
+  "verification": [
+    "236 CE semantic/public/behavior tests passed",
+    "ruff check passed",
+    "mypy passed",
+    "exact frozen r32 provider candidate replay removed all consumed aliases from build/lint verifier coverage"
+  ],
+  "residual_risk": "A future model may emit an unknown verifier reference that is not paired with shared behavior evidence; it intentionally remains rejected by the strict completion-contract gate."
+}

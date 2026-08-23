@@ -381,6 +381,47 @@ def test_build_task_row_snapshot_returns_json_compatible_deep_copy() -> None:
     assert snapshot["metadata"] is not source["metadata"]
 
 
+def test_build_task_row_snapshot_compacts_volumetric_adapter_audit_history() -> None:
+    huge = "x" * 300_000
+    source = {
+        "id": 7,
+        "metadata": {
+            "factory_run_id": "factory-current",
+            "adapter_result": {
+                "new_files": ["main.go"],
+                "modified_files": ["engine/sandbox.go"],
+                "write_tool_evidence": True,
+                "artifact_quality_errors": ["go test ./... failed"],
+                "primary_llm": {"output": huge},
+                "quality_repair": {"provider_result": huge},
+                "quality_repair_attempts": [{"provider_result": huge}],
+            },
+        },
+    }
+
+    snapshot = build_task_row_snapshot(source)
+
+    adapter = snapshot["metadata"]["adapter_result"]
+    assert adapter["new_files"] == ["main.go"]
+    assert adapter["modified_files"] == ["engine/sandbox.go"]
+    assert adapter["write_tool_evidence"] is True
+    assert adapter["artifact_quality_errors"] == ["go test ./... failed"]
+    assert "primary_llm" not in adapter
+    assert "quality_repair" not in adapter
+    assert "quality_repair_attempts" not in adapter
+    projection = adapter["task_runtime_event_audit_projection"]
+    assert projection["schema_version"] == "task-runtime.adapter-audit-projection/1"
+    assert projection["source_bytes"] > 900_000
+    assert projection["omitted_fields"] == [
+        "primary_llm",
+        "quality_repair",
+        "quality_repair_attempts",
+    ]
+    assert len(projection["source_sha256"]) == 64
+    assert len(json.dumps(snapshot, ensure_ascii=False).encode("utf-8")) < 16_000
+    assert source["metadata"]["adapter_result"]["primary_llm"]["output"] == huge
+
+
 def test_build_task_runtime_execution_event_append_result_projects_failure_evidence() -> None:
     result = build_task_runtime_execution_event_append_result(
         event_type="claimed",

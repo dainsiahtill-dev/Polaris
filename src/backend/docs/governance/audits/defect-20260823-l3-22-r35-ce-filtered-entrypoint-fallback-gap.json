@@ -1,0 +1,79 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "L3-22-R35-CE-FILTERED-ENTRYPOINT-FALLBACK-GAP",
+  "status": "FIXED_UNIT_VERIFIED_PENDING_R36",
+  "severity": "P0",
+  "scope": "Polaris platform only",
+  "target_project_modified": false,
+  "observed_at": "2026-08-23",
+  "exact_run": {
+    "project_id": "L3-22",
+    "factory_run_id": "factory_15e159cfa8ff",
+    "work_dir": "/tmp/factory-bench-l3-22-r35",
+    "workspace": "/tmp/factory-bench-l3-22-r35/workspaces/3dd8d410338d-c8d7dc4809963657/L3-22-5aaab9a81e5e829d/f75daa2dccc13a9e0f8e90ac",
+    "primary_context_snapshot_ref": "3e67c6e2466831fb009677b8",
+    "schema_repair_context_snapshot_ref": "c770c80f1cbe872033d69512"
+  },
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "wall_clock_seconds": 122.4,
+    "generated_blueprints": "0/3",
+    "error_code": "invalid_project_completion_contract",
+    "root_cause_hint": "application project requires a required entrypoint",
+    "physical_delivery": "No Director dispatch and zero source files"
+  },
+  "final_request_audit": {
+    "role_identity": "Chief Engineer",
+    "model": "MiniMax-M3",
+    "required_tool": "submit_structured_role_output",
+    "canonical_tool_present": true,
+    "physical_tool_present": true,
+    "tool_choice_forced": true,
+    "schema_repair": "Provider output was structurally recovered and persisted as a schema-valid candidate."
+  },
+  "dynamic_evidence": {
+    "candidate_ref": "runtime/state/blueprints/semantic-repair/L3-22/factory_15e159cfa8ff/41e3fa715c9c630dc048a1afb13e14a100c7f49127ed1228d33110f9bd33169b.json",
+    "candidate_entrypoints": [
+      {
+        "source_path": "cmd/bubblesim/main.go",
+        "command": "go run ./cmd/bubblesim -bubbles 8 -steps 120 -dt 0.016 -g 9.8 -seed 42",
+        "owner_task_id": "TASK-2"
+      },
+      {
+        "source_path": "internal/sandbox/sandbox.go",
+        "command": "go test ./... -count=1 -race",
+        "owner_task_id": "TASK-3"
+      }
+    ],
+    "pm_authority": "PM target_files authorize main.go and command authority includes go run .; cmd/bubblesim/main.go is not a PM-authorized target.",
+    "filter_result": "Both CE advisory entrypoints were correctly removed as unauthorized/unbindable, leaving zero normalized entrypoints."
+  },
+  "root_cause": {
+    "classification": "Chief Engineer completion-contract authority projection",
+    "primary": "PM-authoritative entrypoints were projected only when the provider's original entrypoint list was empty.",
+    "secondary": "When a non-empty CE advisory list became empty after fail-closed authorization filtering, the PM fallback was not rerun, so advisory mistakes erased the valid PM application entrypoint.",
+    "not_model_failure": "The model suggestion was safely rejected; the platform failed to restore the committed PM authority after rejection."
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_public_contractsa.py"
+    ],
+    "behavior": [
+      "Extract one deterministic project_pm_authoritative_entrypoints projection.",
+      "Use it when CE initially omits entrypoints and when every CE row is filtered out.",
+      "Keep unauthorized CE paths fail-closed; restore only exact PM target plus committed command authority."
+    ]
+  },
+  "verification": {
+    "red_test_before_fix": "reproduced exact ValueError: application project requires a required entrypoint",
+    "targeted_tests": "2 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_isolated_bench": "r36 pending"
+  },
+  "remaining_risks": [
+    "Fresh r36 must prove CE 3/3 and then reach Director.",
+    "The original r35 candidate used a topology-expanded CLI path; future support can authorize that path only through explicit PM/CE topology delegation, never by bypassing the PM fallback."
+  ]
+}

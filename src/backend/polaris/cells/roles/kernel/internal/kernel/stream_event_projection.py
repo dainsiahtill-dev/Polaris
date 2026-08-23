@@ -35,6 +35,9 @@ from polaris.cells.roles.kernel.internal.kernel.transaction_turn_completion impo
     task_boundary_ledger_append_failure_error,
 )
 from polaris.cells.roles.kernel.internal.kernel.turn_output_validation import validate_turn_output
+from polaris.cells.roles.kernel.internal.structured_output_transport import (
+    resolve_structured_output_transport,
+)
 from polaris.cells.roles.kernel.public.turn_events import (
     CompletionEvent,
     ContentChunkEvent,
@@ -231,6 +234,7 @@ class StreamEventProjector:
                 max_retries=max(0, int(self.request.max_retries)),
                 last_error=None,
                 has_tool_activity=bool(tool_calls or tool_results),
+                structured_output_context=self.request.context_override,
             )
             metadata["output_validation"] = {
                 "success": bool(quality_result.success),
@@ -238,6 +242,14 @@ class StreamEventProjector:
                 "suggestions": list(quality_result.suggestions),
                 "quality_score": float(quality_result.quality_score),
             }
+            structured_output_plan = resolve_structured_output_transport(self.request.context_override)
+            if structured_output_plan is not None:
+                metadata["output_validation"].update(
+                    {
+                        "schema_name": structured_output_plan.contract.schema_name,
+                        "validation_source": "caller_structured_output_contract",
+                    }
+                )
             if not quality_result.success:
                 self._record_projection_outcome(success=False, reason="stream output validation failed")
                 validation_error = "; ".join(str(item) for item in quality_result.errors)

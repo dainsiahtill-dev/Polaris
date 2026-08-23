@@ -293,8 +293,13 @@ class ChiefEngineerSemanticRepairPatchV1:
         }
 
     @classmethod
-    def from_provider_dict(cls, payload: Mapping[str, Any]) -> ChiefEngineerSemanticRepairPatchV1:
-        """Parse the exact provider patch envelope; derived receipt fields are forbidden."""
+    def from_provider_dict(
+        cls,
+        payload: Mapping[str, Any],
+        *,
+        allowed_operations: tuple[ChiefEngineerSemanticRepairOperationV1, ...] | None = None,
+    ) -> ChiefEngineerSemanticRepairPatchV1:
+        """Parse only diagnosis-authorized groups from the exact provider envelope."""
 
         expected_fields = {
             "base_candidate_hash",
@@ -306,6 +311,18 @@ class ChiefEngineerSemanticRepairPatchV1:
         }
         if set(payload) != expected_fields:
             raise ValueError("semantic repair provider patch fields are invalid")
+        all_operations: frozenset[ChiefEngineerSemanticRepairOperationV1] = frozenset(
+            {
+                "artifact_upsert",
+                "entrypoint_upsert",
+                "behavior_invariant_upsert",
+                "task_behavior_ref_replace",
+            }
+        )
+        enabled_operations = all_operations if allowed_operations is None else frozenset(allowed_operations)
+        unknown_operations = enabled_operations - all_operations
+        if unknown_operations:
+            raise ValueError(f"semantic repair allowed_operations are invalid: {sorted(unknown_operations)}")
 
         def rows(name: str) -> tuple[Mapping[str, Any], ...]:
             value = payload.get(name)
@@ -315,14 +332,21 @@ class ChiefEngineerSemanticRepairPatchV1:
                 raise TypeError(f"{name} must contain mappings")
             return tuple(value)
 
-        artifact_rows = rows("artifact_upserts")
-        entrypoint_rows = rows("entrypoint_upserts")
-        behavior_rows = rows("behavior_invariant_upserts")
-        refs = payload.get("task_behavior_ref_replacements")
-        if not isinstance(refs, Mapping):
-            raise TypeError("task_behavior_ref_replacements must be a mapping")
-        if any(not isinstance(value, list) for value in refs.values()):
-            raise TypeError("task_behavior_ref_replacements values must be lists")
+        artifact_rows = rows("artifact_upserts") if "artifact_upsert" in enabled_operations else ()
+        entrypoint_rows = rows("entrypoint_upserts") if "entrypoint_upsert" in enabled_operations else ()
+        behavior_rows = (
+            rows("behavior_invariant_upserts") if "behavior_invariant_upsert" in enabled_operations else ()
+        )
+        refs: Mapping[Any, Any]
+        if "task_behavior_ref_replace" in enabled_operations:
+            raw_refs = payload.get("task_behavior_ref_replacements")
+            if not isinstance(raw_refs, Mapping):
+                raise TypeError("task_behavior_ref_replacements must be a mapping")
+            if any(not isinstance(value, list) for value in raw_refs.values()):
+                raise TypeError("task_behavior_ref_replacements values must be lists")
+            refs = raw_refs
+        else:
+            refs = {}
 
         def exact(row: Mapping[str, Any], fields: set[str], name: str) -> None:
             if set(row) != fields:
@@ -380,6 +404,23 @@ class ChiefEngineerSemanticRepairPatchV1:
         }
         for row in behavior_rows:
             exact(row, behavior_fields, "behavior_invariant_upsert")
+            owner_task_id = row["owner_task_id"]
+            raw_consumer_task_ids = row["consumer_task_ids"]
+            consumer_task_ids = raw_consumer_task_ids
+            if (
+                isinstance(owner_task_id, str)
+                and isinstance(raw_consumer_task_ids, list)
+                and owner_task_id in raw_consumer_task_ids
+            ):
+                remaining_consumers = [
+                    task_id for task_id in raw_consumer_task_ids if task_id != owner_task_id
+                ]
+                # Match the safe structural recovery used for the primary CE
+                # result. Removing a redundant self-reference is mechanical;
+                # inventing a missing external consumer is not. Owner-only
+                # rows therefore remain invalid and fail closed below.
+                if remaining_consumers:
+                    consumer_task_ids = remaining_consumers
             example_rows = row["verification_examples"]
             if not isinstance(example_rows, list) or any(not isinstance(item, Mapping) for item in example_rows):
                 raise TypeError("verification_examples must contain mappings")
@@ -397,8 +438,8 @@ class ChiefEngineerSemanticRepairPatchV1:
                 ChiefEngineerBehaviorInvariantV1(
                     invariant_id=row["invariant_id"],
                     statement=row["statement"],
-                    owner_task_id=row["owner_task_id"],
-                    consumer_task_ids=tuple(row["consumer_task_ids"]),
+                    owner_task_id=owner_task_id,
+                    consumer_task_ids=tuple(consumer_task_ids),
                     covered_obligation_ids=tuple(row["covered_obligation_ids"]),
                     verification_examples=tuple(examples),
                 )

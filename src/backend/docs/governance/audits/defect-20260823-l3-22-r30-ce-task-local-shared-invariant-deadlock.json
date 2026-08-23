@@ -1,0 +1,68 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "l3-22-r30-ce-task-local-shared-invariant-deadlock",
+  "recorded_at": "2026-08-23T09:18:26+08:00",
+  "status": "FIXED_TARGETED_GATES_PASSED_AWAITING_FRESH_R31",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "attempt": "r30",
+  "factory_run_id": "factory_2286889f97d0",
+  "workspace": "/tmp/factory-bench-l3-22-r30/workspaces/f7db455d1f9f-e8bbd52ddfce63e2/L3-22-5aaab9a81e5e829d/62241fb993b8b89445c0dd5b",
+  "stage": "chief_engineer_review",
+  "symptom": "PM completed and CE made three calls, but semantic repair exhausted because consumer_task_ids still contained owner_task_id. Director and QA never ran.",
+  "final_request_audit": {
+    "role_identity_ok": true,
+    "schema_repair_context_snapshot_ref": "7b8ef051c237118f66d9f3f9",
+    "semantic_patch_context_snapshot_ref": "ce685b9489ab72647a396d0f",
+    "final_patch_context_snapshot_ref": "1d4b4187d66c657ad2e05946",
+    "allowed_operations": ["behavior_invariant_upsert", "task_behavior_ref_replace"],
+    "allowed_completion_obligation_ids_present": true
+  },
+  "dynamic_evidence": {
+    "terminal_error_code": "chief_engineer.semantic_repair_exhausted",
+    "terminal_hint": "chief_engineer.semantic_patch_invalid:ValueError:consumer_task_ids must not contain owner_task_id",
+    "frozen_candidate": "runtime/state/blueprints/semantic-repair/L3-22/factory_2286889f97d0/8cf39705a54c0420acb2d4875564e05a29a851e4f7b03b279e4266c2d031cb99.json",
+    "blocking_row": {
+      "invariant_id": "INV-CLI-ENTRYPOINT-DETERMINISM",
+      "owner_task_id": "TASK-3",
+      "consumer_task_ids": ["TASK-3"],
+      "reverse_task_plan_refs": ["TASK-3"]
+    },
+    "before_fix": "The normalizer correctly refused to invent a sibling consumer, but raised and transactionally discarded independent owner-self and obligation-id repairs for the other rows.",
+    "after_exact_replay": {
+      "recovered": true,
+      "repair_codes": [
+        "remove_behavior_owner_from_consumers",
+        "remove_task_local_invariant_from_shared_contract",
+        "remove_unknown_behavior_obligation_refs"
+      ],
+      "remaining_shared_invariants": 3,
+      "owner_only_shared_invariants": 0,
+      "task_3_local_shared_ref_removed": true
+    }
+  },
+  "root_cause_class": "chief_engineer_task_local_rule_misclassified_as_shared_invariant",
+  "root_cause": "A CE advisory row was placed in shared_behavior_contract even though its declared owner was its sole consumer and the same owner was its sole reverse task-plan reference. That proves the row is task-local rather than cross-task. The recovery kernel had only two choices: invent a sibling consumer or reject the entire transaction. It correctly refused invention but unnecessarily rolled back other independent safe repairs, forcing an LLM patch to solve a structurally provable classification error.",
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_semantic_repair.py"
+    ],
+    "behavior": [
+      "When and only when owner is the sole consumer and the same owner is the sole reverse task-plan ref, remove the advisory invariant from shared_behavior_contract and remove its matching shared ref from that owner plan.",
+      "Do not invent a consumer, change PM authority, or remove rows with any sibling reference.",
+      "Keep owner-only rows with no reverse evidence fail-closed.",
+      "Allow independent safe structural repairs in the same candidate to commit transactionally."
+    ]
+  },
+  "verification": {
+    "tdd_red": "Proven task-local shared invariant regression failed with recovered=false before implementation; no-reverse-evidence refusal remained green.",
+    "tdd_green": "Task-local removal, no-evidence refusal, and sibling-evidence rebind tests all passed.",
+    "exact_r30_replay": "Recovery true; owner-self rows repaired; exact task-local row and ref removed; unknown obligation alias removed for subsequent semantic feasibility repair.",
+    "semantic_repair_pytest": "52 passed",
+    "ruff": "All checks passed",
+    "mypy": "Success: no issues found in 1 source file"
+  },
+  "target_project_modified": false,
+  "next_action": "Stop the r30 isolated backend and run fresh isolated L3-22 r31. Dynamically attribute the first new residual before editing."
+}

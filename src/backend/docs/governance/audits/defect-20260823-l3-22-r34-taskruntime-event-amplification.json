@@ -1,0 +1,65 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "L3-22-R34-TASKRUNTIME-EVENT-SNAPSHOT-AMPLIFICATION",
+  "status": "FIXED_UNIT_VERIFIED_PENDING_R35",
+  "severity": "P0",
+  "scope": "Polaris platform only",
+  "target_project_modified": false,
+  "observed_at": "2026-08-23",
+  "exact_run": {
+    "project_id": "L3-22",
+    "factory_run_id": "factory_3d96c70c0ca8",
+    "work_dir": "/tmp/factory-bench-l3-22-r34",
+    "backend_pid": 19598,
+    "backend_port": 50011
+  },
+  "symptom": {
+    "stage": "quality_gate/qa_gate same-run recovery",
+    "backend_cpu_percent": 93.5,
+    "task_runtime_event_stream_bytes_before": 63525406,
+    "task_runtime_event_stream_bytes_after": 106886410,
+    "process_rchar_bytes": 28914922517,
+    "effect": "Factory timestamps advanced only after long CPU-bound gaps; the old backend required scoped SIGKILL after runner termination."
+  },
+  "dynamic_evidence": {
+    "task_2_json_bytes": 9662304,
+    "task_2_metadata_adapter_result_bytes": 5011275,
+    "quality_repair_attempts_bytes": 3956176,
+    "primary_llm_bytes": 429191,
+    "quality_repair_bytes": 625196,
+    "duplicated_fact_sizes": {
+      "failed": 5060630,
+      "reopened": 5060571,
+      "factory_run_bound": 5059841,
+      "claimed": 5059637
+    },
+    "dominant_field": "payload.task_row_snapshot.metadata.adapter_result",
+    "independent_verifier_residual": "GOWORK=off go test ./... had one real compile error: main.go undefined physics"
+  },
+  "root_cause": {
+    "classification": "TaskRuntime durable-event amplification",
+    "primary": "Every non-heartbeat lifecycle event deep-copied the complete task row, including multi-megabyte provider and quality-repair histories, into task_runtime.execution.jsonl.",
+    "secondary": "Same-run QA recovery emits reopened/factory_run_bound/claimed/failed transitions, multiplying identical adapter audit bodies while execution-fact projections repeatedly scan and deserialize the stream.",
+    "why_existing_guard_missed": "Runtime.v2 already bounded transport payloads and heartbeats used an identity-only snapshot, but durable non-heartbeat facts remained unbounded."
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/runtime/task_runtime/internal/execution_session.py",
+      "src/backend/polaris/cells/runtime/task_runtime/tests/test_execution_session.py"
+    ],
+    "behavior": [
+      "Keep settlement-critical adapter fields, artifact paths, quality errors, and write-tool evidence in the durable task-row snapshot.",
+      "When adapter_result exceeds 256 KiB, omit primary_llm, quality_repair, and quality_repair_attempts from the TaskRuntime event copy only.",
+      "Replace omitted audit history with a deterministic SHA-256, source byte count, schema, and omitted-field list; full transcripts remain in ContextOS/ReceiptStore and the task owner row."
+    ]
+  },
+  "verification": {
+    "red_test_before_fix": "failed because primary_llm remained embedded",
+    "targeted_tests": "76 passed",
+    "fresh_isolated_bench": "r35 pending"
+  },
+  "remaining_risks": [
+    "Run the broader TaskRuntime service suites before r35.",
+    "Fresh r35 must prove lifecycle facts stay bounded during same-run repair and that settlement authority remains intact."
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "L3-22-R33-DIRECTOR-TRANSITIVE-DEPENDENCY-EVIDENCE-GAP",
+  "status": "FIXED_UNIT_VERIFIED_R34_EXPOSED_STALE_REBIND_PENDING_R35",
+  "severity": "P0",
+  "scope": "Polaris platform only",
+  "target_project_modified": false,
+  "observed_at": "2026-08-23",
+  "exact_run": {
+    "project_id": "L3-22",
+    "factory_run_id": "factory_f156c56b7988",
+    "work_dir": "/tmp/factory-bench-l3-22-r33",
+    "workspace": "/tmp/factory-bench-l3-22-r33/workspaces/39fde1aacd7d-b7a1e28443276cc5/L3-22-5aaab9a81e5e829d/53b4a8f9e30b840858cdda3f",
+    "context_snapshot_ref": "1648ea617e401adbae96973a"
+  },
+  "symptom": {
+    "stage": "director_dispatch",
+    "task": "TASK-3",
+    "physical_delivery": "7 Go source files, 898 lines, go test compile succeeded",
+    "failure": "main_test.go, physics_test.go, and README.md remained missing after two same-task repair attempts",
+    "terminal_error": "director_quality_repair_stalled"
+  },
+  "dynamic_evidence": {
+    "task_graph": "TASK-3 -> TASK-2 (zero owned artifacts) -> TASK-1 (receipt-bound Go source interfaces)",
+    "final_request_actual_sibling_exports": {
+      "dependency_task_ids": [
+        "2"
+      ],
+      "covered_parent_task_ids": [
+        "2"
+      ],
+      "zero_artifact_parent_task_ids": [
+        "2"
+      ],
+      "module_count": 0,
+      "receipt_coverage_complete": true
+    },
+    "repair_attempt_1": "The model emitted three writes, but invented World.SpawnBubble and World.Step because no actual dependency bodies were present; compile regression rejected the first test mutation and serial fail-fast aborted siblings.",
+    "repair_attempt_2": "The model emitted four writes; go.mod was a no-op, the invalid main_test.go edit failed compile validation, and remaining writes were aborted.",
+    "ui_projection_discrepancy": "The UI simultaneously displayed CE 0/3 and no blueprints while the exact run had CE 3/3 and active Director materialization; tracked as a separate projection-authority defect.",
+    "r34_live_counterexample": {
+      "factory_run_id": "factory_3d96c70c0ca8",
+      "context_snapshot_ref": "bc01298a89fdfce442ecdbe2",
+      "offline_builder_result": "TASK-2,TASK-1 with 8 modules in 5.75ms",
+      "physical_final_request_result": "TASK-2 only with 4 modules",
+      "cause": "Dialogue rebind returned an already-legal trusted shallow snapshot without rebuilding against the now-observable parent graph."
+    }
+  },
+  "root_cause": {
+    "primary": "build_director_dependency_artifact_snapshot expanded only direct dependencies. A valid zero-artifact orchestration boundary therefore hid receipt-bound source interfaces owned by its ancestor.",
+    "secondary": "_dependency_task_ids preferred ephemeral resolved runtime ids over stable PM/CE external task ids, preventing same-run authority rehydration after TaskRuntime remint or drain.",
+    "tertiary": "_rebind_director_dependency_artifact_for_dialogue documented per-turn rebuilding but returned an existing trusted token immediately, freezing a direct-only snapshot after transitive parent evidence became observable.",
+    "classification": "Director final-request authority projection"
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/dependency_artifact_evidence.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_dependency_artifact_evidence.py"
+    ],
+    "behavior": [
+      "Prefer stable external dependency ids before runtime aliases.",
+      "Traverse the dependency graph breadth-first with a hard parent budget and alias/cycle deduplication.",
+      "Preserve zero-artifact parent evidence while continuing to receipt-bound ancestors.",
+      "Prefer the nearest receipt owner for duplicate physical paths.",
+      "Refresh a legal snapshot against current exact-run TaskRuntime/receipt authority before every dialogue; retain the old snapshot only when refresh cannot be proven because runtime authority was drained."
+    ]
+  },
+  "verification": {
+    "red_tests_before_fix": 2,
+    "targeted_tests": "31 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_isolated_bench": "r34 exposed and fixed stale rebind; r35 pending"
+  },
+  "remaining_risks": [
+    "Fresh isolated L3-22 must prove that TASK-3 final-request actual_sibling_exports contains TASK-1 module bodies and produces tests/README.",
+    "The separate UI projection-authority mismatch needs an automatic regression audit after delivery closure."
+  ]
+}

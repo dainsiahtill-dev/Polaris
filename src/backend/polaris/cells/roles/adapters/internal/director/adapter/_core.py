@@ -1266,25 +1266,51 @@ class DirectorAdapter(BaseRoleAdapter):
         """
 
         existing = context.get(DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY)
-        if type(existing) is TrustedDirectorDependencyArtifactSnapshotV2:
-            return existing
-        recovered = recover_trusted_director_dependency_artifact_snapshot(context.get("actual_sibling_exports"))
+        recovered = (
+            existing
+            if type(existing) is TrustedDirectorDependencyArtifactSnapshotV2
+            else recover_trusted_director_dependency_artifact_snapshot(context.get("actual_sibling_exports"))
+        )
         if recovered is None:
             metadata = context.get("metadata")
             if isinstance(metadata, Mapping):
                 recovered = recover_trusted_director_dependency_artifact_snapshot(
                     metadata.get("actual_sibling_exports")
                 )
+        task = self._resolve_child_task_for_dependency_artifact(context)
+        if task is not None:
+            # A trusted snapshot is immutable evidence for one observed graph
+            # cut, not a forever cache.  Parent TaskRuntime rows and project
+            # receipts can become observable between the primary turn and a
+            # repair/materialization turn. Rebuild against a copy first so a
+            # drained runtime cannot erase the last legal exact-run snapshot.
+            refresh_context = dict(context)
+            refresh_context["metadata"] = _copy_mapping_payload(context.get("metadata")) or {}
+            refreshed = self._prepare_director_dependency_artifact_snapshot(
+                task=task,
+                context=refresh_context,
+            )
+            if type(refreshed) is TrustedDirectorDependencyArtifactSnapshotV2:
+                metadata = _copy_mapping_payload(context.get("metadata")) or {}
+                metadata.pop("actual_sibling_exports_projection_error", None)
+                context["metadata"] = metadata
+                context[DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY] = refreshed
+                project_director_dependency_artifact_snapshot(context, refreshed)
+                return refreshed
+            if type(recovered) is not TrustedDirectorDependencyArtifactSnapshotV2:
+                context.pop(DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY, None)
+                project_director_dependency_artifact_snapshot(context, None)
+                refreshed_metadata = _copy_mapping_payload(refresh_context.get("metadata")) or {}
+                context["metadata"] = refreshed_metadata
+                return None
         if type(recovered) is TrustedDirectorDependencyArtifactSnapshotV2:
-            # Live L2-16 remint-21: keep an already-legal projected payload.
-            # _prepare starts by projecting None, which would wipe it.
+            # Live L2-16 remint-21: when the parent runtime was drained, retain
+            # the last legal projected payload rather than replacing it with
+            # an unprovable empty snapshot.
             context[DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY] = recovered
             project_director_dependency_artifact_snapshot(context, recovered)
             return recovered
-        task = self._resolve_child_task_for_dependency_artifact(context)
-        if task is None:
-            return None
-        return self._prepare_director_dependency_artifact_snapshot(task=task, context=context)
+        return None
 
     @staticmethod
     def _dependency_artifact_factory_run_id(

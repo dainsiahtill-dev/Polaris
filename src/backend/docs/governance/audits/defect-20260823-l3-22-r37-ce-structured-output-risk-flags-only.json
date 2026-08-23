@@ -1,0 +1,76 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-22-R37-CE-STRUCTURED-OUTPUT-RISK-FLAGS-ONLY",
+  "status": "OPEN_DYNAMIC_ROOT_CAUSE_CONFIRMED_FIX_PENDING",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "factory_run_id": "factory_d91a0641abc1",
+  "workspace": "/tmp/factory-bench-l3-22-r37/workspaces/2472eec4b0ba-5bc4b61c68825600/L3-22-5aaab9a81e5e829d/103f35477965efe546bcbee7",
+  "symptom": "PM completed, but Chief Engineer generated 0/3 blueprints after the primary structured-output call and its schema-repair call both failed validation.",
+  "context_snapshot_refs": [
+    "554c01274feb3e2424313ce3",
+    "abd1ceecf32e094fba707400"
+  ],
+  "exact_run_evidence": {
+    "primary_error": "structured_output_payload_schema_mismatch:$:'construction_plan' is a required property",
+    "repair_error": "structured_output_payload_schema_mismatch:$:'construction_plan' is a required property",
+    "validated_root_keys": [
+      "risk_flags"
+    ],
+    "required_root_keys": [
+      "construction_plan",
+      "project_completion_contract",
+      "risk_flags"
+    ],
+    "primary_provider_call": {
+      "tool": "submit_structured_role_output",
+      "call_id": "call_474ad93913f1498b84587664",
+      "assembly_source": "stream_fragments",
+      "fragment_count": 2,
+      "provisional_placeholder_count": 1,
+      "elapsed_ms": 107361.63
+    },
+    "repair_provider_call": {
+      "tool": "submit_structured_role_output",
+      "call_id": "call_42d61fe750aa45209668eeac",
+      "assembly_source": "stream_fragments",
+      "fragment_count": 2,
+      "provisional_placeholder_count": 1,
+      "elapsed_ms": 49632.96
+    },
+    "final_request_audit": {
+      "role_identity_correct": true,
+      "pm_contract_present": true,
+      "target_files_present": true,
+      "required_submission_tool_present": true,
+      "tool_choice_forced": true,
+      "missing_required_refs": [],
+      "missing_required_tools": []
+    },
+    "fallback_signal": "chief_engineer.advisory_projection_fallback_infeasible"
+  },
+  "root_cause": {
+    "confirmed": "Both physical MiniMax-M3 calls submitted a schema-valid tool name but an incomplete root object containing only risk_flags; the schema-repair attempt reproduced the same missing construction_plan/project_completion_contract shape.",
+    "not_caused_by": [
+      "PM failure",
+      "Director execution",
+      "missing CE context",
+      "missing structured-output tool schema",
+      "provider timeout"
+    ],
+    "open_deeper_question": "Determine whether complex forced-tool output needs a smaller staged contract/non-streaming route, or a stronger bounded schema-recovery strategy. Do not weaken immutable CE completion authority."
+  },
+  "required_fix_properties": [
+    "Preserve PM and CE authority boundaries.",
+    "Do not accept risk_flags-only or otherwise partial provider output.",
+    "Do not bypass CE or dispatch Director without a complete blueprint portfolio.",
+    "Bound retries and prove progress by changed validation signature.",
+    "Retain exact final-request and provider assembly evidence."
+  ],
+  "verification_required": [
+    "RED/GREEN unit test reproducing risk_flags-only primary and repair outputs.",
+    "Targeted CE structured-output and fallback suites.",
+    "Fresh isolated L3-22 run reaches Director with 3/3 CE blueprints.",
+    "Then verify r36 Go package-topology constraint live."
+  ]
+}

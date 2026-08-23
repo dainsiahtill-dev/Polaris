@@ -97,10 +97,14 @@ def project_chief_engineer_portfolio_delivery_depth_feasibility(
         path = str(artifact.get("path") or "").strip().replace("\\", "/")
         role = str(artifact.get("semantic_role") or "").strip().lower()
         owner = tasks_by_id.get(str(artifact.get("owner_task_id") or ""))
-        if not path or owner is None or not _ce_artifact_role_matches_path(
-            semantic_role=role,
-            path=path,
-            allowed_source_suffixes=owner.allowed_source_suffixes,
+        if (
+            not path
+            or owner is None
+            or not _ce_artifact_role_matches_path(
+                semantic_role=role,
+                path=path,
+                allowed_source_suffixes=owner.allowed_source_suffixes,
+            )
         ):
             continue
         if not (
@@ -1036,9 +1040,7 @@ def _build_portfolio_completion_contract(
         def owners_for_path(path: str) -> set[str]:
             owners = set(pm_target_owners.get(path, set()))
             owners.update(
-                task.task_id
-                for task in command.tasks
-                if _task_authorizes_completion_path(task=task, path=path)
+                task.task_id for task in command.tasks if _task_authorizes_completion_path(task=task, path=path)
             )
             owners.update(delegated_path_owners.get(path, set()))
             return owners
@@ -1314,9 +1316,15 @@ def _build_portfolio_completion_contract(
                 command_authority_by_hash[authority.authority_hash] = authority
             return authority
 
-        if not entrypoint_rows:
-            # Entrypoint paths and executable commands are already exact PM
-            # authority. An empty CE advisory list must not erase them.
+        def project_pm_authoritative_entrypoints() -> tuple[dict[str, Any], ...]:
+            """Project executable entrypoints from committed PM authority.
+
+            This fallback applies both when CE initially omits entrypoints and
+            when every CE advisory row is later filtered as unauthorized or
+            unexecutable.  Advisory filtering must never erase an otherwise
+            valid PM-owned application entrypoint.
+            """
+
             ordered_entrypoints = tuple(
                 dict.fromkeys(path for task in command.tasks for path in task.entrypoint_targets)
             )
@@ -1373,7 +1381,10 @@ def _build_portfolio_completion_contract(
                         "command": None,
                     }
                 )
-            entrypoint_rows = tuple(projected_entrypoints)
+            return tuple(projected_entrypoints)
+
+        if not entrypoint_rows:
+            entrypoint_rows = project_pm_authoritative_entrypoints()
 
         def authority_for_row(row: Mapping[str, Any]) -> Any:
             """Bind advisory verifier semantics to committed PM command authority.
@@ -1559,6 +1570,9 @@ def _build_portfolio_completion_contract(
             if row["applicability"] != "not_applicable":
                 dropped_unexecutable_entrypoint_ids.add(str(row["obligation_id"]))
             continue
+
+        if not normalized_entrypoint_rows:
+            normalized_entrypoint_rows.extend(project_pm_authoritative_entrypoints())
 
         normalized_verification_rows: list[dict[str, Any]] = []
         for row in verification_rows:
@@ -2013,6 +2027,26 @@ def _parse_portfolio_llm_blueprint(
             }
         )
 
+    # ``owner_task_id`` + ``consumer_task_ids`` are the CE-authored semantic
+    # authority for invariant participation.  ``behavior_invariant_refs`` in
+    # each task-local advisory plan is a redundant projection and providers
+    # may omit an otherwise optional task plan entirely.  Close that projection
+    # deterministically from the declared participants; unknown participant
+    # task ids remain untouched here and are still rejected by the feasibility
+    # validator below.
+    for invariant in behavior_invariants:
+        invariant_id = str(invariant.get("invariant_id") or "").strip()
+        participants = (
+            str(invariant.get("owner_task_id") or "").strip(),
+            *tuple(_string_list(invariant.get("consumer_task_ids"))),
+        )
+        for task_id in participants:
+            if task_id not in task_ids or not invariant_id:
+                continue
+            current_refs = task_behavior_bindings.get(task_id, ())
+            if invariant_id not in current_refs:
+                task_behavior_bindings[task_id] = (*current_refs, invariant_id)
+
     interface_payload = _portfolio_mapping(
         construction_plan.pop("project_interface_contract", {}),
         field_name="construction_plan.project_interface_contract",
@@ -2173,6 +2207,89 @@ def _project_interface_seed(
         "authoritative": False,
     }
     return seed, task_file_ownership, file_task_ownership
+
+
+def _project_go_entrypoint_package_topology(
+    tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
+    provider_declarations: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    """Close executable Go package topology from PM-owned file authority.
+
+    Go permits only one non-test package per directory.  A ``main.go`` that is
+    an executable entrypoint therefore forces every production ``.go`` file in
+    that same directory into ``package main``.  Without this projection,
+    separate Director tasks can independently choose ``main`` and a library
+    package for the same flat directory, creating an immutable CE portfolio
+    that no local repair can satisfy.
+    """
+
+    declarations = [dict(item) for item in provider_declarations]
+    production_go_by_directory: dict[str, list[str]] = {}
+    entrypoint_paths: set[str] = set()
+    for task in tasks:
+        for raw_path in task.target_files:
+            path = PurePosixPath(str(raw_path).replace("\\", "/"))
+            if path.suffix.lower() != ".go" or path.name.endswith("_test.go"):
+                continue
+            directory = path.parent.as_posix()
+            production_go_by_directory.setdefault(directory, []).append(path.as_posix())
+        entrypoint_paths.update(
+            PurePosixPath(str(raw_path).replace("\\", "/")).as_posix()
+            for raw_path in task.entrypoint_targets
+            if PurePosixPath(str(raw_path).replace("\\", "/")).name == "main.go"
+        )
+
+    for declaration in declarations:
+        provider_file = PurePosixPath(str(declaration.get("provider_file") or "").replace("\\", "/"))
+        if (
+            provider_file.name == "main.go"
+            and str(declaration.get("semantic_role") or "").strip().lower() == "entrypoint"
+        ):
+            entrypoint_paths.add(provider_file.as_posix())
+
+    module_roots: dict[str, str] = {}
+    for declaration in declarations:
+        provider_file = PurePosixPath(str(declaration.get("provider_file") or "").replace("\\", "/"))
+        signature = str(declaration.get("signature") or "").strip()
+        if provider_file.name != "go.mod" or not signature.startswith("module "):
+            continue
+        module_path = signature.removeprefix("module ").strip().split()[0]
+        if module_path:
+            module_roots[provider_file.parent.as_posix()] = module_path
+
+    existing = {
+        (
+            str(item.get("semantic_role") or "").strip().lower(),
+            str(item.get("provider_file") or "").replace("\\", "/").strip(),
+        )
+        for item in declarations
+    }
+    for entrypoint_path in sorted(entrypoint_paths):
+        entrypoint = PurePosixPath(entrypoint_path)
+        directory = entrypoint.parent.as_posix()
+        sibling_files = sorted(dict.fromkeys(production_go_by_directory.get(directory, ())))
+        if entrypoint.as_posix() not in sibling_files:
+            continue
+        marker = ("package_topology", entrypoint.as_posix())
+        if marker in existing:
+            continue
+        signature = (
+            f"All non-test Go files in directory {directory} ({', '.join(sibling_files)}) must declare package main"
+        )
+        entrypoint_module_path = module_roots.get(directory)
+        if entrypoint_module_path:
+            signature += f"; {entrypoint.as_posix()} must not import module root {entrypoint_module_path}"
+        declarations.append(
+            {
+                "provider_file": entrypoint.as_posix(),
+                "semantic_role": "package_topology",
+                "signature": signature,
+                "symbol": "package main",
+                "symbol_kind": "declaration",
+            }
+        )
+        existing.add(marker)
+    return tuple(declarations)
 
 
 def _bind_portfolio_task_overlays(
@@ -2485,9 +2602,13 @@ def build_chief_engineer_blueprint_portfolio(
             ) from exc
         behavior_hash = shared_behavior_contract_hash(behavior_invariants, task_behavior_bindings)
 
+    provider_declarations = _project_go_entrypoint_package_topology(
+        command.tasks,
+        parsed.provider_declarations,
+    )
     interface_seed, task_file_ownership, file_task_ownership = _project_interface_seed(
         command.tasks,
-        provider_declarations=parsed.provider_declarations,
+        provider_declarations=provider_declarations,
         consumer_declarations=parsed.consumer_declarations,
     )
     interface_hash = stable_hash(interface_seed)
@@ -2533,7 +2654,7 @@ def build_chief_engineer_blueprint_portfolio(
         contract_hash=interface_hash,
         task_file_ownership=task_file_ownership,
         file_task_ownership=file_task_ownership,
-        provider_declarations=parsed.provider_declarations,
+        provider_declarations=provider_declarations,
         consumer_declarations=parsed.consumer_declarations,
     )
 

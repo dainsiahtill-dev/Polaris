@@ -1201,6 +1201,9 @@ ts_syntax
             ("go", "run", "."),
         }
         assert all(set(row) == {"modality", "argv", "cwd"} for row in command_rows)
+        assert contracts[0]["metadata"]["required_source_kinds"] == ["domain_modules"]
+        assert contracts[1]["metadata"]["required_source_kinds"] == ["domain_modules", "entrypoint"]
+        assert contracts[2]["metadata"]["required_source_kinds"] == ["tests"]
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
 

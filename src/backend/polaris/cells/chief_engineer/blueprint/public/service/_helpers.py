@@ -455,18 +455,6 @@ def query_blueprint_provenance(
             code="blueprint_provenance_target_files_invalid",
             details={"field": "target_files", "reason": str(exc)},
         ) from exc
-    missing_pm_targets = [path for path in expected_target_files if path not in set(target_files)]
-    if missing_pm_targets:
-        raise ChiefEngineerBlueprintErrorV1(
-            "blueprint provenance target_files dropped required PM artifacts",
-            code="blueprint_provenance_target_files_mismatch",
-            details={
-                "expected_target_files": list(expected_target_files),
-                "observed_target_files": list(target_files),
-                "missing_pm_targets": missing_pm_targets,
-            },
-        )
-    extra_targets = [path for path in target_files if path not in set(expected_target_files)]
     completion_contract: ProjectCompletionContractV1 | None = None
     raw_completion_contract = payload.get("project_completion_contract")
     if isinstance(raw_completion_contract, Mapping):
@@ -479,6 +467,38 @@ def query_blueprint_provenance(
                 details={"reason": str(exc)},
             ) from exc
 
+    target_file_set = set(target_files)
+    missing_pm_targets = [path for path in expected_target_files if path not in target_file_set]
+    completion_owner_by_path = (
+        {
+            obligation.path: obligation.owner_task_id
+            for obligation in completion_contract.obligations.artifacts
+        }
+        if completion_contract is not None
+        else {}
+    )
+    delegated_pm_targets = {
+        path
+        for path in missing_pm_targets
+        if _pm_task_declares_ce_owned_topology(pm_task)
+        and completion_owner_by_path.get(path) not in {None, "", task_id}
+    }
+    unresolved_missing_pm_targets = [
+        path for path in missing_pm_targets if path not in delegated_pm_targets
+    ]
+    if unresolved_missing_pm_targets:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance target_files dropped required PM artifacts",
+            code="blueprint_provenance_target_files_mismatch",
+            details={
+                "expected_target_files": list(expected_target_files),
+                "observed_target_files": list(target_files),
+                "missing_pm_targets": missing_pm_targets,
+                "delegated_pm_targets": sorted(delegated_pm_targets),
+                "unresolved_missing_pm_targets": unresolved_missing_pm_targets,
+            },
+        )
+    extra_targets = [path for path in target_files if path not in set(expected_target_files)]
     owned_completion_targets: tuple[str, ...] = ()
     project_completion_source_targets: tuple[str, ...] = ()
     if completion_contract is not None:

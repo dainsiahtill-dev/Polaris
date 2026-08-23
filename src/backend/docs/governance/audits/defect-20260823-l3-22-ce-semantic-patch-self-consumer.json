@@ -1,0 +1,47 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "l3-22-r23-ce-semantic-patch-self-consumer",
+  "recorded_at": "2026-08-23T07:44:03+08:00",
+  "status": "FIX_TARGETED_GATES_PASSED_AWAITING_FRESH_E2E",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "attempt": "r23",
+  "factory_run_id": "factory_03bf8b5b23e7",
+  "workspace": "/tmp/factory-bench-l3-22-r23/workspaces/ae20f20f3ad0-3ade279fb1f96d61/L3-22-5aaab9a81e5e829d/ae440bae01d8cc8ea64dabd1",
+  "stage": "chief_engineer_review",
+  "symptom": "chief_engineer.semantic_repair_exhausted after the frozen candidate entered semantic patch repair",
+  "exact_error": "chief_engineer.semantic_patch_invalid:ValueError:consumer_task_ids must not contain owner_task_id",
+  "primary_context_snapshot_ref": "f3a26acf83e8eb0799db3797",
+  "semantic_repair_context_snapshot_ref": "317dd1437fbdec61791e6025",
+  "candidate_hash": "1a5da4c95434fd650ed6b3e7ae59df3df4f93fddfbe36cbd9aa31dc70c882179",
+  "diagnosis_hash": "33f77cf0f1e35c4e961c3ad8081f944ef0d94c9755999f3853f464c62eee5ba8",
+  "observed_invalid_invariant": {
+    "invariant_id": "INV-NOTE-PITCH-MAP",
+    "owner_task_id": "TASK-2",
+    "consumer_task_ids": [
+      "TASK-2",
+      "TASK-3"
+    ]
+  },
+  "evidence": [
+    "The primary structured-output request used the required tool and reached schema repair.",
+    "Schema repair froze a candidate containing 11 artifacts.",
+    "The semantic repair provider call also returned one structured tool call.",
+    "Patch application rejected a self-consumer invariant before Director dispatch."
+  ],
+  "root_cause_class": "chief_engineer_semantic_patch_contract",
+  "root_cause": "The final provider request did contain the exact invariant-level violations. The provider repaired the unknown obligation references and the original TASK-3 self-consumer, but introduced TASK-2 as both owner and consumer of INV-NOTE-PITCH-MAP. Primary CE output already had a safe deterministic recovery that removes an owner only when a real external consumer remains; the semantic-patch provider parser did not reuse that rule and rejected the whole otherwise useful patch.",
+  "fix": {
+    "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/contracts/_semantic_repair.py",
+    "behavior": "At the semantic-patch Provider trust boundary, remove owner_task_id from consumer_task_ids only when at least one external consumer remains; owner-only rows remain invalid.",
+    "regression_test": "test_provider_patch_parser_removes_owner_from_nonempty_consumer_set"
+  },
+  "verification": {
+    "semantic_repair_tests": "42 passed",
+    "factory_ce_characterization": "47 passed",
+    "ruff": "passed",
+    "mypy": "passed"
+  },
+  "target_project_modified": false,
+  "next_action": "Run fresh isolated L3-22 r24 and prove the Chief Engineer stage consumes the recovered semantic patch before evaluating the next exact boundary."
+}

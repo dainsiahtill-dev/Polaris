@@ -59,22 +59,31 @@ def _job_token_target_files(
     pm_target_files: list[str],
     portfolio_projection: Mapping[str, Any],
 ) -> list[str]:
-    """Bind one JobToken to PM paths plus immutable CE-owned artifacts.
+    """Bind one JobToken to immutable task-owned artifact paths.
 
     PM may explicitly delegate source topology to Chief Engineer.  In that
-    case the signed project-completion contract, not raw model output, owns
-    the additional task-local artifact paths.  Sibling-owned obligations are
-    intentionally excluded so delegation cannot widen cross-task authority.
+    case the signed project-completion contract is the exclusive artifact
+    ownership authority.  A PM target retained only as context for another
+    task (for example a shared manifest or entrypoint) must not widen this
+    task's write capability after CE assigns it to a sibling.
     """
 
     raw_contract = portfolio_projection.get("project_completion_contract")
     if not isinstance(raw_contract, Mapping):
         return list(pm_target_files)
     contract = ProjectCompletionContractV1.from_dict(raw_contract)
+    artifact_owner_by_path = {
+        obligation.path: obligation.owner_task_id for obligation in contract.obligations.artifacts
+    }
+    retained_pm_paths = [
+        path
+        for path in pm_target_files
+        if path not in artifact_owner_by_path or artifact_owner_by_path[path] == task_id
+    ]
     owned_paths = [
         obligation.path for obligation in contract.obligations.artifacts if obligation.owner_task_id == task_id
     ]
-    return _merge_string_lists(pm_target_files, owned_paths)
+    return _merge_string_lists(retained_pm_paths, owned_paths)
 
 
 def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlueprintResultV1:

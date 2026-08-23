@@ -1,0 +1,56 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "l3-22-r25-ce-structural-normalization-residual",
+  "recorded_at": "2026-08-23T08:24:18+08:00",
+  "status": "FIXED_TARGETED_GATES_PASSED_AWAITING_FRESH_R26",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "attempt": "r25",
+  "factory_run_id": "factory_365c8ac96786",
+  "workspace": "/tmp/factory-bench-l3-22-r25/workspaces/b151563ffa0c-a4f8455c15baf1d4/L3-22-5aaab9a81e5e829d/c1aeed47918040dcbcdbb4c9",
+  "stage": "chief_engineer_review",
+  "symptom": "The primary CE portfolio was schema-valid but semantic repair was invoked for owner self-consumers and behavior covered_obligation_ids that named verifier-covered leaf aliases instead of top-level completion obligations.",
+  "dynamic_evidence": {
+    "candidate_hash": "92c92016895f5d4bb4e38c378e0b9fddebda4b2a04156432efa1925856880df5",
+    "diagnosis_hash": "39349f719f641a979e7ee8ee18a19becf6ae7f0505347c8590729503299a2c35",
+    "before": [
+      "INV-PHYSICS-GRAVITY-DAMPING and INV-SCORE-CHORD-MATCH included owner TASK-2 in consumer_task_ids",
+      "INV-VALIDATE-EMPTY-SEED had owner TASK-3 as its only consumer although TASK-1 task_plans referenced that invariant",
+      "behavior covered ids such as OBL-RULE-GRAVITY-FALL were explicitly covered by OBL-VERIFY-TEST or OBL-VERIFY-ENTRYPOINT but were not top-level completion obligation ids"
+    ],
+    "after_exact_replay": {
+      "repair_codes": [
+        "remove_behavior_owner_from_consumers",
+        "rebind_behavior_consumers_from_task_refs",
+        "remove_unknown_behavior_obligation_refs",
+        "map_behavior_obligation_aliases_to_verification"
+      ],
+      "remaining_self_consumer_errors": 0,
+      "remaining_unknown_obligation_errors": 0
+    }
+  },
+  "root_cause_class": "chief_engineer_structural_recovery_incomplete_authority_projection",
+  "root_cause": "The content-preserving CE structural normalizer removed an owner only when an already-present external consumer remained, and recognized only top-level artifact/entrypoint/verification ids. It did not consume the existing task-plan reverse references or the explicit verification.covers_obligation_ids alias graph, so recoverable provider shape drift escalated into extra semantic-repair LLM turns.",
+  "fix": {
+    "cell": "chief_engineer.blueprint",
+    "files": [
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_semantic_repair.py"
+    ],
+    "behavior": [
+      "Recover an owner-only consumer only from existing external task_plans.behavior_invariant_refs.",
+      "Map a non-top-level behavior obligation alias only through explicit verification.covers_obligation_ids to existing verifier obligation ids.",
+      "Keep all unmapped/ambiguous cases fail-closed and retain final semantic validation."
+    ]
+  },
+  "verification": {
+    "tdd_red": "2 focused tests failed before implementation for the expected unrecovered payload",
+    "tdd_green": "6 focused normalizer tests passed",
+    "exact_r25_replay": "4 original semantic errors reduced to 0 without modifying the generated project",
+    "targeted_pytest": "95 passed",
+    "ruff": "All checks passed",
+    "mypy": "Success: no issues found in 2 source files"
+  },
+  "target_project_modified": false,
+  "next_action": "Stop the r25 isolated backend and run fresh isolated L3-22 r26 on the current checkout."
+}

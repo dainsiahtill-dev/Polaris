@@ -1,0 +1,88 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "l3-22-r26-ce-provider-item-wrapper-drift",
+  "recorded_at": "2026-08-23T08:38:10+08:00",
+  "status": "FIXED_TARGETED_GATES_PASSED_AWAITING_FRESH_R27",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "attempt": "r26",
+  "factory_run_id": "factory_56755a7626d4",
+  "workspace": "/tmp/factory-bench-l3-22-r26/workspaces/486edb5aed2f-2f88577d9d4f73c2/L3-22-5aaab9a81e5e829d/dcae3f20d6ddebff9c533577",
+  "stage": "chief_engineer_review",
+  "symptom": "The primary CE provider tool call preserved a complete construction plan but encoded behavior arrays with item wrappers and lifted rows into neighboring item members. Strict schema validation rejected shared_behavior_contract.item, then two bounded LLM repair calls produced malformed JSON and a payload without construction_plan.",
+  "final_request_audit": {
+    "context_snapshot_ref": "9b0555522d16b887660aaeb8",
+    "role_identity_ok": true,
+    "coverage_pass": true,
+    "offered_tools": [
+      "submit_structured_role_output"
+    ],
+    "tool_choice": "submit_structured_role_output",
+    "pm_contract_present": true,
+    "target_files_present": true,
+    "unexpected_tool_pruning": []
+  },
+  "dynamic_evidence": {
+    "provider_tool_call_source": ".polaris/runtime/runs/factory_56755a7626d4/logs/journal.raw.jsonl seq=4 raw.data.metadata.tool_call.arguments",
+    "primary_error": "structured_output_payload_schema_mismatch:construction_plan.shared_behavior_contract:Additional properties are not allowed ('item' was unexpected)",
+    "observed_drift": {
+      "shared_behavior_contract_item_count": 1,
+      "construction_plan_item_count": 4,
+      "lifted_task_plan_keys": [
+        "TASK-3"
+      ],
+      "wrapped_array_fields": [
+        "consumer_task_ids",
+        "covered_obligation_ids",
+        "verification_examples",
+        "behavior_invariant_refs",
+        "scope_for_apply",
+        "risk_flags"
+      ]
+    },
+    "bounded_repair_failures": [
+      "Output validation failed: structured_output_content_invalid_json",
+      "structured_output_payload_schema_mismatch:$:'construction_plan' is a required property"
+    ],
+    "after_exact_primary_replay": {
+      "repair_codes": [
+        "remove_redundant_lifted_task_plan",
+        "move_shared_behavior_item_to_invariants",
+        "move_construction_items_to_behavior_invariants",
+        "unwrap_behavior_invariant_array_items",
+        "remove_behavior_owner_from_consumers"
+      ],
+      "strict_schema_error_count": 0,
+      "recovered_invariant_count": 6,
+      "provider_calls_saved_if_replayed": 2
+    }
+  },
+  "root_cause_class": "chief_engineer_provider_structural_wrapper_drift_not_recovered",
+  "root_cause": "The Factory already retains failed structured tool arguments and has a content-preserving CE recovery hook, but that hook only relocated interface declaration item members and a few root containers. It did not recognize invariant-shaped shared_behavior_contract.item/construction_plan.item rows, known item-wrapped array fields, or a redundant lifted task-plan subset. The usable primary result was therefore discarded before business validation.",
+  "fix": {
+    "cell": "chief_engineer.blueprint",
+    "files": [
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_semantic_repair.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_ce_handoff.py"
+    ],
+    "behavior": [
+      "Unwrap only schema-known CE array fields encoded as an exact {'item': value} wrapper.",
+      "Relocate only invariant-shaped rows into shared_behavior_contract.invariants and reject duplicate-id conflicts.",
+      "Remove a lifted task-plan row only when every lifted list is a subset of the existing canonical task plan.",
+      "Apply all recovery transactionally on a deep copy and return the untouched source on any ambiguity or conflict.",
+      "Revalidate the exact strict provider schema before converting the failed transport result to completed."
+    ]
+  },
+  "verification": {
+    "tdd_red": "provider-array-wrapper recovery test failed before implementation while the conflict test already remained fail-closed",
+    "tdd_green": "2 focused public recovery tests passed",
+    "factory_integration": "3 focused Factory recovery tests passed, including failed transport tool_call arguments becoming a schema-valid completed result",
+    "exact_r26_primary_replay": "strict provider schema error count reduced from 1 to 0; all 6 invariants preserved",
+    "targeted_pytest": "98 passed",
+    "ruff": "All checks passed",
+    "mypy": "Success: no issues found in 1 source file"
+  },
+  "target_project_modified": false,
+  "next_action": "Stop the r26 isolated backend and run fresh isolated L3-22 r27 on the current checkout. If it fails, dynamically audit that exact run before any edit."
+}

@@ -52,6 +52,54 @@ def test_cross_task_source_and_test_share_behavior_authority() -> None:
     )
 
 
+def test_cross_task_behavior_may_cover_test_artifact_through_required_verifier() -> None:
+    contract = _completion_contract()
+    contract.obligations.verification = (
+        SimpleNamespace(
+            obligation_id="verify-test",
+            modality="test",
+            applicability="required",
+            owner_task_id="TASK-2",
+            covers_obligation_ids=("artifact-test",),
+        ),
+    )
+    invariant = _invariant()
+    invariant["covered_obligation_ids"] = ["artifact-source", "verify-test"]
+
+    validate_portfolio_behavior_feasibility(
+        task_ids=("TASK-1", "TASK-2"),
+        invariants=(invariant,),
+        task_bindings={"TASK-1": ("INV-1",), "TASK-2": ("INV-1",)},
+        completion_contract=contract,
+    )
+
+
+def test_non_test_verifier_does_not_substitute_for_test_artifact_coverage() -> None:
+    contract = _completion_contract()
+    contract.obligations.verification = (
+        SimpleNamespace(
+            obligation_id="verify-build",
+            modality="build",
+            applicability="required",
+            owner_task_id="TASK-1",
+            covers_obligation_ids=("artifact-source",),
+        ),
+    )
+    invariant = _invariant()
+    invariant["covered_obligation_ids"] = ["artifact-source", "verify-build"]
+
+    with pytest.raises(
+        PortfolioBehaviorFeasibilityError,
+        match="lacks a shared production behavior invariant",
+    ):
+        validate_portfolio_behavior_feasibility(
+            task_ids=("TASK-1", "TASK-2"),
+            invariants=(invariant,),
+            task_bindings={"TASK-1": ("INV-1",), "TASK-2": ("INV-1",)},
+            completion_contract=contract,
+        )
+
+
 def test_cross_task_test_without_shared_behavior_fails_before_freeze() -> None:
     with pytest.raises(PortfolioBehaviorFeasibilityError, match="lacks a shared production behavior invariant"):
         validate_portfolio_behavior_feasibility(

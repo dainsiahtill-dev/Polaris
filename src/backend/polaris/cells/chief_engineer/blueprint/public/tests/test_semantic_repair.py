@@ -163,7 +163,7 @@ def test_behavior_and_entrypoint_patch_validate_authority_and_refs(tmp_path) -> 
                 statement="Writer and reader preserve values.",
                 owner_task_id="TASK-1",
                 consumer_task_ids=("TASK-2",),
-                covered_obligation_ids=("artifact-main", "entry-main"),
+                covered_obligation_ids=("artifact-main", "entry-main", "verify-build"),
                 verification_examples=(
                     ChiefEngineerBehaviorExampleV1(given="value", when="round trip", then="same value"),
                 ),
@@ -180,6 +180,73 @@ def test_behavior_and_entrypoint_patch_validate_authority_and_refs(tmp_path) -> 
     construction = repaired.candidate["construction_plan"]
     assert construction["task_plans"]["TASK-2"]["behavior_invariant_refs"] == ["behavior-roundtrip"]
     assert construction["shared_behavior_contract"]["invariants"][0]["owner_task_id"] == "TASK-1"
+
+
+def test_behavior_patch_replaces_invalid_baseline_before_strict_rehydration(tmp_path) -> None:
+    """Exact r25: semantic repair must be able to replace its diagnosed defect."""
+
+    seed = _candidate(tmp_path)
+    payload = json.loads(json.dumps(seed.candidate))
+    payload["construction_plan"]["shared_behavior_contract"]["invariants"] = [
+        {
+            "invariant_id": "behavior-roundtrip",
+            "statement": "Writer and reader preserve values.",
+            "owner_task_id": "TASK-1",
+            "consumer_task_ids": ["TASK-1", "TASK-2"],
+            "covered_obligation_ids": ["artifact-main", "verify-build"],
+            "verification_examples": [
+                {"given": "value", "when": "round trip", "then": "same value"}
+            ],
+        }
+    ]
+    candidate = ChiefEngineerSemanticRepairCandidateV1(
+        workspace=seed.workspace,
+        project_id=seed.project_id,
+        run_id=seed.run_id,
+        pm_contract_hash=seed.pm_contract_hash,
+        task_ids=seed.task_ids,
+        task_set_hash=seed.task_set_hash,
+        candidate=payload,
+    )
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.shared_behavior_contract.invalid",),
+        allowed_operations=("behavior_invariant_upsert", "task_behavior_ref_replace"),
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        behavior_invariant_upserts=(
+            ChiefEngineerBehaviorInvariantV1(
+                invariant_id="behavior-roundtrip",
+                statement="Writer and reader preserve values.",
+                owner_task_id="TASK-1",
+                consumer_task_ids=("TASK-2",),
+                covered_obligation_ids=("artifact-main", "verify-build"),
+                verification_examples=(
+                    ChiefEngineerBehaviorExampleV1(
+                        given="value",
+                        when="round trip",
+                        then="same value",
+                    ),
+                ),
+            ),
+        ),
+        task_behavior_ref_replacements={
+            "TASK-1": ("behavior-roundtrip",),
+            "TASK-2": ("behavior-roundtrip",),
+        },
+    )
+
+    repaired, _receipt = compose_chief_engineer_semantic_repair(
+        candidate,
+        diagnosis,
+        patch,
+        tasks=_tasks(),
+    )
+
+    invariant = repaired.candidate["construction_plan"]["shared_behavior_contract"]["invariants"][0]
+    assert invariant["consumer_task_ids"] == ["TASK-2"]
 
 
 def test_entrypoint_patch_cannot_change_immutable_pm_kind_authority(tmp_path) -> None:
@@ -345,6 +412,111 @@ def test_provider_patch_parser_rejects_derived_or_unknown_fields(tmp_path) -> No
         ChiefEngineerSemanticRepairPatchV1.from_provider_dict({**payload, "patch_hash": patch.patch_hash})
 
 
+def test_provider_patch_parser_removes_owner_from_nonempty_consumer_set(tmp_path) -> None:
+    """Exact L3-22 r23: semantic patch must reuse safe primary-output recovery."""
+
+    candidate = _candidate(tmp_path)
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.shared_behavior_contract.invalid",),
+        allowed_operations=("behavior_invariant_upsert", "task_behavior_ref_replace"),
+    )
+    payload = {
+        "base_candidate_hash": candidate.candidate_hash,
+        "diagnosis_hash": diagnosis.diagnosis_hash,
+        "artifact_upserts": [],
+        "entrypoint_upserts": [],
+        "behavior_invariant_upserts": [
+            {
+                "invariant_id": "behavior-main",
+                "statement": "The producer result is consumed by the downstream task.",
+                "owner_task_id": "TASK-1",
+                "consumer_task_ids": ["TASK-1", "TASK-2"],
+                "covered_obligation_ids": ["artifact-main"],
+                "verification_examples": [
+                    {"given": "input", "when": "processed", "then": "output"}
+                ],
+            }
+        ],
+        "task_behavior_ref_replacements": {"TASK-2": ["behavior-main"]},
+    }
+
+    patch = ChiefEngineerSemanticRepairPatchV1.from_provider_dict(
+        payload,
+        allowed_operations=diagnosis.allowed_operations,
+    )
+
+    assert patch.behavior_invariant_upserts[0].consumer_task_ids == ("TASK-2",)
+
+    owner_only_payload = json.loads(json.dumps(payload))
+    owner_only_payload["behavior_invariant_upserts"][0]["consumer_task_ids"] = ["TASK-1"]
+    with pytest.raises(ValueError, match="consumer_task_ids must not contain owner_task_id"):
+        ChiefEngineerSemanticRepairPatchV1.from_provider_dict(
+            owner_only_payload,
+            allowed_operations=diagnosis.allowed_operations,
+        )
+
+
+def test_provider_patch_parser_ignores_untrusted_groups_outside_diagnosis_authority(tmp_path) -> None:
+    """Exact L3-22 r16: irrelevant malformed groups cannot preempt authorized repair."""
+
+    candidate = _candidate(tmp_path)
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.delivery_depth.prod_files_below_minimum",),
+        allowed_operations=("artifact_upsert",),
+    )
+    payload = {
+        "base_candidate_hash": candidate.candidate_hash,
+        "diagnosis_hash": diagnosis.diagnosis_hash,
+        "artifact_upserts": [
+            {
+                "obligation_id": "artifact-support",
+                "path": "src/support.py",
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-1",
+            }
+        ],
+        "entrypoint_upserts": [
+            {
+                "obligation_id": "entry-invalid-but-unauthorized",
+                "kind": "cli",
+                "applicability": "required",
+                "owner_task_id": "TASK-1",
+                "source_path": "src/main.py",
+                "runtime_path": ".",
+                "command": "python src/main.py",
+            }
+        ],
+        "behavior_invariant_upserts": [
+            {
+                "invariant_id": "behavior-invalid-but-unauthorized",
+                "statement": "Owner is incorrectly also a consumer.",
+                "owner_task_id": "TASK-1",
+                "consumer_task_ids": ["TASK-1"],
+                "covered_obligation_ids": ["artifact-main"],
+                "verification_examples": [
+                    {"given": "input", "when": "processed", "then": "output"}
+                ],
+            }
+        ],
+        "task_behavior_ref_replacements": {},
+    }
+
+    with pytest.raises(ValueError, match="runtime_path"):
+        ChiefEngineerSemanticRepairPatchV1.from_provider_dict(payload)
+
+    patch = ChiefEngineerSemanticRepairPatchV1.from_provider_dict(
+        payload,
+        allowed_operations=diagnosis.allowed_operations,
+    )
+    assert patch.operations == ("artifact_upsert",)
+    assert patch.artifact_upserts[0].path == "src/support.py"
+    assert patch.entrypoint_upserts == ()
+    assert patch.behavior_invariant_upserts == ()
+
+
 def test_composer_rejects_duplicate_baseline_and_patch_ids(tmp_path) -> None:
     candidate = _candidate(tmp_path)
     payload = dict(candidate.candidate)
@@ -435,6 +607,28 @@ def test_provider_context_projects_current_rows_and_task_authority(tmp_path) -> 
         "delegated_artifact_roles": [],
     }
     assert projected["repair_feasible"] is True
+
+
+def test_behavior_repair_context_includes_allowed_completion_verification_ids(tmp_path) -> None:
+    candidate = _candidate(tmp_path)
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.shared_behavior_contract.invalid",),
+        allowed_operations=("behavior_invariant_upsert", "task_behavior_ref_replace"),
+    )
+
+    projected = project_chief_engineer_semantic_repair_provider_context(
+        candidate,
+        diagnosis,
+        tasks=_tasks(),
+    )
+
+    verification = projected["current"]["verification"]
+    assert [row["obligation_id"] for row in verification] == ["verify-build"]
+    assert projected["allowed_completion_obligation_ids"] == [
+        "artifact-main",
+        "verify-build",
+    ]
 
 
 def test_provider_context_rejects_depth_patch_when_pm_authority_has_no_unused_or_expandable_path(tmp_path) -> None:
@@ -754,6 +948,289 @@ def test_composer_allows_real_test_path_only_when_pm_delegates_tests(tmp_path) -
     )
 
 
+def test_composer_rebinds_new_artifact_to_unique_authorized_task(tmp_path) -> None:
+    """Exact L3-22 r13: repair may mislabel owner while PM authority is unique."""
+
+    base = _candidate(tmp_path)
+    payload = json.loads(json.dumps(base.candidate, ensure_ascii=False))
+    payload["construction_plan"]["task_plans"]["TASK-3"] = {"behavior_invariant_refs": []}
+    task_ids = ("TASK-1", "TASK-2", "TASK-3")
+    candidate = ChiefEngineerSemanticRepairCandidateV1(
+        workspace=base.workspace,
+        project_id=base.project_id,
+        run_id=base.run_id,
+        pm_contract_hash=base.pm_contract_hash,
+        task_ids=task_ids,
+        task_set_hash=chief_engineer_semantic_repair_task_set_hash(task_ids),
+        candidate=payload,
+    )
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.delivery_depth.test_files_below_minimum",),
+        allowed_operations=("artifact_upsert",),
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        artifact_upserts=(
+            ArtifactObligationV1(
+                obligation_id="artifact-extra-test",
+                path="tests/test_extra.py",
+                semantic_role="test",
+                applicability="required",
+                owner_task_id="TASK-1",
+            ),
+        ),
+    )
+    tasks = (
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-1",
+            objective="Implement domain modules",
+            target_files=("src/main.py",),
+            scope_paths=("src/main.py",),
+            topology_authority="chief_engineer",
+            required_source_kinds=("domain_modules",),
+            primary_language="python",
+            allowed_source_suffixes=(".py",),
+        ),
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-2",
+            objective="Implement CLI",
+            target_files=("src/cli.py",),
+            scope_paths=("src/cli.py",),
+            topology_authority="chief_engineer",
+            required_source_kinds=("entrypoint",),
+            primary_language="python",
+            allowed_source_suffixes=(".py",),
+        ),
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-3",
+            objective="Implement tests",
+            target_files=("tests/test_main.py",),
+            scope_paths=("tests/test_main.py",),
+            topology_authority="chief_engineer",
+            required_source_kinds=("tests",),
+            primary_language="python",
+            allowed_source_suffixes=(".py",),
+        ),
+    )
+
+    repaired, receipt = compose_chief_engineer_semantic_repair(
+        candidate,
+        diagnosis,
+        patch,
+        tasks=tasks,
+    )
+
+    artifact = next(
+        row
+        for row in repaired.candidate["project_completion_contract"]["obligations"]["artifacts"]
+        if row["obligation_id"] == "artifact-extra-test"
+    )
+    assert artifact["owner_task_id"] == "TASK-3"
+    assert receipt.patch_hash != patch.patch_hash
+
+
+def test_composer_keeps_authorized_patch_subset_and_drops_extra_operation(tmp_path) -> None:
+    """Exact L3-22 r14: one extra operation must not discard useful repair work."""
+
+    candidate = _candidate(tmp_path)
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.delivery_depth.prod_files_below_minimum",),
+        allowed_operations=("artifact_upsert",),
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        artifact_upserts=(
+            ArtifactObligationV1(
+                obligation_id="artifact-support",
+                path="src/support.py",
+                semantic_role="source",
+                applicability="required",
+                owner_task_id="TASK-1",
+            ),
+        ),
+        entrypoint_upserts=(
+            EntrypointObligationV1(
+                obligation_id="entry-extra",
+                kind="cli",
+                applicability="required",
+                owner_task_id="TASK-1",
+                source_path="src/main.py",
+                command="python src/main.py",
+            ),
+        ),
+    )
+
+    repaired, receipt = compose_chief_engineer_semantic_repair(
+        candidate,
+        diagnosis,
+        patch,
+        tasks=_tasks(expandable=False, delegated=True),
+    )
+
+    obligations = repaired.candidate["project_completion_contract"]["obligations"]
+    assert [row["obligation_id"] for row in obligations["artifacts"]] == [
+        "artifact-main",
+        "artifact-support",
+    ]
+    assert obligations["entrypoints"] == []
+    assert receipt.changed_semantic_ids == ("artifact-support",)
+    assert receipt.patch_hash != patch.patch_hash
+
+
+def test_composer_preserves_frozen_baseline_path_alias_while_adding_unique_artifact(tmp_path) -> None:
+    """Exact L3-22 r15: incremental repair must not rejudge untouched baseline aliases."""
+
+    base = _candidate(tmp_path)
+    payload = json.loads(json.dumps(base.candidate, ensure_ascii=False))
+    payload["project_completion_contract"]["obligations"]["artifacts"].append(
+        {
+            "obligation_id": "artifact-main-entrypoint-role",
+            "path": "src/main.py",
+            "semantic_role": "entrypoint",
+            "applicability": "required",
+            "owner_task_id": "TASK-1",
+        }
+    )
+    candidate = ChiefEngineerSemanticRepairCandidateV1(
+        workspace=base.workspace,
+        project_id=base.project_id,
+        run_id=base.run_id,
+        pm_contract_hash=base.pm_contract_hash,
+        task_ids=base.task_ids,
+        task_set_hash=base.task_set_hash,
+        candidate=payload,
+    )
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.delivery_depth.prod_files_below_minimum",),
+        allowed_operations=("artifact_upsert",),
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        artifact_upserts=(
+            ArtifactObligationV1(
+                obligation_id="artifact-support",
+                path="src/support.py",
+                semantic_role="source",
+                applicability="required",
+                owner_task_id="TASK-1",
+            ),
+        ),
+    )
+
+    repaired, receipt = compose_chief_engineer_semantic_repair(
+        candidate,
+        diagnosis,
+        patch,
+        tasks=_tasks(expandable=False, delegated=True),
+    )
+
+    paths = [
+        row["path"]
+        for row in repaired.candidate["project_completion_contract"]["obligations"]["artifacts"]
+    ]
+    assert paths.count("src/main.py") == 2
+    assert paths.count("src/support.py") == 1
+    assert receipt.changed_semantic_ids == ("artifact-support",)
+
+
+def test_composer_rejects_patch_that_introduces_new_artifact_path_alias(tmp_path) -> None:
+    candidate = _candidate(tmp_path)
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.delivery_depth.prod_files_below_minimum",),
+        allowed_operations=("artifact_upsert",),
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        artifact_upserts=(
+            ArtifactObligationV1(
+                obligation_id="artifact-main-alias",
+                path="src/main.py",
+                semantic_role="source",
+                applicability="required",
+                owner_task_id="TASK-1",
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="create duplicate artifact paths"):
+        compose_chief_engineer_semantic_repair(
+            candidate,
+            diagnosis,
+            patch,
+            tasks=_tasks(),
+        )
+
+
+def test_composer_rejects_artifact_owner_rebind_when_authority_is_ambiguous(tmp_path) -> None:
+    base = _candidate(tmp_path)
+    payload = json.loads(json.dumps(base.candidate, ensure_ascii=False))
+    payload["construction_plan"]["task_plans"]["TASK-3"] = {"behavior_invariant_refs": []}
+    task_ids = ("TASK-1", "TASK-2", "TASK-3")
+    candidate = ChiefEngineerSemanticRepairCandidateV1(
+        workspace=base.workspace,
+        project_id=base.project_id,
+        run_id=base.run_id,
+        pm_contract_hash=base.pm_contract_hash,
+        task_ids=task_ids,
+        task_set_hash=chief_engineer_semantic_repair_task_set_hash(task_ids),
+        candidate=payload,
+    )
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.delivery_depth.test_files_below_minimum",),
+        allowed_operations=("artifact_upsert",),
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        artifact_upserts=(
+            ArtifactObligationV1(
+                obligation_id="artifact-ambiguous-test",
+                path="tests/test_extra.py",
+                semantic_role="test",
+                applicability="required",
+                owner_task_id="TASK-1",
+            ),
+        ),
+    )
+    tasks = (
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-1",
+            objective="Implement domain modules",
+            target_files=("src/main.py",),
+            scope_paths=("src/main.py",),
+            topology_authority="chief_engineer",
+            required_source_kinds=("domain_modules",),
+            primary_language="python",
+            allowed_source_suffixes=(".py",),
+        ),
+        *(
+            ChiefEngineerPortfolioTaskV1(
+                task_id=task_id,
+                objective="Implement tests",
+                target_files=(target,),
+                scope_paths=(target,),
+                topology_authority="chief_engineer",
+                required_source_kinds=("tests",),
+                primary_language="python",
+                allowed_source_suffixes=(".py",),
+            )
+            for task_id, target in (("TASK-2", "tests/test_main.py"), ("TASK-3", "tests/test_cli.py"))
+        ),
+    )
+
+    with pytest.raises(ValueError, match="outside immutable PM authority"):
+        compose_chief_engineer_semantic_repair(candidate, diagnosis, patch, tasks=tasks)
+
+
 def test_composer_rejects_mutating_existing_artifact_identity(tmp_path) -> None:
     candidate = _candidate(tmp_path)
     diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
@@ -954,11 +1431,638 @@ def test_portfolio_structural_recovery_fails_closed_for_ambiguous_item() -> None
     assert recovery.repair_codes == ()
 
 
+def test_portfolio_structural_recovery_normalizes_provider_array_wrappers() -> None:
+    """Recover preserved CE rows that a provider lifted/wrapped as ``item``."""
+
+    malformed = {
+        "construction_plan": {
+            "task_plans": {
+                "TASK-3": {
+                    "behavior_invariant_refs": ["INV-1", "INV-2", "INV-3"],
+                    "scope_for_apply": ["tests/main_test.go", "go.mod"],
+                    "risk_flags": ["risk:test_coverage"],
+                }
+            },
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {
+                "invariants": [
+                    {
+                        "invariant_id": "INV-1",
+                        "owner_task_id": "TASK-1",
+                        "consumer_task_ids": ["TASK-3"],
+                        "covered_obligation_ids": ["VERIFY-1"],
+                        "statement": "Existing invariant",
+                        "verification_examples": [],
+                    }
+                ],
+                "item": {
+                    "invariant_id": "INV-2",
+                    "owner_task_id": "TASK-1",
+                    "consumer_task_ids": {"item": ["TASK-3"]},
+                    "covered_obligation_ids": {"item": ["VERIFY-1"]},
+                    "statement": "Lifted singleton invariant",
+                    "verification_examples": {
+                        "item": {"given": "x", "when": "y", "then": "z"}
+                    },
+                },
+            },
+            "item": [
+                {
+                    "invariant_id": "INV-3",
+                    "owner_task_id": "TASK-1",
+                    "consumer_task_ids": {"item": ["TASK-3"]},
+                    "covered_obligation_ids": {"item": ["VERIFY-1"]},
+                    "statement": "Lifted invariant array",
+                    "verification_examples": {"item": []},
+                }
+            ],
+            "TASK-3": {
+                "behavior_invariant_refs": {"item": ["INV-1", "INV-2", "INV-3"]},
+                "scope_for_apply": {"item": "tests/main_test.go"},
+                "risk_flags": {"item": ["risk:test_coverage"]},
+            },
+        },
+        "project_completion_contract": {"obligations": {}},
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is True
+    assert malformed["construction_plan"]["shared_behavior_contract"]["item"][
+        "consumer_task_ids"
+    ] == {"item": ["TASK-3"]}
+    construction = recovery.payload["construction_plan"]
+    assert set(construction) == {
+        "task_plans",
+        "project_interface_contract",
+        "shared_behavior_contract",
+    }
+    assert construction["task_plans"]["TASK-3"]["scope_for_apply"] == [
+        "tests/main_test.go",
+        "go.mod",
+    ]
+    assert construction["shared_behavior_contract"]["invariants"] == [
+        malformed["construction_plan"]["shared_behavior_contract"]["invariants"][0],
+        {
+            "invariant_id": "INV-2",
+            "owner_task_id": "TASK-1",
+            "consumer_task_ids": ["TASK-3"],
+            "covered_obligation_ids": ["VERIFY-1"],
+            "statement": "Lifted singleton invariant",
+            "verification_examples": [{"given": "x", "when": "y", "then": "z"}],
+        },
+        {
+            "invariant_id": "INV-3",
+            "owner_task_id": "TASK-1",
+            "consumer_task_ids": ["TASK-3"],
+            "covered_obligation_ids": ["VERIFY-1"],
+            "statement": "Lifted invariant array",
+            "verification_examples": [],
+        },
+    ]
+    assert set(recovery.repair_codes) >= {
+        "move_shared_behavior_item_to_invariants",
+        "move_construction_items_to_behavior_invariants",
+        "remove_redundant_lifted_task_plan",
+        "unwrap_behavior_invariant_array_items",
+    }
+
+
+def test_portfolio_structural_recovery_refuses_conflicting_lifted_task_plan() -> None:
+    malformed = {
+        "construction_plan": {
+            "task_plans": {
+                "TASK-3": {
+                    "behavior_invariant_refs": ["INV-1"],
+                    "scope_for_apply": ["tests/main_test.go"],
+                    "risk_flags": [],
+                }
+            },
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {"invariants": []},
+            "TASK-3": {
+                "behavior_invariant_refs": {"item": ["INV-CONFLICT"]},
+                "scope_for_apply": {"item": ["tests/main_test.go"]},
+                "risk_flags": {"item": []},
+            },
+        }
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is False
+    assert recovery.payload == malformed
+    assert recovery.repair_codes == ()
+
+
+def test_portfolio_structural_recovery_moves_missing_lifted_task_plans_before_behavior_repair() -> None:
+    malformed = {
+        "construction_plan": {
+            "task_plans": {
+                "TASK-1": {
+                    "behavior_invariant_refs": ["INV-SHARED"],
+                }
+            },
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {
+                "invariants": [
+                    {
+                        "invariant_id": "INV-SHARED",
+                        "owner_task_id": "TASK-2",
+                        "consumer_task_ids": ["TASK-2"],
+                        "covered_obligation_ids": ["VERIFY-1"],
+                        "statement": "A shared behavior",
+                        "verification_examples": [
+                            {"given": "x", "when": "y", "then": "z"}
+                        ],
+                    }
+                ]
+            },
+            "TASK-2": {
+                "behavior_invariant_refs": {"item": ["INV-SHARED"]},
+                "risk_flags": {"item": ["risk:owner"]},
+                "implementation_phases": {"item": {"phase_label": "author"}},
+            },
+            "TASK-3": {
+                "behavior_invariant_refs": {"item": ["INV-SHARED"]},
+                "scope_for_apply": {"item": ["tests/main_test.go"]},
+            },
+        }
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is True
+    construction = recovery.payload["construction_plan"]
+    assert set(construction) == {
+        "task_plans",
+        "project_interface_contract",
+        "shared_behavior_contract",
+    }
+    assert set(construction["task_plans"]) == {"TASK-1", "TASK-2", "TASK-3"}
+    assert construction["task_plans"]["TASK-2"]["behavior_invariant_refs"] == ["INV-SHARED"]
+    assert construction["task_plans"]["TASK-2"]["implementation_phases"] == {
+        "item": {"phase_label": "author"}
+    }
+    assert construction["shared_behavior_contract"]["invariants"][0]["consumer_task_ids"] == [
+        "TASK-1",
+        "TASK-3",
+    ]
+    assert set(recovery.repair_codes) >= {
+        "move_lifted_task_plans",
+        "rebind_behavior_consumers_from_task_refs",
+    }
+
+
 def test_portfolio_structural_recovery_does_not_invent_empty_payload() -> None:
     recovery = normalize_chief_engineer_portfolio_tool_arguments({})
 
     assert recovery.recovered is False
     assert recovery.payload == {}
+    assert recovery.repair_codes == ()
+
+
+def test_portfolio_structural_recovery_removes_owner_from_real_consumer_set() -> None:
+    malformed = {
+        "construction_plan": {
+            "task_plans": {},
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {
+                "invariants": [
+                    {
+                        "invariant_id": "INV-1",
+                        "owner_task_id": "TASK-1",
+                        "consumer_task_ids": ["TASK-1", "TASK-2"],
+                    }
+                ]
+            },
+        }
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is True
+    assert recovery.repair_codes == ("remove_behavior_owner_from_consumers",)
+    invariant = recovery.payload["construction_plan"]["shared_behavior_contract"]["invariants"][0]
+    assert invariant["consumer_task_ids"] == ["TASK-2"]
+    assert malformed["construction_plan"]["shared_behavior_contract"]["invariants"][0][
+        "consumer_task_ids"
+    ] == ["TASK-1", "TASK-2"]
+
+
+def test_portfolio_structural_recovery_refuses_owner_only_consumer_set() -> None:
+    malformed = {
+        "construction_plan": {
+            "task_plans": {},
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {
+                "invariants": [
+                    {
+                        "invariant_id": "INV-1",
+                        "owner_task_id": "TASK-1",
+                        "consumer_task_ids": ["TASK-1"],
+                    }
+                ]
+            },
+        }
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is False
+    assert recovery.payload == malformed
+    assert recovery.repair_codes == ()
+
+
+def test_portfolio_structural_recovery_removes_proven_task_local_invariant_from_shared_contract() -> None:
+    """A shared row referenced only by its owner is provably task-local, not cross-task."""
+
+    malformed = {
+        "construction_plan": {
+            "task_plans": {
+                "TASK-1": {"behavior_invariant_refs": ["INV-LOCAL"]},
+                "TASK-2": {"behavior_invariant_refs": []},
+            },
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {
+                "invariants": [
+                    {
+                        "invariant_id": "INV-LOCAL",
+                        "owner_task_id": "TASK-1",
+                        "consumer_task_ids": ["TASK-1"],
+                    }
+                ]
+            },
+        }
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is True
+    assert recovery.repair_codes == ("remove_task_local_invariant_from_shared_contract",)
+    construction = recovery.payload["construction_plan"]
+    assert construction["shared_behavior_contract"]["invariants"] == []
+    assert construction["task_plans"]["TASK-1"]["behavior_invariant_refs"] == []
+    assert malformed["construction_plan"]["shared_behavior_contract"]["invariants"][0][
+        "invariant_id"
+    ] == "INV-LOCAL"
+
+
+def test_portfolio_structural_recovery_rebinds_owner_only_consumer_from_task_refs() -> None:
+    """Use existing task-plan evidence; never invent a consumer task."""
+
+    malformed = {
+        "construction_plan": {
+            "task_plans": {
+                "TASK-1": {"behavior_invariant_refs": ["INV-1"]},
+                "TASK-2": {"behavior_invariant_refs": []},
+            },
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {
+                "invariants": [
+                    {
+                        "invariant_id": "INV-1",
+                        "owner_task_id": "TASK-2",
+                        "consumer_task_ids": ["TASK-2"],
+                    }
+                ]
+            },
+        }
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is True
+    assert recovery.repair_codes == ("rebind_behavior_consumers_from_task_refs",)
+    invariant = recovery.payload["construction_plan"]["shared_behavior_contract"]["invariants"][0]
+    assert invariant["consumer_task_ids"] == ["TASK-1"]
+    assert malformed["construction_plan"]["shared_behavior_contract"]["invariants"][0][
+        "consumer_task_ids"
+    ] == ["TASK-2"]
+
+
+def test_portfolio_structural_recovery_removes_only_unknown_mixed_obligation_refs() -> None:
+    """Keep real artifact/verification authority while dropping a hallucinated alias."""
+
+    malformed = {
+        "construction_plan": {
+            "task_plans": {},
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {
+                "invariants": [
+                    {
+                        "invariant_id": "INV-1",
+                        "owner_task_id": "TASK-1",
+                        "consumer_task_ids": ["TASK-2"],
+                        "covered_obligation_ids": [
+                            "ART-main.go",
+                            "ART-main_test.go",
+                            "VER-go-test",
+                        ],
+                    }
+                ]
+            },
+        },
+        "project_completion_contract": {
+            "obligations": {
+                "artifacts": [
+                    {
+                        "obligation_id": "ART-main.go",
+                        "path": "main.go",
+                        "semantic_role": "entrypoint",
+                    }
+                ],
+                "entrypoints": [],
+                "verification": [{"obligation_id": "VER-go-test", "modality": "test"}],
+            }
+        },
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is True
+    assert recovery.repair_codes == ("remove_unknown_behavior_obligation_refs",)
+    invariant = recovery.payload["construction_plan"]["shared_behavior_contract"]["invariants"][0]
+    assert invariant["covered_obligation_ids"] == ["ART-main.go", "VER-go-test"]
+    assert malformed["construction_plan"]["shared_behavior_contract"]["invariants"][0][
+        "covered_obligation_ids"
+    ] == ["ART-main.go", "ART-main_test.go", "VER-go-test"]
+
+
+def test_portfolio_structural_recovery_refuses_unknown_only_obligation_refs() -> None:
+    malformed = {
+        "construction_plan": {
+            "task_plans": {},
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {
+                "invariants": [
+                    {
+                        "invariant_id": "INV-1",
+                        "owner_task_id": "TASK-1",
+                        "consumer_task_ids": ["TASK-2"],
+                        "covered_obligation_ids": ["ART-main_test.go"],
+                    }
+                ]
+            },
+        },
+        "project_completion_contract": {
+            "obligations": {
+                "artifacts": [
+                    {
+                        "obligation_id": "ART-main.go",
+                        "path": "main.go",
+                        "semantic_role": "entrypoint",
+                    }
+                ],
+                "entrypoints": [],
+                "verification": [{"obligation_id": "VER-go-test", "modality": "test"}],
+            }
+        },
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is False
+    assert recovery.payload == malformed
+    assert recovery.repair_codes == ()
+
+
+def test_portfolio_structural_recovery_maps_known_verifier_coverage_aliases() -> None:
+    """Unknown leaf ids may map only through explicit verifier coverage evidence."""
+
+    malformed = {
+        "construction_plan": {
+            "task_plans": {},
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {
+                "invariants": [
+                    {
+                        "invariant_id": "INV-1",
+                        "owner_task_id": "TASK-1",
+                        "consumer_task_ids": ["TASK-2"],
+                        "covered_obligation_ids": [
+                            "OBL-RULE-GRAVITY",
+                            "OBL-RULE-DAMPING",
+                        ],
+                    }
+                ]
+            },
+        },
+        "project_completion_contract": {
+            "obligations": {
+                "artifacts": [],
+                "entrypoints": [],
+                "verification": [
+                    {
+                        "obligation_id": "OBL-VERIFY-TEST",
+                        "modality": "test",
+                        "covers_obligation_ids": [
+                            "OBL-RULE-GRAVITY",
+                            "OBL-RULE-DAMPING",
+                        ],
+                    }
+                ],
+            }
+        },
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is True
+    assert recovery.repair_codes == ("map_behavior_obligation_aliases_to_verification",)
+    invariant = recovery.payload["construction_plan"]["shared_behavior_contract"]["invariants"][0]
+    assert invariant["covered_obligation_ids"] == ["OBL-VERIFY-TEST"]
+    assert malformed["construction_plan"]["shared_behavior_contract"]["invariants"][0][
+        "covered_obligation_ids"
+    ] == ["OBL-RULE-GRAVITY", "OBL-RULE-DAMPING"]
+
+
+def test_portfolio_structural_recovery_closes_consumed_verifier_aliases() -> None:
+    """A behavior alias consumed by mapping must not remain an unknown verifier ref."""
+
+    malformed = {
+        "construction_plan": {
+            "task_plans": {},
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {
+                "invariants": [
+                    {
+                        "invariant_id": "INV-MODULE",
+                        "owner_task_id": "TASK-1",
+                        "consumer_task_ids": ["TASK-2"],
+                        "covered_obligation_ids": ["OBL-MODULE-COMPILE"],
+                    }
+                ]
+            },
+        },
+        "project_completion_contract": {
+            "obligations": {
+                "artifacts": [
+                    {
+                        "obligation_id": "ART-MODULE",
+                        "path": "go.mod",
+                        "semantic_role": "manifest",
+                    }
+                ],
+                "entrypoints": [],
+                "verification": [
+                    {
+                        "obligation_id": "VER-GO-BUILD",
+                        "modality": "build",
+                        "covers_obligation_ids": ["OBL-MODULE-COMPILE", "ART-MODULE"],
+                    }
+                ],
+            }
+        },
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is True
+    assert recovery.repair_codes == (
+        "map_behavior_obligation_aliases_to_verification",
+        "remove_consumed_verifier_coverage_aliases",
+    )
+    invariant = recovery.payload["construction_plan"]["shared_behavior_contract"]["invariants"][0]
+    verifier = recovery.payload["project_completion_contract"]["obligations"]["verification"][0]
+    assert invariant["covered_obligation_ids"] == ["VER-GO-BUILD"]
+    assert verifier["covers_obligation_ids"] == ["ART-MODULE"]
+    assert malformed["project_completion_contract"]["obligations"]["verification"][0][
+        "covers_obligation_ids"
+    ] == ["OBL-MODULE-COMPILE", "ART-MODULE"]
+
+
+def test_portfolio_structural_recovery_keeps_unconsumed_unknown_verifier_refs() -> None:
+    """Arbitrary unknown verifier refs remain fail-closed rather than being erased."""
+
+    malformed = {
+        "construction_plan": {
+            "task_plans": {},
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {"invariants": []},
+        },
+        "project_completion_contract": {
+            "obligations": {
+                "artifacts": [
+                    {
+                        "obligation_id": "ART-MODULE",
+                        "path": "go.mod",
+                        "semantic_role": "manifest",
+                    }
+                ],
+                "entrypoints": [],
+                "verification": [
+                    {
+                        "obligation_id": "VER-GO-BUILD",
+                        "modality": "build",
+                        "covers_obligation_ids": ["OBL-UNKNOWN", "ART-MODULE"],
+                    }
+                ],
+            }
+        },
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is False
+    assert recovery.payload == malformed
+
+
+def test_portfolio_structural_recovery_infers_missing_artifact_roles_from_unambiguous_paths() -> None:
+    malformed = {
+        "construction_plan": {
+            "task_plans": {},
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+        },
+        "project_completion_contract": {
+            "obligations": {
+                "artifacts": [
+                    {"obligation_id": "ART-MANIFEST", "path": "go.mod"},
+                    {"obligation_id": "ART-MAIN", "path": "main.go"},
+                    {"obligation_id": "ART-SOURCE", "path": "engine/world.go"},
+                    {"obligation_id": "ART-TEST", "path": "engine/world_test.go"},
+                    {"obligation_id": "ART-DOCS", "path": "README.md"},
+                ],
+                "entrypoints": [{"source_path": "main.go", "runtime_path": "main.go"}],
+            }
+        },
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is True
+    assert recovery.repair_codes == ("infer_missing_artifact_semantic_roles",)
+    artifacts = recovery.payload["project_completion_contract"]["obligations"]["artifacts"]
+    assert [row["semantic_role"] for row in artifacts] == [
+        "manifest",
+        "entrypoint",
+        "source",
+        "test",
+        "docs",
+    ]
+    assert all("semantic_role" not in row for row in malformed["project_completion_contract"]["obligations"]["artifacts"])
+
+
+def test_portfolio_structural_recovery_refuses_ambiguous_missing_artifact_role() -> None:
+    malformed = {
+        "construction_plan": {
+            "task_plans": {},
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+        },
+        "project_completion_contract": {
+            "obligations": {
+                "artifacts": [{"obligation_id": "ART-UNKNOWN", "path": "tests/payload.data"}],
+                "entrypoints": [],
+            }
+        },
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is False
+    assert recovery.payload == malformed
     assert recovery.repair_codes == ()
 
 

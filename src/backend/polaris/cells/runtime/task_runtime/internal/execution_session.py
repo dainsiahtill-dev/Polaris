@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from collections.abc import Mapping
@@ -79,6 +80,12 @@ _REALTIME_DETAIL_FIELDS = frozenset(
         "session_write_receipt",
         "dependency_satisfaction",
     }
+)
+_DURABLE_ADAPTER_AUDIT_MAX_BYTES = 256 * 1024
+_DURABLE_ADAPTER_AUDIT_FIELDS: tuple[str, ...] = (
+    "primary_llm",
+    "quality_repair",
+    "quality_repair_attempts",
 )
 
 
@@ -221,7 +228,40 @@ def build_task_row_snapshot(task_row: dict[str, Any]) -> dict[str, Any]:
         O(n) time and memory over the task-row payload size.
     """
 
-    return cast(dict[str, Any], _json_compatible_copy(task_row))
+    snapshot = cast(dict[str, Any], _json_compatible_copy(task_row))
+    metadata = snapshot.get("metadata")
+    if not isinstance(metadata, dict):
+        return snapshot
+    adapter_result = metadata.get("adapter_result")
+    if not isinstance(adapter_result, dict):
+        return snapshot
+
+    encoded = json.dumps(
+        adapter_result,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if len(encoded) <= _DURABLE_ADAPTER_AUDIT_MAX_BYTES:
+        return snapshot
+
+    omitted_fields = [field for field in _DURABLE_ADAPTER_AUDIT_FIELDS if field in adapter_result]
+    if not omitted_fields:
+        return snapshot
+    for omitted_field in omitted_fields:
+        adapter_result.pop(omitted_field, None)
+    adapter_result["task_runtime_event_audit_projection"] = {
+        "schema_version": "task-runtime.adapter-audit-projection/1",
+        "status": "content_addressed_omission",
+        "source_bytes": len(encoded),
+        "source_sha256": hashlib.sha256(encoded).hexdigest(),
+        "omitted_fields": omitted_fields,
+        "authority_note": (
+            "Volumetric provider/repair transcripts remain authoritative in "
+            "ContextOS and ReceiptStore; TaskRuntime retains settlement fields."
+        ),
+    }
+    return snapshot
 
 
 _HEARTBEAT_SNAPSHOT_METADATA_KEYS: tuple[str, ...] = (

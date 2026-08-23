@@ -1,0 +1,38 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-22-R22-CE-STRUCTURED-TOOL-PROMPT-CONTRADICTION",
+  "status": "FIX_TARGETED_GATES_PASSED_AWAITING_FRESH_E2E",
+  "severity": "P0",
+  "factory_run_id": "factory_fa3d02da44f6",
+  "workspace": "/tmp/factory-bench-l3-22-r22/workspaces/093fca6f595d-2874f2897c73e6de/L3-22-5aaab9a81e5e829d/e421d573aec1428121db4bee",
+  "symptom": "Chief Engineer produced zero of three blueprints; both the primary call and bounded schema-repair call returned natural-language acknowledgements with tool_calls_count=0.",
+  "dynamic_evidence": {
+    "primary_call_id": "c49dccb14856488981b9840b69420161",
+    "primary_context_snapshot_ref": "18ee74f35e6c1dfc8fa5efeb",
+    "repair_call_id": "f94258995f064bd89c351e3c793b8033",
+    "repair_context_snapshot_ref": "8b854b8e15ab9df33f34cc63",
+    "physical_protocol": "Both final provider requests offered and forced only submit_structured_role_output with the strict caller-owned CE schema.",
+    "primary_result": "completion_tokens=10179; tool_calls_count=0; visible output was an acknowledgement rather than a result call.",
+    "repair_result": "completion_tokens=5187; tool_calls_count=0; visible output was an acknowledgement rather than a result call.",
+    "contradictory_repair_instruction": "The repair request physically forced submit_structured_role_output while its user objective said Return JSON only.",
+    "terminal_error": "chief_engineer.advisory_projection_fallback_infeasible after structured_output_content_invalid_json; deterministic fallback had prod_files=1 and test_files=1 below L3 minimums 7 and 2."
+  },
+  "root_cause": "The CE schema-repair objective contradicted the active provider-tool transport. It instructed raw JSON-only output even though final-request qualification forced a singleton result-submission tool, so the bounded repair did not provide one coherent output protocol.",
+  "fixes": [
+    "Make the schema-repair objective require exactly one submit_structured_role_output call.",
+    "Forbid assistant prose and raw JSON outside the tool call while preserving the exact caller-owned schema and PM authority."
+  ],
+  "files": [
+    "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_01.py",
+    "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_ce_handoff.py"
+  ],
+  "verification": {
+    "dynamic_final_request_audit": "completed against both exact r22 context snapshots",
+    "targeted_tests": "47 CE characterization tests plus 48 structured transport/stream projection tests passed; focused objective regression also passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_isolated_l3_22": "pending"
+  },
+  "next_action": "Run focused CE characterization gates, then fresh isolated L3-22 r23 with full budgets.",
+  "target_project_modified": false
+}

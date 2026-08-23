@@ -8,6 +8,9 @@ from typing import TYPE_CHECKING, Any
 from polaris.cells.roles.kernel.internal.kernel.output_parser_provider import get_output_parser
 from polaris.cells.roles.kernel.internal.kernel.quality_checker_provider import get_quality_checker
 from polaris.cells.roles.kernel.internal.quality_checker import QualityResult
+from polaris.cells.roles.kernel.internal.structured_output_transport import (
+    validate_structured_output_content,
+)
 
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
@@ -25,8 +28,37 @@ def validate_turn_output(
     max_retries: int,
     last_error: str | None,
     has_tool_activity: bool,
+    structured_output_context: Any = None,
 ) -> tuple[QualityResult, str | None]:
     """Validate one terminal role output without performing side effects."""
+
+    try:
+        structured = validate_structured_output_content(content, structured_output_context)
+    except (TypeError, ValueError) as exc:
+        return (
+            QualityResult(
+                success=False,
+                errors=[str(exc)],
+                suggestions=["Return one payload matching the caller-owned structured-output contract"],
+                data=None,
+                quality_score=0.0,
+                quality_passed=False,
+            ),
+            str(exc),
+        )
+    if structured is not None:
+        payload, _plan = structured
+        return (
+            QualityResult(
+                success=True,
+                errors=[],
+                suggestions=[],
+                data=payload,
+                quality_score=100.0,
+                quality_passed=True,
+            ),
+            last_error,
+        )
 
     tool_only_turn = not content.strip() and has_tool_activity
     if tool_only_turn:

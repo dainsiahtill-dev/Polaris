@@ -75,9 +75,7 @@ class TestChiefEngineerHandoffGuards:
         executor = OrchestrationStageExecutor(tmp_path)
         valid = _single_task_chief_engineer_result().metadata["structured_output"]
         malformed = json.loads(json.dumps(valid))
-        malformed["shared_behavior_contract"] = malformed["construction_plan"].pop(
-            "shared_behavior_contract"
-        )
+        malformed["shared_behavior_contract"] = malformed["construction_plan"].pop("shared_behavior_contract")
         failed = _invalid_structured_transport_chief_engineer_result()
         failed.metadata["tool_call"] = {
             "tool": "submit_structured_role_output",
@@ -105,9 +103,7 @@ class TestChiefEngineerHandoffGuards:
                 "detail": "Relocated CE tool arguments and revalidated the exact portfolio schema.",
                 "task_id": "CE-PORTFOLIO-test",
                 "source_hash": recovered.metadata["chief_engineer_portfolio_structural_recovery"]["source_hash"],
-                "recovered_hash": recovered.metadata["chief_engineer_portfolio_structural_recovery"][
-                    "recovered_hash"
-                ],
+                "recovered_hash": recovered.metadata["chief_engineer_portfolio_structural_recovery"]["recovered_hash"],
                 "repair_codes": ["move_root_shared_behavior_contract"],
                 "provider_call_consumed": False,
             }
@@ -136,6 +132,110 @@ class TestChiefEngineerHandoffGuards:
         )
 
         assert recovered is failed
+
+    def test_structural_recovery_accepts_ce_provider_item_wrappers_before_schema_retry(
+        self, tmp_path: Path
+    ) -> None:
+        executor = OrchestrationStageExecutor(tmp_path)
+        valid = _single_task_chief_engineer_result().metadata["structured_output"]
+        malformed = json.loads(json.dumps(valid))
+        task_plan = malformed["construction_plan"]["task_plans"]["TASK-CANCEL"]
+        task_plan["behavior_invariant_refs"] = ["INV-1", "INV-2"]
+        malformed["construction_plan"]["task_plans"]["TASK-OTHER"] = {
+            "behavior_invariant_refs": ["INV-1", "INV-2"],
+            "implementation": ["Consume the shared behavior"],
+            "verification": ["Verify the shared behavior"],
+        }
+        malformed["construction_plan"]["shared_behavior_contract"]["item"] = {
+            "invariant_id": "INV-1",
+            "statement": "A lifted singleton remains behaviorally stable.",
+            "owner_task_id": "TASK-CANCEL",
+            "consumer_task_ids": {"item": ["TASK-CANCEL"]},
+            "covered_obligation_ids": {"item": ["artifact-1"]},
+            "verification_examples": {
+                "item": {"given": "input", "when": "processed", "then": "stable"}
+            },
+        }
+        malformed["construction_plan"]["item"] = [
+            {
+                "invariant_id": "INV-2",
+                "statement": "A lifted array member remains behaviorally stable.",
+                "owner_task_id": "TASK-CANCEL",
+                "consumer_task_ids": {"item": ["TASK-CANCEL"]},
+                "covered_obligation_ids": {"item": ["artifact-1"]},
+                "verification_examples": {
+                    "item": {"given": "input", "when": "processed", "then": "stable"}
+                },
+            }
+        ]
+        malformed["construction_plan"]["TASK-CANCEL"] = {
+            "behavior_invariant_refs": {"item": ["INV-1", "INV-2"]},
+        }
+        failed = _invalid_structured_transport_chief_engineer_result()
+        failed.metadata["tool_call"] = {
+            "tool": "submit_structured_role_output",
+            "arguments": malformed,
+        }
+
+        recovered = executor._recover_chief_engineer_portfolio_structural_result(
+            result=failed,
+            portfolio_task_ids=("TASK-CANCEL", "TASK-OTHER"),
+        )
+
+        assert recovered.ok is True
+        construction = recovered.metadata["structured_output"]["construction_plan"]
+        assert set(construction) == {
+            "project_design_intent",
+            "project_interface_contract",
+            "shared_behavior_contract",
+            "task_plans",
+        }
+        assert len(construction["shared_behavior_contract"]["invariants"]) == 2
+        assert set(
+            recovered.metadata["chief_engineer_portfolio_structural_recovery"]["repair_codes"]
+        ) >= {
+            "move_shared_behavior_item_to_invariants",
+            "move_construction_items_to_behavior_invariants",
+            "remove_redundant_lifted_task_plan",
+            "unwrap_behavior_invariant_array_items",
+        }
+
+    def test_structural_recovery_normalizes_schema_valid_success_before_business_validation(
+        self, tmp_path: Path
+    ) -> None:
+        executor = OrchestrationStageExecutor(tmp_path)
+        result = _single_task_chief_engineer_result()
+        payload = result.metadata["structured_output"]
+        payload["construction_plan"]["task_plans"]["TASK-OTHER"] = {
+            "behavior_invariant_refs": ["INV-1"],
+            "implementation": ["Consume cancellation behavior"],
+            "verification": ["Verify cancellation behavior"],
+        }
+        payload["construction_plan"]["task_plans"]["TASK-CANCEL"]["behavior_invariant_refs"] = ["INV-1"]
+        payload["construction_plan"]["shared_behavior_contract"]["invariants"] = [
+            {
+                "invariant_id": "INV-1",
+                "statement": "Consumers observe cancellation.",
+                "owner_task_id": "TASK-CANCEL",
+                "consumer_task_ids": ["TASK-CANCEL", "TASK-OTHER"],
+                "covered_obligation_ids": ["ART-SRC"],
+                "verification_examples": [{"given": "cancelled", "when": "read", "then": "observed"}],
+            }
+        ]
+
+        recovered = executor._recover_chief_engineer_portfolio_structural_result(
+            result=result,
+            portfolio_task_ids=("TASK-CANCEL", "TASK-OTHER"),
+        )
+
+        assert recovered is not result
+        invariant = recovered.metadata["structured_output"]["construction_plan"]["shared_behavior_contract"][
+            "invariants"
+        ][0]
+        assert invariant["consumer_task_ids"] == ["TASK-OTHER"]
+        assert recovered.metadata["chief_engineer_portfolio_structural_recovery"]["repair_codes"] == [
+            "remove_behavior_owner_from_consumers"
+        ]
 
     def test_semantic_diagnosis_uses_stable_codes_and_minimal_operations(self, tmp_path: Path) -> None:
         task_ids = ("TASK-1",)
@@ -253,6 +353,80 @@ class TestChiefEngineerHandoffGuards:
         assert errors == [
             "shared_behavior_contract.invariants[0] invalid: consumer_task_ids must not contain owner_task_id"
         ]
+
+    def test_portfolio_output_reports_unknown_behavior_obligations_with_depth_deficits(self) -> None:
+        payload = json.loads(json.dumps(_single_task_chief_engineer_result().metadata["structured_output"]))
+        payload["construction_plan"]["shared_behavior_contract"] = {
+            "invariants": [
+                {
+                    "invariant_id": "INV-CANCEL",
+                    "statement": "Cancellation remains observable across task boundaries.",
+                    "owner_task_id": "TASK-CANCEL",
+                    "consumer_task_ids": ["TASK-VERIFY"],
+                    "covered_obligation_ids": ["OBL-UNKNOWN"],
+                    "verification_examples": [
+                        {
+                            "given": "an active task",
+                            "when": "cancellation is requested",
+                            "then": "the task reports cancellation",
+                        }
+                    ],
+                }
+            ]
+        }
+        task = ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-CANCEL",
+            objective="Deliver a real project",
+            target_files=("src/cancel.py", "tests/test_cancel.py"),
+            scope_paths=("src/cancel.py", "tests/test_cancel.py"),
+            delivery_depth_contract={"minimums": {"min_prod_files": 2, "min_test_files": 2}},
+        )
+
+        errors = OrchestrationStageExecutor._chief_engineer_portfolio_output_errors(
+            payload,
+            task_ids=("TASK-CANCEL", "TASK-VERIFY"),
+            tasks=(task,),
+        )
+
+        assert (
+            "shared_behavior_contract.invariants[0].covered_obligation_ids reference unknown completion "
+            "obligations: OBL-UNKNOWN"
+        ) in errors
+        assert "project_completion_contract delivery depth infeasible: prod_files=1 < 2" in errors
+        assert "project_completion_contract delivery depth infeasible: test_files=1 < 2" in errors
+
+    def test_portfolio_output_accepts_behavior_reference_to_verification_obligation(self) -> None:
+        """Exact L3-22 r23/r24: verification obligations are completion obligations."""
+
+        payload = json.loads(json.dumps(_single_task_chief_engineer_result().metadata["structured_output"]))
+        verification_id = payload["project_completion_contract"]["obligations"]["verification"][0][
+            "obligation_id"
+        ]
+        payload["construction_plan"]["shared_behavior_contract"] = {
+            "invariants": [
+                {
+                    "invariant_id": "INV-VERIFY",
+                    "statement": "The shared behavior is proven by its command-backed verifier.",
+                    "owner_task_id": "TASK-CANCEL",
+                    "consumer_task_ids": ["TASK-VERIFY"],
+                    "covered_obligation_ids": [verification_id],
+                    "verification_examples": [
+                        {
+                            "given": "a completed implementation",
+                            "when": "the verifier runs",
+                            "then": "the shared behavior is observed",
+                        }
+                    ],
+                }
+            ]
+        }
+
+        errors = OrchestrationStageExecutor._chief_engineer_portfolio_output_errors(
+            payload,
+            task_ids=("TASK-CANCEL", "TASK-VERIFY"),
+        )
+
+        assert not any("unknown completion obligations" in error for error in errors)
 
     def test_portfolio_validation_rejects_delivery_depth_authority_deficit(self) -> None:
         payload = dict(_single_task_chief_engineer_result().metadata["structured_output"])
@@ -1137,6 +1311,7 @@ class TestChiefEngineerHandoffGuards:
             "construction_plan"
         ]["properties"]["task_plans"]
         assert repair_task_plans_schema.get("required", []) == []
+
         assert repair_task_plans_schema["additionalProperties"] is False
         assert repair_command.context["failure_feedback"] == {
             "schema_version": "factory.chief_engineer_schema_repair.failure_evidence.v1",
@@ -1197,6 +1372,40 @@ class TestChiefEngineerHandoffGuards:
         assert len(keepers) == 2
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_chief_engineer_final_structural_repair_restores_full_portfolio_output_budget(self) -> None:
+        """A final full reconstruction must not inherit the 8K patch ceiling.
+
+        The first structural repair remains deliberately small.  When it still
+        omits a required portfolio section, round two has to reconstruct the
+        same multi-task portfolio as the primary CE call and therefore needs
+        the task-scaled portfolio budget.  Typed semantic patches remain small.
+        """
+
+        assert (
+            OrchestrationStageExecutor._chief_engineer_schema_repair_output_tokens(
+                task_count=3,
+                repair_round=1,
+                semantic_patch=False,
+            )
+            == 8_192
+        )
+        assert (
+            OrchestrationStageExecutor._chief_engineer_schema_repair_output_tokens(
+                task_count=3,
+                repair_round=2,
+                semantic_patch=False,
+            )
+            == 16_384
+        )
+        assert (
+            OrchestrationStageExecutor._chief_engineer_schema_repair_output_tokens(
+                task_count=3,
+                repair_round=2,
+                semantic_patch=True,
+            )
+            == 8_192
+        )
 
     def test_chief_engineer_thinking_only_result_uses_bounded_schema_repair(
         self,
@@ -1384,6 +1593,8 @@ class TestChiefEngineerHandoffGuards:
         assert commands[1].context["chief_engineer_semantic_repair_diagnosis"]["diagnostic_codes"] == [
             "chief_engineer.delivery_depth.prod_files_below_minimum"
         ]
+        assert "allowed_completion_obligation_ids" in commands[1].objective
+        assert "never copy diagnostic prose" in commands[1].objective
         review = json.loads(
             Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
                 encoding="utf-8"
@@ -1450,9 +1661,7 @@ class TestChiefEngineerHandoffGuards:
         )
         assert review["llm_call_count"] == 1
         assert review["signals"][-1]["code"] == "chief_engineer.semantic_repair_authority_infeasible"
-        assert "chief_engineer.output_contract_repair_started" not in {
-            signal["code"] for signal in review["signals"]
-        }
+        assert "chief_engineer.output_contract_repair_started" not in {signal["code"] for signal in review["signals"]}
         assert len(keepers) == 1
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
@@ -1596,6 +1805,92 @@ class TestChiefEngineerHandoffGuards:
             "chief_engineer.output_contract_final_repair_started",
         ]
         assert len(keepers) == 3
+        assert all(keeper.is_alive is False for keeper in keepers)
+        _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_chief_engineer_final_schema_repair_gets_one_typed_semantic_patch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Two schema failures must not strand a schema-valid semantic deficit."""
+
+        executor = _executor(tmp_path)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-CANCEL",
+                        "title": "Implement cancellation coverage",
+                        "goal": "Exercise the Chief Engineer cancellation path.",
+                        "language": "python",
+                        "target_files": ["src/cancel.py", "src/support.py", "tests/test_cancel.py"],
+                        "scope_paths": ["src", "tests"],
+                        "acceptance_criteria": ["cancellation is observable"],
+                        "execution_checklist": ["Suspend the claimed attempt"],
+                        "delivery_depth_contract": {"minimums": {"min_prod_files": 2, "min_test_files": 1}},
+                        "metadata": {
+                            "topology_authority": "chief_engineer",
+                            "required_source_kinds": ["domain_modules", "tests"],
+                        },
+                    }
+                ]
+            },
+        )
+        first = _invalid_chief_engineer_stream_result()
+        second = _invalid_chief_engineer_stream_result()
+        second.error_message = (
+            "structured_output_payload_schema_mismatch:$:'project_completion_contract' is a required property"
+        )
+        commands: list[Any] = []
+
+        class _SchemaThenSemanticRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                commands.append(command)
+                if len(commands) == 1:
+                    return first
+                if len(commands) == 2:
+                    return second
+                if len(commands) == 3:
+                    return _single_task_chief_engineer_result()
+                return _semantic_artifact_patch_result(
+                    command,
+                    path="src/support.py",
+                    obligation_id="artifact-support",
+                )
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _SchemaThenSemanticRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-final-schema-then-semantic-repair",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-23T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "success", result.output
+        assert [command.task_id for command in commands] == [
+            f"CE-PORTFOLIO-{run.id}",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
+            f"CE-PORTFOLIO-{run.id}-CONTRACT-REPAIR-2",
+            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH-REPAIR-3",
+        ]
+        review = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert review["generated_blueprints"] == 1
+        assert review["llm_call_count"] == 4
+        assert [signal["code"] for signal in review["signals"][:3]] == [
+            "chief_engineer.output_schema_repair_started",
+            "chief_engineer.output_contract_final_repair_started",
+            "chief_engineer.final_schema_candidate_semantic_repair_started",
+        ]
+        assert len(keepers) == 4
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
@@ -1854,6 +2149,9 @@ class TestChiefEngineerHandoffGuards:
         assert task_plan_schema["properties"]["risk_flags"]["type"] == "array"
         assert "Arrays may be empty only when" in objective
         assert "enough distinct task-owned production/test source artifacts" in objective
+        assert "Call the required submit_structured_role_output result-submission tool exactly once" in objective
+        assert "Emit no assistant prose or raw JSON outside that tool call" in objective
+        assert "Return JSON only" not in objective
 
     def test_chief_engineer_portfolio_tasks_bind_go_source_and_cli_authority(self, tmp_path: Path) -> None:
         executor = OrchestrationStageExecutor(tmp_path)

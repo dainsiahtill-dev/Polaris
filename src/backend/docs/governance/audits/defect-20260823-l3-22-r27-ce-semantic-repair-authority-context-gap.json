@@ -1,0 +1,83 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "l3-22-r27-ce-semantic-repair-authority-context-gap",
+  "recorded_at": "2026-08-23T08:49:15+08:00",
+  "status": "FIXED_TARGETED_GATES_PASSED_AWAITING_FRESH_R28",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "attempt": "r27",
+  "factory_run_id": "factory_843694a8e915",
+  "workspace": "/tmp/factory-bench-l3-22-r27/workspaces/7a99a015a225-56583e17e3c07502/L3-22-5aaab9a81e5e829d/aca8a19f9d4356b41afbfed8",
+  "stage": "chief_engineer_review",
+  "symptom": "PM and the primary CE provider call completed, but CE semantic repair exhausted three total calls. No Director or QA call occurred. The runner's source=0 and run_ledger_integrity_failed were downstream symptoms.",
+  "final_request_audit": {
+    "primary_context_snapshot_ref": "b39c16a433a60467d9d238e1",
+    "semantic_patch_context_snapshot_ref": "03b68a7658693edf09db1346",
+    "role_identity_ok": true,
+    "primary_tool_surface_ok": true,
+    "semantic_patch_context_present": true,
+    "missing_authority_in_semantic_patch_context": [
+      "project_completion_contract.obligations.verification",
+      "allowed_completion_obligation_ids"
+    ]
+  },
+  "dynamic_evidence": {
+    "review_signals": [
+      "chief_engineer.output_contract_repair_started",
+      "chief_engineer.output_contract_final_repair_started",
+      "chief_engineer.semantic_repair_exhausted"
+    ],
+    "primary_candidate_hash": "6de26e2e71b842ae4b08a65c157ac99ee08bda1c8d25e3b8469ef9215a7c8765",
+    "primary_shape_drift": {
+      "canonical_task_plans": [
+        "TASK-1"
+      ],
+      "lifted_task_plans": [
+        "TASK-2",
+        "TASK-3"
+      ],
+      "effect": "The normalizer could not see TASK-3's reverse invariant references, so an owner-only self-consumer could not be safely rebound."
+    },
+    "semantic_patch_failure": "The first patch repeated natural-language gate labels in covered_obligation_ids and retained an owner self-consumer. The composer correctly rejected it with consumer_task_ids must not contain owner_task_id.",
+    "final_patch_failure": "The second patch was structurally malformed and failed strict schema validation because a verification example lacked the required when field.",
+    "after_exact_primary_replay": {
+      "repair_codes": [
+        "move_lifted_task_plans",
+        "rebind_behavior_consumers_from_task_refs"
+      ],
+      "canonical_task_plans": [
+        "TASK-1",
+        "TASK-2",
+        "TASK-3"
+      ],
+      "remaining_owner_self_consumers": 0,
+      "strict_schema_error_count": 0
+    }
+  },
+  "root_cause_class": "chief_engineer_semantic_repair_missing_completion_authority",
+  "root_cause": "Two independent platform gaps compounded. The structural normalizer removed only redundant lifted task plans and did not move missing task plans into the canonical task_plans map, hiding reverse behavior references. Then the semantic repair provider context projected artifacts, entrypoints, and behavior rows but omitted the verification obligations and the complete set of legal completion obligation ids. The model was asked to repair covered_obligation_ids without being given the allowed identifiers, so it repeated diagnostic prose and gate labels.",
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_semantic_repair.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_ce_handoff.py"
+    ],
+    "behavior": [
+      "Move a root task-plan-shaped object into canonical task_plans only when it carries behavior_invariant_refs; preserve its advisory fields and unwrap only known list fields.",
+      "Keep duplicate task-plan removal subset-only and conflicting rows fail-closed.",
+      "Project verification obligations and a sorted allowed_completion_obligation_ids list whenever behavior invariant repair is authorized.",
+      "Tell the semantic repair provider that covered_obligation_ids may contain only those allowed ids and must never copy diagnostic prose, commands, gate labels, or acceptance text."
+    ]
+  },
+  "verification": {
+    "tdd_red": "Both the missing lifted-task-plan recovery test and allowed completion-id context test failed before implementation.",
+    "tdd_green": "Both focused tests passed after implementation.",
+    "exact_r27_primary_replay": "TASK-1/TASK-2/TASK-3 canonicalized; owner self-consumer removed using existing reverse refs; strict schema errors remained 0.",
+    "targeted_pytest": "100 passed",
+    "ruff": "All checks passed",
+    "mypy": "Success: no issues found in 2 source files"
+  },
+  "target_project_modified": false,
+  "next_action": "Stop the r27 isolated backend and run fresh isolated L3-22 r28. Dynamically attribute any new residual before editing."
+}

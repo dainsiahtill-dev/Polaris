@@ -121,6 +121,87 @@ def test_snapshot_is_bound_to_parent_task_effect_receipt_and_exact_body(tmp_path
     assert body in rendered
 
 
+def test_snapshot_prefers_stable_external_dependency_id_over_runtime_alias(tmp_path: Path) -> None:
+    """A frozen CE dependency id must survive TaskRuntime remint/drain.
+
+    Live L3-22 r33 carried both ``resolved_depends_on_task_ids=[2]`` and
+    ``depends_on_external=['TASK-2']``.  Looking up the ephemeral runtime alias
+    first prevented the exact same-run parent from being rehydrated by its
+    immutable CE/PM identity.
+    """
+
+    path = "main.go"
+    body = "package main\n\nfunc main() {}\n"
+    (tmp_path / path).write_text(body, encoding="utf-8")
+    child = _child_task([2])
+    child["metadata"]["depends_on_external"] = ["TASK-2"]
+
+    snapshot = build_director_dependency_artifact_snapshot(
+        workspace=str(tmp_path),
+        child_task=child,
+        get_task=_resolver({"TASK-2": _parent_row(task_id=2, external_task_id="TASK-2", paths=(path,))}),
+    )
+
+    assert type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2
+    payload = snapshot.payload()
+    assert payload["dependency_task_ids"] == ["TASK-2"]
+    assert payload["modules"][0]["parent_task_id"] == "TASK-2"
+    assert payload["modules"][0]["body"] == body
+
+
+def test_snapshot_traverses_zero_artifact_parent_to_receipt_bound_ancestor(tmp_path: Path) -> None:
+    """A zero-artifact orchestration boundary must not hide real ancestor APIs.
+
+    Live L3-22 r33 had ``TASK-3 -> TASK-2 -> TASK-1``.  TASK-2 legitimately
+    owned no files, while TASK-1 held every Go interface needed by TASK-3 tests.
+    Direct-only projection reported complete coverage with zero modules, so the
+    Director guessed nonexistent APIs and its serial mutation batch aborted.
+    """
+
+    path = "physics.go"
+    body = "package main\n\ntype World struct{}\nfunc (World) Tick() {}\n"
+    (tmp_path / path).write_text(body, encoding="utf-8")
+    task_1 = _parent_row(task_id=1, external_task_id="TASK-1", paths=(path,))
+    task_2 = {
+        "id": 2,
+        "status": "completed",
+        "metadata": {
+            "external_task_id": "TASK-2",
+            "depends_on_external": ["TASK-1"],
+            "resolved_depends_on_task_ids": [1],
+            "task_completion_projection": {
+                "task_id": "TASK-2",
+                "project_id": "L3-22",
+                "run_id": "factory-r33",
+                "project_contract_hash": "e" * 64,
+                "owned_artifacts": [],
+            },
+        },
+    }
+    child = {
+        "id": 3,
+        "metadata": {
+            "external_task_id": "TASK-3",
+            "depends_on_external": ["TASK-2"],
+            "resolved_depends_on_task_ids": [2],
+        },
+    }
+
+    snapshot = build_director_dependency_artifact_snapshot(
+        workspace=str(tmp_path),
+        child_task=child,
+        get_task=_resolver({"TASK-1": task_1, "TASK-2": task_2}),
+    )
+
+    assert type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2
+    payload = snapshot.payload()
+    assert payload["dependency_task_ids"] == ["TASK-2", "TASK-1"]
+    assert payload["covered_parent_task_ids"] == ["TASK-2", "TASK-1"]
+    assert payload["zero_artifact_parent_task_ids"] == ["TASK-2"]
+    assert [module["path"] for module in payload["modules"]] == [path]
+    assert payload["modules"][0]["body"] == body
+
+
 def test_snapshot_skips_empty_receipt_bound_sibling_file(tmp_path: Path) -> None:
     """Empty declared siblings must not poison coverage with body=''.
 
@@ -653,9 +734,66 @@ def test_projecting_none_wipes_sibling_exports_and_rebind_restores_them(tmp_path
     assert payload["module_count"] == 1
     assert payload["modules"][0]["path"] == "src/models/types.ts"
     assert "GardenState" in payload["modules"][0]["body"]
-    # Second rebind is a no-op when trusted token already present.
+    # Rebinding remains deterministic when the dependency graph is unchanged.
     again = adapter._rebind_director_dependency_artifact_for_dialogue(context)
-    assert again is rebound
+    assert type(again) is TrustedDirectorDependencyArtifactSnapshotV2
+    assert again.payload() == rebound.payload()
+
+
+def test_rebind_refreshes_legal_direct_snapshot_after_parent_graph_becomes_available(tmp_path: Path) -> None:
+    """A legal but shallow snapshot must not freeze out newly observable ancestors.
+
+    Live L3-22 r34 carried a trusted direct-only TASK-2 snapshot into the final
+    TASK-3 request.  By dialogue time TaskRuntime exposed TASK-2 -> TASK-1, but
+    the early return for an existing trusted token prevented rebuilding, so the
+    test-writing Director still received only four modules instead of all eight.
+    """
+
+    from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
+    from polaris.cells.roles.adapters.internal.director.dependency_artifact_evidence import (
+        DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY,
+    )
+
+    task_2_path = "engine/sandbox.go"
+    task_1_path = "physics/note.go"
+    (tmp_path / "engine").mkdir()
+    (tmp_path / "physics").mkdir()
+    (tmp_path / task_2_path).write_text("package engine\n", encoding="utf-8")
+    (tmp_path / task_1_path).write_text("package physics\n", encoding="utf-8")
+    task_1 = _parent_row(task_id=1, external_task_id="TASK-1", paths=(task_1_path,))
+    task_2 = _parent_row(task_id=2, external_task_id="TASK-2", paths=(task_2_path,))
+    child = {
+        "id": 3,
+        "metadata": {
+            "external_task_id": "TASK-3",
+            "depends_on_external": ["TASK-2"],
+            "resolved_depends_on_task_ids": [2],
+        },
+    }
+    shallow = build_director_dependency_artifact_snapshot(
+        workspace=str(tmp_path),
+        child_task=child,
+        get_task=_resolver({"TASK-2": task_2}),
+    )
+    assert type(shallow) is TrustedDirectorDependencyArtifactSnapshotV2
+    assert shallow.payload()["dependency_task_ids"] == ["TASK-2"]
+
+    # The parent graph is observable by dialogue time, after TASK-2 settlement.
+    task_2["metadata"]["depends_on_external"] = ["TASK-1"]
+    task_2["metadata"]["resolved_depends_on_task_ids"] = [1]
+    adapter = DirectorAdapter(str(tmp_path))
+    rows = {"TASK-1": task_1, "1": task_1, "TASK-2": task_2, "2": task_2, "TASK-3": child, "3": child}
+    adapter._get_task = lambda task_id: rows.get(str(task_id))  # type: ignore[method-assign]
+    context: dict[str, Any] = {"task": child, "task_id": "TASK-3"}
+    context[DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY] = shallow
+    project_director_dependency_artifact_snapshot(context, shallow)
+
+    rebound = adapter._rebind_director_dependency_artifact_for_dialogue(context)
+
+    assert type(rebound) is TrustedDirectorDependencyArtifactSnapshotV2
+    payload = rebound.payload()
+    assert payload["dependency_task_ids"] == ["TASK-2", "TASK-1"]
+    assert [module["path"] for module in payload["modules"]] == [task_2_path, task_1_path]
 
 
 def test_rebind_keeps_projected_zero_artifact_when_parent_receipts_missing(tmp_path: Path) -> None:
