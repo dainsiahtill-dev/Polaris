@@ -1,0 +1,48 @@
+id: vc-20260825-pm-topology-test-authority-coherence
+title: PM topology and test-depth authority coherence
+date: "2026-08-25"
+classification: pattern
+status: root_cause_proven_tdd_pending
+owner: codex
+scope:
+  - src/backend/polaris/cells/roles/adapters/internal/pm/synthesis/_mixin.py
+  - src/backend/polaris/cells/roles/adapters/tests/test_pm_adapter_purea.py
+related_blueprint: src/backend/docs/blueprints/PM_TOPOLOGY_TEST_AUTHORITY_COHERENCE_20260825.md
+assumption_register:
+  - id: A1
+    statement: L3-23 r02 contains two CE test artifacts but only one PM-authorized test path.
+    evidence:
+      - /tmp/factory-bench-l3-23-r02/workspaces/ee0c381150e6-507eed25576d4669/L3-23-2956ab31bd653d97/cd81c9c5c13974164137c658/.polaris/runtime/state/blueprints/semantic-repair/L3-23/factory_78b3af283513/eb073d7e23373eb414f64f15cb44f43aa0552f4a29af7dbd42d7d7c62f2c6c99.json
+      - /tmp/factory-bench-l3-23-r02/workspaces/ee0c381150e6-507eed25576d4669/L3-23-2956ab31bd653d97/cd81c9c5c13974164137c658/.polaris/runtime/tasks/plan.json
+    verified: true
+  - id: A2
+    statement: CE final provider request identity, tools, context refs, and budget are sufficient; this is not a transport or model-context failure.
+    evidence:
+      - /tmp/factory-bench-l3-23-r02/workspaces/ee0c381150e6-507eed25576d4669/L3-23-2956ab31bd653d97/cd81c9c5c13974164137c658/.polaris/runtime/signals/chief_engineer_review.signals.json
+    verified: true
+  - id: A3
+    statement: Rust deterministic PM synthesis applies domain_modules and entrypoint delegation to all three tasks, including verification.
+    evidence:
+      - src/backend/polaris/cells/roles/adapters/internal/pm/synthesis/_mixin.py
+    verified: true
+pre_mortem:
+  - risk: Test topology is delegated to production tasks and weakens ownership.
+    mitigation: Give tests only to the verification task.
+  - risk: CE gate is relaxed instead of fixing upstream authority.
+    mitigation: Do not edit chief_engineer feasibility code.
+  - risk: A sample-specific Rust path is hardcoded.
+    mitigation: Change only generic source-kind metadata; keep exact targets unchanged.
+verification_plan:
+  - command: PYTHONPATH=src/backend python -m pytest -q test_pm_adapter_purea.py -k rust_root_workspace_directive_prefers_cargo_contracts
+    expected: Fails before implementation because verification task lacks tests delegation, then passes.
+  - command: PYTHONPATH=src/backend python -m pytest -q test_pm_adapter_purea.py
+    expected: PM synthesis suite passes.
+  - command: PYTHONPATH=src/backend python -m ruff check changed-files
+    expected: No issues.
+  - command: PYTHONPATH=src/backend python -m ruff format --check changed-files
+    expected: No formatting drift.
+  - command: PYTHONPATH=src/backend python -m mypy changed-source-file
+    expected: No type errors.
+  - command: fresh isolated L3-23 r03
+    expected: No chief_engineer.semantic_repair_authority_infeasible for missing test topology authority.
+

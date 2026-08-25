@@ -21,6 +21,7 @@ from polaris.cells.roles.kernel.public.structured_output_contracts import (
     STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
     RoleStructuredOutputContractV1,
 )
+from polaris.cells.roles.kernel.public.turn_contracts import RawLLMResponse
 
 STRUCTURED_OUTPUT_TOOL_NAME = "submit_structured_role_output"
 STRUCTURED_OUTPUT_TRANSPORT_SCHEMA = "roles.kernel.structured_output_transport.v1"
@@ -36,6 +37,14 @@ logger = logging.getLogger(__name__)
 
 class _ValidatedStructuredOutputStreamEvent(dict[str, Any]):
     """In-process provenance minted only after reserved-tool validation."""
+
+
+class _ValidatedStructuredOutputResponse(dict[str, Any]):
+    """Non-stream response minted only after reserved-tool validation."""
+
+
+class _ValidatedStructuredOutputRawResponse(RawLLMResponse):
+    """Transaction response carrying proven non-executable result transport."""
 
 
 def _without_untrusted_transport_metadata(event: Mapping[str, Any]) -> dict[str, Any]:
@@ -223,7 +232,11 @@ def _tool_call_arguments(call: Mapping[str, Any]) -> dict[str, Any]:
     function = call.get("function")
     raw_arguments = function.get("arguments") if isinstance(function, Mapping) else None
     if raw_arguments is None:
-        raw_arguments = call.get("args", call.get("arguments"))
+        # Keep provider-native envelopes lossless at this transport boundary.
+        # Anthropic exposes forced-tool arguments as ``tool_use.input`` while
+        # OpenAI-style calls use ``function.arguments``. Both still pass the
+        # same strict JSON-object and caller-schema validation below.
+        raw_arguments = call.get("args", call.get("arguments", call.get("input")))
     if isinstance(raw_arguments, str):
         try:
             raw_arguments = json.loads(raw_arguments)
@@ -321,6 +334,85 @@ def trusted_structured_output_stream_evidence(event: Mapping[str, Any]) -> dict[
     ):
         return None
     return dict(evidence)
+
+
+def _trusted_structured_output_evidence(
+    *,
+    content: str,
+    evidence: Any,
+) -> dict[str, Any] | None:
+    """Validate exact non-effect transport evidence against canonical content."""
+
+    if not isinstance(evidence, Mapping):
+        return None
+    if (
+        evidence.get("schema_version") != STRUCTURED_OUTPUT_TRANSPORT_SCHEMA
+        or evidence.get("transport") != "provider_tool"
+        or evidence.get("tool_name") != STRUCTURED_OUTPUT_TOOL_NAME
+        or evidence.get("strict") is not True
+        or evidence.get("side_effect") is not False
+        or evidence.get("tool_lifecycle") is not False
+    ):
+        return None
+    if not content:
+        return None
+    if hashlib.sha256(content.encode("utf-8")).hexdigest() != str(evidence.get("payload_sha256") or ""):
+        return None
+    try:
+        payload = json.loads(content, object_pairs_hook=_reject_duplicate_json_object_pairs)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return dict(evidence) if isinstance(payload, Mapping) else None
+
+
+def project_validated_structured_output_raw_response(
+    response: Mapping[str, Any],
+) -> RawLLMResponse | None:
+    """Project an internally normalized result response into TransactionKernel.
+
+    Ordinary provider dictionaries cannot opt out of executable-tool lifecycle:
+    only the private response type minted by ``normalize_structured_output_response``
+    is accepted here, and its payload hash plus non-effect invariants are checked
+    again before the private ``RawLLMResponse`` subtype is created.
+    """
+
+    if type(response) is not _ValidatedStructuredOutputResponse:
+        return None
+    content = str(response.get("content") or "")
+    evidence = _trusted_structured_output_evidence(
+        content=content,
+        evidence=response.get(_STRUCTURED_OUTPUT_METADATA_KEY),
+    )
+    metadata = response.get("metadata")
+    metadata_evidence = metadata.get(_STRUCTURED_OUTPUT_METADATA_KEY) if isinstance(metadata, Mapping) else None
+    if evidence is None or metadata_evidence != evidence:
+        return None
+    if response.get("tool_calls") or response.get("native_tool_calls"):
+        return None
+    thinking = response.get("thinking")
+    usage = response.get("usage")
+    return _ValidatedStructuredOutputRawResponse(
+        content=content,
+        thinking=thinking if isinstance(thinking, str) else None,
+        native_tool_calls=[],
+        model=str(response.get("model") or "unknown"),
+        usage=dict(usage) if isinstance(usage, Mapping) else {},
+        metadata={_STRUCTURED_OUTPUT_METADATA_KEY: evidence},
+    )
+
+
+def trusted_structured_output_response_evidence(
+    response: RawLLMResponse,
+) -> dict[str, Any] | None:
+    """Return evidence only for the private validated transaction response."""
+
+    if type(response) is not _ValidatedStructuredOutputRawResponse:
+        return None
+    content = str(response.content or "")
+    evidence = response.metadata.get(_STRUCTURED_OUTPUT_METADATA_KEY)
+    if response.native_tool_calls:
+        return None
+    return _trusted_structured_output_evidence(content=content, evidence=evidence)
 
 
 def _coerce_structured_output_payload_defaults(
@@ -814,10 +906,7 @@ def _validate_payload_with_normalization(
         if displaced_defaults_applied:
             normalization_policy += "+required_empty_container_defaults_v1"
     coerced = _coerce_structured_output_payload_defaults(normalized, schema)
-    if (
-        coerced != normalized
-        and "required_empty_container_defaults_v1" not in normalization_policy.split("+")
-    ):
+    if coerced != normalized and "required_empty_container_defaults_v1" not in normalization_policy.split("+"):
         normalization_policy = (
             f"{normalization_policy}+required_empty_container_defaults_v1"
             if normalization_policy != "none"
@@ -925,7 +1014,7 @@ def normalize_structured_output_response(
         schema_normalization_policy=normalization_policy,
         schema_normalization_details=normalization_details,
     )
-    normalized = dict(response)
+    normalized = _ValidatedStructuredOutputResponse(response)
     normalized["content"] = payload_json
     normalized["tool_calls"] = []
     normalized["native_tool_calls"] = []
@@ -1013,8 +1102,10 @@ __all__ = [
     "StructuredOutputTransportPlan",
     "is_canonical_structured_output_stream_chunk",
     "normalize_structured_output_response",
+    "project_validated_structured_output_raw_response",
     "require_exact_structured_output_tool_surface",
     "resolve_structured_output_transport",
+    "trusted_structured_output_response_evidence",
     "trusted_structured_output_stream_evidence",
     "validate_structured_output_content",
     "validate_structured_output_stream_tool_call",

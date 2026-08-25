@@ -332,6 +332,21 @@ def _precommit_source_compile_guard(
 ) -> dict[str, Any]:
     """Reject a candidate that introduces a definite workspace compile failure."""
 
+    if _is_test_artifact_path(rel_path):
+        # Test/verifier artifacts are allowed to expose an interface mismatch
+        # with already-materialized production code.  That mismatch is a
+        # workspace-quality residual owned by the same Director task, not a
+        # physical-write failure.  Rejecting it here dead-letters the first
+        # test write and serial-aborts every sibling test/README write, so the
+        # repair loop never receives either the artifact or its diagnostics.
+        # Syntax remains fail-closed in _precommit_source_syntax_guard; the
+        # authoritative workspace verifier must compile, diagnose, repair, and
+        # revalidate the landed test artifact before delivery can pass.
+        return {
+            "ok": True,
+            "compile_check": "deferred_test_artifact_to_workspace_quality",
+        }
+
     from polaris.kernelone.quality import check_candidate_workspace_compile
 
     result = check_candidate_workspace_compile(workspace, rel_path, after_content)
@@ -355,6 +370,22 @@ def _precommit_source_compile_guard(
         "compile_check": "failed_precommit",
         "verifier_command": command,
     }
+
+
+def _is_test_artifact_path(rel_path: str) -> bool:
+    """Return whether a project-relative path is a cross-language test artifact."""
+
+    normalized = str(rel_path or "").replace("\\", "/").strip("/")
+    if not normalized:
+        return False
+    path = Path(normalized)
+    name = path.name.lower()
+    parent_parts = {part.lower() for part in path.parts[:-1]}
+    if parent_parts.intersection({"test", "tests", "__tests__", "spec", "specs"}):
+        return True
+    if name.endswith("_test.go") or name.endswith("_test.py") or name.startswith("test_"):
+        return True
+    return ".test." in name or ".spec." in name
 
 
 def _validate_or_repair_json_config_content(

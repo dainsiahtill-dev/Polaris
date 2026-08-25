@@ -1,0 +1,64 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "l3-22-r43-ce-completion-behavior-normalization-split",
+  "status": "FIX_UNIT_VERIFIED_LIVE_BENCH_PENDING",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "factory_run_id": "factory_cc2ab6dfae15",
+  "workspace": "/tmp/factory-bench-l3-22-r43/workspaces/c4c9d985bb6d-9f064f32903f508f/L3-22-5aaab9a81e5e829d/3928aa5ea08e16e2902f04a5",
+  "stage": "chief_engineer_review",
+  "symptom": {
+    "error_code": "blueprint_portfolio_behavior_contract_infeasible",
+    "message": "shared behavior invariant references unknown authority identities",
+    "details": {
+      "invariant_ids": [
+        "INV-DETERMINISTIC-SEED"
+      ],
+      "task_ids": [],
+      "obligation_ids": [
+        "ENT-CLI-MAIN"
+      ]
+    }
+  },
+  "final_request_audit": {
+    "role_identity": "chief_engineer",
+    "pm_contract_included": true,
+    "target_files_included": true,
+    "required_tool_available": true,
+    "response_format_present": true,
+    "context_capacity_blocker": false
+  },
+  "dynamic_evidence": {
+    "semantic_candidate": ".polaris/runtime/state/blueprints/semantic-repair/L3-22/factory_cc2ab6dfae15/09092774e56d9adaad74f32bea0d424d1469200fb7109b37e2ae316512718af8.json",
+    "candidate_entrypoint_id": "ENT-CLI-MAIN",
+    "candidate_entrypoint_command": "go run ./cmd/bubbles -scenario=happy|boundary|error",
+    "committed_pm_entrypoint_command": "go run . -scenario=happy",
+    "surviving_candidate_entrypoint_id": "ENT-CLI-ROOT",
+    "behavior_reference": "INV-DETERMINISTIC-SEED covered_obligation_ids includes ENT-CLI-MAIN",
+    "observed_boundary": "completion contract normalization removes unbound advisory entrypoint and verifier references, but shared behavior was parsed from the pre-normalized candidate"
+  },
+  "root_cause": {
+    "owner_cell": "chief_engineer.blueprint",
+    "classification": "atomic_projection_split",
+    "description": "ProjectCompletionContractV1 authority normalization and shared behavior projection were not one transaction. Provider-declared obligation ids removed by committed PM authority normalization remained in behavior invariants and became platform-created dangling references."
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_public_contractsa.py"
+    ],
+    "behavior": "Remove from behavior coverage only entrypoint ids declared by the same provider candidate and absent after completion command-authority normalization. Artifact/verifier ids are not generalized without explicit remap evidence; truly unknown ids remain and still fail closed.",
+    "target_project_modified": false
+  },
+  "tdd_evidence": {
+    "red": "1 failed: shared behavior invariant references unknown authority identities",
+    "green": "180 passed in test_public_contractsa.py; 6 passed in test_portfolio_behavior_feasibility.py; unknown provider-only ids remain fail-closed",
+    "ruff": "All checks passed",
+    "mypy": "Success: no issues found in 1 source file"
+  },
+  "remaining": [
+    "Run fresh isolated L3-22 on current working tree with full 5400 second project budget",
+    "Verify Chief Engineer persists 3/3 blueprints and Director receives handoff",
+    "Continue exact-run Director and QA audit until COMPLETED_VERIFIED"
+  ]
+}

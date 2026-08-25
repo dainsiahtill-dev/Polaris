@@ -24,8 +24,10 @@ from polaris.cells.orchestration.workflow_orchestration.public.project_completio
 from polaris.cells.runtime.task_runtime.public import (
     SAME_TASK_LOCAL_REWORK_AUTHORIZATION_SCHEMA_V1,
     PrepareSameTaskLocalReworkCommandV1,
+    QuerySameTaskLocalReworkAuthorizationV1,
     prepare_same_task_local_rework,
     query_observable_task_rows,
+    query_same_task_local_rework_authorization,
 )
 
 
@@ -66,20 +68,36 @@ class TaskRuntimeProjectCompletionActionOwnerV1(ProjectCompletionActionPortV1):
     def _record(command: ProjectCompletionActionCommandV1) -> Mapping[str, object] | None:
         rows = query_observable_task_rows(command.identity.workspace).rows_for_factory_run(command.identity.run_id)
         matching = [row for row in rows if _external_aliases(row) == {command.owner_task_id}]
-        if len(matching) != 1:
+        if len(matching) == 1:
+            metadata_raw = matching[0].get("metadata")
+            metadata = metadata_raw if isinstance(metadata_raw, Mapping) else {}
+            records_raw = metadata.get("same_task_local_rework_authorizations")
+            records = records_raw if isinstance(records_raw, list) else []
+            matches = [
+                item
+                for item in records
+                if isinstance(item, Mapping) and str(item.get("action_id") or "").strip() == command.action_id
+            ]
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                raise RuntimeError("project_completion_task_runtime_receipt_ambiguous")
+        elif len(matching) > 1:
+            raise RuntimeError("project_completion_task_runtime_owner_identity_ambiguous")
+
+        durable = query_same_task_local_rework_authorization(
+            QuerySameTaskLocalReworkAuthorizationV1(
+                workspace=command.identity.workspace,
+                factory_run_id=command.identity.run_id,
+                external_task_id=command.owner_task_id,
+                action_id=command.action_id,
+            )
+        )
+        if durable.code == "same_task_local_rework_authorization_not_found":
             return None
-        metadata_raw = matching[0].get("metadata")
-        metadata = metadata_raw if isinstance(metadata_raw, Mapping) else {}
-        records_raw = metadata.get("same_task_local_rework_authorizations")
-        records = records_raw if isinstance(records_raw, list) else []
-        matches = [
-            item
-            for item in records
-            if isinstance(item, Mapping) and str(item.get("action_id") or "").strip() == command.action_id
-        ]
-        if len(matches) != 1:
-            return None
-        return matches[0]
+        if durable.code != "same_task_local_rework_authorization_found" or not durable.ok:
+            raise RuntimeError(f"project_completion_task_runtime_{durable.code}")
+        return durable.authorization
 
     @staticmethod
     def _receipt(

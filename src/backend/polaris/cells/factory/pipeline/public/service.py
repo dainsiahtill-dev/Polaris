@@ -244,7 +244,12 @@ def _normalize_owner_stage_tuple(values: object, field_name: str) -> tuple[str, 
 
 
 def _normalize_owner_event_projection(events: object) -> tuple[tuple[str, ...], str | None]:
-    """Derive stable refs plus the sole successful terminal completion event."""
+    """Derive stable refs plus the latest successful completion epoch.
+
+    Same-run recovery may legitimately append a new completion after an
+    explicit ``retry_requested`` event.  Multiple completions inside one epoch
+    remain invalid and fail closed.
+    """
     if not isinstance(events, Sequence) or isinstance(events, (str, bytes)):
         raise FactoryPipelineError(
             "Factory chain events are not a sequence",
@@ -253,6 +258,7 @@ def _normalize_owner_event_projection(events: object) -> tuple[tuple[str, ...], 
     seen: set[str] = set()
     out: list[str] = []
     completion_refs: list[str] = []
+    completion_seen_since_retry = False
     for event in events:
         if not isinstance(event, Mapping):
             raise FactoryPipelineError(
@@ -274,6 +280,8 @@ def _normalize_owner_event_projection(events: object) -> tuple[tuple[str, ...], 
             )
         seen.add(ref)
         out.append(ref)
+        if event.get("type") == "retry_requested":
+            completion_seen_since_retry = False
         if event.get("type") == "completed":
             if event.get("success") is not True:
                 raise FactoryPipelineError(
@@ -281,14 +289,15 @@ def _normalize_owner_event_projection(events: object) -> tuple[tuple[str, ...], 
                     code="factory_chain_projection_terminal_event_invalid",
                     details={"event_ref": ref},
                 )
+            if completion_seen_since_retry:
+                raise FactoryPipelineError(
+                    "Factory chain contains multiple completion events in one retry epoch",
+                    code="factory_chain_projection_terminal_event_invalid",
+                    details={"completion_event_refs": [*completion_refs, ref]},
+                )
             completion_refs.append(ref)
-    if len(completion_refs) > 1:
-        raise FactoryPipelineError(
-            "Factory chain contains multiple completion events",
-            code="factory_chain_projection_terminal_event_invalid",
-            details={"completion_event_refs": completion_refs},
-        )
-    return tuple(out), completion_refs[0] if completion_refs else None
+            completion_seen_since_retry = True
+    return tuple(out), completion_refs[-1] if completion_refs else None
 
 
 def _build_factory_chain_projection(

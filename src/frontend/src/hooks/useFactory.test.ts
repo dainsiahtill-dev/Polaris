@@ -215,6 +215,37 @@ describe('useFactory', () => {
     });
   });
 
+  it('refreshes artifacts after each completed stage', async () => {
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+    await act(async () => {
+      await result.current.startRun({ workspace: 'ws' });
+    });
+    await waitFor(() => {
+      expect(getFactoryRunArtifactsMock).toHaveBeenCalledWith('run-1');
+    });
+    getFactoryRunArtifactsMock.mockClear();
+
+    await act(async () => {
+      lastMessageHandler?.(
+        envelope(
+          {
+            run_id: 'run-1',
+            stage: 'chief_engineer_review',
+            result: {
+              artifacts: ['runtime/blueprints/ce_TASK-1.json'],
+            },
+          },
+          'stage_completed',
+        ),
+      );
+    });
+
+    await waitFor(() => {
+      expect(getFactoryRunArtifactsMock).toHaveBeenCalledWith('run-1');
+    });
+    expect(result.current.currentRun?.current_stage).toBe('chief_engineer_review');
+  });
+
   it('keeps the Factory stream running when a child Director task completes', async () => {
     const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
     await act(async () => {

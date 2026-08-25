@@ -119,15 +119,20 @@ def _owner_receipt(
     )
 
 
-def _binding(identity: ProjectCompletionIdentityV1, *, completed: bool) -> ProjectOutcomeAuthorityBindingV1:
+def _binding(
+    identity: ProjectCompletionIdentityV1,
+    *,
+    completed: bool,
+    evidence_revision: str = "",
+) -> ProjectOutcomeAuthorityBindingV1:
     hashes = ProjectOutcomeNonFactoryOwnerProjectionHashesV1(
-        delivery=_hash("delivery"),
-        qa=_hash("qa"),
-        task_boundary=_hash("task-boundary"),
-        task_runtime=_hash("task-runtime"),
-        run_ledger=_hash("run-ledger"),
+        delivery=_hash(f"delivery{evidence_revision}"),
+        qa=_hash(f"qa{evidence_revision}"),
+        task_boundary=_hash(f"task-boundary{evidence_revision}"),
+        task_runtime=_hash(f"task-runtime{evidence_revision}"),
+        run_ledger=_hash(f"run-ledger{evidence_revision}"),
     )
-    factory_hash = _hash("factory")
+    factory_hash = _hash(f"factory{evidence_revision}")
     non_factory_refs = ProjectOutcomeNonFactoryEvidenceRefsV1(
         delivery=(hashes.delivery,),
         qa=(hashes.qa,),
@@ -669,7 +674,32 @@ async def test_only_sealed_owner_binding_can_complete_and_replay_requeries_owner
 
 
 @pytest.mark.asyncio
-async def test_forged_generic_completed_event_cannot_complete(tmp_path: Path) -> None:
+async def test_completed_terminal_rebinds_when_current_owner_evidence_stays_verified(tmp_path: Path) -> None:
+    """Stronger replacement receipts must not invalidate a still-green outcome."""
+
+    identity = _identity(tmp_path)
+    outcome_port = MutableOutcomePort(_binding(identity, completed=True))
+    store = SqliteRuntimeStore(str(tmp_path / "runtime.db"), workspace=str(tmp_path))
+    engine = _engine(store, outcome_port, MutableDiagnosticsPort(_diagnostics(identity)))
+    command = AdvanceProjectCompletionCommandV1(identity=identity)
+
+    first = await engine.advance(command)
+    outcome_port.binding = _binding(identity, completed=True, evidence_revision="-stronger-receipts")
+    rebound = await engine.advance(command)
+    replay = await engine.advance(command)
+
+    assert first.status == rebound.status == replay.status == "completed_verified"
+    assert rebound.terminal is True
+    assert rebound.reason_codes == ("owner_binding_revalidated",)
+    assert replay.terminal is True
+    assert replay.reason_codes == ("owner_binding_revalidated",)
+    assert replay.event_seq == rebound.event_seq
+    execution = await store.get_execution(first.workflow_id)
+    assert execution is not None and execution.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_forged_generic_completed_event_cannot_override_incomplete_owner(tmp_path: Path) -> None:
     identity = _identity(tmp_path)
     store = SqliteRuntimeStore(str(tmp_path / "runtime.db"), workspace=str(tmp_path))
     command = AdvanceProjectCompletionCommandV1(identity=identity)
@@ -715,7 +745,7 @@ async def test_forged_generic_completed_event_cannot_complete(tmp_path: Path) ->
     )
     engine = _engine(
         store,
-        MutableOutcomePort(_binding(identity, completed=True)),
+        MutableOutcomePort(_binding(identity, completed=False)),
         MutableDiagnosticsPort(_diagnostics(identity)),
     )
 
@@ -946,6 +976,7 @@ async def test_failed_claim_retries_same_action_id_with_new_claim(tmp_path: Path
 
     assert first.reason_codes == ("owner_action_dispatch_failed",)
     assert second.reason_codes == ("owner_action_receipt_committed",)
+    assert second.next_action == "publish_owner_rework"
     assert len(set(port.dispatch_calls)) == 1
     assert len(port.effects) == 1
     events = await store.get_events(second.workflow_id)

@@ -1915,6 +1915,64 @@ async def test_durable_completion_action_issues_quality_local_rework_projection(
 
 
 @pytest.mark.asyncio
+async def test_successful_quality_completion_notifies_only_after_completed_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A successful QA owner query must observe the terminal Factory epoch.
+
+    The quality stage persists before ``complete_run`` appends ``completed``.
+    Querying project outcome from the stage wrapper therefore races the Factory
+    owner and reports ``factory_chain_owner_query_failed`` despite green QA.
+    Failed QA still needs immediate local-rework routing; successful QA waits
+    for terminal lifecycle persistence and then emits exactly one convergence
+    wake.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    class _StaticExecutor:
+        async def execute(self, stage: str, _run: FactoryRun, _context: dict[str, Any]) -> StageResult:
+            return StageResult(stage=stage, status="success", output="qa passed", metadata={})
+
+    service = FactoryRunService(workspace, cache_root=tmp_path / "runtime", executor=_StaticExecutor())
+    run = await service.create_run(FactoryConfig(name="terminal-owner-wake", stages=["quality_gate"]))
+    await service.start_run(run.id)
+    observed_event_types: list[tuple[str, ...]] = []
+
+    async def notify(_run_id: str, _result: StageResult) -> FactoryProjectCompletionNotificationResultV1:
+        events = await service.store.get_events(run.id)
+        observed_event_types.append(tuple(str(event.get("type") or "") for event in events))
+        return FactoryProjectCompletionNotificationResultV1(
+            status="completed_verified",
+            reason_codes=(),
+            action_id="",
+            diagnostic_id="",
+            next_action="",
+        )
+
+    monkeypatch.setattr(service, "_notify_project_completion_supervisor", notify)
+
+    await service.execute_stage(run.id, "quality_gate", {"heartbeat_interval_seconds": 0})
+    assert observed_event_types == []
+
+    await service.complete_run(run.id, success=True)
+
+    assert len(observed_event_types) == 1
+    assert "completed" in observed_event_types[0]
+    events = await service.store.get_events(run.id)
+    completed_index = next(index for index, event in enumerate(events) if event.get("type") == "completed")
+    advance_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.get("type") == "project_completion_advance"
+        and event.get("status") == "completed_verified"
+    )
+    assert completed_index < advance_index
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("proof_available", [True, False])
 async def test_stage_context_uses_only_factory_revalidated_pm_binding(
     tmp_path: Path,

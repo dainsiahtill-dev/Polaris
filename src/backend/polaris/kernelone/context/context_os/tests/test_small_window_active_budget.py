@@ -183,3 +183,61 @@ class TestSchedulerReadsResolvedWindow:
 
         # The resolved 16k window must reach the budget helper — NOT the policy 128k.
         assert captured["model_context_window"] == 16_000
+
+    def test_truncated_pydantic_transcript_event_is_rebuilt_without_dataclass_replace(
+        self,
+        monkeypatch,
+    ) -> None:
+        """A large pinned event must survive truncation as a validated V2 model.
+
+        Regression for the live L3-22 second Director repair: handoff export
+        rebuilt the prompt window after a large tool batch, truncated the root
+        ``TranscriptEventV2``, then called ``dataclasses.replace`` on that
+        Pydantic model and aborted before the next provider request.
+        """
+        from polaris.kernelone.context.context_os.models_v2 import (
+            BudgetPlanV2,
+            TaskStateViewV2,
+            TranscriptEventV2,
+            UserProfileStateV2,
+            WorkingStateV2,
+        )
+        from polaris.kernelone.context.context_os.policies import StateFirstContextOSPolicy
+
+        monkeypatch.setattr(scheduler_module, "_active_window_token_budget", lambda **_: 600)
+        scheduler = _WiringScheduler(StateFirstContextOSPolicy())
+        original = TranscriptEventV2(
+            event_id="evt_large_root",
+            sequence=0,
+            role="assistant",
+            content="large tool batch " * 2_000,
+            kind="assistant_turn",
+            route="PATCH",
+            source_turns=("t0",),
+        )
+        working_state = WorkingStateV2(
+            task_state=TaskStateViewV2(),
+            user_profile=UserProfileStateV2(),
+            active_entities=(),
+            active_artifacts=(),
+            decision_log=(),
+        )
+        plan = BudgetPlanV2(
+            model_context_window=16_000,
+            input_budget=9472,
+            soft_limit=5209,
+            hard_limit=6819,
+            emergency_limit=8056,
+        )
+
+        result = scheduler._collect_active_window(
+            transcript=(original,),
+            working_state=working_state,
+            recent_window_messages=1,
+            budget_plan=plan,
+        )
+
+        assert len(result) == 1
+        assert isinstance(result[0], TranscriptEventV2)
+        assert result[0].event_id == original.event_id
+        assert 0 < len(result[0].content) < len(original.content)

@@ -1064,6 +1064,7 @@ class _FactoryRunServiceLifecycleMixin:
         ``completed_at=null`` and leases stuck in ``draining``.
         """
         run_lock = self._get_run_lock(run_id)
+        completion_event_appended = False
         async with run_lock:
             run = await self.store.get_run(run_id)
             if run is None:
@@ -1107,6 +1108,7 @@ class _FactoryRunServiceLifecycleMixin:
                                 "authority_scope": "orchestration_session_lifecycle",
                             },
                         )
+                        completion_event_appended = True
                         logger.info(
                             "Factory orchestration session %s soft-closed after prior lease release status=%s",
                             run_id,
@@ -1156,6 +1158,7 @@ class _FactoryRunServiceLifecycleMixin:
                                     "authority_scope": "orchestration_session_lifecycle",
                                 },
                             )
+                            completion_event_appended = True
                             if claimed:
                                 await self._release_lifecycle_operation(
                                     run,
@@ -1178,6 +1181,39 @@ class _FactoryRunServiceLifecycleMixin:
                                     reason="complete_run_failed",
                                 )
                             raise
+
+        # The terminal Factory event is part of ProjectOutcome authority.  Wake
+        # convergence only after it is durable, while the exact workspace lease
+        # still exists for physical-evidence closure.  Notification failure is
+        # projected but never rolls back the already-closed Factory lifecycle.
+        stage_results_raw = run.metadata.get("stage_results") if isinstance(run.metadata, Mapping) else None
+        stage_results = stage_results_raw if isinstance(stage_results_raw, Mapping) else {}
+        quality_result = stage_results.get("quality_gate")
+        has_successful_quality_result = (
+            isinstance(quality_result, Mapping) and str(quality_result.get("status") or "").strip() == "success"
+        )
+        if completion_event_appended and run.status == FactoryRunStatus.COMPLETED and has_successful_quality_result:
+            try:
+                await self._notify_project_completion_after_terminal(run_id)
+            except Exception as exc:  # noqa: BLE001 -- owner boundary failure is projected fail-closed
+                logger.error(
+                    "Post-terminal project completion notification failed for run %s: %s",
+                    run_id,
+                    exc,
+                    exc_info=True,
+                )
+                await self._append_event(
+                    run_id,
+                    {
+                        "type": "project_completion_control_plane_blocked",
+                        "message": str(exc)[:500],
+                        "error_type": type(exc).__name__,
+                        "source_stage": "quality_gate",
+                        "source_stage_status": "success",
+                        "timestamp": self._now(),
+                        "terminal": False,
+                    },
+                )
 
         run = await self.settle_terminal_run(run_id)
         archive_reason = "completed" if run.status == FactoryRunStatus.COMPLETED else "failed"

@@ -1,0 +1,54 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-23-R05-CE-CROSS-COLLECTION-OBLIGATION-LINK",
+  "status": "CLOSED_FRESH_R06_VERIFIED",
+  "severity": "P0",
+  "project_id": "L3-23",
+  "factory_run_id": "factory_3c7e29c3229c",
+  "workspace": "/tmp/factory-bench-l3-23-r05/workspaces/93db6b17dad3-5034c4c7bc21b4f7/L3-23-2956ab31bd653d97/8acd5c0d3342f39bd78e4fad",
+  "symptom": "CE consumed three physical LLM calls and produced two schema-valid, unique test-artifact upserts, but semantic composition rejected both as duplicate obligation ids.",
+  "exact_run_evidence": {
+    "terminal_error_code": "chief_engineer.semantic_repair_exhausted",
+    "terminal_hint": "chief_engineer.semantic_patch_invalid:ValueError:semantic repair would create duplicate obligation ids",
+    "first_upsert": {
+      "obligation_id": "OBL-ENGINE-UNIT-TESTS",
+      "path": "tests/engine_unit.rs",
+      "owner_task_id": "TASK-2"
+    },
+    "final_upsert": {
+      "obligation_id": "OBL-EDGE-CASES-RS",
+      "path": "tests/edge_cases.rs",
+      "owner_task_id": "TASK-3"
+    },
+    "preexisting_cross_collection_link": {
+      "obligation_id": "OBL-MAIN-RS",
+      "collections": [
+        "artifacts",
+        "entrypoints"
+      ]
+    },
+    "target_project_modified_by_main_agent": false
+  },
+  "root_cause": {
+    "confirmed": "The repair composer required absolute global obligation-id uniqueness after every patch. The frozen schema-valid CE candidate intentionally used OBL-MAIN-RS in both artifact and entrypoint collections to link two views of one delivery fact. Neither typed patch introduced a duplicate, but the unconditional guard blamed that pre-existing relation.",
+    "not_caused_by": [
+      "duplicate provider patch ids",
+      "duplicate provider patch paths",
+      "missing schema retry",
+      "Director execution",
+      "target project code"
+    ]
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+    "policy": "Compare before and after cross-collection obligation-id multiplicities and reject only duplicates introduced or increased by the patch. Per-collection duplicate ids remain rejected by _replace_by_id, and a new cross-collection collision still fails closed."
+  },
+  "verification": {
+    "red_green_regression": "test_artifact_patch_preserves_preexisting_artifact_entrypoint_obligation_link",
+    "negative_regression": "test_artifact_patch_rejects_new_cross_collection_obligation_collision",
+    "semantic_repair_tests": "60 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_r06": "The duplicate-obligation terminal signature disappeared. CE reached a fourth typed repair call and exposed an atomic test-depth versus cross-task behavior-coverage diagnosis gap."
+  }
+}

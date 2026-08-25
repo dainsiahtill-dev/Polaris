@@ -1,0 +1,78 @@
+card_id: vc-20260825-task-runtime-durable-local-rework-receipt-replay
+bug_summary: >
+  A committed same-task local-rework receipt exists in the append-only
+  TaskRuntime fact stream, but Factory convergence loses it after an authorized
+  TaskRuntime row reset because the bootstrap action owner queries mutable row
+  metadata only.
+
+classification: structural
+
+bug_path:
+  file: polaris/bootstrap/project_completion_task_runtime_action_owner.py
+  method: TaskRuntimeProjectCompletionActionOwnerV1._record
+  symptom: >
+    L3-22 factory_cbc114bc122b stopped at project completion with
+    committed_owner_receipt_missing after action 8d1ec0e... was prepared and
+    later runtime_reset_removed deleted its owner row.
+
+assumptions:
+  - id: A1
+    statement: Mutable TaskRuntime row metadata is durable receipt authority.
+    status: verified_false
+    evidence: >
+      The row was removed during terminal drain while the immutable
+      same_task_local_rework_prepared fact remained readable.
+  - id: A2
+    statement: The action itself was never committed.
+    status: verified_false
+    evidence: >
+      The exact execution fact contains action id, diagnostic id, dispatch
+      claim id and effect hash before runtime_reset_removed.
+  - id: A3
+    statement: Retaining removed rows is required.
+    status: verified_false
+    evidence: >
+      Receipt replay needs only an exact read-only fact query; lifecycle reset
+      semantics remain unchanged.
+
+pre_mortem:
+  failure_point: A broad fact scan could accept a foreign or malformed action.
+  risk_zone:
+    - polaris/cells/runtime/task_runtime/public/contracts
+    - polaris/cells/runtime/task_runtime/internal/service
+    - polaris/bootstrap/project_completion_task_runtime_action_owner.py
+  mitigation: >
+    Match all four identities exactly, reject ambiguity, and preserve existing
+    effect-hash and dispatch-claim verification.
+
+verification_plan:
+  - command: >
+      PYTHONPATH=src/backend PYTHONUTF8=1
+      /home/dains/.pyenv/versions/3.12.3/bin/python -m pytest -q
+      src/backend/polaris/tests/unit/bootstrap/test_project_completion_task_runtime_action_owner.py
+    expected: Receipt survives runtime_reset_removed and existing owner tests pass.
+  - command: >
+      PYTHONPATH=src/backend PYTHONUTF8=1
+      /home/dains/.pyenv/versions/3.12.3/bin/python -m pytest -q
+      src/backend/polaris/cells/runtime/task_runtime/tests
+    expected: TaskRuntime lifecycle and fact-stream tests pass.
+  - command: ruff check <touched Python paths>
+    expected: No lint violations.
+  - command: mypy <touched Python paths>
+    expected: No new type errors.
+  - command: same-run L3-22 quality recovery for factory_cbc114bc122b
+    expected: >
+      PM and CE authority remain unchanged and
+      committed_owner_receipt_missing is absent.
+
+rollback:
+  strategy: >
+    Revert the typed query, bootstrap fallback and regression tests together;
+    keep TaskRuntime reset semantics and generated projects unchanged.
+
+related_decisions:
+  - ADR-0097
+  - ADR-0100
+  - ADR-0101
+
+related_blueprint: docs/blueprints/TASK_RUNTIME_DURABLE_LOCAL_REWORK_RECEIPT_REPLAY_20260825.md

@@ -497,6 +497,15 @@ export function useFactory(options: UseFactoryOptions = {}) {
       } as FactoryAuditEvent;
       setEvents((previous) => [...previous, factoryEvent].slice(-200));
 
+      // Stage artifacts are appended only after a stage settles.  The initial
+      // run-id fetch therefore cannot observe later PM/CE/Director evidence.
+      // Refresh from the canonical artifacts endpoint on each stage boundary
+      // so the layered Factory UI never claims that CE evidence is missing
+      // while Director is already consuming that same handoff.
+      if (eventType === 'stage_completed') {
+        void fetchRunArtifacts(eventRunId);
+      }
+
       if (
         FACTORY_RUN_SNAPSHOT_EVENT_TYPES.has(eventType) &&
         payload.run_id &&

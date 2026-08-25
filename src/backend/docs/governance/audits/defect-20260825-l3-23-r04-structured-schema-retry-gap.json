@@ -1,0 +1,45 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-23-R04-STRUCTURED-SCHEMA-RETRY-GAP",
+  "status": "CLOSED_FRESH_R05_VERIFIED",
+  "severity": "P0",
+  "project_id": "L3-23",
+  "factory_run_id": "factory_247ce5304712",
+  "workspace": "/tmp/factory-bench-l3-23-r04/workspaces/af51e16c6d04-9ed040fe2c06fe67/L3-23-2956ab31bd653d97/390af15a98e31143af0789c2",
+  "symptom": "PM and CE portfolio recovery succeeded, but a semantic-patch tool payload missing one required field terminated CE without consuming its configured retry budget.",
+  "exact_run_evidence": {
+    "terminal_error_code": "chief_engineer.semantic_repair_exhausted",
+    "transaction_error": "structured_output_payload_schema_mismatch:behavior_invariant_upserts.0.verification_examples.1:'when' is a required property",
+    "context_snapshot_ref": "129834e7c35ef8d44a5f0932",
+    "provider_call_id": "0bec735ccc8c4d18845c609e1cddd019",
+    "native_tool": "submit_structured_role_output",
+    "configured_max_retries": 1,
+    "actual_schema_retries": 0,
+    "provider_request_identity_passed": true,
+    "provider_request_tools_passed": true,
+    "provider_request_context_coverage_passed": true,
+    "target_project_modified_by_main_agent": false
+  },
+  "root_cause": {
+    "confirmed": "RoleRuntime propagated max_retries=1 correctly, but non_stream_turn_flow returned immediately for every TransactionKernel RoleTurnResult.error. Strict structured-tool payload schema rejection is correctable output validation, yet it was classified as fatal transport/runtime failure, so the exact diagnostic never reached a repair attempt.",
+    "not_caused_by": [
+      "CE role identity",
+      "missing tool schema",
+      "context budget",
+      "provider transport outage",
+      "target project code"
+    ]
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/roles/kernel/internal/kernel/non_stream_turn_flow.py",
+    "policy": "Only structured_output_payload_schema_mismatch is converted into a bounded validation retry when validate_output is enabled and budget remains. The exact schema diagnostic is injected into the retry prompt. All other transaction errors remain fail-fast."
+  },
+  "verification": {
+    "red_green_regression": "test_structured_output_schema_error_retries_with_exact_failure_feedback",
+    "targeted_tests": "5 passed across retry and generic-error characterization",
+    "kernel_regression": "160 passed; 2 unrelated dirty-worktree characterization failures recorded",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_r05": "The r04 schema-mismatch terminal signature disappeared. CE executed three LLM calls and reached the bounded final repair before exposing a distinct duplicate-obligation composer guard defect."
+  }
+}

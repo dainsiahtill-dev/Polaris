@@ -74,6 +74,9 @@ from polaris.cells.roles.kernel.internal.speculation.salvage import SalvageGover
 from polaris.cells.roles.kernel.internal.speculation.task_group import TurnScopedTaskGroup
 from polaris.cells.roles.kernel.internal.speculative_executor import SpeculativeExecutor
 from polaris.cells.roles.kernel.internal.stream_shadow_engine import StreamShadowEngine
+from polaris.cells.roles.kernel.internal.structured_output_transport import (
+    project_validated_structured_output_raw_response,
+)
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime, ToolExecutionContext
 from polaris.cells.roles.kernel.internal.transaction import (
     adaptive_session_state,
@@ -1315,6 +1318,9 @@ class TurnTransactionController:
         thinking = response.get("thinking")
         if thinking is not None and not isinstance(thinking, str):
             thinking = None
+        validated_structured_response = project_validated_structured_output_raw_response(response)
+        if validated_structured_response is not None:
+            return validated_structured_response
         return RawLLMResponse(
             content=response.get("content", ""),
             thinking=thinking,

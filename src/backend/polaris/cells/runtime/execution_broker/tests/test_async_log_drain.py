@@ -199,6 +199,47 @@ async def test_drain_stream_offloads_all_file_io(tmp_path: Path, monkeypatch: py
 
 
 @pytest.mark.asyncio
+async def test_drain_stream_keeps_waiting_for_a_delayed_first_output_line(tmp_path: Path) -> None:
+    """An idle interval must not cancel the one live stream iterator.
+
+    Real compiler/test commands can spend more than one second before their
+    first line.  Cancelling ``__anext__`` on that idle interval closes the
+    async generator and loses all later verifier output even when the process
+    exits successfully.
+    """
+
+    runtime = ExecutionRuntime(async_concurrency=1, blocking_concurrency=1, process_concurrency=1)
+    broker = ExecutionBrokerService(facade=ExecutionFacade(runtime=runtime))
+    log_path = tmp_path / "delayed-first-line.log"
+    command = LaunchExecutionProcessCommandV1(
+        name="delayed-first-line-test",
+        args=(
+            sys.executable,
+            "-c",
+            "import time; time.sleep(2.25); print('delayed-proof-line', flush=True)",
+        ),
+        workspace=str(tmp_path),
+        timeout_seconds=10.0,
+        log_path=str(log_path),
+        metadata={"test_case": "delayed_first_line_is_preserved"},
+    )
+
+    try:
+        launch = await broker.launch_process(command)
+        assert launch.success is True
+        assert launch.handle is not None
+        waited = await broker.wait_process(launch.handle, timeout_seconds=10.0)
+
+        assert waited.success is True
+        content = log_path.read_text(encoding="utf-8")
+        assert "delayed-proof-line" in content
+        assert "[execution_broker] terminal" in content
+        assert "closed_before_terminal" not in content
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_drain_open_failure_unregisters_task(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If the log file cannot be opened, the drain task must still clear its registry slot."""
     # Arrange

@@ -19,6 +19,8 @@ from polaris.cells.runtime.task_runtime.internal.task_board import (
 )
 from polaris.cells.runtime.task_runtime.public.contracts import (
     TASK_RUNTIME_EXECUTION_STREAM_V1,
+    QuerySameTaskLocalReworkAuthorizationV1,
+    SameTaskLocalReworkAuthorizationQueryResultV1,
 )
 
 from ..directed_effect_operation import (
@@ -1234,6 +1236,125 @@ class _TaskRowsMixin(_ServiceMixinBase):
                 limit=limit,
                 offset=offset,
             )
+        )
+
+    def query_same_task_local_rework_authorization(
+        self,
+        query: QuerySameTaskLocalReworkAuthorizationV1,
+        *,
+        page_size: int = 500,
+    ) -> SameTaskLocalReworkAuthorizationQueryResultV1:
+        """Recover one exact committed rework authorization from append-only facts."""
+
+        base = {
+            "workspace": str(self.workspace),
+            "factory_run_id": query.factory_run_id,
+            "external_task_id": query.external_task_id,
+            "action_id": query.action_id,
+        }
+        try:
+            first_page = self._query_execution_fact_events(limit=1, offset=0)
+        except (FactStreamError, RuntimeError, TypeError, ValueError):
+            return SameTaskLocalReworkAuthorizationQueryResultV1(
+                ok=False,
+                code="same_task_local_rework_authorization_fact_query_failed",
+                **base,
+            )
+        total = int(getattr(first_page, "total", 0) or 0)
+        if total <= 0:
+            return SameTaskLocalReworkAuthorizationQueryResultV1(
+                ok=True,
+                code="same_task_local_rework_authorization_not_found",
+                **base,
+            )
+
+        per_page = max(1, int(page_size))
+        remaining = total
+        matches: list[tuple[dict[str, Any], str, int | None]] = []
+        malformed = False
+        while remaining > 0:
+            page_limit = min(per_page, remaining)
+            offset = remaining - page_limit
+            try:
+                result = self._query_execution_fact_events(limit=page_limit, offset=offset)
+            except (FactStreamError, RuntimeError, TypeError, ValueError):
+                return SameTaskLocalReworkAuthorizationQueryResultV1(
+                    ok=False,
+                    code="same_task_local_rework_authorization_fact_query_failed",
+                    **base,
+                )
+            events = [event for event in tuple(getattr(result, "events", ()) or ()) if isinstance(event, dict)]
+            for event in reversed(events):
+                if str(event.get("event_type") or "").strip() != "same_task_local_rework_prepared":
+                    continue
+                payload_raw = event.get("payload")
+                payload = payload_raw if isinstance(payload_raw, Mapping) else {}
+                details_raw = payload.get("details")
+                details = details_raw if isinstance(details_raw, Mapping) else {}
+                if (
+                    str(payload.get("factory_run_id") or "").strip() != query.factory_run_id
+                    or str(details.get("external_task_id") or "").strip() != query.external_task_id
+                    or str(details.get("action_id") or "").strip() != query.action_id
+                ):
+                    continue
+                authorization: dict[str, Any] = {
+                    "schema_version": "task-runtime.same-task-local-rework-record/1",
+                    "factory_run_id": str(details.get("factory_run_id") or "").strip(),
+                    "external_task_id": str(details.get("external_task_id") or "").strip(),
+                    "action_id": str(details.get("action_id") or "").strip(),
+                    "diagnostic_id": str(details.get("diagnostic_id") or "").strip(),
+                    "dispatch_claim_id": str(details.get("dispatch_claim_id") or "").strip(),
+                    "effect_hash": str(details.get("effect_hash") or "").strip(),
+                    "rework_attempt": int(details.get("rework_attempt") or 0),
+                }
+                event_id = str(event.get("event_id") or "").strip()
+                event_seq_raw = event.get("seq")
+                try:
+                    event_seq = int(event_seq_raw) if event_seq_raw is not None else None
+                except (TypeError, ValueError):
+                    event_seq = None
+                if (
+                    authorization["factory_run_id"] != query.factory_run_id
+                    or authorization["external_task_id"] != query.external_task_id
+                    or authorization["action_id"] != query.action_id
+                    or not authorization["diagnostic_id"]
+                    or len(authorization["dispatch_claim_id"]) != 64
+                    or len(authorization["effect_hash"]) != 64
+                    or authorization["rework_attempt"] < 1
+                    or not event_id
+                    or event_seq is None
+                ):
+                    malformed = True
+                    continue
+                matches.append((authorization, event_id, event_seq))
+            remaining = offset
+
+        if malformed:
+            return SameTaskLocalReworkAuthorizationQueryResultV1(
+                ok=False,
+                code="same_task_local_rework_authorization_malformed",
+                **base,
+            )
+        if not matches:
+            return SameTaskLocalReworkAuthorizationQueryResultV1(
+                ok=True,
+                code="same_task_local_rework_authorization_not_found",
+                **base,
+            )
+        if len(matches) != 1:
+            return SameTaskLocalReworkAuthorizationQueryResultV1(
+                ok=False,
+                code="same_task_local_rework_authorization_ambiguous",
+                **base,
+            )
+        authorization, event_id, event_seq = matches[0]
+        return SameTaskLocalReworkAuthorizationQueryResultV1(
+            ok=True,
+            code="same_task_local_rework_authorization_found",
+            authorization=authorization,
+            fact_event_id=event_id,
+            fact_event_seq=event_seq,
+            **base,
         )
 
     def _query_execution_fact_stream_head(self) -> int | None:

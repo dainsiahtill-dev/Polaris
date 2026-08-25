@@ -110,7 +110,14 @@ def _residual_seed(
                 evidence_state="missing",
                 archetype="missing_verifier_receipt",
             )
-        if evidence.status == "failed" or evidence.verifier_exit_code != 0:
+        # Entrypoint readiness probes are long-running by design.  The
+        # ExecutionBroker first proves readiness, then terminates the process
+        # under platform control; that produces an expected negative exit code
+        # while the authoritative receipt status remains ``passed``.  Preserve
+        # the non-zero guard for every ordinary verifier, but do not overwrite
+        # a readiness-proven entrypoint receipt with a contradictory failure.
+        unexpected_nonzero_exit = evidence.verifier_exit_code != 0 and item.modality != "entrypoint"
+        if evidence.status == "failed" or unexpected_nonzero_exit:
             return build_seed(
                 evidence_state="failed",
                 archetype="failed_required_verification",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -33,7 +34,11 @@ from polaris.cells.runtime.task_market.public import (
     TaskMarketService,
 )
 from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
-from polaris.cells.runtime.task_runtime.public import BindRuntimeTaskToFactoryRunCommandV1
+from polaris.cells.runtime.task_runtime.public import (
+    BindRuntimeTaskToFactoryRunCommandV1,
+    QuerySameTaskLocalReworkAuthorizationV1,
+    reset_runtime_task_records,
+)
 from polaris.kernelone.storage import resolve_runtime_path
 
 
@@ -133,6 +138,108 @@ async def test_production_action_owner_reopens_exact_taskruntime_owner_with_full
     assert owner_after["metadata"]["last_failure"]["affected_target"] == "src/main.ts"
     assert unrelated_after is not None
     assert "factory_local_rework" not in unrelated_after["metadata"]
+
+
+@pytest.mark.asyncio
+async def test_action_receipt_survives_authorized_taskruntime_row_reset(
+    tmp_path: Path,
+) -> None:
+    """Committed action evidence remains queryable after its row is removed."""
+
+    workspace = str((tmp_path / "reset-workspace").resolve())
+    Path(workspace).mkdir(parents=True)
+    runtime = _task_runtime(workspace)
+    owner_row = runtime.ensure_task_row(external_task_id="task-owner", subject="owner")
+    assert runtime.bind_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=workspace,
+            task_id=str(owner_row["id"]),
+            factory_run_id="run-1",
+        )
+    ).ok
+
+    command = _action(workspace)
+    action_owner = TaskRuntimeProjectCompletionActionOwnerV1()
+    committed = await action_owner.dispatch_project_completion_action(command, _claim(command))
+
+    reset = reset_runtime_task_records(workspace, factory_run_id="run-1")
+    assert reset["tombstone_count"] == 1
+    durable = runtime.query_same_task_local_rework_authorization(
+        QuerySameTaskLocalReworkAuthorizationV1(
+            workspace=workspace,
+            factory_run_id="run-1",
+            external_task_id="task-owner",
+            action_id=command.action_id,
+        ),
+        page_size=3,
+    )
+    assert durable.code == "same_task_local_rework_authorization_found"
+
+    replayed = await action_owner.query_project_completion_action_receipt(command)
+
+    assert replayed == committed
+
+
+@pytest.mark.asyncio
+async def test_new_action_rehydrates_exact_owner_after_terminal_taskruntime_drain(
+    tmp_path: Path,
+) -> None:
+    """A QA-only retry restores one exact owner without replaying PM/CE/Director."""
+
+    workspace = str((tmp_path / "rehydrate-workspace").resolve())
+    Path(workspace).mkdir(parents=True)
+    runtime = _task_runtime(workspace)
+    owner_row = runtime.ensure_task_row(external_task_id="task-owner", subject="owner")
+    assert runtime.bind_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=workspace,
+            task_id=str(owner_row["id"]),
+            factory_run_id="run-1",
+        )
+    ).ok
+
+    first = _action(workspace)
+    action_owner = TaskRuntimeProjectCompletionActionOwnerV1()
+    await action_owner.dispatch_project_completion_action(first, _claim(first))
+    reset = reset_runtime_task_records(workspace, factory_run_id="run-1")
+    assert reset["tombstone_count"] == 1
+    assert not Path(resolve_runtime_path(workspace, "runtime/tasks/task_1.json")).exists()
+
+    runtime = _task_runtime(workspace)
+    unrelated = runtime.ensure_task_row(external_task_id="task-other", subject="unrelated generation 2")
+    assert runtime.bind_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=workspace,
+            task_id=str(unrelated["id"]),
+            factory_run_id="run-1",
+        )
+    ).ok
+    replacement = runtime.ensure_task_row(external_task_id="task-owner", subject="owner generation 2")
+    assert replacement["id"] != owner_row["id"]
+    assert runtime.bind_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=workspace,
+            task_id=str(replacement["id"]),
+            factory_run_id="run-1",
+        )
+    ).ok
+    second_reset = reset_runtime_task_records(workspace, factory_run_id="run-1")
+    assert second_reset["tombstone_count"] == 2
+
+    second_diagnostic_id = _hash("diagnostic-2")
+    second = replace(
+        first,
+        action_id=_hash("action-2"),
+        diagnostic_id=second_diagnostic_id,
+        diagnostic=replace(first.diagnostic, diagnostic_id=second_diagnostic_id),
+    )
+    receipt = await action_owner.dispatch_project_completion_action(second, _claim(second))
+
+    assert receipt.action_id == second.action_id
+    restored = runtime.get_task("task-owner")
+    assert restored is not None
+    assert restored["id"] == replacement["id"]
+    assert restored["metadata"]["factory_local_rework"]["action_id"] == second.action_id
 
 
 @pytest.mark.asyncio

@@ -218,6 +218,7 @@ def _repair_target_context_block(
         return ""
 
     blocks: list[str] = []
+    primary_diagnostic_blocks: list[str] = []
     # One complete failing verifier is cheaper than repeated blind repair
     # turns.  Diagnostic windows remain the default for product sources, but
     # test files often keep fixtures/capture helpers far from the failing
@@ -243,6 +244,23 @@ def _repair_target_context_block(
             artifact_quality_errors=artifact_quality_errors,
             rel_path=rel,
         )
+        if diagnostic_lines:
+            content_lines = content.splitlines()
+            rendered_sites: list[str] = []
+            for line_number in diagnostic_lines[:4]:
+                if not 1 <= line_number <= len(content_lines):
+                    continue
+                start = max(1, line_number - 2)
+                end = min(len(content_lines), line_number + 2)
+                numbered_excerpt = "\n".join(
+                    f"{source_line}: {content_lines[source_line - 1]}"
+                    for source_line in range(start, end + 1)
+                )
+                rendered_sites.append(
+                    f"--- {rel}:{line_number} ---\n```text\n{numbered_excerpt}\n```"
+                )
+            if rendered_sites:
+                primary_diagnostic_blocks.extend(rendered_sites)
         if diagnostic_lines and len(content) <= budget:
             # Full body for any budget-fitting target with diagnostic anchors.
             # The former verifier-source-only gate hid the implementation from
@@ -265,8 +283,18 @@ def _repair_target_context_block(
         blocks.append(f"--- {rel} ---\n```text\n{excerpt}{suffix}```")
     if not blocks:
         return ""
+    primary_diagnostic_section = ""
+    if primary_diagnostic_blocks:
+        primary_diagnostic_section = (
+            "PRIMARY DIAGNOSTIC SITE(S):\n"
+            "Resolve this exact path:line compiler/verifier diagnostic first. "
+            "Do not edit a different occurrence of the same symbol while the anchored diagnostic remains.\n"
+            + "\n".join(primary_diagnostic_blocks)
+            + "\n"
+        )
     return (
-        "CURRENT UTF-8 CONTENT OF REPAIR TARGETS:\n"
+        primary_diagnostic_section
+        + "CURRENT UTF-8 CONTENT OF REPAIR TARGETS:\n"
         "Use these current file bodies as the source of truth for cross-file API coherence. "
         "Preserve existing public contracts unless changing every dependent target in this repair batch.\n"
         + "\n".join(blocks)
@@ -1614,6 +1642,144 @@ def _javascript_callee_definition_refs(
     )
 
 
+_GO_DIAGNOSTIC_SYMBOL_RE = re.compile(
+    r"(?:undefined:\s*|but\s+)(?P<symbol>[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)(?:\s+returns)?",
+    re.IGNORECASE,
+)
+_GO_TOP_LEVEL_DECL_RE = re.compile(
+    r"^\s*(?:func\s+(?:\([^)]*\)\s*)?(?P<func>[A-Za-z_][A-Za-z0-9_]*)\s*\(|"
+    r"type\s+(?P<type>[A-Za-z_][A-Za-z0-9_]*)\b|"
+    r"(?:var|const)\s+(?P<value>[A-Za-z_][A-Za-z0-9_]*)\b)"
+)
+
+
+def _go_same_package_definition_context_blocks(
+    *,
+    workspace: Path,
+    artifact_quality_errors: Sequence[str],
+    repair_targets: set[str],
+) -> list[str]:
+    """Project bounded Go package declarations for failing ``*_test.go`` repairs.
+
+    Go compiler diagnostics name the consumer test and symbol but generally do
+    not cite the implementation file.  A forced-edit repair therefore saw the
+    test body yet lacked the real return arity/type (live L3-22: ``Run``,
+    ``ApplyGravity`` and ``bubbleType``).  Project declarations from non-test
+    siblings as read-only evidence; this never expands write authority.
+    """
+
+    symbols: set[str] = set()
+    source_dirs: list[Path] = []
+
+    for error in artifact_quality_errors:
+        error_text = str(error or "")
+        for symbol_match in _GO_DIAGNOSTIC_SYMBOL_RE.finditer(error_text):
+            symbol = str(symbol_match.group("symbol") or "").strip().rsplit(".", 1)[-1]
+            if symbol:
+                symbols.add(symbol.casefold())
+        for match in _GO_TEST_ASSERTION_LOCATION_RE.finditer(error_text):
+            raw_path = Path(str(match.group("path") or ""))
+            try:
+                source = raw_path.resolve() if raw_path.is_absolute() else (workspace / raw_path).resolve()
+                source.relative_to(workspace)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if not source.is_file() and len(raw_path.parts) == 1:
+                try:
+                    candidates = [
+                        candidate.resolve()
+                        for candidate in workspace.rglob(raw_path.name)
+                        if candidate.is_file() and "node_modules" not in candidate.parts
+                    ]
+                    unique = {candidate.relative_to(workspace).as_posix(): candidate for candidate in candidates}
+                except (OSError, RuntimeError, ValueError):
+                    continue
+                if len(unique) != 1:
+                    continue
+                source = next(iter(unique.values()))
+            if not source.is_file():
+                continue
+            parent = source.parent
+            if parent not in source_dirs:
+                source_dirs.append(parent)
+
+    blocks: list[str] = []
+    total_budget = 12000
+    used = 0
+    for source_dir in source_dirs[:4]:
+        try:
+            candidates = sorted(
+                path
+                for path in source_dir.glob("*.go")
+                if path.is_file() and not path.name.lower().endswith("_test.go")
+            )
+        except OSError:
+            continue
+
+        ranked: list[tuple[int, Path, list[str]]] = []
+        for path in candidates:
+            try:
+                rel = path.resolve().relative_to(workspace).as_posix()
+                if rel in repair_targets:
+                    continue
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+                continue
+            declaration_names = {
+                str(
+                    candidate_match.group("func")
+                    or candidate_match.group("type")
+                    or candidate_match.group("value")
+                    or ""
+                ).casefold()
+                for line in lines
+                if (candidate_match := _GO_TOP_LEVEL_DECL_RE.match(line)) is not None
+            }
+            ranked.append((0 if declaration_names.intersection(symbols) else 1, path, lines))
+
+        for _rank, path, lines in sorted(ranked, key=lambda item: (item[0], item[1].name))[:4]:
+            rendered: list[str] = []
+            index = 0
+            while index < len(lines) and len(rendered) < 80:
+                declaration_match = _GO_TOP_LEVEL_DECL_RE.match(lines[index])
+                if declaration_match is None:
+                    index += 1
+                    continue
+                rendered.append(f"{index + 1}: {lines[index]}")
+                # Preserve multi-line signatures and struct/interface fields,
+                # but never dump whole function bodies into the repair prompt.
+                if declaration_match.group("type") and "{" in lines[index]:
+                    depth = lines[index].count("{") - lines[index].count("}")
+                    cursor = index + 1
+                    while cursor < len(lines) and depth > 0 and cursor <= index + 24:
+                        rendered.append(f"{cursor + 1}: {lines[cursor]}")
+                        depth += lines[cursor].count("{") - lines[cursor].count("}")
+                        cursor += 1
+                    index = cursor
+                    continue
+                cursor = index + 1
+                while "{" not in " ".join(lines[index:cursor]) and cursor < len(lines) and cursor <= index + 6:
+                    rendered.append(f"{cursor + 1}: {lines[cursor]}")
+                    cursor += 1
+                index = cursor
+            if not rendered:
+                continue
+            rel = path.resolve().relative_to(workspace).as_posix()
+            excerpt = "\n".join(rendered)
+            remaining = total_budget - used
+            if remaining <= 0:
+                return blocks
+            excerpt = excerpt[:remaining]
+            used += len(excerpt)
+            blocks.append(
+                f"--- {rel} GO SAME-PACKAGE DEFINITIONS (READ-ONLY; DECLARATIONS ONLY) ---\n"
+                "```text\n"
+                + excerpt
+                + "\n```"
+            )
+    return blocks
+
+
 def _diagnostic_referenced_definition_context_block(
     *,
     workspace_full: str,
@@ -1722,6 +1888,13 @@ def _diagnostic_referenced_definition_context_block(
         excerpt = excerpt[:remaining]
         used += len(excerpt)
         blocks.append(f"--- {rel} around line {line_number} (READ-ONLY DEFINITION) ---\n```text\n{excerpt}\n```")
+    blocks.extend(
+        _go_same_package_definition_context_blocks(
+            workspace=workspace,
+            artifact_quality_errors=artifact_quality_errors,
+            repair_targets=repair_targets,
+        )
+    )
     if not blocks:
         return ""
     cpp_sibling_note = ""
@@ -2606,6 +2779,7 @@ def _build_materialization_quality_repair_message(
     workspace_full: str = "",
     interface_discrepancy_evidence: dict[str, Any] | None = None,
     regression_guard_errors: list[str] | None = None,
+    candidate_rejection_errors: list[str] | None = None,
     causal_reanalysis_required: bool = False,
 ) -> str:
     directive_quality_errors = (
@@ -2707,6 +2881,24 @@ def _build_materialization_quality_repair_message(
             repair_target_files=prompt_repair_target_files,
             heading="REGRESSION GUARD VERIFIER SOURCE CONTEXT",
             include_go_sibling_contract=False,
+        )
+    normalized_candidate_rejections = [
+        str(item or "").strip()
+        for item in (candidate_rejection_errors or [])
+        if str(item or "").strip()
+    ][:4]
+    candidate_rejection_block = ""
+    if normalized_candidate_rejections:
+        rejection_lines = "\n".join(
+            f"- {_format_quality_error_for_repair_prompt(item)}"
+            for item in normalized_candidate_rejections
+        )
+        candidate_rejection_block = (
+            "PREVIOUS CANDIDATE REJECTED BEFORE COMMIT:\n"
+            "The precommit syntax/compile guard rejected the previous candidate and kept the workspace unchanged. "
+            "Use the diagnostic below to choose a different valid edit; do not repeat that rejected edit. "
+            "This feedback does not expand authorized tool paths.\n"
+            f"{rejection_lines}\n"
         )
     causal_reanalysis_block = ""
     if causal_reanalysis_required:
@@ -3060,6 +3252,7 @@ def _build_materialization_quality_repair_message(
         f"{repair_context_block}"
         f"{verifier_source_context_block}"
         f"{regression_guard_block}"
+        f"{candidate_rejection_block}"
         f"{regression_guard_source_context_block}"
         f"{causal_reanalysis_block}"
         f"{referenced_definition_context_block}"

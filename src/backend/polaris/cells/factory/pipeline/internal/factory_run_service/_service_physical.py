@@ -379,6 +379,54 @@ class _FactoryRunServicePhysicalMixin:
             raise RuntimeError("chief_engineer_project_completion_identity_not_unique")
         return await notify_factory_project_completion(identities[0])
 
+    async def _notify_project_completion_after_terminal(
+        self: Any,
+        run_id: str,
+    ) -> object:
+        """Wake completion convergence after Factory terminal persistence.
+
+        Successful QA cannot query the Factory outcome owner from the stage
+        wrapper: ``complete_run`` has not appended ``completed`` yet.  Reuse
+        the persisted quality StageResult only after that event exists, then
+        project the authoritative convergence result into the Factory stream.
+        """
+
+        run = await self.store.get_run(run_id)
+        stage_results_raw = (
+            run.metadata.get("stage_results")
+            if run is not None and isinstance(run.metadata, Mapping)
+            else None
+        )
+        stage_results = stage_results_raw if isinstance(stage_results_raw, Mapping) else {}
+        quality_result_raw = stage_results.get("quality_gate")
+        if not isinstance(quality_result_raw, Mapping):
+            raise RuntimeError("quality_gate_project_completion_result_missing")
+        quality_result = StageResult(**dict(quality_result_raw))
+        if quality_result.status != "success":
+            raise RuntimeError("quality_gate_project_completion_result_not_successful")
+
+        completion_result = await self._notify_project_completion_supervisor(run_id, quality_result)
+        completion_projection = {
+            "schema_version": "factory.project-completion-advance.v1",
+            "status": str(getattr(completion_result, "status", None) or "unknown"),
+            "reason_codes": list(getattr(completion_result, "reason_codes", ()) or ()),
+            "action_id": str(getattr(completion_result, "action_id", None) or "").strip(),
+            "diagnostic_id": str(getattr(completion_result, "diagnostic_id", None) or "").strip(),
+            "next_action": str(getattr(completion_result, "next_action", None) or "").strip(),
+            "source_stage": quality_result.stage,
+            "source_stage_status": quality_result.status,
+        }
+        await self._append_event(
+            run_id,
+            {
+                "type": "project_completion_advance",
+                **completion_projection,
+                "terminal": False,
+                "timestamp": self._now(),
+            },
+        )
+        return completion_result
+
     async def _run_stage_heartbeat(
         self: Any,
         run_id: str,

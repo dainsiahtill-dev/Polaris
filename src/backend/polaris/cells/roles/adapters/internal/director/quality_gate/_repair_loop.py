@@ -258,6 +258,24 @@ def _compiler_diagnostic_anchor_files(artifact_quality_errors: list[str]) -> lis
     return _dedupe_preserve_order(anchors)
 
 
+def _go_compiler_diagnostic_anchor_files(artifact_quality_errors: list[str]) -> list[str]:
+    """Return only Go compiler ``path:line:column`` diagnostic sites.
+
+    ``go test`` behavior failures use ``*_test.go:line`` assertion locations.
+    Those are verifier evidence, not compiler ownership evidence. Treating both
+    shapes alike deferred causal production repairs to a tests-only owner and
+    made the following repair claim fail without invoking the provider.
+    """
+
+    anchors: list[str] = []
+    for item in artifact_quality_errors:
+        for match in _GO_COMPILE_PATH_RE.finditer(str(item or "")):
+            rel = _normalize_declared_task_path(match.group("path"))
+            if rel:
+                anchors.append(rel)
+    return _dedupe_preserve_order(anchors)
+
+
 _CPP_GXX_ERROR_SITE_RE = re.compile(
     r"(?P<path>(?:[A-Za-z]:)?[^\s:'\"]+\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx))"
     r":\d+(?::\d+)?:\s+error:\s+(?P<msg>.+)",
@@ -486,6 +504,45 @@ async def _run_materialization_quality_repair_retry(
             "task_boundary_scope_filter": task_scope_filter_evidence,
             "llm_fallback_blocked": True,
         }
+    compiler_anchor_files = _go_compiler_diagnostic_anchor_files(repair_quality_errors)
+    # Go diagnostics name the physical source file that owns each compile
+    # failure.  If every named Go file is outside this immutable task's write
+    # scope, invoking this task's repair LLM cannot possibly commit the fix.
+    # Live L3-22 r45: TASK-3 owned tests/README, but received residuals in
+    # simulator.go/main.go/report.go (TASK-2).  The old fallback replayed the
+    # full verifier output, causing five edit_file attempts to fail as stale,
+    # syntax-invalid, empty-search, or DEO scope denied.  Defer to the owner
+    # boundary instead; never widen the current JobToken across tasks.
+    if compiler_anchor_files and all(Path(path).suffix.lower() == ".go" for path in compiler_anchor_files):
+        in_scope_anchors, out_of_scope_anchors = _partition_paths_by_task_write_scope(
+            compiler_anchor_files,
+            task=task,
+        )
+        if not in_scope_anchors and out_of_scope_anchors:
+            task_scope_filter_evidence = _task_boundary_scope_filter_evidence(
+                task,
+                target_files=out_of_scope_anchors,
+                reason="compiler_diagnostic_anchor_outside_current_task_target_files",
+                workspace=workspace_full,
+                cache_root=cache_root_full,
+            )
+            return [], {
+                "stage": "task_boundary_repair_targets_deferred",
+                "attempted": True,
+                "attempt": repair_attempt,
+                "success": False,
+                "success_reason": "repair_targets_outside_current_task_target_files",
+                "tool_results": 0,
+                "write_tool_evidence": False,
+                "missing_target_files": [],
+                "runtime_smoke_target_files": [],
+                "semantic_quality_target_files": [],
+                "explicit_quality_target_files": [],
+                "repair_target_files": [],
+                "rotated_repair_targets": False,
+                "task_boundary_scope_filter": task_scope_filter_evidence,
+                "llm_fallback_blocked": True,
+            }
     missing_target_files = _missing_materialization_quality_repair_target_files(
         task,
         workspace_full,
@@ -603,6 +660,7 @@ async def _run_materialization_quality_repair_retry(
     factory_quality = context.get("director_quality_repair") if isinstance(context, Mapping) else None
     factory_forced_targets: list[str] = []
     regression_guard_errors: list[str] = []
+    candidate_rejection_errors: list[str] = []
     causal_reanalysis_required = False
     if isinstance(factory_quality, Mapping):
         raw_forced = factory_quality.get("repair_target_files")
@@ -615,6 +673,13 @@ async def _run_materialization_quality_repair_retry(
             regression_guard_errors = [
                 str(item or "").strip() for item in raw_regression_guards if str(item or "").strip()
             ][:6]
+        raw_candidate_rejections = factory_quality.get("candidate_rejection_errors")
+        if isinstance(raw_candidate_rejections, list | tuple):
+            candidate_rejection_errors = [
+                str(item or "").strip()
+                for item in raw_candidate_rejections
+                if str(item or "").strip()
+            ][:4]
         causal_reanalysis_required = bool(factory_quality.get("causal_reanalysis_required"))
     factory_forced_targets_refreshed = False
     if factory_forced_targets or repair_attempt >= 2:
@@ -1060,6 +1125,7 @@ async def _run_materialization_quality_repair_retry(
         workspace_full=workspace_full,
         interface_discrepancy_evidence=task_boundary_discrepancy_evidence,
         regression_guard_errors=regression_guard_errors,
+        candidate_rejection_errors=candidate_rejection_errors,
         causal_reanalysis_required=causal_reanalysis_required,
     )
     failed_gate_evidence = _build_materialization_quality_failure_evidence_context(
@@ -1102,6 +1168,10 @@ async def _run_materialization_quality_repair_retry(
     if regression_guard_errors:
         repair_context["director_quality_repair"]["regression_guard_errors"] = [
             _format_quality_error_for_repair_prompt(error) for error in regression_guard_errors
+        ]
+    if candidate_rejection_errors:
+        repair_context["director_quality_repair"]["candidate_rejection_errors"] = [
+            _format_quality_error_for_repair_prompt(error) for error in candidate_rejection_errors
         ]
     if causal_reanalysis_required:
         repair_context["director_quality_repair"]["causal_reanalysis_required"] = True
@@ -2375,6 +2445,7 @@ __all__ = [
     "_context_float_value",
     "_extract_task_interface_contract",
     "_filter_materialization_quality_errors_for_repair_targets",
+    "_go_compiler_diagnostic_anchor_files",
     "_has_scaffold_marker_quality_error",
     "_materialization_interface_discrepancy_evidence",
     "_materialization_interface_discrepancy_retry_authorized",

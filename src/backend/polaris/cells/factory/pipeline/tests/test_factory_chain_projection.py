@@ -385,6 +385,45 @@ async def test_invalid_terminal_completion_event_fails_closed(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+async def test_retry_separated_completion_events_select_latest_epoch(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = _FakeFactoryRunService(
+        workspace,
+        run=_completed_run(),
+        events=[
+            {"event_id": "evt-complete-1", "type": "completed", "success": True},
+            {"event_id": "evt-retry", "type": "retry_requested"},
+            {"event_id": "evt-complete-2", "type": "completed", "success": True},
+        ],
+    )
+
+    result = await _project_with_private_test_reader(_query(workspace), service)
+
+    assert result.completion_event_ref == "evt-complete-2"
+    assert result.chain_completed is True
+
+
+@pytest.mark.asyncio
+async def test_duplicate_completion_in_same_epoch_fails_closed(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = _FakeFactoryRunService(
+        workspace,
+        run=_completed_run(),
+        events=[
+            {"event_id": "evt-complete-1", "type": "completed", "success": True},
+            {"event_id": "evt-complete-2", "type": "completed", "success": True},
+        ],
+    )
+
+    with pytest.raises(FactoryPipelineError) as error:
+        await _project_with_private_test_reader(_query(workspace), service)
+
+    assert error.value.code == "factory_chain_projection_terminal_event_invalid"
+
+
+@pytest.mark.asyncio
 async def test_query_type_must_be_exact(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     workspace.mkdir()

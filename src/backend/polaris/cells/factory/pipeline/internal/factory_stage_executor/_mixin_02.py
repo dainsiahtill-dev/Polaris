@@ -117,6 +117,12 @@ from ._pkg_proxy import pkg
 
 logger = logging.getLogger("polaris.cells.factory.pipeline.internal.factory_stage_executor")
 
+# One same-task transport retry is allowed only after CE authority has already
+# been frozen into a schema-valid candidate plus typed semantic diagnosis.  It
+# recovers provider forced-tool noncompliance without reopening PM authority or
+# starting another semantic repair round.
+_CHIEF_ENGINEER_SEMANTIC_PATCH_TRANSPORT_MAX_RETRIES = 1
+
 # Structured compiler error codes used by the workspace-quality repair-effect
 # classifier: rustc ``error[E0432]`` and TypeScript ``TS2551``.  One scan
 # yields a bare, casefoldable code token per diagnostic.
@@ -165,6 +171,22 @@ class _Mixin02:
                 metric = "test_files" if "test_files=" in error else "prod_files"
                 codes.append(f"chief_engineer.delivery_depth.{metric}_below_minimum")
                 operations.append("artifact_upsert")
+                if metric == "test_files":
+                    # Adding a test artifact can create a new PM-authorized test
+                    # owner.  The same atomic patch must be able to bind that
+                    # owner to production behavior; otherwise depth repair
+                    # merely unmasks cross-task coverage after the provider
+                    # budget is exhausted (exact L3-23 r06).
+                    codes.append(
+                        "chief_engineer.shared_behavior_contract."
+                        "cross_task_production_test_coverage_missing"
+                    )
+                    operations.extend(
+                        ("behavior_invariant_upsert", "task_behavior_ref_replace")
+                    )
+            elif "cross-task production-and-test obligation coverage" in error:
+                codes.append("chief_engineer.shared_behavior_contract.cross_task_production_test_coverage_missing")
+                operations.extend(("behavior_invariant_upsert", "task_behavior_ref_replace"))
             elif "shared_behavior_contract" in error or "behavior invariant" in error:
                 codes.append("chief_engineer.shared_behavior_contract.invalid")
                 operations.extend(("behavior_invariant_upsert", "task_behavior_ref_replace"))
@@ -396,6 +418,7 @@ class _Mixin02:
         repair_round: int = 1,
         semantic_candidate: ChiefEngineerSemanticRepairCandidateV1 | None = None,
         semantic_diagnosis: ChiefEngineerSemanticRepairDiagnosisV1 | None = None,
+        prompt_profile_identity: Mapping[str, str] | None = None,
     ) -> RoleExecutionResultV1:
         """Run one separately claimed schema reconstruction or typed semantic patch."""
 
@@ -465,9 +488,15 @@ class _Mixin02:
                 "change PM task authority, or alter unrelated sections. Use only the operation arrays authorized "
                 "by the diagnosis. Echo base_candidate_hash and diagnosis_hash exactly. Call the required "
                 "result-submission tool exactly once; do not emit prose or a second envelope. "
-                "For behavior_invariant_upserts, every covered_obligation_ids value MUST come from "
-                "allowed_completion_obligation_ids in the authoritative patch context; never copy diagnostic "
-                "prose, gate labels, commands, or acceptance text into that ID field.\n"
+                "For behavior_invariant_upserts, every covered_obligation_ids value MUST either come from "
+                "allowed_completion_obligation_ids in the authoritative patch context OR be the obligation_id "
+                "of an artifact_upsert in this same atomic envelope; never copy diagnostic prose, gate labels, "
+                "commands, or acceptance text into that ID field. When the diagnostic is "
+                "chief_engineer.shared_behavior_contract.cross_task_production_test_coverage_missing, replace "
+                "or add an invariant whose owner is the production task, whose consumers include the test task, "
+                "and whose covered_obligation_ids include BOTH one required production source/entrypoint "
+                "artifact obligation and one required test artifact obligation (or its required test-verifier "
+                "obligation). Bind that invariant from both tasks.\n"
                 f"Base candidate hash: {semantic_candidate.candidate_hash}\n"
                 f"Diagnosis hash: {semantic_diagnosis.diagnosis_hash}\n"
                 "Stable diagnostic codes: "
@@ -535,7 +564,13 @@ class _Mixin02:
             repair_failure_feedback["contract_validation_errors"] = [
                 str(item).strip() for item in post_validation_errors if str(item).strip()
             ]
-        repair_profile_identity = self._ce_prompt_profile_identity(prior_result)
+        repair_profile_identity = {
+            str(key): str(value)
+            for key, value in dict(prompt_profile_identity or {}).items()
+            if str(key).strip() and str(value).strip()
+        }
+        if not repair_profile_identity:
+            repair_profile_identity = self._ce_prompt_profile_identity(prior_result)
         required_profile_fields = {"language", "task_type", "prompt_stage", "artifact"}
         missing_profile_fields = sorted(required_profile_fields.difference(repair_profile_identity))
         if missing_profile_fields:
@@ -579,6 +614,9 @@ class _Mixin02:
                     "response_format_mode": "json",
                     "chief_engineer_json_contract_required": True,
                     "chief_engineer_portfolio_required": not semantic_patch,
+                    "chief_engineer_semantic_patch_transport_retry_budget": (
+                        _CHIEF_ENGINEER_SEMANTIC_PATCH_TRANSPORT_MAX_RETRIES if semantic_patch else 0
+                    ),
                 }
             )
             if semantic_candidate is not None and semantic_diagnosis is not None:
@@ -609,7 +647,9 @@ class _Mixin02:
                 workspace=str(self.workspace),
                 objective=repair_objective,
                 run_id=run.id,
-                stream=True,
+                # Diversify the bounded repair transport after an incomplete
+                # streamed forced-tool payload. Schema and CE authority stay strict.
+                stream=False,
                 context=repair_context,
                 timeout_seconds=repair_timeout_seconds,
                 execution_attempt=execution_attempt,
@@ -635,7 +675,10 @@ class _Mixin02:
                     "cognitive_runtime_required": False,
                     "llm_call_timeout_seconds": repair_timeout_seconds,
                     "validate_output": True,
-                    "max_retries": 0,
+                    "max_retries": (_CHIEF_ENGINEER_SEMANTIC_PATCH_TRANSPORT_MAX_RETRIES if semantic_patch else 0),
+                    "chief_engineer_semantic_patch_transport_retry_budget": (
+                        _CHIEF_ENGINEER_SEMANTIC_PATCH_TRANSPORT_MAX_RETRIES if semantic_patch else 0
+                    ),
                     "temperature": 0.0,
                     "llm_max_tokens": repair_output_tokens,
                     "reasoning_budget_tokens": _CHIEF_ENGINEER_SCHEMA_REPAIR_REASONING_BUDGET_TOKENS,
@@ -910,6 +953,7 @@ class _Mixin02:
                 )
                 portfolio_task_id = f"CE-PORTFOLIO-{run.id}"
                 previous_repair_diagnostic = ""
+                primary_prompt_profile_identity: dict[str, str] = {}
                 semantic_repair_candidate: ChiefEngineerSemanticRepairCandidateV1 | None = None
                 semantic_repair_diagnosis: ChiefEngineerSemanticRepairDiagnosisV1 | None = None
                 try:
@@ -980,6 +1024,7 @@ class _Mixin02:
                         result=ce_result,
                         portfolio_task_ids=tuple(task.task_id for task in portfolio_tasks),
                     )
+                    primary_prompt_profile_identity = self._ce_prompt_profile_identity(ce_result)
                     self._append_chief_engineer_structural_recovery_signal(
                         result=ce_result,
                         stage_signals=stage_signals,
@@ -1052,6 +1097,7 @@ class _Mixin02:
                                     portfolio_task_ids=tuple(task.task_id for task in portfolio_tasks),
                                     portfolio_tasks=portfolio_tasks,
                                     deadline_decision=deadline_decision,
+                                    prompt_profile_identity=primary_prompt_profile_identity,
                                 )
                                 self._append_chief_engineer_structural_recovery_signal(
                                     result=ce_result,
@@ -1148,9 +1194,13 @@ class _Mixin02:
                                         deadline_decision=semantic_deadline_decision,
                                         semantic_candidate=semantic_repair_candidate,
                                         semantic_diagnosis=semantic_repair_diagnosis,
+                                        prompt_profile_identity=primary_prompt_profile_identity,
                                     )
                                     ce_result = repair_result
-                                    if repair_result.error_code == "chief_engineer.semantic_repair_authority_infeasible":
+                                    if (
+                                        repair_result.error_code
+                                        == "chief_engineer.semantic_repair_authority_infeasible"
+                                    ):
                                         if stage_signals and stage_signals[-1] is repair_signal:
                                             stage_signals.pop()
                                     else:
@@ -1310,6 +1360,7 @@ class _Mixin02:
                                     repair_round=2,
                                     semantic_candidate=semantic_repair_candidate,
                                     semantic_diagnosis=semantic_repair_diagnosis,
+                                    prompt_profile_identity=primary_prompt_profile_identity,
                                 )
                                 ce_result = repair_result
                                 if repair_result.error_code == "chief_engineer.semantic_repair_authority_infeasible":
@@ -1350,9 +1401,7 @@ class _Mixin02:
                                     task_set_hash=chief_engineer_semantic_repair_task_set_hash(task_ids),
                                     candidate=dict(final_structured_output),
                                 )
-                                final_candidate_ref = persist_chief_engineer_semantic_repair_candidate(
-                                    final_candidate
-                                )
+                                final_candidate_ref = persist_chief_engineer_semantic_repair_candidate(final_candidate)
                                 final_diagnosis = self._chief_engineer_semantic_repair_diagnosis(
                                     candidate=final_candidate,
                                     output_errors=final_output_errors,
@@ -1419,6 +1468,7 @@ class _Mixin02:
                                         repair_round=3,
                                         semantic_candidate=final_candidate,
                                         semantic_diagnosis=final_diagnosis,
+                                        prompt_profile_identity=primary_prompt_profile_identity,
                                     )
                                     ce_result = final_patch_result
                                     if (
@@ -1528,9 +1578,7 @@ class _Mixin02:
                         self._attach_ce_llm_evidence(fallback_signal, ce_evidence)
                         stage_signals.append(fallback_signal)
                 else:
-                    authority_infeasible = (
-                        ce_result.error_code == "chief_engineer.semantic_repair_authority_infeasible"
-                    )
+                    authority_infeasible = ce_result.error_code == "chief_engineer.semantic_repair_authority_infeasible"
                     semantic_repair_exhausted = semantic_repair_candidate is not None and not authority_infeasible
                     error_signal: dict[str, Any] = {
                         "code": (
@@ -2541,6 +2589,10 @@ class _Mixin02:
             "invalid operation:",
             "not enough arguments in call",
             "too many arguments in call",
+            "assignment mismatch:",
+            "multiple-value ",
+            "not enough return values",
+            "too many return values",
         )
         before_has_compile_barrier = any(marker in before_text for marker in go_compile_markers)
         after_has_compile_barrier = any(marker in after_text for marker in go_compile_markers)

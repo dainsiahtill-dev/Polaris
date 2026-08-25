@@ -1,0 +1,88 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-22-R38-CE-NONSTREAM-STRUCTURED-TOOL-ARGUMENTS",
+  "status": "CLOSED_INPUT_NORMALIZATION_FIXED_R39_UNMASKED_LIFECYCLE",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "factory_run_id": "factory_7e2a5868bf88",
+  "workspace": "/tmp/factory-bench-l3-22-r38/workspaces/47e4a440cce9-e0dfb2d0698ef435/L3-22-5aaab9a81e5e829d/4585ef37529b23cdc8491b8e",
+  "symptom": "PM completed, the primary CE response failed strict schema validation, and the bounded non-stream CE schema-repair call returned HTTP 200 plus one forced tool call but failed before portfolio validation with structured_output_tool_arguments_must_be_object.",
+  "context_snapshot_refs": [
+    "395d446d546a6e952ce325e1",
+    "4e07287452d29e3b840b6419"
+  ],
+  "exact_run_evidence": {
+    "primary_error": "structured_output_payload_schema_mismatch:$:Additional properties are not allowed ('item', 'task_plans' were unexpected)",
+    "primary_validated_root_keys": [
+      "construction_plan",
+      "item",
+      "project_completion_contract",
+      "risk_flags",
+      "scope_for_apply",
+      "task_plans"
+    ],
+    "schema_repair_call": {
+      "llm_call_id": "59257a7e14e748a0b79372f1b6c88f18",
+      "provider_tool_call_id": "call_6b70764f96a442b790bd87a6",
+      "tool": "submit_structured_role_output",
+      "stream": false,
+      "http_status": 200,
+      "elapsed_ms": 84447,
+      "tool_calls_count": 1,
+      "response_content_empty": true,
+      "audited_arguments_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    "primary_physical_failure": {
+      "error": "structured_output_tool_arguments_must_be_object",
+      "trace": "transaction_factory.__call__ -> normalize_structured_output_response -> _tool_call_arguments",
+      "source": "src/backend/polaris/cells/roles/kernel/internal/structured_output_transport.py:918"
+    },
+    "final_request_audit": {
+      "role_identity_correct": true,
+      "pm_contract_present": true,
+      "target_files_present": true,
+      "failure_feedback_present": true,
+      "required_submission_tool_present": true,
+      "tool_choice_forced": true,
+      "provider_protocol_schema_matches": true,
+      "missing_required_refs": [],
+      "missing_required_tools": []
+    },
+    "secondary_causal_overwrite": {
+      "error": "chief_engineer_schema_repair_prompt_profile_identity_missing:artifact,language,prompt_stage,task_type",
+      "effect": "Factory root_cause_hint reported a later orchestration/profile error instead of the first physical structured-output transport failure."
+    }
+  },
+  "root_cause": {
+    "confirmed": "The atomic non-stream provider path reached HTTP 200 with the correct forced result tool, but its tool arguments did not arrive at structured_output_transport as a Mapping. The transport rejected the value before schema validation. A later repair-orchestration error then masked this first physical cause.",
+    "not_caused_by": [
+      "PM failure",
+      "Director execution",
+      "missing CE context",
+      "missing forced result tool",
+      "provider timeout",
+      "stream assembly"
+    ],
+    "remaining_dynamic_question": "Capture the safe raw argument shape/type at the non-stream normalization boundary, then normalize only a provable JSON-object envelope while preserving duplicate-key and exact-schema rejection."
+  },
+  "required_fix_properties": [
+    "Preserve strict CE schema and immutable completion authority.",
+    "Do not coerce a scalar, invalid JSON, empty payload, or foreign wrapper into success.",
+    "Record safe type, keys, length, and hash diagnostics before fail-closed rejection.",
+    "Preserve the first physical failure as Factory root cause; do not overwrite it with a later profile-identity error.",
+    "Stop after the bounded repair transport failure; do not spend a third provider call."
+  ],
+  "verification_required": [
+    "RED/GREEN unit test for the exact non-stream response envelope.",
+    "Scalar/invalid/duplicate-key/foreign-wrapper negative tests remain fail-closed.",
+    "CE characterization, structured-output transport, ruff, and mypy gates pass.",
+    "Fresh isolated L3-22 run produces 3/3 accepted CE blueprints and reaches Director.",
+    "Factory root_cause_hint retains the first physical transport error if repair still fails."
+  ],
+  "closure_evidence": {
+    "implementation": "Anthropic tool_use.input is now consumed by structured_output_transport._tool_call_arguments while invalid/non-object arguments remain fail-closed.",
+    "unit_gate": "88 passed across CE characterization and structured-output transport; ruff and mypy clean.",
+    "live_gate": "Fresh isolated r39 no longer emitted structured_output_tool_arguments_must_be_object and progressed to the next independent lifecycle defect.",
+    "successor_defect": "L3-22-R39-STRUCTURED-RESULT-TOOL-LIFECYCLE"
+  }
+}

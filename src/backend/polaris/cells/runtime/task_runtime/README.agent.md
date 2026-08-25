@@ -26,11 +26,11 @@ repository architecture fence are also closed.
 - DEO parent/operation commands: `EnrollDirectedEffectParentRegistryStreamCommandV1`, `EnrollDirectedEffectOperationStreamCommandV1`, `AdmitDirectedEffectParentCommandV1`, `AdmitDirectedEffectParentBatchCommandV1`, `AdmitDirectedEffectOperationCommandV1`, `ClaimDirectedEffectCommandV1`, `AbortDirectedEffectOperationCommandV1`
 - DEO-2A inventory commands: `SealDirectedEffectInventoryCommandV1`, `FinalizeDirectedEffectInventoryAdmissionCommandV1`
 - DEO-2A inventory contracts: `DirectedEffectInventoryIntentV1`, `DirectedEffectInventoryMemberV1`, `DirectedEffectInventoryProjectionV1`, `DirectedEffectInventoryResultV1`, `DirectedEffectClaimGrantV1`
-- queries: `ListRuntimeTasksQueryV1`, `GetRuntimeTaskQueryV1`, `ValidateTaskRuntimeExecutionAttemptQueryV1`, `GetDirectedEffectParentRegistryQueryV1`, `GetDirectedEffectOperationQueryV1`, `GetDirectedEffectInventoryQueryV1`, `GetDirectedEffectParentReadinessQueryV1`
+- queries: `ListRuntimeTasksQueryV1`, `GetRuntimeTaskQueryV1`, `QuerySameTaskLocalReworkAuthorizationV1`, `ValidateTaskRuntimeExecutionAttemptQueryV1`, `GetDirectedEffectParentRegistryQueryV1`, `GetDirectedEffectOperationQueryV1`, `GetDirectedEffectInventoryQueryV1`, `GetDirectedEffectParentReadinessQueryV1`
 - DEO-2A public services: `seal_directed_effect_inventory`, `finalize_directed_effect_inventory_admission`, `get_directed_effect_inventory`
 - DEO-1C read service: `get_directed_effect_parent_readiness`
 - events: `RuntimeTaskLifecycleEventV1`, `TaskRuntimeExecutionFactV1`
-- results: `RuntimeTaskResultV1`, `RuntimeTaskFactoryRunBindingResultV1`, `ExpiredFactoryRunSessionFenceResultV1`, `OwnerReworkExecutionPreparationResultV1`, `SameTaskLocalReworkPreparationResultV1`, `TaskRuntimeExecutionAttemptValidationVerdictV1`, `TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1`, `TaskRuntimeExecutionAttemptHeartbeatVerdictV1`, `TaskRuntimeExecutionAttemptSettlementVerdictV1`, `DirectedEffectStreamEnrollmentResultV1`, `DirectedEffectOperationResultV1`, `DirectedEffectClaimGrantV1`, `DirectedEffectInventoryProjectionV1`, `DirectedEffectInventoryResultV1`, `DirectedEffectParentRegistryResultV1`, `DirectedEffectParentReadinessStateCountV1`, `DirectedEffectParentReadinessProjectionV1`, `DirectedEffectParentReadinessResultV1`, `ObservableTaskRowsProjectionV1`
+- results: `RuntimeTaskResultV1`, `RuntimeTaskFactoryRunBindingResultV1`, `ExpiredFactoryRunSessionFenceResultV1`, `OwnerReworkExecutionPreparationResultV1`, `SameTaskLocalReworkPreparationResultV1`, `SameTaskLocalReworkAuthorizationQueryResultV1`, `TaskRuntimeExecutionAttemptValidationVerdictV1`, `TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1`, `TaskRuntimeExecutionAttemptHeartbeatVerdictV1`, `TaskRuntimeExecutionAttemptSettlementVerdictV1`, `DirectedEffectStreamEnrollmentResultV1`, `DirectedEffectOperationResultV1`, `DirectedEffectClaimGrantV1`, `DirectedEffectInventoryProjectionV1`, `DirectedEffectInventoryResultV1`, `DirectedEffectParentRegistryResultV1`, `DirectedEffectParentReadinessStateCountV1`, `DirectedEffectParentReadinessProjectionV1`, `DirectedEffectParentReadinessResultV1`, `ObservableTaskRowsProjectionV1`
 - errors: `RuntimeTaskRuntimeError`
 
 ## Depends On
@@ -60,6 +60,10 @@ repository architecture fence are also closed.
 - ordinary completion failure reopens only the exact owning Director row with
   the sealed action, claim, completion contract, diagnostic, and retry budget;
   unrelated rows remain unchanged
+- committed same-task local-rework authorization remains queryable from the
+  append-only execution fact after an authorized runtime row reset; replay
+  still requires exact Factory run, external task, action, claim and effect
+  identity
 - cross-role task lifecycle updates are append-only auditable
 - all text reads/writes use explicit UTF-8
 - DEO-1B enrollment receipts are observability evidence only; enrollment never

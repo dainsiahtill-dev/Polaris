@@ -46,8 +46,10 @@ from .contracts import (
     OwnerReworkExecutionPreparationResultV1,
     PrepareOwnerReworkExecutionCommandV1,
     PrepareSameTaskLocalReworkCommandV1,
+    QuerySameTaskLocalReworkAuthorizationV1,
     ReconcileAmbiguousDirectedEffectsCommandV1,
     RuntimeTaskFactoryRunBindingResultV1,
+    SameTaskLocalReworkAuthorizationQueryResultV1,
     SameTaskLocalReworkPreparationResultV1,
     SealDirectedEffectInventoryCommandV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
@@ -793,6 +795,15 @@ def prepare_same_task_local_rework(
     return runtime.prepare_same_task_local_rework(command)
 
 
+def query_same_task_local_rework_authorization(
+    query: QuerySameTaskLocalReworkAuthorizationV1,
+) -> SameTaskLocalReworkAuthorizationQueryResultV1:
+    """Read one committed local-rework authorization from durable execution facts."""
+
+    runtime = TaskRuntimeService(query.workspace)
+    return runtime.query_same_task_local_rework_authorization(query)
+
+
 __all__ = [
     "TaskRuntimeExecutionAttemptAuthorityV1",
     "TaskRuntimeService",
@@ -813,6 +824,7 @@ __all__ = [
     "prepare_same_task_local_rework",
     "query_factory_run_settlement",
     "query_observable_task_rows",
+    "query_same_task_local_rework_authorization",
     "reset_runtime_task_records",
     "settle_task_runtime_execution_attempt",
     "settle_task_runtime_execution_attempt_typed",

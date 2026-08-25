@@ -564,6 +564,7 @@ cells:
       queries:
         - ListRuntimeTasksQueryV1
         - GetRuntimeTaskQueryV1
+        - QuerySameTaskLocalReworkAuthorizationV1
         - ValidateTaskRuntimeExecutionAttemptQueryV1
         - GetDirectedEffectParentRegistryQueryV1
         - GetDirectedEffectOperationQueryV1
@@ -578,6 +579,7 @@ cells:
         - ExpiredFactoryRunSessionFenceResultV1
         - OwnerReworkExecutionPreparationResultV1
         - SameTaskLocalReworkPreparationResultV1
+        - SameTaskLocalReworkAuthorizationQueryResultV1
         - TaskRuntimeExecutionAttemptValidationVerdictV1
         - TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1
         - TaskRuntimeExecutionAttemptHeartbeatVerdictV1

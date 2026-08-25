@@ -1,0 +1,71 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-22-R41-RESIDUAL-OWNER-HANDOFF-BUDGET",
+  "status": "FIX_UNIT_VERIFIED_FRESH_R42_PENDING",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "factory_run_id": "factory_fd0d26537322",
+  "workspace": "/tmp/factory-bench-l3-22-r41/workspaces/69229fd2be0f-428fd1ca33b3ebd9/L3-22-5aaab9a81e5e829d/6f8875878d172a4a3c842a6f",
+  "symptom": "PM and Chief Engineer completed, Director materialized a runnable-size Go project, and eight same-run repair rounds reduced verifier diagnostics, but the quality loop terminated immediately after round 8 while an explicit owner_task_retry handoff remained executable.",
+  "exact_run_evidence": {
+    "pm_completed": true,
+    "ce_blueprints": "3/3",
+    "director_legally_started": true,
+    "production_files": 7,
+    "test_files": 3,
+    "production_lines": 811,
+    "delivery_depth_passed": true,
+    "repair_rounds": 8,
+    "max_rounds": 8,
+    "last_round_verifier_effect": "progress",
+    "last_round_diagnostics": "7 -> 6",
+    "last_round_owner": "TASK-2",
+    "last_round_target": "main.go",
+    "remaining_compile_target": "physics/gravity_test.go",
+    "remaining_compile_error": "scene.Add undefined (type *Scene has no field or method Add)",
+    "remaining_target_owner": "TASK-3",
+    "owner_handoff_status": "owner_found",
+    "owner_handoff_route": "owner_task_retry",
+    "remaining_behavior_tests": [
+      "TestRun_InvalidRadiusReturnsError",
+      "TestStep_InvalidRadiusPropagates"
+    ],
+    "target_project_modified_by_main_agent": false
+  },
+  "root_cause": {
+    "confirmed": "The global eight-round budget charged every repair attempt even when later rounds produced verified progress. After round 8 repaired TASK-2/main.go, the revalidated residual moved to a different owner, TASK-3/physics/gravity_test.go. Scope authority had already emitted an owner_found owner_task_retry handoff, but post-verifier orchestration only rotates immediately for language-specific failing-TU heuristics. Go test paths were not covered, and general residual owner rotation ran only after two stagnant rounds. The loop therefore ended before consuming its already-authorized handoff.",
+    "not_caused_by": [
+      "PM or Chief Engineer restart requirement",
+      "missing Director write effects",
+      "QA rejecting an otherwise green project",
+      "target project baseline",
+      "provider transport failure"
+    ]
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_evidence.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ],
+    "policy": "After each real verifier rerun, intersect residual diagnostics with KernelOne owner_task_retry handoff evidence. If a still-failing target belongs to a different explicit owner, consume the existing bounded leftover extra-round allowance and claim that owner. Do not restart PM/CE, expand write authority, raise the base eight-round budget, or bypass non-progress fuses.",
+    "security_properties": [
+      "Only owner_found owner_task_retry evidence is eligible",
+      "Residual diagnostic must still name the target path",
+      "JobToken and execution envelope remain write authority",
+      "Existing extra-round cap remains two",
+      "Existing global non-progress hard cap remains active"
+    ]
+  },
+  "verification": {
+    "exact_regression_and_legacy_owner_tests": "4 passed",
+    "workspace_quality_and_scope_authority_suites": "121 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_isolated_required": "r42 must route a residual owner handoff after verified progress and continue only the failed Director/QA boundary"
+  },
+  "ui_projection_followup": {
+    "historical_run_id": "factory_f156c56b7988",
+    "finding": "The screenshot CE panel showing 0/3 while Director runs is a separate projection defect. Authoritative historical TaskRuntime rows show CE portfolio plus two semantic-patch tasks completed and Director materialization occurred. UI must consume persisted CE handoff evidence rather than infer absence from the current panel slice."
+  }
+}

@@ -53,6 +53,7 @@ public_contracts:
   queries:
   - ListRuntimeTasksQueryV1
   - GetRuntimeTaskQueryV1
+  - QuerySameTaskLocalReworkAuthorizationV1
   - ValidateTaskRuntimeExecutionAttemptQueryV1
   - GetDirectedEffectParentRegistryQueryV1
   - GetDirectedEffectOperationQueryV1
@@ -67,6 +68,7 @@ public_contracts:
   - ExpiredFactoryRunSessionFenceResultV1
   - OwnerReworkExecutionPreparationResultV1
   - SameTaskLocalReworkPreparationResultV1
+  - SameTaskLocalReworkAuthorizationQueryResultV1
   - TaskRuntimeExecutionAttemptValidationVerdictV1
   - TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1
   - TaskRuntimeExecutionAttemptHeartbeatVerdictV1
@@ -97,6 +99,7 @@ descriptor_surface:
       - get_task
       - list_ready_task_rows
       - list_observable_task_rows
+      - query_same_task_local_rework_authorization
       - get_task_row_stats
       - claim_next_execution
 depends_on:

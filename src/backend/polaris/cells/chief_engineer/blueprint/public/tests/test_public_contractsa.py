@@ -4306,3 +4306,118 @@ def test_shared_behavior_participants_close_missing_task_local_refs(tmp_path: Pa
         "TASK-A": ("behavior-coordinate-floor",),
         "TASK-B": ("behavior-coordinate-floor",),
     }
+
+
+def test_shared_behavior_drops_only_candidate_entrypoint_ids_normalized_out_by_authority(
+    tmp_path: Path,
+) -> None:
+    """Completion normalization and behavior authority must be one transaction.
+
+    A topology-delegated source path may be a valid delivery artifact while its
+    advisory entrypoint command lacks committed PM command authority.  The
+    completion contract deliberately drops that entrypoint.  A behavior
+    invariant authored against the same candidate must drop the same identifier
+    instead of failing later with a platform-created dangling reference.
+    """
+
+    tasks = (
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-A",
+            objective="Choose and implement the application topology",
+            target_files=("src/main.py",),
+            scope_paths=("src/main.py",),
+            entrypoint_targets=("src/main.py",),
+            topology_authority="chief_engineer",
+            required_source_kinds=("domain_modules", "entrypoint"),
+            primary_language="python",
+            allowed_source_suffixes=(".py",),
+        ),
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-B",
+            objective="Verify application behavior",
+            target_files=("tests/test_main.py",),
+            scope_paths=("tests/test_main.py",),
+            dependencies=("TASK-A",),
+        ),
+    )
+    blueprint = _cross_task_behavior_blueprint(include_invariant=True)
+    obligations = blueprint["project_completion_contract"]["obligations"]
+    obligations["artifacts"].append(
+        {
+            "obligation_id": "artifact-delegated-engine",
+            "path": "src/engine.py",
+            "semantic_role": "source",
+            "applicability": "required",
+            "owner_task_id": "TASK-A",
+        }
+    )
+    obligations["entrypoints"].append(
+        {
+            "obligation_id": "entrypoint-delegated-advisory",
+            "kind": "cli",
+            "applicability": "required",
+            "owner_task_id": "TASK-A",
+            "source_path": "src/engine.py",
+            "runtime_path": None,
+            "command": "python -m src.engine",
+        }
+    )
+    invariant = blueprint["construction_plan"]["shared_behavior_contract"]["invariants"][0]
+    invariant["covered_obligation_ids"] = [
+        "artifact-main",
+        "artifact-tests",
+        "entrypoint-delegated-advisory",
+    ]
+
+    portfolio = build_chief_engineer_blueprint_portfolio(
+        BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-behavior-completion-normalization",
+            tasks=tasks,
+            **_portfolio_command_authority(
+                tasks=tasks,
+                workspace=tmp_path,
+                run_id="run-behavior-completion-normalization",
+            ),
+            llm_blueprint=blueprint,
+        )
+    )
+
+    completion = portfolio.project_completion_contract
+    behavior = portfolio.shared_behavior_contract
+    assert completion is not None
+    assert behavior is not None
+    assert "entrypoint-delegated-advisory" not in {
+        item.obligation_id for item in completion.obligations.entrypoints
+    }
+    assert behavior.invariants[0].covered_obligation_ids == (
+        "artifact-main",
+        "artifact-tests",
+    )
+
+
+def test_shared_behavior_unknown_obligation_still_fails_closed(tmp_path: Path) -> None:
+    """Normalization must not hide an id absent from the completion candidate."""
+
+    tasks = _cross_task_behavior_tasks()
+    blueprint = _cross_task_behavior_blueprint(include_invariant=True)
+    invariant = blueprint["construction_plan"]["shared_behavior_contract"]["invariants"][0]
+    invariant["covered_obligation_ids"].append("entrypoint-provider-typo")
+
+    with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+        build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-behavior-unknown-obligation",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-behavior-unknown-obligation",
+                ),
+                llm_blueprint=blueprint,
+            )
+        )
+
+    assert exc_info.value.code == "blueprint_portfolio_behavior_contract_infeasible"
+    assert exc_info.value.details["obligation_ids"] == ["entrypoint-provider-typo"]

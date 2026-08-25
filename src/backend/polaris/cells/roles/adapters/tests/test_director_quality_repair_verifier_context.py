@@ -217,6 +217,30 @@ def test_quality_repair_includes_previous_go_failure_as_regression_guard(tmp_pat
     assert "Authorized tool target paths:\n- engine/engine_test.go" not in message
 
 
+def test_quality_repair_prompt_carries_rejected_candidate_diagnostic(tmp_path: Path) -> None:
+    """A precommit rejection must alter the next same-task Director request."""
+
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    (engine / "engine.go").write_text("package engine\nfunc Step() {}\n", encoding="utf-8")
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair the Go behavior failure.",
+        artifact_quality_errors=["--- FAIL: TestStep (0.00s)\n    engine_test.go:6: wrong value"],
+        candidate_rejection_errors=[
+            "source_compile_regression: Edit rejected before commit: engine/engine.go: undefined: DefaultDT"
+        ],
+        changed_files=["engine/engine.go"],
+        repair_target_files=["engine/engine.go"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "PREVIOUS CANDIDATE REJECTED BEFORE COMMIT" in message
+    assert "undefined: DefaultDT" in message
+    assert "do not repeat that rejected edit" in message
+    assert "Authorized tool target paths:\n- engine/engine.go" in message
+
+
 def test_quality_repair_causal_reanalysis_rejects_another_unreachable_branch_edit(tmp_path: Path) -> None:
     """Stable named tests after real edits require a causal-path rethink."""
 
@@ -498,6 +522,84 @@ def test_quality_repair_includes_javascript_tap_callee_and_call_site(
     assert "tests/product.test.js" in impl_owner
     assert "grantWish(closeWish(openWish(w)))" in impl_owner
     assert "function grantWish(wish, meteorId)" not in impl_owner.split("CURRENT UTF-8 CONTENT OF REPAIR TARGETS")[0]
+
+
+def test_quality_repair_includes_go_callee_definition_for_test_owner(tmp_path: Path) -> None:
+    """A Go test repair must see the implementation signature it is calling."""
+
+    physics = tmp_path / "internal" / "physics"
+    physics.mkdir(parents=True)
+    (physics / "step.go").write_text(
+        "package physics\n\n"
+        "type World struct{}\n\n"
+        "func ApplyGravity(w *World) float64 {\n"
+        "\treturn 9.8\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (physics / "step_test.go").write_text(
+        "package physics\n\n"
+        "func TestApplyGravity(t *testing.T) {\n"
+        "\tw := &World{}\n"
+        "\tif err := ApplyGravity(w); err != nil { t.Fatal(err) }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair the Go compiler failure.",
+        artifact_quality_errors=[
+            "internal/physics/step_test.go:5:12: assignment mismatch: "
+            "1 variable but ApplyGravity returns 1 value"
+        ],
+        changed_files=["internal/physics/step_test.go"],
+        repair_target_files=["internal/physics/step_test.go"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "GO SAME-PACKAGE DEFINITIONS" in message
+    assert "internal/physics/step.go" in message
+    assert "func ApplyGravity(w *World) float64" in message
+    assert "READ-ONLY" in message
+
+
+def test_quality_repair_includes_go_package_inventory_for_unresolved_test_symbol(tmp_path: Path) -> None:
+    """Undefined test helpers must see case variants and real package-owned types."""
+
+    sandbox = tmp_path / "internal" / "sandbox"
+    sandbox.mkdir(parents=True)
+    (sandbox / "sandbox.go").write_text(
+        "package sandbox\n\n"
+        "type Scenario struct {\n"
+        "\tBubbles []physics.Bubble\n"
+        "}\n\n"
+        "func run(args []string) error { return nil }\n",
+        encoding="utf-8",
+    )
+    (sandbox / "sandbox_test.go").write_text(
+        "package sandbox\n\n"
+        "func TestScenario(t *testing.T) {\n"
+        "\t_ = Run(nil)\n"
+        "\t_ = append([]bubbleType(nil))\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair undefined Go test symbols.",
+        artifact_quality_errors=[
+            "internal/sandbox/sandbox_test.go:4:6: undefined: Run",
+            "internal/sandbox/sandbox_test.go:5:15: undefined: bubbleType",
+        ],
+        changed_files=["internal/sandbox/sandbox_test.go"],
+        repair_target_files=["internal/sandbox/sandbox_test.go"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "GO SAME-PACKAGE DEFINITIONS" in message
+    assert "func run(args []string) error" in message
+    assert "type Scenario struct" in message
+    assert "Bubbles []physics.Bubble" in message
 
 
 def test_quality_repair_javascript_reference_error_restores_const(tmp_path: Path) -> None:

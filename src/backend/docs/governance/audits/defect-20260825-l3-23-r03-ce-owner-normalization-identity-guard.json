@@ -1,0 +1,38 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-23-R03-CE-OWNER-NORMALIZATION-IDENTITY-GUARD",
+  "status": "CLOSED_FRESH_R04_VERIFIED",
+  "severity": "P0",
+  "project_id": "L3-23",
+  "factory_run_id": "factory_d91bc3c83267",
+  "workspace": "/tmp/factory-bench-l3-23-r03/workspaces/e6486648b689-633f8daa422e6e9b/L3-23-2956ab31bd653d97/1d0426e38b84a1ecf3604664",
+  "symptom": "CE semantic repair exhausted before Director dispatch with an alleged immutable owner_task_id mutation for OBL-LIB-ENTRY.",
+  "exact_run_evidence": {
+    "terminal_error_code": "chief_engineer.semantic_repair_exhausted",
+    "terminal_hint": "semantic repair cannot mutate immutable semantic identity: obligation_id='OBL-LIB-ENTRY':fields=['owner_task_id']",
+    "provider_patch_owner_task_id": "TASK-1",
+    "composer_effective_owner_task_id": "TASK-2",
+    "unique_authorized_owner_task_id": "TASK-2",
+    "target_project_modified_by_main_agent": false
+  },
+  "root_cause": {
+    "confirmed": "The provider did not mutate semantic identity. The composer safely normalized the artifact owner from unauthorized TASK-1 to the uniquely authorized TASK-2, then compared that normalized candidate against the unnormalized TASK-1 baseline and rejected its own correction.",
+    "not_caused_by": [
+      "provider owner mutation",
+      "missing CE context",
+      "Director execution",
+      "target project code"
+    ]
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+    "policy": "Normalize the immutable comparison baseline only for targeted artifact obligations through the same unique-authority owner normalization. Ambiguous ownership and path or role mutation remain fail-closed."
+  },
+  "verification": {
+    "red_green_regression": "test_composer_rebinds_existing_artifact_when_frozen_owner_is_uniquely_unauthorized",
+    "semantic_repair_tests": "58 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_r04": "The immutable-owner signature disappeared and CE advanced to a later structured-output schema failure."
+  }
+}

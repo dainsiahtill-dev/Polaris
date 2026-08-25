@@ -94,6 +94,33 @@ from ._helpers import (
 )
 
 
+def _failed_batch_diagnostic_excerpt(receipts: list[dict[str, Any]]) -> str:
+    """Preserve bounded actionable tool diagnostics across the turn boundary."""
+
+    details: list[str] = []
+    for receipt in normalize_batch_receipts(receipts):
+        rows = receipt.get("raw_results")
+        if not isinstance(rows, list):
+            rows = receipt.get("results")
+        for row in rows or []:
+            if not isinstance(row, Mapping):
+                continue
+            payloads = [row]
+            result = row.get("result")
+            if isinstance(result, Mapping):
+                payloads.append(result)
+            for payload in payloads:
+                for key in ("error", "physical_error", "suggestion", "stderr", "stderr_tail"):
+                    value = " ".join(str(payload.get(key) or "").split())
+                    if value and value not in details:
+                        details.append(value[:800])
+            if sum(len(item) for item in details) >= 1200:
+                break
+        if sum(len(item) for item in details) >= 1200:
+            break
+    return " | ".join(details)[:1200]
+
+
 class _ToolBatchExecuteMixin:
     """Mixin providing ToolBatchExecutor.execute_tool_batch."""
 
@@ -1096,9 +1123,12 @@ class _ToolBatchExecuteMixin:
             # name. Observational/command failures must stay as receipts so the
             # model can re-issue read_file / single commands.
             if any(is_write_tool_name(name) for name in failed_tool_names):
+                failure_details = _failed_batch_diagnostic_excerpt(receipts_as_dicts)
+                detail_suffix = f"; failure_details={failure_details}" if failure_details else ""
                 raise RuntimeError(
                     "tool_dispatch_failed: decoded tool batch produced only failed tool results; "
-                    f"decoded_tool_calls={len(invocations)}; error_types={','.join(failure_error_types) or 'unknown'}"
+                    f"decoded_tool_calls={len(invocations)}; "
+                    f"error_types={','.join(failure_error_types) or 'unknown'}{detail_suffix}"
                 )
 
         # 本 turn 的工具批裁决已完成（adopt/join/replay 全部计入 metrics）；在此

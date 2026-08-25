@@ -1,0 +1,77 @@
+{
+  "schema_version": "polaris.defect-record.v1",
+  "defect_id": "L3-22-R47-PROJECT-COMPLETION-OWNER-REPLAY",
+  "status": "CLOSED_COMPLETED_VERIFIED",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "run_id": "factory_cbc114bc122b",
+  "workspace": "/tmp/factory-bench-l3-22-r47/workspaces/9f8b29a2d9f2-709e51abbe0150f8/L3-22-5aaab9a81e5e829d/6a7bb7519e5dec8472f9ec1e",
+  "debug_method": "exact-run dynamic replay; generated project remained read-only to the main Agent",
+  "symptom": "Physical Go tests and entrypoint passed, but ProjectOutcome and the append-only convergence cursor repeatedly remained control_plane_blocked.",
+  "root_causes": [
+    {
+      "id": "mixed_go_test_package_proof_false_negative",
+      "cause": "A successful tested Go package followed by a helper package with [no test files] was treated as missing test proof.",
+      "fix": "Accept proof when at least one exact ok <package> line exists; preserve failure authority for non-zero verifier receipts."
+    },
+    {
+      "id": "proof_semantics_absent_from_policy_identity",
+      "cause": "Changing builtin proof semantics did not change verifier policy identity, allowing stale policy decisions to survive.",
+      "fix": "Bind BUILTIN_PROOF_SEMANTICS_VERSION into the verifier-policy decision payload."
+    },
+    {
+      "id": "entrypoint_controlled_termination_misclassified",
+      "cause": "Project-completion diagnostics treated any non-zero exit code as failure, overriding the entrypoint receipt's authoritative readiness plus controlled-termination success semantics.",
+      "fix": "For entrypoint evidence, retain the typed receipt status; apply generic non-zero-exit rejection only to non-entrypoint verifiers."
+    },
+    {
+      "id": "terminal_owner_binding_refresh_rejected",
+      "cause": "Stronger replacement receipts changed a still-completed owner binding hash. The convergence cursor first rejected the new hash, then a legal owner_binding_revalidated terminal refresh was rejected as an event after terminal.",
+      "fix": "Re-query current owner authority; append a replacement completed terminal only when the owner is still completed; parse only consecutive, same-identity completed_verified refreshes explicitly marked owner_binding_revalidated. All other post-terminal events remain fail-closed."
+    }
+  ],
+  "dynamic_debug_evidence": {
+    "factory_event_log": ".polaris/runtime/factory/factory_cbc114bc122b/events/events.jsonl",
+    "convergence_cursor": ".polaris/runtime/state/project_completion/convergence.sqlite3",
+    "verification_receipts": ".polaris/runtime/evidence/project_verification_receipts.sqlite3",
+    "red_events": [
+      "chain_sequence=517 status=control_plane_blocked reason=terminal_owner_binding_revalidation_failed",
+      "chain_sequence=527 status=control_plane_blocked reason=workflow_identity_or_event_drift"
+    ],
+    "cursor_rows": [
+      "seq=35 project_completion.terminal.v1 status=completed_verified",
+      "seq=36 project_completion.terminal.v1 status=completed_verified reason=owner_binding_revalidated"
+    ],
+    "final_event": "chain_sequence=537 status=completed_verified reason=owner_binding_revalidated",
+    "physical_verifiers": [
+      "go test ./... exit_code=0",
+      "go run . exit_code=0"
+    ],
+    "factory_terminal": "status=completed; progress=100; quality_gate score=100; failure=null"
+  },
+  "modified_platform_areas": [
+    "control_plane.verifier_policy",
+    "runtime.execution_broker",
+    "factory.verification_guard",
+    "orchestration.workflow_orchestration",
+    "factory.pipeline completion notification ordering"
+  ],
+  "regression_followup": {
+    "symptom": "The full Factory admission suite exposed a cancel/complete lifecycle race that timed out while publishing a false project-completion blocker.",
+    "dynamic_root_cause": "Direct lifecycle completion without a persisted successful quality_gate StageResult incorrectly invoked post-terminal ProjectOutcome notification.",
+    "fix": "Notify post-terminal convergence only when the completed run carries a persisted successful quality_gate result; direct lifecycle completion remains local and does not manufacture QA authority.",
+    "proof": "The exact failing concurrency test and the successful-QA ordering test both passed; the full admission file then passed 70/70."
+  },
+  "validation": {
+    "project_completion_convergence": "29 passed",
+    "project_completion_diagnostics": "10 passed",
+    "execution_broker_log_drain": "7 passed",
+    "verifier_policy": "69 passed",
+    "factory_workspace_admission": "70 passed",
+    "ruff": "passed",
+    "mypy": "passed"
+  },
+  "recovery_scope": "same Factory run; qa_gate only; PM, Chief Engineer, and Director were not restarted",
+  "target_project_modified_by_main_agent": false,
+  "residual_risk": "Factory project_completion_advance uses terminal=false as a non-terminal Factory event-envelope flag even when its typed status is completed_verified; consumers must use typed status/reason codes, not the envelope flag, for ProjectOutcome authority."
+}

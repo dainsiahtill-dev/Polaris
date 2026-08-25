@@ -1,0 +1,38 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-22-R47-REAL-RUN-READ-SCOPE",
+  "status": "CLOSED_UNIT_AND_EXACT_REPLAY",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "factory_run_id": "factory_cbc114bc122b",
+  "bench_run_id": "9f8b29a2d9f2",
+  "workspace": "/tmp/factory-bench-l3-22-r47/workspaces/9f8b29a2d9f2-709e51abbe0150f8/L3-22-5aaab9a81e5e829d/6a7bb7519e5dec8472f9ec1e",
+  "symptom": "real_run_gate failed canonical execution with run_ledger_integrity_failed although all three latest task-boundary verdicts were completed_verified and tool lifecycle had no unresolved calls",
+  "runtime_evidence": {
+    "tool_native_calls": 30,
+    "tool_decoded_calls": 29,
+    "tool_dropped_calls": 0,
+    "effect_receipts": 19,
+    "task_boundary_ok": true,
+    "capability_issue": "required_artifacts_outside_allowed_paths"
+  },
+  "root_cause": "build_job_token_from_record used declared_source_targets as the real-run verifier allowed_paths but code_files as required_artifacts. A root-entrypoint-only contract therefore made the read-only gate reject the wider CE-owned project portfolio as capability drift.",
+  "root_cause_class": "control_plane_gate_read_scope_projection",
+  "not_root_cause": [
+    "tool normalization",
+    "Director tool dispatch",
+    "effect receipt persistence",
+    "task-boundary materialization"
+  ],
+  "fix": "For stage=real_run_gate only, union required_artifacts into allowed_paths. Keep allowed_write_paths empty.",
+  "files_modified": [
+    "src/backend/polaris/cells/factory/pipeline/internal/run_ledger.py",
+    "src/backend/polaris/cells/factory/pipeline/tests/test_run_ledger.py"
+  ],
+  "verification": {
+    "red": "test_real_run_gate_read_scope_covers_all_required_project_artifacts failed because allowed_paths contained only main.go and main_test.go",
+    "green": "2 passed: new regression plus existing capability-drift fail-closed control",
+    "exact_replay": "r47 audit record rebuilt with capability_ok=true, no issues, no drift, allowed_write_paths=[]"
+  },
+  "remaining_risk": "Fresh end-to-end bench still required after Go quality diagnostics converge; this fix closes only false Ledger integrity failure."
+}

@@ -643,10 +643,11 @@ class _ContextOSSchedulerMixin:
             if item.event_id in pinned_events:
                 continue
 
-            # Use truncated content if applicable
-            from dataclasses import replace
-
-            pinned_item = replace(item, content=item_content) if item_content != item.content else item
+            # TranscriptEventV2 is a frozen Pydantic model, not a dataclass.
+            # Rebuild through the validating copy helper when token-budget
+            # truncation changes its content.  This path is exercised when a
+            # large Director tool batch is folded into the next repair turn.
+            pinned_item = validated_replace(item, content=item_content) if item_content != item.content else item
             pinned_events[item.event_id] = pinned_item
             token_count += estimated
         result = tuple(sorted(pinned_events.values(), key=lambda item: (item.sequence, item.event_id)))

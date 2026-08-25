@@ -6,11 +6,40 @@ import os
 import subprocess
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from polaris.cells.runtime.execution_broker.public.project_verification import (
     ProjectVerificationArtifactInputV1,
 )
+
+
+def test_project_local_runtime_root_is_not_rejected_as_external_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The canonical ``<workspace>/.polaris/runtime`` root is locally masked.
+
+    It must not be mistaken for an external platform root that overlaps the
+    workspace.  Workspace-local authority remains protected by the dedicated
+    ``.polaris`` tmpfs and input/cwd guards.
+    """
+    from polaris.cells.runtime.execution_broker.internal import project_verification_sandbox
+
+    external_config = tmp_path.parent / "external-polaris" / "config"
+    local_runtime = tmp_path / ".polaris" / "runtime"
+    monkeypatch.setattr(
+        project_verification_sandbox,
+        "resolve_storage_roots",
+        lambda _workspace: SimpleNamespace(
+            config_root=str(external_config),
+            runtime_root=str(local_runtime),
+        ),
+    )
+
+    assert project_verification_sandbox._protected_platform_roots(tmp_path.resolve()) == (
+        external_config.parent.resolve(),
+    )
 
 
 @pytest.mark.skipif(os.name != "posix", reason="bubblewrap verifier sandbox is Linux-only")

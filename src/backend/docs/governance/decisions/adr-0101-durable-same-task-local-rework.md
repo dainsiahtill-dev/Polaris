@@ -33,6 +33,16 @@ TaskMarket work item。使用 TaskMarket 会增加不可达的第二生命周期
 8. restart recovery 必须先 replay/settle 并永久关闭旧 physical-attempt epoch；随后只允许
    通过显式 lifecycle claim 和更高 workspace fencing token 创建新 epoch。旧 provider
    attempt 不可重放，但同一 Factory run 不得因此永久失去继续执行能力。
+9. 已提交 action 的 receipt authority 不得只存在于可 reset 的 TaskRuntime row
+   metadata。`runtime.task_runtime` 必须通过 public typed query 从 append-only
+   `task_runtime.execution` fact 恢复 exact action/claim/effect evidence；bootstrap action
+   owner 仅在当前 row projection 缺失时使用该 durable query，并继续执行完整 identity
+   与 effect-hash 校验。
+10. `completed_verified` 终态之后若 replacement verifier receipt 或物理 TaskRuntime
+    recovery 使 owner binding hash 变强，convergence 必须重新查询当前 ProjectOutcome。
+    只有当前 owner 仍为 `completed_verified` 时，才允许追加同 identity、同 status、明确
+    `owner_binding_revalidated` 的终态刷新；任何 action/wait/status change、身份漂移、
+    malformed refresh 或当前 owner 不再完成，仍必须 fail-closed。
 
 ## 被拒绝方案
 
@@ -49,6 +59,8 @@ TaskMarket work item。使用 TaskMarket 会增加不可达的第二生命周期
 - PM/CE provider token 不再被普通代码错误重复消耗。
 - TaskRuntime 保持唯一 execution lifecycle owner。
 - workflow orchestration 与 TaskRuntime 增加 typed public contract，需要同步 graph/catalog 和测试。
+- authorized `runtime_reset_removed` 不再抹除已提交 action 的可重放 receipt；mutable
+  row 仍可正常删除，append-only fact 保持唯一历史执行证据。
 - backend lifespan-owned driver 已恢复 live/recovering runs 与 pending local-rework
   actions；真实 backend process restart 已验证旧 epoch 关闭、新 epoch 续跑且无需新
   HTTP 请求。

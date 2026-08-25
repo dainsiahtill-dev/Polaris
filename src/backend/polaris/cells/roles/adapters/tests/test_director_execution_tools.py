@@ -425,6 +425,33 @@ def test_edit_file_rejects_new_go_compile_failure_before_commit(tmp_path) -> Non
     assert target.read_text(encoding="utf-8") == original
 
 
+def test_write_file_defers_go_test_compile_failure_to_workspace_quality(tmp_path) -> None:
+    """L3-22 r42: test API mismatch must land for same-Director repair."""
+
+    (tmp_path / "go.mod").write_text("module example.com/candidate\n\ngo 1.21\n", encoding="utf-8")
+    (tmp_path / "main.go").write_text("package main\n\nfunc main() {}\n", encoding="utf-8")
+    executor = _create_director_tool_executor(str(tmp_path))
+    test_body = (
+        "package main\n\n"
+        'import "testing"\n\n'
+        "func TestRunDemo(t *testing.T) {\n"
+        "\tRunDemo()\n"
+        "}\n"
+    )
+
+    result = executor.execute_tool(
+        "write_file",
+        {
+            "file": "main_test.go",
+            "content": test_body,
+            "target_files": ["main_test.go"],
+        },
+    )
+
+    assert result["ok"] is True, result
+    assert (tmp_path / "main_test.go").read_text(encoding="utf-8") == test_body
+
+
 def test_edit_file_rejects_changed_but_still_invalid_go_candidate(tmp_path) -> None:
     """L1-04 r51: an existing parse error must be fixed atomically, not moved."""
 

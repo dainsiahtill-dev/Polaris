@@ -1,0 +1,50 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-22-r46-ce-prefreeze-behavior-feasibility-gap",
+  "recorded_at": "2026-08-23T15:05:00+08:00",
+  "status": "FIX_UNIT_AND_EXACT_REPLAY_VERIFIED_LIVE_BENCH_PENDING",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "factory_run_id": "factory_4ebc79abc46f",
+  "symptom": "CE produced a schema-valid 3-task portfolio candidate, but authoritative portfolio freeze failed because the test-owning task had no shared invariant covering both production and test artifacts.",
+  "dynamic_evidence": {
+    "workspace": "/tmp/factory-bench-l3-22-r46/workspaces/7fb3257e7846-f4af09b556f7b0b8/L3-22-5aaab9a81e5e829d/17a0e6a638c91b26127272c1",
+    "review": ".polaris/runtime/state/blueprints/factory_4ebc79abc46f.review.json",
+    "candidate": ".polaris/runtime/state/blueprints/semantic-repair/L3-22/factory_4ebc79abc46f/babfcd91e6a59f1d36ab72d13e10096824e8bfd231c93b3d8f7a512f6ec95c32.json",
+    "error_code": "blueprint_portfolio_behavior_contract_infeasible",
+    "error_message": "cross-task test ownership lacks a shared production behavior invariant",
+    "provider_calls": 3,
+    "candidate_observation": "All four invariants owned by TASK-2 and consumed by TASK-3 covered OBL-V-TEST or OBL-V-RUN, but none covered a TASK-2 production artifact obligation.",
+    "exact_replay_result": {
+      "diagnostic_code": "chief_engineer.shared_behavior_contract.cross_task_production_test_coverage_missing",
+      "allowed_operations": [
+        "behavior_invariant_upsert",
+        "task_behavior_ref_replace"
+      ]
+    }
+  },
+  "root_cause": "Factory pre-freeze output validation checked shared-behavior schema and obligation ID existence but not the authoritative production/test cross-owner feasibility invariant. The candidate therefore bypassed the typed semantic-repair loop and failed only during immutable portfolio construction.",
+  "root_cause_class": "factory.ce_prefreeze_validation_authority_parity_gap",
+  "not_root_cause": [
+    "ToolSpecRegistry alias or argument normalization",
+    "Director edit_file parsing",
+    "provider context token truncation",
+    "authoritative Chief Engineer feasibility gate strictness"
+  ],
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_ce_evidence.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py"
+    ],
+    "behavior": "Detect cross-task production/test coverage gaps before portfolio freeze, retain a dedicated stable diagnosis, and authorize one bounded same-CE typed semantic patch with explicit dual-sided coverage instructions."
+  },
+  "validation": {
+    "red_green": "Regression failed before the fix and passed after it.",
+    "pytest": "57 passed",
+    "ruff": "clean",
+    "mypy": "clean",
+    "exact_candidate_replay": "r46 candidate now routes to the specific typed semantic diagnosis"
+  },
+  "next_action": "Run fresh isolated L3-22 r47 and verify the CE final provider request contains the specific diagnosis, full candidate and obligation context, required submit tool, and then advances to Director handoff."
+}
+

@@ -69,9 +69,54 @@ def test_quality_repair_message_embeds_full_product_source_with_inline_unit_test
     assert "assert_eq!(report.verdict, Verdict::Conflicted);" in message
 
 
+def test_quality_repair_message_prioritizes_exact_compile_site_before_full_verifier(
+    tmp_path: Path,
+) -> None:
+    """A small verifier with repeated calls must lead with the failing line.
+
+    Live L3-22 exposed two ``Assign`` calls in one Go test file.  Full-file
+    context alone made the Director repeatedly edit the later, already-correct
+    occurrence while the compiler diagnostic at line 6 remained unchanged.
+    """
+
+    source = tmp_path / "internal" / "bubbletea" / "note_test.go"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "package bubbletea\n\n"
+        "func TestEmpty(t *testing.T) {\n"
+        "    b := NewBoard()\n"
+        "    // exact failing occurrence follows\n"
+        "    err := b.Assign(Note{})\n"
+        "    _ = err\n"
+        "}\n\n"
+        "func TestValid(t *testing.T) {\n"
+        "    b := NewBoard()\n"
+        "    if _, err := b.Assign(validNote()); err != nil { t.Fatal(err) }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair Go tests.",
+        artifact_quality_errors=[
+            "internal/bubbletea/note_test.go:6:9: assignment mismatch: "
+            "1 variable but b.Assign returns 2 values"
+        ],
+        changed_files=["internal/bubbletea/note_test.go"],
+        repair_target_files=["internal/bubbletea/note_test.go"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "PRIMARY DIAGNOSTIC SITE" in message
+    assert "Resolve this exact path:line compiler/verifier diagnostic first" in message
+    assert "6:     err := b.Assign(Note{})" in message
+    assert message.index("PRIMARY DIAGNOSTIC SITE") < message.index("CURRENT UTF-8 CONTENT OF REPAIR TARGETS")
+    assert "if _, err := b.Assign(validNote())" in message
+
+
 def test_quality_repair_message_keeps_head_fallback_without_matching_diagnostic(tmp_path: Path) -> None:
     source = tmp_path / "main_test.go"
-    source.write_text("head contract\n" + ("x" * 6000), encoding="utf-8")
+    source.write_text("head contract\n" + ("x" * 26000), encoding="utf-8")
 
     message = _build_materialization_quality_repair_message(
         original_message="Repair Go tests.",

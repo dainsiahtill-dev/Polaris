@@ -1,0 +1,64 @@
+{
+  "schema_version": "polaris.defect-record.v1",
+  "defect_id": "L3-22-R42-TEST-ARTIFACT-COMPILE-DEADLETTER",
+  "status": "FIX_UNIT_VERIFIED_FRESH_R43_PENDING",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "factory_run_id": "factory_a5162fc14df1",
+  "workspace": "/tmp/factory-bench-l3-22-r42/workspaces/15f97c246a52-9d18a1f2353c7799/L3-22-5aaab9a81e5e829d/466d20d198abf9bfe3bfcdd4",
+  "symptom": {
+    "factory_stage": "director_dispatch",
+    "factory_error_code": "director.canonical_task_boundary_missing",
+    "failed_task": "TASK-3",
+    "physical_result": "6 valid write_file calls decoded; first test write failed; 5 serial siblings aborted",
+    "artifact_result": "production files landed, but no test files or README landed"
+  },
+  "dynamic_evidence": {
+    "context_snapshot_ref": "77c11c38556572774d6a052e",
+    "final_request_role": "director",
+    "final_request_context_pass": true,
+    "final_request_tool": "write_file",
+    "native_tool_call_count": 6,
+    "first_call_id": "call_eYZFst5DSF3J2VXvAUstpAUg",
+    "physical_error_type": "source_compile_regression",
+    "physical_error_sample": "main_test.go references undefined sim.RunDemo and sibling interfaces that do not exist in the materialized production code",
+    "sibling_abort_reason": "serial_mutation_sibling_aborted_after_failure",
+    "effect_receipt_count": 0,
+    "task_outcome": "tool_dispatch_failed: decoded tool batch produced only failed tool results"
+  },
+  "root_cause": {
+    "classification": "wrong-layer fail-closed boundary",
+    "detail": "The physical write precommit compile guard treated a test/verifier API mismatch as an unrecoverable physical mutation failure. DEO dead-lettered the first test artifact and serial-aborted all sibling test and README writes, preventing workspace-quality diagnostics and same-Director repair from ever observing the residual.",
+    "not_caused_by": [
+      "missing CE blueprint",
+      "missing Director tools",
+      "context overload",
+      "tool argument normalization",
+      "target project baseline"
+    ]
+  },
+  "invariant": "Syntactically valid test/verifier artifacts may expose compile or API mismatches and must land as workspace-quality residuals for same-owner Director repair; production-source compile regressions remain precommit fail-closed.",
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/execution_tools.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_execution_tools.py"
+    ],
+    "mechanism": "Classify cross-language test artifacts and defer only their compile gate to workspace quality. Syntax validation, path policy, JobToken scope, physical receipts, verifier failure, repair limits, and final delivery gates remain authoritative.",
+    "production_source_policy": "unchanged_fail_closed",
+    "test_artifact_policy": "land_then_diagnose_repair_revalidate"
+  },
+  "verification": {
+    "targeted": "3 passed",
+    "execution_tools_full": "22 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "diff_check": "passed",
+    "broader_batch": "103 passed, 2 unrelated pre-existing transaction_controller failures",
+    "fresh_bench": "R43 pending"
+  },
+  "residual_risk": [
+    "R43 must prove the test artifacts land, workspace quality emits structured diagnostics, and the same Director owner repairs or cleanly isolates them.",
+    "The existing transaction_controller dirty refactor has two independent failing tests and must be closed by its owner."
+  ],
+  "next_action": "Run fresh isolated L3-22 R43 with full budget; audit every final provider request and verify test-write effect receipts, workspace-quality repair rounds, TaskRuntime settlement, QA, and real entrypoint."
+}

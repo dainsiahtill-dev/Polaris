@@ -49,10 +49,19 @@ def _protected_platform_roots(workspace: Path) -> tuple[Path, ...]:
         (candidate for candidate in (runtime_root, *runtime_root.parents) if candidate.name == ".polaris"),
         runtime_root,
     )
-    protected = tuple(dict.fromkeys((polaris_home, runtime_authority_root)))
-    if any(root == workspace or root in workspace.parents or workspace in root.parents for root in protected):
-        raise RuntimeError("workspace overlaps protected Polaris authority storage")
-    return protected
+    workspace_authority_root = (workspace / ".polaris").resolve()
+    protected: list[Path] = []
+    for root in dict.fromkeys((polaris_home, runtime_authority_root)):
+        # Project-local authority is the canonical runtime layout.  It is
+        # already hidden by the dedicated workspace ``.polaris`` tmpfs below
+        # and rejected as verifier cwd/input, so treating it as an external
+        # overlapping root would make every valid project unverifiable.
+        if root == workspace_authority_root:
+            continue
+        if root == workspace or root in workspace.parents or workspace in root.parents:
+            raise RuntimeError("workspace overlaps protected Polaris authority storage")
+        protected.append(root)
+    return tuple(protected)
 
 
 def _is_within(path: Path, root: Path) -> bool:

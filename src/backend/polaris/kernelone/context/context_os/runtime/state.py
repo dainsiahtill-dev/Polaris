@@ -11,7 +11,6 @@ import hashlib
 import logging
 import re
 import time
-from dataclasses import replace
 from typing import Any
 
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
@@ -26,6 +25,7 @@ from ..helpers import (
     _utc_now_iso,
     get_metadata_value,
 )
+from ..model_utils import validated_replace
 from ..models_v2 import (
     ArtifactRecordV2 as ArtifactRecord,
     BudgetPlanV2 as BudgetPlan,
@@ -547,7 +547,12 @@ class _ContextOSStateMixin:
         stub_content = (
             artifact.content[:MAX_STUB_CHARS] + f"\n...[truncated, full content at {artifact.artifact_id}]..."
         )
-        return replace(
+        # ArtifactRecordV2 is a frozen Pydantic model, not a dataclass.  The
+        # large-artifact path is exercised during ContextOS handoff export, so
+        # dataclasses.replace() raised after a successful provider response and
+        # made the role turn look like an LLM failure.  Use the same validated
+        # model copy primitive as the rest of ContextOS.
+        return validated_replace(
             artifact,
             content=stub_content,
             metadata=tuple(

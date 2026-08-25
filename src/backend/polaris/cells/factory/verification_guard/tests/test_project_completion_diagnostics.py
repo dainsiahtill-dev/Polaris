@@ -357,6 +357,39 @@ def test_authoritative_query_returns_owner_task_bound_diagnostics(tmp_path: Path
     assert diagnostic.retry_class == "owner_rework"
 
 
+def test_ready_entrypoint_controlled_termination_is_not_rejected_by_exit_code(tmp_path: Path) -> None:
+    """A readiness-proven service is successful even after controlled SIGTERM.
+
+    ExecutionBroker derives ``status=passed`` only after the entrypoint became
+    ready and the platform terminated it deliberately.  VerificationGuard must
+    not reinterpret that expected negative exit code as a verifier failure.
+    """
+
+    contract = _contract()
+    rows = tuple(
+        replace(row, verifier_exit_code=-15)
+        if row.obligation_id == "verify.entrypoint"
+        else row
+        for row in _full_evidence(tmp_path, contract)
+    )
+    observation = ProjectCompletionOwnerObservationV1(
+        workspace=str(tmp_path.resolve()),
+        project_id=contract.project_id,
+        run_id=contract.run_id,
+        completion_contract_hash=contract.contract_hash,
+        contract=contract,
+        evidence=rows,
+        repair_coverage=(),
+    )
+    bind_project_completion_owner_observation_port(_Port(observation))
+
+    result = query_project_completion_diagnostics(_query(tmp_path, contract))
+
+    assert result.diagnostics == ()
+    assert result.failed_obligation_ids == ()
+    assert "verify.entrypoint" in result.passed_obligation_ids
+
+
 def test_owner_bundle_and_diagnostics_cannot_be_retagged_with_replace(tmp_path: Path) -> None:
     contract = _contract()
     observation = ProjectCompletionOwnerObservationV1(

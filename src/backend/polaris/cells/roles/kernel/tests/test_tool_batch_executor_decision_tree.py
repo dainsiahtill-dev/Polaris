@@ -601,7 +601,10 @@ async def test_token_scoped_failed_tool_batch_appends_failed_run_ledger_event(tm
 
     with pytest.raises(
         RuntimeError,
-        match=r"tool_dispatch_failed: decoded tool batch produced only failed tool results",
+        match=(
+            r"tool_dispatch_failed: decoded tool batch produced only failed tool results.*"
+            r"runtime denied write without producing an effect receipt"
+        ),
     ):
         await executor.execute_tool_batch(
             decision,

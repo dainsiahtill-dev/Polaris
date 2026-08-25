@@ -1,0 +1,64 @@
+id: vc-20260823-factory-ce-prefreeze-behavior-feasibility
+title: Factory CE pre-freeze behavior feasibility parity
+date: "2026-08-23"
+classification: pattern
+status: unit_passed_live_pending
+owner: codex
+scope:
+  - src/backend/polaris/cells/factory/pipeline/internal/factory_ce_evidence.py
+  - src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py
+  - src/backend/polaris/cells/factory/pipeline/tests/test_characterization_ce_handoff.py
+related_blueprint: src/backend/docs/blueprints/FACTORY_CE_PREFREEZE_BEHAVIOR_FEASIBILITY_20260823.md
+assumption_register:
+  - id: A1
+    statement: The r46 final provider payload is schema-valid but behavior-infeasible because its invariants cover a test verifier without any production artifact.
+    evidence:
+      - /tmp/factory-bench-l3-22-r46/workspaces/7fb3257e7846-f4af09b556f7b0b8/L3-22-5aaab9a81e5e829d/17a0e6a638c91b26127272c1/.polaris/runtime/state/blueprints/factory_4ebc79abc46f.review.json
+      - /tmp/factory-bench-l3-22-r46/workspaces/7fb3257e7846-f4af09b556f7b0b8/L3-22-5aaab9a81e5e829d/17a0e6a638c91b26127272c1/.polaris/runtime/state/blueprints/semantic-repair/L3-22/factory_4ebc79abc46f/babfcd91e6a59f1d36ab72d13e10096824e8bfd231c93b3d8f7a512f6ec95c32.json
+    verified: true
+  - id: A2
+    statement: Native tool decoding and ToolSpec normalization are not involved in the r46 CE failure.
+    evidence:
+      - Factory failed before Director dispatch at authoritative CE portfolio freeze.
+    verified: true
+  - id: A3
+    statement: The Factory pre-freeze validator can project the authoritative feasibility invariant without writing state or importing Chief Engineer internals.
+    evidence:
+      - src/backend/polaris/cells/factory/pipeline/internal/factory_ce_evidence.py
+      - src/backend/polaris/cells/chief_engineer/blueprint/internal/portfolio_behavior_feasibility.py
+    verified: true
+pre_mortem:
+  - risk: The parity check could reject same-task source and test ownership.
+    mitigation: Only enforce when required test owner differs from at least one required source owner.
+  - risk: A test verifier might be incorrectly ignored.
+    mitigation: Expand required test verifier coverage to its covered test artifacts, matching the authoritative validator.
+  - risk: The provider receives a generic diagnosis and repeats the same invalid patch.
+    mitigation: Preserve a dedicated stable diagnostic code and explicit dual-sided coverage instruction.
+verification_plan:
+  - command: PYTHONPATH=src/backend python -m ruff check --fix changed-python-files
+    expected: Ruff reports no remaining issues.
+  - command: PYTHONPATH=src/backend python -m ruff format changed-python-files
+    expected: Formatting completes.
+  - command: PYTHONPATH=src/backend python -m mypy changed-source-files
+    expected: Mypy succeeds.
+  - command: PYTHONPATH=src/backend python -m pytest -q CE-characterization authoritative-feasibility
+    expected: Pre-freeze and authoritative behavior feasibility tests pass.
+  - command: fresh isolated L3-22 r47
+    expected: The r46 behavior gap is repaired before portfolio freeze and CE either hands off or exposes a new exact residual.
+verification_results:
+  - command: targeted red/green regression
+    result: PASS
+    evidence: Test failed with empty errors before fix and passed after fix.
+  - command: ruff check --fix and ruff format
+    result: PASS
+    evidence: All checks passed; three files formatted.
+  - command: mypy changed source files
+    result: PASS
+    evidence: Success with no issues in two source files.
+  - command: pytest CE characterization plus authoritative feasibility
+    result: PASS
+    evidence: 57 passed in 8.54 seconds.
+  - command: exact r46 persisted candidate replay
+    result: PASS
+    evidence: Specific cross_task_production_test_coverage_missing diagnosis with only behavior invariant and task ref operations.
+

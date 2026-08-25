@@ -1,0 +1,56 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-22-R39-STRUCTURED-RESULT-TOOL-LIFECYCLE",
+  "status": "CLOSED_LIVE_R40_RESULT_TRANSPORT_CLASSIFIED",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "factory_run_id": "factory_5cc9967b10ba",
+  "workspace": "/tmp/factory-bench-l3-22-r39/workspaces/f4b06708b0a5-412972af44d95fa0/L3-22-5aaab9a81e5e829d/cc1af7706cff1d7ed08d2a28",
+  "symptom": "PM completed and the primary CE response reached bounded non-stream schema repair, but CE produced 0/3 accepted blueprints because the already-consumed submit_structured_role_output result transport was classified as a dropped executable tool dispatch.",
+  "exact_run_evidence": {
+    "runner_wall_clock_seconds": 94.8,
+    "pm_completed": true,
+    "primary_ce_error": "structured_output_payload_schema_mismatch:$:'project_completion_contract' is a required property",
+    "bounded_schema_repair_executed": true,
+    "r38_error_absent": "structured_output_tool_arguments_must_be_object",
+    "physical_failure": "RuntimeError: tool_dispatch_dropped: provider emitted 1 tool call(s), but no executable tool batch was decoded",
+    "trace": "turn_transaction_controller -> transaction.decision_pipeline.run_decision_pipeline",
+    "factory_result": "Chief Engineer portfolio review generated 0/3 blueprints; llm_calls=2; signals=2",
+    "residual_module": "M03_tool_batch_deo",
+    "backend_log": "/home/dains/.polaris/instances/factory-bench-l3-22-r39-l3-22-run-f4b06708b0a5-3a544b3f6c152c4d/logs/backend.log"
+  },
+  "root_cause": {
+    "confirmed": "normalize_structured_output_response strictly validated the forced submit_structured_role_output payload, projected it into canonical content, cleared executable tool_calls/native_tool_calls, and emitted side_effect=false/tool_lifecycle=false hash-bound evidence. run_decision_pipeline subsequently reconstructed one native call from audit metadata and applied the generic executable-tool dropped guard, so a valid non-executable result protocol was fatally misclassified.",
+    "not_caused_by": [
+      "missing PM contract",
+      "missing CE provider request context",
+      "Director execution",
+      "target project code",
+      "provider timeout",
+      "invalid Anthropic input normalization"
+    ]
+  },
+  "required_fix_properties": [
+    "Exempt only an internally normalized, hash-bound, strict submit_structured_role_output response whose evidence says side_effect=false and tool_lifecycle=false.",
+    "Do not exempt write tools, arbitrary provider metadata, malformed JSON, hash mismatch, or executable tool batches.",
+    "Apply the trusted result-transport classification consistently at both dropped-dispatch guards.",
+    "Preserve auditable decision metadata showing that the result protocol was consumed without executable dispatch."
+  ],
+  "verification_required": [
+    "Positive transaction test: trusted result transport reaches a final decision without dispatch.",
+    "Negative transaction test: forged or hash-mismatched evidence remains tool_dispatch_dropped.",
+    "Existing native write/no-decode fail-closed tests remain green.",
+    "Ruff, mypy, structured-output transport, decision-pipeline, and CE characterization gates pass.",
+    "Fresh isolated r40 accepts CE blueprints and reaches Director without tool_dispatch_dropped."
+  ],
+  "closure_evidence": {
+    "fresh_factory_run_id": "factory_3a7b0d80259c",
+    "fresh_workspace": "/tmp/factory-bench-l3-22-r40/workspaces/769820cd64ca-a1656cd0e0695ed1/L3-22-5aaab9a81e5e829d/fe943cc63a3b19d0141e2156",
+    "result_transport_consumed": true,
+    "tool_dispatch_dropped_absent": true,
+    "bounded_semantic_repairs_completed": 2,
+    "new_primary_residual": "chief_engineer.semantic_repair_exhausted",
+    "targeted_tests": "320 passed",
+    "note": "R40 proved the non-effect structured result protocol no longer entered executable dispatch. CE then advanced to semantic repair and failed for a distinct duplicate-path batch-composition defect."
+  }
+}

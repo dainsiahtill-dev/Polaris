@@ -365,9 +365,14 @@ class _FactoryRunServiceStageMixin:
                 and current_lease.run_id == run_id
                 and current_lease.state.value in {"active", "draining"}
             )
+        # Failed Director/QA stages need an immediate owner-local rework
+        # decision before terminal drain.  Successful QA is different: the
+        # Factory owner cannot authorize completed_verified until complete_run
+        # has durably appended the terminal ``completed`` event.  Querying here
+        # races that event and falsely reports factory_chain_owner_query_failed.
         completion_facts_changed = (
             result.stage == "director_dispatch" and result.status != "success"
-        ) or result.stage == "quality_gate"
+        ) or (result.stage == "quality_gate" and result.status != "success")
         if completion_facts_changed:
             try:
                 completion_result = await self._notify_project_completion_supervisor(run_id, result)

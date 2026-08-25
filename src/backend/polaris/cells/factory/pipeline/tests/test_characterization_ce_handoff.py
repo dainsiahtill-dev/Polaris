@@ -133,9 +133,7 @@ class TestChiefEngineerHandoffGuards:
 
         assert recovered is failed
 
-    def test_structural_recovery_accepts_ce_provider_item_wrappers_before_schema_retry(
-        self, tmp_path: Path
-    ) -> None:
+    def test_structural_recovery_accepts_ce_provider_item_wrappers_before_schema_retry(self, tmp_path: Path) -> None:
         executor = OrchestrationStageExecutor(tmp_path)
         valid = _single_task_chief_engineer_result().metadata["structured_output"]
         malformed = json.loads(json.dumps(valid))
@@ -152,9 +150,7 @@ class TestChiefEngineerHandoffGuards:
             "owner_task_id": "TASK-CANCEL",
             "consumer_task_ids": {"item": ["TASK-CANCEL"]},
             "covered_obligation_ids": {"item": ["artifact-1"]},
-            "verification_examples": {
-                "item": {"given": "input", "when": "processed", "then": "stable"}
-            },
+            "verification_examples": {"item": {"given": "input", "when": "processed", "then": "stable"}},
         }
         malformed["construction_plan"]["item"] = [
             {
@@ -163,9 +159,7 @@ class TestChiefEngineerHandoffGuards:
                 "owner_task_id": "TASK-CANCEL",
                 "consumer_task_ids": {"item": ["TASK-CANCEL"]},
                 "covered_obligation_ids": {"item": ["artifact-1"]},
-                "verification_examples": {
-                    "item": {"given": "input", "when": "processed", "then": "stable"}
-                },
+                "verification_examples": {"item": {"given": "input", "when": "processed", "then": "stable"}},
             }
         ]
         malformed["construction_plan"]["TASK-CANCEL"] = {
@@ -191,9 +185,7 @@ class TestChiefEngineerHandoffGuards:
             "task_plans",
         }
         assert len(construction["shared_behavior_contract"]["invariants"]) == 2
-        assert set(
-            recovered.metadata["chief_engineer_portfolio_structural_recovery"]["repair_codes"]
-        ) >= {
+        assert set(recovered.metadata["chief_engineer_portfolio_structural_recovery"]["repair_codes"]) >= {
             "move_shared_behavior_item_to_invariants",
             "move_construction_items_to_behavior_invariants",
             "remove_redundant_lifted_task_plan",
@@ -264,6 +256,73 @@ class TestChiefEngineerHandoffGuards:
         assert diagnosis.diagnostic_codes == (
             "chief_engineer.delivery_depth.prod_files_below_minimum",
             "chief_engineer.shared_behavior_contract.invalid",
+        )
+        assert diagnosis.allowed_operations == (
+            "artifact_upsert",
+            "behavior_invariant_upsert",
+            "task_behavior_ref_replace",
+        )
+
+    def test_semantic_diagnosis_preserves_cross_task_behavior_coverage_failure_class(self) -> None:
+        task_ids = ("TASK-PROD", "TASK-TEST")
+        candidate = ChiefEngineerSemanticRepairCandidateV1(
+            workspace="/tmp/workspace",
+            project_id="L3-22",
+            run_id="factory-test",
+            pm_contract_hash="a" * 64,
+            task_ids=task_ids,
+            task_set_hash=chief_engineer_semantic_repair_task_set_hash(task_ids),
+            candidate={
+                "construction_plan": {"task_plans": {}},
+                "project_completion_contract": {"obligations": {}},
+                "risk_flags": [],
+            },
+        )
+
+        diagnosis = OrchestrationStageExecutor._chief_engineer_semantic_repair_diagnosis(
+            candidate=candidate,
+            output_errors=[
+                "shared_behavior_contract behavior invariant lacks cross-task "
+                "production-and-test obligation coverage: test_owner=TASK-TEST"
+            ],
+        )
+
+        assert diagnosis.diagnostic_codes == (
+            "chief_engineer.shared_behavior_contract.cross_task_production_test_coverage_missing",
+        )
+        assert diagnosis.allowed_operations == (
+            "behavior_invariant_upsert",
+            "task_behavior_ref_replace",
+        )
+
+    def test_test_depth_diagnosis_authorizes_atomic_cross_task_behavior_binding(self) -> None:
+        """Exact L3-23 r06: new test artifacts must be bindable in the same patch."""
+
+        task_ids = ("TASK-PROD", "TASK-TEST")
+        candidate = ChiefEngineerSemanticRepairCandidateV1(
+            workspace="/tmp/workspace",
+            project_id="L3-23",
+            run_id="factory-r06",
+            pm_contract_hash="a" * 64,
+            task_ids=task_ids,
+            task_set_hash=chief_engineer_semantic_repair_task_set_hash(task_ids),
+            candidate={
+                "construction_plan": {"task_plans": {}},
+                "project_completion_contract": {"obligations": {}},
+                "risk_flags": [],
+            },
+        )
+
+        diagnosis = OrchestrationStageExecutor._chief_engineer_semantic_repair_diagnosis(
+            candidate=candidate,
+            output_errors=[
+                "project_completion_contract delivery depth infeasible: test_files=1 < 2"
+            ],
+        )
+
+        assert diagnosis.diagnostic_codes == (
+            "chief_engineer.delivery_depth.test_files_below_minimum",
+            "chief_engineer.shared_behavior_contract.cross_task_production_test_coverage_missing",
         )
         assert diagnosis.allowed_operations == (
             "artifact_upsert",
@@ -399,9 +458,7 @@ class TestChiefEngineerHandoffGuards:
         """Exact L3-22 r23/r24: verification obligations are completion obligations."""
 
         payload = json.loads(json.dumps(_single_task_chief_engineer_result().metadata["structured_output"]))
-        verification_id = payload["project_completion_contract"]["obligations"]["verification"][0][
-            "obligation_id"
-        ]
+        verification_id = payload["project_completion_contract"]["obligations"]["verification"][0]["obligation_id"]
         payload["construction_plan"]["shared_behavior_contract"] = {
             "invariants": [
                 {
@@ -427,6 +484,64 @@ class TestChiefEngineerHandoffGuards:
         )
 
         assert not any("unknown completion obligations" in error for error in errors)
+
+    def test_portfolio_output_routes_cross_task_behavior_coverage_gap_to_semantic_repair(self) -> None:
+        """L3-22 r46: schema-valid invariants must connect production and test facts."""
+
+        payload = json.loads(json.dumps(_single_task_chief_engineer_result().metadata["structured_output"]))
+        payload["construction_plan"]["task_plans"] = {
+            "TASK-PROD": {"behavior_invariant_refs": ["INV-SHARED"]},
+            "TASK-TEST": {"behavior_invariant_refs": ["INV-SHARED"]},
+        }
+        payload["project_completion_contract"] = _library_completion_requirements(
+            "src/product.py",
+            owner_task_ids=("TASK-PROD",),
+            test_path="tests/test_product.py",
+            test_owner_task_id="TASK-TEST",
+        )
+        payload["construction_plan"]["shared_behavior_contract"] = {
+            "invariants": [
+                {
+                    "invariant_id": "INV-SHARED",
+                    "statement": "Tests observe the production behavior owned by TASK-PROD.",
+                    "owner_task_id": "TASK-PROD",
+                    "consumer_task_ids": ["TASK-TEST"],
+                    # A test verifier expands only to the test artifact. It does
+                    # not prove which production artifact owns the behavior.
+                    "covered_obligation_ids": ["verify-test"],
+                    "verification_examples": [
+                        {
+                            "given": "a production implementation",
+                            "when": "the test verifier runs",
+                            "then": "the shared behavior is observed",
+                        }
+                    ],
+                }
+            ]
+        }
+
+        errors = OrchestrationStageExecutor._chief_engineer_portfolio_output_errors(
+            payload,
+            task_ids=("TASK-PROD", "TASK-TEST"),
+        )
+
+        assert errors == [
+            "shared_behavior_contract behavior invariant lacks cross-task production-and-test obligation coverage: "
+            "test_owner=TASK-TEST"
+        ]
+
+        payload["construction_plan"]["shared_behavior_contract"]["invariants"][0]["covered_obligation_ids"] = [
+            "artifact-1",
+            "verify-test",
+        ]
+
+        assert (
+            OrchestrationStageExecutor._chief_engineer_portfolio_output_errors(
+                payload,
+                task_ids=("TASK-PROD", "TASK-TEST"),
+            )
+            == []
+        )
 
     def test_portfolio_validation_rejects_delivery_depth_authority_deficit(self) -> None:
         payload = dict(_single_task_chief_engineer_result().metadata["structured_output"])
@@ -1283,7 +1398,9 @@ class TestChiefEngineerHandoffGuards:
             f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
         ]
         repair_command = commands[1]
-        assert repair_command.stream is True
+        # The primary CE attempt remains streaming; bounded schema repair is
+        # atomic so only a complete forced result-tool payload is validated.
+        assert repair_command.stream is False
         assert repair_command.metadata["max_retries"] == 0
         assert repair_command.metadata["validate_output"] is True
         assert repair_command.metadata["temperature"] == 0.0
@@ -1763,6 +1880,11 @@ class TestChiefEngineerHandoffGuards:
         second.error_message = (
             "structured_output_payload_schema_mismatch:$:'project_completion_contract' is a required property"
         )
+        # A transport/normalization failure may not carry the final-request
+        # audit back in RoleExecutionResult. Later bounded repair must retain
+        # the primary call's exact profile identity instead of re-inferring or
+        # masking the physical failure with profile-identity-missing.
+        second.metadata = {"provider_id": "test-provider", "model": "test-model"}
         results = [first, second, _single_task_chief_engineer_result()]
         commands: list[Any] = []
 
@@ -1793,6 +1915,12 @@ class TestChiefEngineerHandoffGuards:
         ]
         final_feedback = commands[-1].context["failure_feedback"]
         assert "'project_completion_contract' is a required property" in final_feedback["detail"]
+        assert commands[-1].metadata["inherited_prompt_profile_identity"] == {
+            "language": "python",
+            "task_type": "implement",
+            "prompt_stage": "blueprint",
+            "artifact": "library",
+        }
         review = json.loads(
             Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
                 encoding="utf-8"
@@ -2044,6 +2172,12 @@ class TestChiefEngineerHandoffGuards:
         assert commands[-1].context["chief_engineer_semantic_repair_diagnosis"]["diagnostic_codes"] == [
             "chief_engineer.delivery_depth.prod_files_below_minimum"
         ]
+        # A frozen semantic candidate plus typed diagnosis may retry one
+        # transport-validation miss in place.  This is NOT another CE semantic
+        # round: PM authority, candidate hash, diagnosis hash, claim, and role
+        # remain unchanged.  Plain schema reconstruction stays at zero retries.
+        assert commands[1].metadata["max_retries"] == 1
+        assert commands[2].metadata["max_retries"] == 1
         assert result.metadata["error_code"] == "chief_engineer.semantic_repair_exhausted"
         review = json.loads(
             Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(

@@ -13,7 +13,9 @@ from polaris.cells.roles.kernel.internal.structured_output_transport import (
     StructuredOutputStreamNormalizer,
     is_canonical_structured_output_stream_chunk,
     normalize_structured_output_response,
+    project_validated_structured_output_raw_response,
     resolve_structured_output_transport,
+    trusted_structured_output_response_evidence,
 )
 from polaris.cells.roles.kernel.public.structured_output_contracts import (
     STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
@@ -192,6 +194,77 @@ def test_non_stream_result_tool_is_normalized_to_json_without_tool_dispatch() ->
     assert normalized["structured_output_transport"]["tool_lifecycle"] is False
     assert normalized["structured_output_transport"]["side_effect"] is False
 
+    raw_response = project_validated_structured_output_raw_response(normalized)
+    assert raw_response is not None
+    assert trusted_structured_output_response_evidence(raw_response) is not None
+
+    forged_response = dict(normalized)
+    assert project_validated_structured_output_raw_response(forged_response) is None
+
+
+def test_non_stream_anthropic_tool_use_input_is_normalized_without_tool_dispatch() -> None:
+    """Regression: Anthropic native ``tool_use.input`` is the argument object."""
+
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _contract().to_context_projection()}
+    )
+    assert plan is not None
+    payload = {
+        "construction_plan": {"task_plans": {}},
+        "scope_for_apply": [],
+        "risk_flags": [],
+    }
+
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "type": "tool_use",
+                    "name": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "input": payload,
+                    "id": "call-anthropic-result-1",
+                }
+            ],
+        },
+        plan,
+    )
+
+    assert json.loads(normalized["content"]) == payload
+    assert normalized["tool_calls"] == []
+    assert normalized["structured_output_transport"]["call_id"] == "call-anthropic-result-1"
+
+
+@pytest.mark.parametrize("invalid_input", [None, [], 42, "not-json"])
+def test_non_stream_anthropic_tool_use_input_remains_fail_closed_for_non_objects(
+    invalid_input: object,
+) -> None:
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _contract().to_context_projection()}
+    )
+    assert plan is not None
+
+    expected_error = (
+        "structured_output_tool_arguments_invalid_json"
+        if invalid_input == "not-json"
+        else "structured_output_tool_arguments_must_be_object"
+    )
+    with pytest.raises(ValueError, match=expected_error):
+        normalize_structured_output_response(
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "type": "tool_use",
+                        "name": STRUCTURED_OUTPUT_TOOL_NAME,
+                        "input": invalid_input,
+                        "id": "call-anthropic-invalid",
+                    }
+                ],
+            },
+            plan,
+        )
+
 
 def test_result_tool_payload_is_validated_against_caller_schema() -> None:
     plan = resolve_structured_output_transport(
@@ -273,9 +346,7 @@ def test_schema_proven_displaced_root_members_recover_without_provider_retry() -
     )
     assert plan is not None
     malformed = {
-        "construction_plan": {
-            "project_interface_contract": {"consumer_declarations": [{"consumer_file": "main.go"}]}
-        },
+        "construction_plan": {"project_interface_contract": {"consumer_declarations": [{"consumer_file": "main.go"}]}},
         "task_plans": {"TASK-1": {"summary": "models"}},
         "TASK-2": {"summary": "tests"},
         "provider_declarations": [{"owner_file": "models/model.go"}],
@@ -307,9 +378,7 @@ def test_schema_proven_displaced_root_members_recover_without_provider_retry() -
         "consumer_declarations": [{"consumer_file": "main.go"}],
         "provider_declarations": [{"owner_file": "models/model.go"}],
     }
-    assert construction_plan["shared_behavior_contract"] == {
-        "invariants": [{"invariant_id": "INV-1"}]
-    }
+    assert construction_plan["shared_behavior_contract"] == {"invariants": [{"invariant_id": "INV-1"}]}
     evidence = normalized["structured_output_transport"]
     assert evidence["schema_normalization_policy"] == "schema_proven_displaced_root_members_v1"
     assert evidence["schema_normalization_details"]["displaced_root_relocations"] == [

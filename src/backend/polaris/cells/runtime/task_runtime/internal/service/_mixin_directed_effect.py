@@ -984,6 +984,87 @@ class _DirectedEffectMixin(_ServiceMixinBase):
         canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(canonical).hexdigest()
 
+    def _terminal_removed_same_task_owner_row(
+        self,
+        *,
+        factory_run_id: str,
+        external_task_id: str,
+        page_size: int = 500,
+    ) -> Mapping[str, Any] | None:
+        """Read one exact terminal-drained owner from append-only execution facts.
+
+        Factory terminal drain intentionally removes mutable TaskRuntime files
+        after freezing the run.  A later QA-only retry must not replay PM, CE,
+        or Director merely to recreate that row.  TaskRuntime can safely
+        restore it from its own latest ``runtime_reset_removed`` fact, provided
+        the run/task identity is unique and the newest fact is actually a
+        terminal-drain tombstone.
+        """
+
+        per_page = max(1, int(page_size))
+        first_page = self._query_execution_fact_events(limit=1, offset=0)
+        total = int(getattr(first_page, "total", 0) or 0)
+        if total <= 0:
+            return None
+
+        latest_task_ids: set[str] = set()
+        matching: list[Mapping[str, Any]] = []
+        cursor = total
+        while cursor > 0:
+            offset = max(0, cursor - per_page)
+            page = self._query_execution_fact_events(limit=cursor - offset, offset=offset)
+            events = [event for event in list(getattr(page, "events", []) or []) if isinstance(event, dict)]
+            for event in reversed(events):
+                row = self._project_execution_fact_event_row(event)
+                if row is None:
+                    continue
+                runtime_task_id = str(row.get("id") or row.get("task_id") or "").strip()
+                if not runtime_task_id or runtime_task_id in latest_task_ids:
+                    continue
+                latest_task_ids.add(runtime_task_id)
+                if str(row.get("factory_run_id") or "").strip() != factory_run_id:
+                    continue
+                aliases = self._same_task_external_aliases(row)
+                if external_task_id in aliases and len(aliases) > 1:
+                    raise ValueError("same_task_local_rework_task_identity_conflict")
+                if aliases == {external_task_id}:
+                    matching.append(row)
+            cursor = offset
+
+        if not matching:
+            return None
+        # One PM task may have several numeric TaskRuntime generations across
+        # terminal drain/retry epochs.  Those older tombstones are history,
+        # not concurrent owners.  The append sequence selects the single
+        # latest generation; alias conflicts *within* that row still fail
+        # closed above.
+        row = max(matching, key=lambda item: int(item.get("fact_event_seq") or 0))
+        status = str(row.get("execution_state") or row.get("status") or "").strip().lower()
+        if status != "removed":
+            return None
+        return row
+
+    def _rehydrate_terminal_removed_same_task_owner(
+        self,
+        *,
+        factory_run_id: str,
+        external_task_id: str,
+    ) -> bool:
+        """Restore exactly one terminal-drained owner into mutable TaskRuntime."""
+
+        row = self._terminal_removed_same_task_owner_row(
+            factory_run_id=factory_run_id,
+            external_task_id=external_task_id,
+        )
+        if row is None:
+            return False
+        result = self.import_task_rows_for_reexecution(
+            [row],
+            source="runtime.task_runtime.same_task_local_rework_terminal_rehydrate",
+            source_task_dir="task_runtime.execution",
+        )
+        return bool(result.get("success")) and len(result.get("changed_files") or []) == 1
+
     def prepare_same_task_local_rework(
         self,
         command: PrepareSameTaskLocalReworkCommandV1,
@@ -1032,6 +1113,30 @@ class _DirectedEffectMixin(_ServiceMixinBase):
                 continue
             if aliases == {external_task_id}:
                 matching_rows.append(row)
+        if not matching_rows:
+            try:
+                rehydrated = self._rehydrate_terminal_removed_same_task_owner(
+                    factory_run_id=command.factory_run_id,
+                    external_task_id=external_task_id,
+                )
+            except (RuntimeError, TypeError, ValueError) as exc:
+                if str(exc) == "same_task_local_rework_task_identity_conflict":
+                    return self._same_task_local_rework_result(
+                        ok=False,
+                        code="same_task_local_rework_task_identity_conflict",
+                        reason="Terminal TaskRuntime facts expose conflicting PM task identities",
+                        external_task_id=external_task_id,
+                    )
+                rehydrated = False
+            if rehydrated:
+                projection = self.query_observable_task_rows_projection().rows_for_factory_run(
+                    command.factory_run_id
+                )
+                matching_rows = [
+                    row
+                    for row in projection
+                    if self._same_task_external_aliases(row) == {external_task_id}
+                ]
         if len(matching_rows) != 1:
             return self._same_task_local_rework_result(
                 ok=False,
@@ -1332,7 +1437,7 @@ class _DirectedEffectMixin(_ServiceMixinBase):
         row_attempt = row.get("claim_attempt") or runtime_map.get("attempt") or fact_map.get("attempt")
         row_task_id = 0
         raw_row_id = row.get("id")
-        if not isinstance(raw_row_id, bool):
+        if isinstance(raw_row_id, (int, str)) and not isinstance(raw_row_id, bool):
             try:
                 row_task_id = int(raw_row_id)
             except (TypeError, ValueError):

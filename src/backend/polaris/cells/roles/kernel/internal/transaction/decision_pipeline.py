@@ -40,6 +40,9 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     native_tool_calls_from_response,
     provider_response_hash,
 )
+from polaris.cells.roles.kernel.internal.structured_output_transport import (
+    trusted_structured_output_response_evidence,
+)
 from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
     build_corrective_context,
     evaluate_decode_corrective,
@@ -201,6 +204,17 @@ def ensure_native_write_tool_batch_or_fail(
     if _decision_has_executable_tool_batch(decision):
         return decision
 
+    structured_result_evidence = trusted_structured_output_response_evidence(llm_response)
+    if structured_result_evidence is not None:
+        return _with_decision_metadata(
+            decision,
+            {
+                **dict(decision_metadata),
+                "structured_output_transport": structured_result_evidence,
+                "structured_output_transport_consumed_without_dispatch": True,
+            },
+        )
+
     recovered = decoder.recover_executable_tool_batch_decision(llm_response, TurnId(turn_id))
     if recovered is not None and _decision_has_executable_tool_batch(recovered):
         recovered_metadata = dict(recovered.get("metadata") or {})
@@ -320,7 +334,12 @@ async def run_decision_pipeline(
     decision_metadata.setdefault("provider_response_hash", provider_response_hash(llm_response, decision_metadata))
     project_native_tool_call_facts_to_metadata(decision_metadata, native_tool_call_facts)
     decision = _with_decision_metadata(decision, decision_metadata)
-    if tool_dispatch_dropped_guard_applies(
+    structured_result_evidence = trusted_structured_output_response_evidence(llm_response)
+    if structured_result_evidence is not None:
+        decision_metadata["structured_output_transport"] = structured_result_evidence
+        decision_metadata["structured_output_transport_consumed_without_dispatch"] = True
+        decision = _with_decision_metadata(decision, decision_metadata)
+    if structured_result_evidence is None and tool_dispatch_dropped_guard_applies(
         native_tool_call_facts=native_tool_call_facts,
         tool_definitions_present=bool(tool_definitions),
         decoded_tool_batch_present=bool(decision.get("tool_batch")),

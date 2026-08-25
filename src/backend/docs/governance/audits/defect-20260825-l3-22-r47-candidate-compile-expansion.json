@@ -1,0 +1,27 @@
+{
+  "schema_version": "polaris.defect-record.v1",
+  "defect_id": "L3-22-R47-CANDIDATE-COMPILE-EXPANSION",
+  "status": "FIXED_LIVE_REPLAY_ACTIVE",
+  "severity": "P0",
+  "run_id": "factory_cbc114bc122b",
+  "symptom": "Director repair changed a Go API on an already-red workspace and expanded two compiler diagnostics into failures across multiple packages.",
+  "dynamic_debug_evidence": {
+    "before": "Two Go compile diagnostics in the exact same-run repair input.",
+    "after": "go test ./... reported assignment mismatches and undefined symbols in root, bubbletea, physics, and sandbox packages.",
+    "old_gate_reason": "baseline does not compile",
+    "old_gate_behavior": "candidate shadow compile skipped and mutation accepted"
+  },
+  "root_cause": "candidate_compile_gate only compared candidates when the baseline compiled, treating any red baseline as permission for an unbounded mutation.",
+  "fix_file": "src/backend/polaris/kernelone/quality/candidate_compile_gate.py",
+  "fix": "Always run the Go shadow candidate; reject proven diagnostic-count expansion while allowing compile success, diagnostic reduction, or bounded same-count forward-unmask.",
+  "tests": [
+    "test_rejects_candidate_that_expands_existing_go_diagnostics",
+    "test_allows_candidate_that_reduces_existing_go_diagnostics"
+  ],
+  "validation": {
+    "pytest": "21 passed in combined closure suite",
+    "ruff": "passed",
+    "mypy": "passed"
+  },
+  "residual_risk": "Equal-count semantic substitutions remain allowed and must be bounded by effect receipts, diagnosis hashes, and verifier progress."
+}

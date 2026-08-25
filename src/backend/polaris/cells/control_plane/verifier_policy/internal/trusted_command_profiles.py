@@ -373,8 +373,12 @@ def evaluate_builtin_proof(
         matches = re.findall(r"test result:\s*ok\.\s*(\d+)\s+passed", output, flags=re.IGNORECASE)
         return any(int(value) > 0 for value in matches)
     if normalized_profile == "go.test":
-        lowered = output.casefold()
-        return "[no test files]" not in lowered and bool(re.search(r"(?m)^ok\s+\S+", output))
+        # ``go test ./...`` legitimately reports ``[no test files]`` for
+        # auxiliary packages (for example ``cmd/<entrypoint>``) while other
+        # packages in the same authoritative run execute real tests.  Reject
+        # only an all-empty run; one successful package line proves that the
+        # command exercised at least one package test suite.
+        return bool(re.search(r"(?m)^ok\s+\S+", output))
     if normalized_profile == "node.script_test":
         patterns = (
             r"(?im)^\s*tests?\s*:?\s*(\d+)\s+passed",

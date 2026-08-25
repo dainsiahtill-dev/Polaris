@@ -1,0 +1,24 @@
+{
+  "schema_version": "polaris.defect-record.v1",
+  "defect_id": "L3-22-R47-TASK-BOUNDARY-COMMAND-RECEIPT",
+  "status": "FIXED_LIVE_REPLAY_ACTIVE",
+  "severity": "P0",
+  "run_id": "factory_cbc114bc122b",
+  "symptom": "TaskBoundary emitted completed_verified with required_verifiers=[] while the same Director turn contained a failed go test receipt.",
+  "dynamic_debug_evidence": {
+    "ledger": ".polaris/runtime/control_plane/ledger/director-eca682efb057.ndjson",
+    "physical_effect": "edit effect receipt succeeded",
+    "verifier": "go test -count=0 ./... exited 1",
+    "incorrect_verdict": "completed_verified"
+  },
+  "root_cause": "director_task_boundary_verifier_policy consumed only optional context policy and ignored execute_command receipts already present in tool_results.",
+  "fix_file": "src/backend/polaris/cells/roles/kernel/internal/kernel/task_boundary.py",
+  "fix": "Project every execute_command/run_command receipt into required/completed/failed verifier obligations before building the boundary verdict.",
+  "test": "test_director_task_boundary_verdict_does_not_ignore_failed_command_receipt",
+  "validation": {
+    "pytest": "12 task-boundary tests passed; 21 combined closure tests passed",
+    "ruff": "passed",
+    "mypy": "passed"
+  },
+  "residual_risk": "Command-name normalization is intentionally receipt-derived; future typed verifier ids should replace display command strings without weakening failure authority."
+}

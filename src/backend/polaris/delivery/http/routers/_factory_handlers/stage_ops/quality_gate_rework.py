@@ -228,6 +228,28 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
         record = entry.to_dict() if hasattr(entry, "to_dict") else entry
         if not isinstance(record, dict):
             continue
+        metadata_raw = record.get("metadata")
+        metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+        completion_action_raw = metadata.get("factory_local_rework")
+        completion_action = completion_action_raw if isinstance(completion_action_raw, Mapping) else {}
+        completion_action_id = str(completion_action.get("action_id") or "").strip()
+        if re.fullmatch(r"[0-9a-f]{64}", completion_action_id) is not None:
+            summary["evaluated_count"] += 1
+            summary["reopened_count"] += 1
+            summary["requested"] = True
+            summary["tasks"].append(
+                {
+                    "task_id": str(record.get("id") or record.get("task_id") or "").strip(),
+                    "external_task_id": _resolve_task_identifier(metadata, record),
+                    "retry_count": int(completion_action.get("rework_attempt") or 1),
+                    "max_retries": _resolve_quality_rework_max_cycles(),
+                    "exhausted": False,
+                    "reason": "project_completion_owner_rework_authorized",
+                    "project_completion_action_id": completion_action_id,
+                    "transition_owner": "runtime.task_runtime",
+                }
+            )
+            continue
         task_key = task_record_routing_key(record)
         owner_handoff_request = owner_handoff_index.matched_owner_handoff_by_task_key.get(task_key, {})
         if owner_handoff_index.all_handoff_requests:
@@ -250,28 +272,6 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
             summary["skipped_count"] += 1
             continue
 
-        metadata_raw = record.get("metadata")
-        metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
-        completion_action_raw = metadata.get("factory_local_rework")
-        completion_action = completion_action_raw if isinstance(completion_action_raw, Mapping) else {}
-        completion_action_id = str(completion_action.get("action_id") or "").strip()
-        if re.fullmatch(r"[0-9a-f]{64}", completion_action_id) is not None:
-            summary["evaluated_count"] += 1
-            summary["reopened_count"] += 1
-            summary["requested"] = True
-            summary["tasks"].append(
-                {
-                    "task_id": str(record.get("id") or record.get("task_id") or "").strip(),
-                    "external_task_id": _resolve_task_identifier(metadata, record),
-                    "retry_count": int(completion_action.get("rework_attempt") or 1),
-                    "max_retries": _resolve_quality_rework_max_cycles(),
-                    "exhausted": False,
-                    "reason": rework_reason,
-                    "project_completion_action_id": completion_action_id,
-                    "transition_owner": "runtime.task_runtime",
-                }
-            )
-            continue
         adapter_result_raw = metadata.get("adapter_result")
         adapter_result: dict[str, Any] = adapter_result_raw if isinstance(adapter_result_raw, dict) else {}
         retry_count = _safe_rework_int(
@@ -447,7 +447,11 @@ def _read_quality_gate_rework_summary(workspace: str) -> dict[str, Any]:
             continue
         metadata_raw = record.get("metadata")
         metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
-        requested = bool(metadata.get("qa_rework_requested"))
+        completion_action_raw = metadata.get("factory_local_rework")
+        completion_action = completion_action_raw if isinstance(completion_action_raw, Mapping) else {}
+        completion_action_id = str(completion_action.get("action_id") or "").strip()
+        completion_action_requested = re.fullmatch(r"[0-9a-f]{64}", completion_action_id) is not None
+        requested = bool(metadata.get("qa_rework_requested")) or completion_action_requested
         exhausted = bool(metadata.get("qa_rework_exhausted"))
         if not requested and not exhausted:
             continue
@@ -462,11 +466,16 @@ def _read_quality_gate_rework_summary(workspace: str) -> dict[str, Any]:
             "task_id": str(record.get("id") or record.get("task_id") or "").strip(),
             "external_task_id": _resolve_task_identifier(metadata, record),
             "status": status,
-            "reason": str(metadata.get("qa_rework_reason") or "").strip(),
+            "reason": str(
+                metadata.get("qa_rework_reason")
+                or ("project_completion_owner_rework_authorized" if completion_action_requested else "")
+            ).strip(),
             "retry_count": metadata.get("qa_rework_retry_count"),
             "max_retries": metadata.get("qa_rework_max_retries"),
             "exhausted": exhausted,
         }
+        if completion_action_requested:
+            task_entry["project_completion_action_id"] = completion_action_id
         if owner_handoff_index is not None:
             task_key = task_record_routing_key(record)
             matched_request = owner_handoff_index.matched_owner_handoff_by_task_key.get(task_key, {})

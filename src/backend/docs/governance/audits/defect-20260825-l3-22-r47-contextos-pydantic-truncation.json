@@ -1,0 +1,35 @@
+{
+  "schema_version": "polaris.defect-record.v1",
+  "defect_id": "L3-22-R47-CONTEXTOS-PYDANTIC-TRUNCATION",
+  "status": "FIXED_LIVE_REPLAY_PENDING_TERMINAL",
+  "severity": "P0",
+  "run_id": "factory_cbc114bc122b",
+  "workspace": "/tmp/factory-bench-l3-22-r47/workspaces/9f8b29a2d9f2-709e51abbe0150f8/L3-22-5aaab9a81e5e829d/6a7bb7519e5dec8472f9ec1e",
+  "symptom": "A successful Director provider/tool turn failed during ContextOS handoff export with replace() should be called on dataclass instances.",
+  "dynamic_debug_evidence": {
+    "method": "sitecustomize monkeypatch on dataclasses.replace",
+    "stack": "execute_role_session -> export_handoff_pack -> ContextOS.get_state -> _rebuild_prompt_view -> scheduler._collect_active_window",
+    "root_models": [
+      "TranscriptEventV2",
+      "ArtifactRecordV2"
+    ],
+    "model_kind": "frozen Pydantic BaseModel, not dataclass"
+  },
+  "root_cause": "ContextOS used dataclasses.replace on Pydantic V2 state during budget truncation, converting a post-provider bookkeeping exception into a role failure.",
+  "fix_files": [
+    "src/backend/polaris/kernelone/context/context_os/runtime/scheduler.py",
+    "src/backend/polaris/kernelone/context/context_os/runtime/state.py"
+  ],
+  "fix": "Use validated_replace for TranscriptEventV2 and ArtifactRecordV2 copies.",
+  "tests": [
+    "src/backend/polaris/kernelone/context/context_os/tests/test_small_window_active_budget.py::TestSchedulerReadsResolvedWindow::test_truncated_pydantic_transcript_event_is_rebuilt_without_dataclass_replace",
+    "src/backend/polaris/kernelone/context/context_os/tests/test_pydantic_artifact_truncation.py"
+  ],
+  "validation": {
+    "pytest": "21 passed in combined closure suite",
+    "ruff": "passed",
+    "mypy": "passed",
+    "live": "Same-run replay advanced through later provider requests and tool cycles without the prior replace() exception."
+  },
+  "residual_risk": "Factory terminal success remains separately gated by generated Go verifier results."
+}

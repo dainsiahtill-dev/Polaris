@@ -43,6 +43,25 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_STRUCTURED_OUTPUT_SCHEMA_MISMATCH_PREFIX = "structured_output_payload_schema_mismatch:"
+
+
+def _is_retryable_structured_output_schema_error(
+    error: str,
+    *,
+    validate_output: bool,
+) -> bool:
+    """Classify typed-payload schema rejection as output validation failure.
+
+    TransactionKernel reports strict structured-tool argument validation through
+    ``RoleTurnResult.error``.  That error is recoverable when output validation
+    is enabled: the next attempt can receive the exact schema diagnostic and
+    correct only the malformed payload.  Other transaction errors remain
+    fail-fast.
+    """
+
+    return validate_output and error.startswith(_STRUCTURED_OUTPUT_SCHEMA_MISMATCH_PREFIX)
+
 
 async def execute_non_stream_role_turn(
     *,
@@ -150,6 +169,51 @@ async def execute_non_stream_role_turn(
             span.set_tag("has_tool_calls", bool(te_result.tool_calls))
 
         if te_result.error:
+            if _is_retryable_structured_output_schema_error(
+                te_result.error,
+                validate_output=validate_output,
+            ):
+                last_error = te_result.error
+                last_validation = QualityResult(
+                    success=False,
+                    errors=[te_result.error],
+                    suggestions=[
+                        "Return exactly one structured payload that satisfies the declared schema; "
+                        "preserve valid fields and add or correct only the fields named by the diagnostic."
+                    ],
+                    data=None,
+                    quality_score=0.0,
+                    quality_passed=False,
+                )
+                event_emitter.emit_runtime_llm_event(
+                    event_type=LLMEventType.VALIDATION_FAIL,
+                    role=role,
+                    run_id=observer_run_id,
+                    task_id=task_id,
+                    attempt=attempt,
+                    workspace=kernel.workspace,
+                    errors=last_validation.errors,
+                    quality_score=last_validation.quality_score,
+                    error_category="structured_output_schema_mismatch",
+                    model=profile.model,
+                    publish_realtime=False,
+                )
+                kernel_repair_retry_count += 1
+                kernel_repair_reasons.append(f"attempt_{attempt}: {te_result.error}")
+                _record_retry(role, "structured_output_schema_mismatch")
+                if attempt < max_retries:
+                    event_emitter.emit_runtime_llm_event(
+                        event_type=LLMEventType.CALL_RETRY,
+                        role=role,
+                        run_id=observer_run_id,
+                        task_id=task_id,
+                        attempt=attempt,
+                        workspace=kernel.workspace,
+                        error_category="structured_output_schema_mismatch",
+                        model=profile.model,
+                        publish_realtime=False,
+                    )
+                    continue
             return role_turn_result_from_transaction_result(
                 transaction_result=te_result,
                 profile=profile,

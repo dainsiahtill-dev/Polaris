@@ -1551,6 +1551,71 @@ def test_quality_gate_task_boundary_validation_routes_owner_handoff_to_owner_tas
     assert rows["PM-0001-2-step-3"]["status"] == "failed"
 
 
+def test_quality_gate_rework_preserves_committed_owner_action_amid_unrelated_handoff(
+    temp_workspace: Path,
+) -> None:
+    task_runtime = TaskRuntimeService(str(temp_workspace))
+    action = {
+        "schema_version": "task-runtime.same-task-local-rework-record/1",
+        "factory_run_id": "factory-run-1",
+        "external_task_id": "TASK-1",
+        "action_id": "a" * 64,
+        "action_kind": "publish_owner_rework",
+        "diagnostic_id": "diagnostic-entrypoint",
+        "rework_attempt": 1,
+    }
+    task_runtime.ensure_task_row(
+        external_task_id="TASK-1",
+        subject="Repair the project entrypoint",
+        metadata={
+            "external_task_id": "TASK-1",
+            "factory_local_rework": action,
+            "same_task_local_rework_authorizations": [dict(action)],
+        },
+        priority=1,
+    )
+
+    target = Path(resolve_logical_path(str(temp_workspace), "workspace/qa/latest.workspace-validation.json"))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(
+            {
+                "passed": False,
+                "repair": {
+                    "task_boundary_scope_filter": {
+                        "schema_version": "director.task_boundary.repair_scope_filter.v1",
+                        "ownership_handoff_requests": [
+                            {
+                                "schema_version": "file-ownership-handoff-request/1",
+                                "target_file": "internal/physics/step_test.go",
+                                "requesting_task_id": "TASK-2",
+                                "owner_step_id": "TASK-3",
+                                "owner_found": True,
+                                "recommended_route": "owner_task_retry",
+                                "status": "owner_found",
+                            }
+                        ],
+                    }
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    bridge_summary = factory_router_module._apply_quality_gate_task_boundary_rework_requests(str(temp_workspace))
+    rework_summary = factory_router_module._read_quality_gate_rework_summary(str(temp_workspace))
+
+    assert bridge_summary["requested"] is True
+    assert bridge_summary["tasks"][0]["external_task_id"] == "TASK-1"
+    assert bridge_summary["tasks"][0]["project_completion_action_id"] == "a" * 64
+    assert rework_summary["requested"] is True
+    assert rework_summary["tasks"][0]["external_task_id"] == "TASK-1"
+    assert rework_summary["tasks"][0]["project_completion_action_id"] == "a" * 64
+
+
 def test_quality_gate_task_boundary_validation_routes_scope_authority_nested_handoff(
     temp_workspace: Path,
 ) -> None:

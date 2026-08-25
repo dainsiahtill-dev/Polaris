@@ -1,0 +1,69 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-22-R40-CE-DEPTH-REPAIR-BATCH-POISONING",
+  "status": "FIX_UNIT_VERIFIED_FRESH_R41_PENDING",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "factory_run_id": "factory_3a7b0d80259c",
+  "workspace": "/tmp/factory-bench-l3-22-r40/workspaces/769820cd64ca-a1656cd0e0695ed1/L3-22-5aaab9a81e5e829d/fe943cc63a3b19d0141e2156",
+  "symptom": "PM completed and CE structural recovery produced a schema-valid portfolio, but delivery-depth semantic repair exhausted. Director never received an accepted CE handoff.",
+  "exact_run_evidence": {
+    "terminal_error_code": "chief_engineer.semantic_repair_exhausted",
+    "terminal_hint": "chief_engineer.semantic_patch_invalid:ValueError:semantic repair would create duplicate artifact paths",
+    "diagnostic_codes": [
+      "chief_engineer.delivery_depth.prod_files_below_minimum",
+      "chief_engineer.delivery_depth.test_files_below_minimum"
+    ],
+    "before_depth": {
+      "unique_prod_files": 1,
+      "required_prod_files": 7,
+      "unique_test_files": 1,
+      "required_test_files": 2
+    },
+    "first_patch_useful_paths": [
+      "bubble.go",
+      "physics.go",
+      "note.go",
+      "sandbox.go",
+      "rules.go",
+      "snapshot.go",
+      "physics_test.go"
+    ],
+    "first_patch_redundant_path": "main.go",
+    "provider_tool_transport_valid": true,
+    "provider_context_identity_valid": true,
+    "target_project_modified_by_main_agent": false
+  },
+  "root_cause": {
+    "confirmed": "The first semantic patch contained seven useful new physical paths and one new obligation id for the already-owned main.go path. _introduces_duplicate_value rejected the whole patch atomically, discarding all useful depth progress. The second repair then received only a coarse duplicate-path error and regressed into repeated main.go/main_test.go aliases.",
+    "deeper_contract_fact": "The baseline candidate already represented main.go with two semantic obligation ids. That frozen alias is preserved intentionally; physical delivery depth counts unique paths. A new alias cannot increase depth and must not poison unrelated unique upserts.",
+    "not_caused_by": [
+      "Director write/edit execution",
+      "missing CE final request context",
+      "provider tool transport",
+      "target project code",
+      "weak model output with no usable repair"
+    ]
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+    "policy": "For delivery-depth diagnoses only, retain existing-id replacements and genuinely new physical paths; drop a new obligation id that aliases an existing physical path only when at least one useful upsert remains. If all upserts are aliases, preserve fail-closed duplicate rejection.",
+    "security_properties": [
+      "No PM/CE path authority relaxation",
+      "No duplicate physical paths accepted",
+      "No all-alias patch accepted",
+      "Receipt hash binds the effective filtered patch"
+    ]
+  },
+  "verification": {
+    "semantic_repair_tests": "55 passed",
+    "ce_and_factory_targeted_tests": "320 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_isolated_required": "r41 must accept CE portfolio and reach Director without semantic_repair_exhausted"
+  },
+  "ui_projection_followup": {
+    "historical_run_id": "factory_f156c56b7988",
+    "finding": "The screenshot showing CE 0/3 while Director materialized files is historical r33. Its authoritative TaskRuntime records all three CE tasks completed and Director tasks executed; the CE panel therefore under-projects persisted CE evidence. This is a separate UI projection defect, not r40 execution authority."
+  }
+}

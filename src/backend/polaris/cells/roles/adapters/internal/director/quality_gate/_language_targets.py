@@ -403,6 +403,10 @@ _GO_TEST_ASSERTION_LOCATION_RE = re.compile(
     r"(?:^|\s)(?:[A-Za-z]:)?[^\s:\n]*_test\.go:\d+:",
     re.IGNORECASE | re.MULTILINE,
 )
+_GO_TEST_ASSERTION_FILE_RE = re.compile(
+    r"(?:^|\s)(?P<path>(?:[A-Za-z]:)?[^\s:\n]*_test\.go):\d+:",
+    re.IGNORECASE | re.MULTILINE,
+)
 _GO_STACK_OVERFLOW_FRAME_RE = re.compile(
     r"(?P<pkg>[A-Za-z0-9_./]+)\.\(\*?(?P<type>[A-Za-z0-9_]+)\)\.(?P<method>[A-Za-z0-9_]+)"
 )
@@ -558,6 +562,22 @@ def _go_test_behavior_repair_target_files(
     if not production_files:
         return []
 
+    # Go assertion rows often contain only a package-local basename such as
+    # ``step_test.go:165``.  The following package result identifies the
+    # failing package, but title-token matching alone cannot map
+    # ``TestApplyGravity`` to ``step.go``.  Resolve each uniquely authored test
+    # path and rank non-test files from that same package first.  Live L3-22
+    # otherwise selected ``cmd/sandboxd/main.go`` while the exact failures
+    # lived in internal/physics and internal/sandbox.
+    package_sources = _go_assertion_package_source_files(
+        text=text,
+        changed_files=changed_files,
+        production_files=production_files,
+        workspace_root=workspace_root,
+    )
+    if package_sources:
+        return package_sources
+
     matched: list[str] = []
     for title_match in _GO_TEST_FAILURE_TITLE_RE.finditer(str(text or "")):
         tokens = _go_test_title_tokens(str(title_match.group("title") or ""))
@@ -565,6 +585,42 @@ def _go_test_behavior_repair_target_files(
             matched.extend(_go_production_files_matching_tokens(production_files, tokens))
 
     return _dedupe_preserve_order([*matched, *production_files])
+
+
+def _go_assertion_package_source_files(
+    *,
+    text: str,
+    changed_files: set[str],
+    production_files: list[str],
+    workspace_root: Path,
+) -> list[str]:
+    """Map runnable Go assertion locations to same-package production files."""
+
+    test_files = [rel for rel in sorted(changed_files) if Path(rel).name.endswith("_test.go")]
+    targets: list[str] = []
+    for match in _GO_TEST_ASSERTION_FILE_RE.finditer(str(text or "")):
+        raw = _normalize_declared_task_path(str(match.group("path") or ""))
+        if not raw:
+            continue
+        candidates = [rel for rel in test_files if rel == raw]
+        if not candidates:
+            basename = Path(raw).name.casefold()
+            candidates = [rel for rel in test_files if Path(rel).name.casefold() == basename]
+        if len(candidates) != 1:
+            continue
+        package_dir = Path(candidates[0]).parent
+        # Root-level integration tests commonly exercise imported internal
+        # packages; their test-title tokens remain the stronger causal clue.
+        # Package-local tests under a subdirectory own a concrete Go package
+        # and can safely rank that package's production files.
+        if package_dir == Path("."):
+            continue
+        for rel in production_files:
+            if Path(rel).parent != package_dir:
+                continue
+            if _workspace_path_exists_case_insensitive(workspace_root, rel):
+                targets.append(rel)
+    return _dedupe_preserve_order(targets)
 
 
 def _go_test_title_tokens(title: str) -> list[str]:

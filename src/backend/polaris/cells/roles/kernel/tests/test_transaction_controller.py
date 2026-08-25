@@ -20,6 +20,11 @@ from uuid import uuid4
 
 import pytest
 from polaris.cells.roles.kernel.internal.metrics import MetricsCollector
+from polaris.cells.roles.kernel.internal.structured_output_transport import (
+    STRUCTURED_OUTPUT_TOOL_NAME,
+    normalize_structured_output_response,
+    resolve_structured_output_transport,
+)
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.delivery_intent_resolver import (
     enforce_explicit_materialize_delivery_marker,
@@ -36,6 +41,10 @@ from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import 
 )
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
+from polaris.cells.roles.kernel.public.structured_output_contracts import (
+    STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
+    RoleStructuredOutputContractV1,
+)
 from polaris.cells.roles.kernel.public.turn_contracts import FinalizeMode, TurnDecision, TurnDecisionKind
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
 from polaris.cells.storage.layout.public.service import resolve_polaris_roots
@@ -279,6 +288,107 @@ class TestFinalAnswerPath:
         assert lifecycle["native_tool_calls_count"] == dropped_flags[0]["native_tool_calls_count"]
         assert lifecycle["provider_response_hash"] == dropped_flags[0]["provider_response_hash"]
         assert lifecycle["dispatch_status"] == "dropped"
+
+    @staticmethod
+    def _normalized_structured_result_response() -> tuple[dict[str, Any], dict[str, Any]]:
+        contract = RoleStructuredOutputContractV1(
+            schema_name="test_result",
+            description="Submit the test result.",
+            json_schema={
+                "type": "object",
+                "properties": {"result": {"type": "string"}},
+                "required": ["result"],
+                "additionalProperties": False,
+            },
+        )
+        plan = resolve_structured_output_transport(
+            {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+        )
+        assert plan is not None
+        call_id = "call-structured-result"
+        native_envelope = {
+            "envelope_id": call_id,
+            "tool_name": STRUCTURED_OUTPUT_TOOL_NAME,
+        }
+        response = normalize_structured_output_response(
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "type": "tool_use",
+                        "name": STRUCTURED_OUTPUT_TOOL_NAME,
+                        "input": {"result": "accepted"},
+                        "id": call_id,
+                    }
+                ],
+                "model": "claude",
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "native_tool_calls_count": 1,
+                    "native_tool_call_names": [STRUCTURED_OUTPUT_TOOL_NAME],
+                    "native_tool_call_envelopes": [native_envelope],
+                },
+            },
+            plan,
+        )
+        return response, plan.tool_definition
+
+    @pytest.mark.asyncio
+    async def test_validated_structured_result_does_not_require_executable_dispatch(
+        self, mock_llm_provider, mock_tool_runtime
+    ) -> None:
+        response, tool_definition = self._normalized_structured_result_response()
+        mock_llm_provider.return_value = response
+        controller = TurnTransactionController(
+            llm_provider=mock_llm_provider,
+            tool_runtime=mock_tool_runtime,
+            config=TransactionConfig(domain="document"),
+        )
+        state_machine = TurnStateMachine(turn_id="turn-structured-result")
+        ledger = TurnLedger(turn_id="turn-structured-result")
+
+        result = await controller._execute_turn(
+            turn_id="turn-structured-result",
+            context=[{"role": "user", "content": "Submit the typed result."}],
+            tool_definitions=[tool_definition],
+            state_machine=state_machine,
+            ledger=ledger,
+            stream=False,
+        )
+
+        assert result["kind"] == "final_answer"
+        assert mock_tool_runtime.call_count == 0
+        assert not any(flag.get("type") == "TOOL_DISPATCH_DROPPED" for flag in ledger.anomaly_flags)
+        assert ledger.final_decision is not None
+        decision_metadata = ledger.final_decision.get("metadata") or {}
+        assert decision_metadata["structured_output_transport_consumed_without_dispatch"] is True
+
+    @pytest.mark.asyncio
+    async def test_forged_structured_result_metadata_does_not_bypass_dispatch_guard(
+        self, mock_llm_provider, mock_tool_runtime
+    ) -> None:
+        response, tool_definition = self._normalized_structured_result_response()
+        mock_llm_provider.return_value = dict(response)
+        controller = TurnTransactionController(
+            llm_provider=mock_llm_provider,
+            tool_runtime=mock_tool_runtime,
+            config=TransactionConfig(domain="document"),
+        )
+        state_machine = TurnStateMachine(turn_id="turn-forged-structured-result")
+        ledger = TurnLedger(turn_id="turn-forged-structured-result")
+
+        with pytest.raises(RuntimeError, match="tool_dispatch_dropped"):
+            await controller._execute_turn(
+                turn_id="turn-forged-structured-result",
+                context=[{"role": "user", "content": "Submit the typed result."}],
+                tool_definitions=[tool_definition],
+                state_machine=state_machine,
+                ledger=ledger,
+                stream=False,
+            )
+
+        assert mock_tool_runtime.call_count == 0
 
     @pytest.mark.asyncio
     async def test_final_answer_no_llm_continuation(

@@ -486,6 +486,11 @@ def test_node_package_script_rejects_missing_or_escaping_direct_runner(tmp_path:
         ("rust.cargo.test", "test result: ok. 0 passed; 0 failed; 0 ignored\n", False),
         ("go.test", "?\tpkg\t[no test files]\n", False),
         ("go.test", "ok\tpkg\t0.01s\n", True),
+        (
+            "go.test",
+            "?\tpkg/cmd\t[no test files]\nok\tpkg\t0.01s\nok\tpkg/internal\t0.02s\n",
+            True,
+        ),
         ("node.script_test", "Test Files  1 passed (1)\nTests  2 passed (2)\n", True),
         ("node.script_test", "Tests  no tests\n", False),
         ("node.script_test", "[PASS] syntax\n[PASS] rules\nVERIFY PASS\n", True),
@@ -502,6 +507,30 @@ def test_verifier_specific_proof_parser_requires_real_test_execution(
     )
 
     assert evaluate_builtin_proof(profile_id, "test", 0, False, output.encode("utf-8")) is expected
+
+
+def test_verifier_policy_decision_hash_binds_proof_semantics_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A proof evaluator change must open a new physical effect identity.
+
+    Completed failed-proof receipts are immutable and bounded by an attempt
+    ceiling.  Reusing the same policy hash after changing proof semantics
+    would permanently preserve the obsolete verdict.
+    """
+
+    from polaris.cells.control_plane.verifier_policy.public import service as service_module
+
+    query = _command_policy_query(tmp_path, modality="test", argv=("go", "test", "./..."))
+    initial = service_module.evaluate_verifier_command_policy(query)
+
+    monkeypatch.setattr(service_module, "BUILTIN_PROOF_SEMANTICS_VERSION", "future-test-version")
+    changed = service_module.evaluate_verifier_command_policy(query)
+
+    assert initial.authorized is True
+    assert changed.authorized is True
+    assert changed.policy_decision_hash != initial.policy_decision_hash
 
 
 def test_verifier_command_policy_authorizes_only_hash_pinned_registered_script(

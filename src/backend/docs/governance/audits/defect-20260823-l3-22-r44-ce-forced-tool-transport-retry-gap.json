@@ -1,0 +1,83 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "l3-22-r44-ce-forced-tool-transport-retry-gap",
+  "status": "FIX_UNIT_VERIFIED_LIVE_BENCH_PENDING",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "factory_run_id": "factory_a1e4c6bd7553",
+  "workspace": "/tmp/factory-bench-l3-22-r44/workspaces/c47386517a5d-d14a4512cd5b5c82/L3-22-5aaab9a81e5e829d/1258bd3ba5f3d4f14966c311",
+  "stage": "chief_engineer_review",
+  "symptom": {
+    "error_code": "chief_engineer.semantic_repair_exhausted",
+    "message": "验证失败，已重试0次: structured_output_content_invalid_json",
+    "generated_blueprints": 0,
+    "expected_blueprints": 3,
+    "director_started": false
+  },
+  "final_request_audit": {
+    "context_snapshot_ref": "b0817c431f2ae0ffe69a27ff",
+    "role_identity": "chief_engineer",
+    "pm_contract_included": true,
+    "target_files_included": true,
+    "failure_feedback_included": true,
+    "required_tool": "submit_structured_role_output",
+    "required_tool_available": true,
+    "tool_choice": {
+      "name": "submit_structured_role_output",
+      "type": "tool"
+    },
+    "response_schema": "chief_engineer_semantic_repair_patch",
+    "context_window_utilization_percent": 0.84,
+    "context_capacity_blocker": false
+  },
+  "dynamic_evidence": {
+    "call_id": "925f874ad43e4233b6305f61bc8a8a47",
+    "provider": "MiniMax Anthropic-compatible messages",
+    "provider_completion_tokens": 729,
+    "provider_tool_calls_count": 0,
+    "provider_response_class": "prose_despite_forced_native_tool_choice",
+    "provider_response_prefix": "I'll construct the semantic patch envelope to address the prod_files_below_minimum diagnosis",
+    "frozen_candidate_ref": ".polaris/runtime/state/blueprints/semantic-repair/L3-22/factory_a1e4c6bd7553/5c8c399ae1d237882e39e1fb340d16e9a73c58c80e6d68adb8f4b56dcdb1a027.json",
+    "diagnostic_codes": [
+      "chief_engineer.delivery_depth.prod_files_below_minimum"
+    ],
+    "allowed_operations": [
+      "artifact_upsert"
+    ],
+    "prior_retry_budget": 0
+  },
+  "root_cause": {
+    "owner_cell": "factory.pipeline + roles.kernel",
+    "classification": "same_role_structured_transport_resilience_gap",
+    "description": "Tool name, JSON schema, Anthropic tool_choice, role identity, PM authority, target files, and context budget were correct. Provider ignored the forced result tool and returned prose. Factory configured the frozen-candidate semantic patch call with max_retries=0, so the roles kernel could not use its existing validation retry loop."
+  },
+  "non_causes": [
+    "ToolSpec alias or argument normalization",
+    "Missing result tool schema",
+    "Role prompt identity drift",
+    "PM contract omission",
+    "Context window exhaustion",
+    "Generated target-project code"
+  ],
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_ce_handoff.py"
+    ],
+    "behavior": "Allow exactly one non-stream validation retry only for a frozen schema-valid CE semantic candidate with typed diagnosis. Plain schema reconstruction remains zero retry. The retry keeps the same role, TaskRuntime claim, PM authority, candidate hash, and diagnosis hash; each kernel attempt receives a distinct transaction_attempt_id.",
+    "target_project_modified": false
+  },
+  "verification": {
+    "tdd_red": "1 failed: semantic patch command max_retries was 0",
+    "targeted_green": "52 passed across CE handoff and non-stream retry identity suites",
+    "transaction_identity": "retry attempts share transaction_invocation_id and use distinct transaction_attempt_id",
+    "ruff": "All checks passed",
+    "mypy": "Success: no issues found in 1 source file"
+  },
+  "remaining": [
+    "Stop isolated r44 backend/frontend after evidence preservation",
+    "Run fresh isolated L3-22 with full 5400 second project budget",
+    "Verify CE reaches 3/3 blueprints or capture next exact residual",
+    "Continue same-run Director and QA closure without restarting completed roles"
+  ]
+}

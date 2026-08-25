@@ -628,6 +628,139 @@ class TestRunWorkspaceQualityChecks:
         assert rebind["target_files"] == ["index.html"]
         assert rebind["previous_repair"]["stage"] == "task_boundary_repair_targets_deferred"
 
+    @pytest.mark.asyncio
+    async def test_workspace_quality_grants_bounded_extra_round_for_residual_owner_handoff(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-residual-owner-handoff",
+            config=FactoryConfig(name="quality-residual-owner-handoff"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-23T00:00:00+00:00",
+        )
+        state = {"phase": 0}
+        owner_target_calls: list[list[str] | None] = []
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            phase = state["phase"]
+            errors = (
+                "main.go:12: undefined: VelocityForTest"
+                if phase == 0
+                else "physics/gravity_test.go:22:8: scene.Add undefined"
+                if phase == 1
+                else ""
+            )
+            return {
+                "command": command,
+                "exit_code": 0 if phase == 2 else 1,
+                "passed": phase == 2,
+                "stdout_tail": errors,
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def fake_apply_workspace_quality_deterministic_repairs(
+            *,
+            run: FactoryRun,
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            assert run.id == "factory-quality-residual-owner-handoff"
+            assert repair_attempt in {1, 2}
+            assert artifact_quality_errors
+            return [], {"attempted": False, "success": False, "source_tools": [], "tool_results": 0}
+
+        async def fake_apply_workspace_quality_llm_repairs(
+            *,
+            run: FactoryRun,
+            context: dict[str, Any],
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+            interface_discrepancy_evidence: dict[str, Any] | None = None,
+            owner_target_files: list[str] | None = None,
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            del context, artifact_quality_errors, interface_discrepancy_evidence
+            assert run.id == "factory-quality-residual-owner-handoff"
+            owner_target_calls.append(owner_target_files)
+            if repair_attempt == 1:
+                assert owner_target_files is None
+                state["phase"] = 1
+                return (
+                    [{"success": True, "tool": "edit_file", "file": "main.go", "operation": "modify"}],
+                    {
+                        "stage": "quality_repair",
+                        "task_id": "TASK-2",
+                        "repair_target_files": ["main.go"],
+                        "source_tools": ["director_materialization_quality_repair"],
+                        "tool_results": 1,
+                        "write_tool_evidence": True,
+                        "task_boundary_scope_filter": {
+                            "deferred": True,
+                            "owner_task_retry_handoff_requests": [
+                                {
+                                    "target_file": "physics/gravity_test.go",
+                                    "owner_step_id": "TASK-3",
+                                    "owner_found": True,
+                                    "status": "owner_found",
+                                    "recommended_route": "owner_task_retry",
+                                }
+                            ],
+                        },
+                    },
+                )
+            assert repair_attempt == 2
+            assert owner_target_files == ["physics/gravity_test.go"]
+            state["phase"] = 2
+            return (
+                [
+                    {
+                        "success": True,
+                        "tool": "edit_file",
+                        "file": "physics/gravity_test.go",
+                        "operation": "modify",
+                    }
+                ],
+                {
+                    "stage": "quality_repair",
+                    "task_id": "TASK-3",
+                    "repair_target_files": ["physics/gravity_test.go"],
+                    "source_tools": ["director_materialization_quality_repair"],
+                    "tool_results": 1,
+                    "write_tool_evidence": True,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["go", "test", "./..."]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_deterministic_repairs",
+            fake_apply_workspace_quality_deterministic_repairs,
+        )
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", fake_apply_workspace_quality_llm_repairs)
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 1},
+        )
+
+        assert passed is True
+        assert owner_target_calls == [None, ["physics/gravity_test.go"]]
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        rounds = payload["repair"]["rounds"]
+        assert len(rounds) == 2
+        assert rounds[0]["verifier_effect"] == "equal_count_swap"
+        assert rounds[0]["residual_owner_handoff_extra_round_granted"] is True
+        assert rounds[0]["residual_owner_handoff_targets"] == ["physics/gravity_test.go"]
+        assert rounds[1]["verifier_effect"] == "resolved"
+
     def test_workspace_quality_owner_score_ignores_project_wide_target_inventory(
         self,
         tmp_path: Path,
@@ -786,6 +919,66 @@ class TestRunWorkspaceQualityChecks:
         assert claim_targets
         assert not claim_targets[0].endswith("_test.go")
 
+    def test_workspace_quality_go_behavior_ranks_observed_package_sources(self, tmp_path: Path) -> None:
+        """L3-22: assertion sites rank same-package production before CLI files."""
+
+        for rel in (
+            "cmd/sandboxd/main.go",
+            "internal/bubbletea/note.go",
+            "internal/physics/step.go",
+            "internal/physics/world.go",
+            "internal/physics/step_test.go",
+            "internal/sandbox/sandbox.go",
+            "internal/sandbox/seed.go",
+            "internal/sandbox/sandbox_test.go",
+        ):
+            path = tmp_path / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("package fixture\n", encoding="utf-8")
+        executor = _executor(tmp_path)
+
+        targets = _workspace_quality_causal_repair_target_files(
+            executor,
+            artifact_quality_errors=[
+                "Workspace validation command failed (go test ./...):\n"
+                "--- FAIL: TestApplyGravity (0.00s)\n"
+                "    step_test.go:165: expected y to advance\n"
+                "FAIL\nFAIL\texample/internal/physics\t0.005s\n"
+                "--- FAIL: TestAttachNoteValid (0.00s)\n"
+                "    sandbox_test.go:52: unknown seed scenario: quiet\n"
+                "FAIL\nFAIL\texample/internal/sandbox\t0.005s\nFAIL"
+            ],
+        )
+
+        assert targets[:4] == [
+            "internal/physics/step.go",
+            "internal/physics/world.go",
+            "internal/sandbox/sandbox.go",
+            "internal/sandbox/seed.go",
+        ]
+
+    def test_workspace_quality_owner_rebind_rotates_only_current_causal_candidates(self) -> None:
+        """A current sandbox failure must not rotate through an unrelated CLI owner file."""
+
+        ranked = workspace_quality_impl._workspace_quality_rank_owner_rebind_candidates(
+            owner_candidates=[
+                "internal/bubbletea/bubble.go",
+                "cmd/sandboxd/main.go",
+                "internal/sandbox/sandbox.go",
+                "internal/sandbox/seed.go",
+            ],
+            diagnostic_targets=[
+                "internal/physics/step.go",
+                "internal/sandbox/sandbox.go",
+                "internal/sandbox/seed.go",
+            ],
+        )
+
+        assert ranked == [
+            "internal/sandbox/sandbox.go",
+            "internal/sandbox/seed.go",
+        ]
+
     def test_workspace_quality_go_compile_failure_keeps_direct_test_owner(self, tmp_path: Path) -> None:
         """Compiler diagnostics in an authored test still belong to that test."""
 
@@ -805,6 +998,30 @@ class TestRunWorkspaceQualityChecks:
         )
 
         assert "engine/engine_test.go" in targets
+
+    def test_workspace_quality_go_assignment_mismatch_keeps_direct_test_owner(self, tmp_path: Path) -> None:
+        """Go result-arity compilation errors must stay on the authored test owner."""
+
+        (tmp_path / "internal" / "bubbletea").mkdir(parents=True)
+        (tmp_path / "internal" / "bubbletea" / "note_test.go").write_text(
+            "package bubbletea\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "internal" / "bubbletea" / "note.go").write_text(
+            "package bubbletea\nfunc (b *Bubble) Assign(n Note) (*Note, error) { return nil, nil }\n",
+            encoding="utf-8",
+        )
+        executor = _executor(tmp_path)
+
+        targets = _workspace_quality_causal_repair_target_files(
+            executor,
+            artifact_quality_errors=[
+                "internal/bubbletea/note_test.go:115:9: assignment mismatch: "
+                "1 variable but b.Assign returns 2 values"
+            ],
+        )
+
+        assert "internal/bubbletea/note_test.go" in targets
 
     def test_workspace_quality_owner_paths_prefer_completion_projection_over_shared_token(self) -> None:
         """Capability scope may be shared; CE owned_artifacts is unique ownership."""
@@ -1186,6 +1403,175 @@ class TestRunWorkspaceQualityChecks:
         assert attempt.run_id == run.id
         assert "src/dream_subway/line_editor.py" in repair_task["target_files"]
         assert "src/dream_subway/domain.py" not in repair_task["target_files"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("repair_attempt", "expected_target"),
+        [
+            (1, "internal/sandbox/sandbox_test.go"),
+            (2, "internal/bubbletea/note_test.go"),
+            (3, "main_test.go"),
+        ],
+    )
+    async def test_workspace_quality_deferred_rebind_claims_real_owner_and_filters_provider_targets(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        repair_attempt: int,
+        expected_target: str,
+    ) -> None:
+        """L3-22: deferred test targets must re-lease TASK-3, not retry TASK-1.
+
+        The first quality turn correctly deferred test files outside TASK-1.
+        Factory previously passed those paths back only as a target hint; the
+        generic causal selector then leased TASK-1 again and the adapter
+        failed before any Provider call.  Exercise the real TaskRuntime claim
+        and prove the final repair request is narrowed to TASK-3 authority.
+        """
+
+        from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-go-deferred-owner",
+            config=FactoryConfig(name="go-deferred-owner", stages=["quality_gate"]),
+            status=FactoryRunStatus.RECOVERING,
+            created_at="2026-08-25T00:00:00+00:00",
+        )
+        for rel in (
+            "main.go",
+            "internal/physics/step.go",
+            "internal/physics/step_test.go",
+            "internal/sandbox/sandbox_test.go",
+            "internal/bubbletea/note_test.go",
+            "main_test.go",
+        ):
+            path = tmp_path / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("package main\n", encoding="utf-8")
+
+        runtime = TaskRuntimeService(str(tmp_path))
+        runtime.ensure_task_row(
+            external_task_id="TASK-1",
+            subject="Production owner",
+            description="Own Go entrypoint and physics implementation",
+            metadata={
+                "external_task_id": "TASK-1",
+                "factory_run_id": run.id,
+                "target_files": ["main.go", "internal/physics/step.go"],
+                "control_plane_job_token": {
+                    "factory_run_id": run.id,
+                    "allowed_write_paths": ["main.go", "internal/physics/step.go"],
+                },
+            },
+        )
+        runtime.ensure_task_row(
+            external_task_id="TASK-3",
+            subject="Test owner",
+            description="Own Go verifier sources",
+            metadata={
+                "external_task_id": "TASK-3",
+                "factory_run_id": run.id,
+                "target_files": [
+                    "internal/physics/step_test.go",
+                    "internal/sandbox/sandbox_test.go",
+                    "internal/bubbletea/note_test.go",
+                    "main_test.go",
+                ],
+                "control_plane_job_token": {
+                    "factory_run_id": run.id,
+                    "allowed_write_paths": [
+                        "internal/physics/step_test.go",
+                        "internal/sandbox/sandbox_test.go",
+                        "internal/bubbletea/note_test.go",
+                        "main_test.go",
+                    ],
+                },
+            },
+        )
+        captured: dict[str, Any] = {}
+
+        async def fake_run_director_materialization_quality_repair(
+            workspace: str,
+            *,
+            task: dict[str, Any],
+            target_task_id: str,
+            run_id: str,
+            context: dict[str, Any],
+            original_message: str,
+            llm_call_timeout: float,
+            artifact_quality_errors: list[str],
+            changed_files: list[str],
+            repair_attempt: int,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            del workspace, run_id, original_message, llm_call_timeout, artifact_quality_errors, changed_files
+            captured.update(
+                {
+                    "task": task,
+                    "target_task_id": target_task_id,
+                    "context": context,
+                    "repair_attempt": repair_attempt,
+                }
+            )
+            return [], {"attempted": True, "success": False, "tool_results": 0}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.run_director_materialization_quality_repair",
+            fake_run_director_materialization_quality_repair,
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "_workspace_quality_causal_repair_target_files",
+            lambda _executor, *, artifact_quality_errors: [
+                "internal/physics/step_test.go",
+                "internal/bubbletea/note_test.go",
+                "internal/sandbox/sandbox_test.go",
+                "main_test.go",
+                "internal/physics/step.go",
+                "internal/bubbletea/note.go",
+                "internal/sandbox/sandbox.go",
+                "main.go",
+            ],
+        )
+
+        await executor._apply_workspace_quality_llm_repairs(
+            run=run,
+            context={
+                "factory_workspace_quality_owner_rebind": {
+                    "required": True,
+                    "source": "task_boundary_scope_filter",
+                }
+            },
+            artifact_quality_errors=[
+                "step_test.go:137: Y = 0, want 1",
+                "internal/sandbox/sandbox_test.go:208:30: undefined: bubbleType",
+                "internal/bubbletea/note_test.go:30:16: assignment mismatch",
+                "main_test.go:19:12: undefined: Run",
+            ],
+            repair_attempt=repair_attempt,
+            owner_target_files=[
+                "step_test.go",
+                "internal/sandbox/sandbox_test.go",
+                "internal/bubbletea/note_test.go",
+                "main_test.go",
+            ],
+        )
+
+        assert captured["target_task_id"] == "TASK-3"
+        # Owner selection needs the complete candidate set, but one provider
+        # turn must receive one exact failing target. Otherwise the model can
+        # keep choosing the first file while sibling compiler failures never
+        # receive an edit (live L3-22: main_test.go repeated for three rounds).
+        assert captured["context"]["target_files"] == [
+            expected_target,
+        ]
+        assert captured["context"]["director_quality_repair"]["repair_target_files"] == [
+            expected_target,
+        ]
+        assert captured["context"]["director_quality_repair"]["write_only_single_target"] == {
+            "target_file": expected_target
+        }
+        assert "step_test.go" not in captured["context"]["target_files"]
 
     def test_workspace_quality_owner_score_matches_cmake_lists_case_aliases(
         self,
@@ -1704,6 +2090,36 @@ class TestRunWorkspaceQualityChecks:
             [
                 "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
                 "    engine_test.go:112: bubble still moving downward"
+            ]
+        )
+
+        assert (
+            OrchestrationStageExecutor._workspace_quality_repair_effect(
+                before_signature=before,
+                after_signature=after,
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "forward_unmask"
+        )
+
+    def test_workspace_quality_go_assignment_mismatch_unmasks_runnable_test(self) -> None:
+        """L3-22: clearing result arity compilation is verifier progress."""
+
+        before = OrchestrationStageExecutor._workspace_quality_diagnostic_signature(
+            [
+                "--- FAIL: TestStepSettlesAtFloor (0.00s)\n"
+                "    step_test.go:137: Y = 0, want 1",
+                "internal/bubbletea/note_test.go:115:9: assignment mismatch: "
+                "1 variable but b.Assign returns 2 values",
+            ]
+        )
+        after = OrchestrationStageExecutor._workspace_quality_diagnostic_signature(
+            [
+                "--- FAIL: TestStepSettlesAtFloor (0.00s)\n"
+                "    step_test.go:137: Y = 0, want 1",
+                "--- FAIL: TestNotesForScale (0.00s)\n"
+                "    note_test.go:159: unknown note name",
             ]
         )
 
@@ -2251,6 +2667,7 @@ class TestRunWorkspaceQualityChecks:
         command_calls = 0
         deterministic_calls = 0
         llm_calls = 0
+        llm_contexts: list[dict[str, object]] = []
 
         def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
             nonlocal command_calls
@@ -2273,8 +2690,10 @@ class TestRunWorkspaceQualityChecks:
 
         async def fake_llm_repairs(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
             nonlocal llm_calls
-            del kwargs
             llm_calls += 1
+            context = kwargs.get("context")
+            assert isinstance(context, dict)
+            llm_contexts.append(context)
             return (
                 [
                     {
@@ -2292,6 +2711,11 @@ class TestRunWorkspaceQualityChecks:
                     "source_tools": ["director_materialization_quality_repair"],
                     "tool_results": 1,
                     "write_tool_evidence": False,
+                    "error": (
+                        "TransactionKernel execution failed: tool_dispatch_failed: decoded tool batch "
+                        "produced only failed tool results; error_types=source_compile_regression; "
+                        "failure_details=Edit rejected before commit: undefined: DefaultDT"
+                    ),
                 },
             )
 
@@ -2316,6 +2740,13 @@ class TestRunWorkspaceQualityChecks:
         # repair instead of reopening/settling another deterministic attempt.
         assert deterministic_calls == 1
         assert llm_calls == 2
+        first_quality = llm_contexts[0].get("director_quality_repair")
+        assert not isinstance(first_quality, dict) or not first_quality.get("candidate_rejection_errors")
+        second_quality = llm_contexts[1]["director_quality_repair"]
+        assert isinstance(second_quality, dict)
+        candidate_rejections = second_quality["candidate_rejection_errors"]
+        assert isinstance(candidate_rejections, list)
+        assert any("undefined: DefaultDT" in str(item) for item in candidate_rejections)
         payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
         repair = payload["repair"]
         assert repair["revalidated"] is False
@@ -2323,6 +2754,10 @@ class TestRunWorkspaceQualityChecks:
         assert repair["convergence_stop_reason"] == "two_consecutive_no_mutation_repairs"
         assert [item["verifier_effect"] for item in repair["rounds"]] == ["no_op", "no_op"]
         assert all(item["write_tool_evidence"] is False for item in repair["rounds"])
+        assert any(
+            "undefined: DefaultDT" in str(item)
+            for item in repair["rounds"][0]["candidate_rejection_errors_for_next_round"]
+        )
         assert "deterministic_no_commit_signature_cache_hit" in repair["rounds"][1]["evidence"]
 
     @pytest.mark.asyncio
@@ -5112,3 +5547,40 @@ def test_deferred_owner_targets_drop_runtime_and_dotfile_noise() -> None:
     )
 
     assert targets == ["readme.md", "src/models/moon.hpp", "src/models/stamp.hpp"]
+
+
+def test_residual_owner_handoff_targets_require_explicit_owner_and_live_diagnostic() -> None:
+    from polaris.cells.factory.pipeline.internal.factory_workspace_quality_evidence import (
+        workspace_quality_residual_owner_handoff_targets,
+    )
+
+    targets = workspace_quality_residual_owner_handoff_targets(
+        {
+            "stage": "quality_repair",
+            "task_boundary_scope_filter": {
+                "owner_task_retry_handoff_requests": [
+                    {
+                        "target_file": "physics/gravity_test.go",
+                        "owner_found": True,
+                        "status": "owner_found",
+                        "recommended_route": "owner_task_retry",
+                    },
+                    {
+                        "target_file": "note/frequency.go",
+                        "owner_found": True,
+                        "status": "owner_found",
+                        "recommended_route": "owner_task_retry",
+                    },
+                    {
+                        "target_file": "engine/sandbox.go",
+                        "owner_found": False,
+                        "status": "owner_unknown",
+                        "recommended_route": "scope_authority_resolution",
+                    },
+                ]
+            },
+        },
+        ["physics/gravity_test.go:22:8: scene.Add undefined"],
+    )
+
+    assert targets == ["physics/gravity_test.go"]

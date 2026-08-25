@@ -137,6 +137,45 @@ def test_job_token_is_stable_and_carries_canonical_paths() -> None:
     assert first.blueprint_hash
 
 
+def test_real_run_gate_read_scope_covers_all_required_project_artifacts() -> None:
+    """A verifier token may read every artifact it is required to audit.
+
+    The project contract can declare only entrypoint targets while Director
+    materializes a wider CE-owned portfolio.  The read-only real-run gate must
+    not report capability drift merely because those required artifacts extend
+    beyond the entrypoint subset.  This does not grant any write capability.
+    """
+    token = build_job_token_from_record(
+        {
+            "id": "L3-22",
+            "declared_source_targets": ["main.go", "main_test.go"],
+            "code_files": [
+                "main.go",
+                "main_test.go",
+                "cmd/sandboxd/main.go",
+                "internal/physics/world.go",
+            ],
+            "chain": {"run_id": "factory-l3-22", "audit_bundle": {"blueprint_id": "bp-l3-22"}},
+            "chain_results": {"contract_goal": "Build a Go physics sandbox"},
+        },
+        run_id="bench-l3-22",
+        project_id="L3-22",
+        stage="real_run_gate",
+    )
+
+    assert token.target_files == ["main.go", "main_test.go"]
+    assert token.required_artifacts == [
+        "main.go",
+        "main_test.go",
+        "cmd/sandboxd/main.go",
+        "internal/physics/world.go",
+    ]
+    assert token.allowed_paths == token.required_artifacts
+    assert token.allowed_write_paths == []
+    assert token.capability_audit["ok"] is True
+    assert token.capability_audit["drift"]["required_artifacts_outside_allowed_paths"] == []
+
+
 def test_job_token_accepts_blueprint_artifacts_as_ce_source() -> None:
     record = {
         "id": "L1-02",

@@ -299,3 +299,98 @@ def test_validation_retry_uses_distinct_transaction_attempt_identity(monkeypatch
     assert no_retry_result.error is not None
     assert len(captured_attempts) == 1
     assert captured_attempts[0]["transaction_attempt"] == 0
+
+
+def test_structured_output_schema_error_retries_with_exact_failure_feedback(
+    monkeypatch: Any,
+) -> None:
+    """Exact L3-23 r04: provider-tool schema drift is validation, not fatal transport."""
+
+    profile = _profile()
+    fingerprint = PromptFingerprint(
+        core_hash="core",
+        profile_fingerprint=profile.profile_fingerprint,
+    )
+    event_emitter = _EventEmitter()
+    prompts: list[str] = []
+    error = (
+        "structured_output_payload_schema_mismatch:"
+        "behavior_invariant_upserts.0.verification_examples.1:"
+        "'when' is a required property"
+    )
+
+    def setup(*_: Any, **__: Any) -> Any:
+        return SimpleNamespace(
+            profile=profile,
+            prompt_builder=_PromptBuilder(),
+            fingerprint=fingerprint,
+            system_prompt="base",
+        )
+
+    class _SchemaDriftThenValidTransactionTurnExecutor:
+        def __init__(self, _: Any) -> None:
+            pass
+
+        async def execute_turn(self, **kwargs: Any) -> RoleTurnResult:
+            prompts.append(str(kwargs["system_prompt"]))
+            if len(prompts) == 1:
+                return RoleTurnResult(
+                    content="",
+                    error=error,
+                    is_complete=False,
+                    execution_stats={"transaction_kernel": True},
+                )
+            return RoleTurnResult(
+                content="valid structured output",
+                is_complete=True,
+                execution_stats={"transaction_kernel": True},
+            )
+
+    def validate_turn_output(**_: Any) -> tuple[SimpleNamespace, None]:
+        return (
+            SimpleNamespace(
+                success=True,
+                errors=[],
+                suggestions=[],
+                data={"ok": True},
+                quality_score=1.0,
+                quality_passed=True,
+            ),
+            None,
+        )
+
+    monkeypatch.setattr(flow, "build_role_turn_prompt_setup", setup)
+    monkeypatch.setattr(flow, "build_context_request", lambda request: {"request": request})
+    monkeypatch.setattr(flow, "get_kernel_event_emitter", lambda kernel: event_emitter)
+    monkeypatch.setattr(flow, "get_metrics_collector", lambda: _Metrics())
+    monkeypatch.setattr(flow, "get_tracer", lambda: _Tracer())
+    monkeypatch.setattr(
+        flow,
+        "TransactionTurnExecutor",
+        _SchemaDriftThenValidTransactionTurnExecutor,
+    )
+    monkeypatch.setattr(flow, "_validate_turn_output", validate_turn_output)
+
+    result = asyncio.run(
+        flow.execute_non_stream_role_turn(
+            kernel=_kernel(),
+            role="chief_engineer",
+            request=RoleTurnRequest(
+                message="return a typed semantic patch",
+                validate_output=True,
+                max_retries=1,
+                run_id="run-r04",
+                task_id="CE-SEMANTIC-PATCH",
+                metadata={"turn_request_id": "l3-23-r04-schema-retry"},
+            ),
+        )
+    )
+
+    assert result.error is None
+    assert len(prompts) == 2
+    assert error in prompts[1]
+    assert any(
+        event.get("event_type") is flow.LLMEventType.CALL_RETRY
+        and event.get("error_category") == "structured_output_schema_mismatch"
+        for event in event_emitter.events
+    )

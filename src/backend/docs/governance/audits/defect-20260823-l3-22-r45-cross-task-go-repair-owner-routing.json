@@ -1,0 +1,58 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-22-r45-cross-task-go-repair-owner-routing",
+  "recorded_at": "2026-08-23T14:40:00+08:00",
+  "status": "FIX_UNIT_VERIFIED_LIVE_BENCH_PENDING",
+  "severity": "P0",
+  "project_id": "L3-22",
+  "factory_run_id": "factory_8cecdf9894f9",
+  "director_run_id": "director-7f793c0f2ef4",
+  "symptom": "TASK-3 owned only tests, README, and go.mod but repeatedly received Go compiler failures anchored in TASK-2 production files; five edit_file attempts produced no effect.",
+  "dynamic_evidence": {
+    "workspace": "/tmp/factory-bench-l3-22-r45/workspaces/70d155d01e09-e7911caa1481705c/L3-22-5aaab9a81e5e829d/f1a48939f8b5bce8b8ee9441",
+    "final_request_context_refs": [
+      "3ead80c9c60a7cada96a5148",
+      "62e17a165a2510fe8d7eea2f",
+      "9ca36f6da82935d7e8f01a3b"
+    ],
+    "tool_lifecycle_ledger": ".polaris/runtime/control_plane/ledger/director-7f793c0f2ef4.ndjson",
+    "authorized_write_paths": [
+      "main_test.go",
+      "engine_test.go",
+      "README.md",
+      "go.mod"
+    ],
+    "foreign_diagnostic_anchors": [
+      "simulator.go",
+      "scene.go",
+      "main.go",
+      "report.go"
+    ],
+    "tool_failure_reasons": [
+      "deo_physical_execution_failed:No replacements made",
+      "deo_path_scope_denied",
+      "source syntax regression rejected before commit",
+      "edit_file_empty_search"
+    ],
+    "effect_receipt_count": 0
+  },
+  "root_cause": "_filter_materialization_quality_errors_for_repair_targets fell back to the full verifier diagnostics when no diagnostic matched the current task's repair targets. The quality loop therefore invoked the wrong immutable task owner instead of emitting task_boundary_scope_filter evidence for owner rebind.",
+  "root_cause_class": "director.cross_task_repair_owner_routing",
+  "not_root_cause": [
+    "ToolSpecRegistry alias normalization",
+    "provider native tool decoding",
+    "missing PM or Chief Engineer context"
+  ],
+  "fix": {
+    "file": "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_repair_loop.py",
+    "behavior": "When all explicit Go compiler diagnostic anchors are outside the current task write scope, fail closed before LLM invocation and return task_boundary_repair_targets_deferred with owner-scope evidence. JobToken scope is never widened across tasks."
+  },
+  "validation": {
+    "red_test": "test_go_compile_errors_owned_only_by_another_task_are_deferred failed with stage=quality_repair before the fix",
+    "green_test": "1 passed after the fix",
+    "ruff": "source file clean",
+    "mypy": "source file clean",
+    "broader_suite": "59 passed, 5 unrelated pre-existing TS/Python failures in the concurrently refactored split test module"
+  },
+  "next_action": "Run fresh isolated L3-22 r46 and prove the residual is deferred/rebound to the production-file owner before any further repair LLM call."
+}

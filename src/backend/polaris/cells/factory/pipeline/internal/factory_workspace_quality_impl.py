@@ -34,6 +34,7 @@ from .factory_workspace_quality_evidence import (
     leftover_targets_should_force_owner_rotate,
     workspace_quality_latest_task_boundary_scope_filter,
     workspace_quality_repair_result_has_mutation,
+    workspace_quality_residual_owner_handoff_targets,
     workspace_quality_unclaimed_failing_tu_targets,
     workspace_quality_unclaimed_residual_targets,
 )
@@ -78,7 +79,8 @@ _GO_COMPILER_DIAGNOSTIC_RE = re.compile(
     r"(?:^|\s)(?:[A-Za-z]:)?[^\s:\n]+\.go:\d+(?::\d+)?:[^\n]*(?:"
     r"cannot\s+convert|undefined|declared\s+and\s+not\s+used|imported\s+and\s+not\s+used|"
     r"has\s+no\s+field\s+or\s+method|invalid\s+operation|syntax\s+error|"
-    r"not\s+enough\s+arguments|too\s+many\s+arguments"
+    r"not\s+enough\s+arguments|too\s+many\s+arguments|assignment\s+mismatch|"
+    r"multiple-value|not\s+enough\s+return\s+values|too\s+many\s+return\s+values"
     r")",
     re.IGNORECASE | re.MULTILINE,
 )
@@ -1562,6 +1564,31 @@ def _workspace_quality_causal_repair_target_files(
     return _dedupe_workspace_repair_paths([*direct_targets, *causal_targets])
 
 
+def _workspace_quality_rank_owner_rebind_candidates(
+    *,
+    owner_candidates: list[str],
+    diagnostic_targets: list[str],
+) -> list[str]:
+    """Narrow a rebound CE owner to production paths named by current evidence.
+
+    Rebinding establishes the full JobToken boundary, not a reason to rotate
+    through every file in that boundary.  Prefer the ordered causal targets
+    that overlap the owner and fall back to the whole owner only when current
+    diagnostics cannot identify an owned production path.
+    """
+
+    normalized_owners = _dedupe_workspace_repair_paths(owner_candidates)
+    owner_overlap = _workspace_quality_repair_path_overlaps(
+        set(diagnostic_targets),
+        set(normalized_owners),
+    )
+    # Preserve the CE owner's stable file order for bounded round rotation;
+    # current diagnostics only narrow that list, they do not mint a second
+    # ordering authority.
+    causal_owner_candidates = [path for path in normalized_owners if path in owner_overlap]
+    return causal_owner_candidates or normalized_owners
+
+
 async def _apply_workspace_quality_llm_repairs(
     executor,
     *,
@@ -1573,6 +1600,9 @@ async def _apply_workspace_quality_llm_repairs(
     owner_target_files: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     run_id = run.id
+    owner_rebind_raw = context.get("factory_workspace_quality_owner_rebind")
+    owner_rebind_payload = dict(owner_rebind_raw) if isinstance(owner_rebind_raw, Mapping) else {}
+    explicit_owner_rebind = owner_rebind_payload.get("required") is True
     changed_files = executor._workspace_quality_repair_changed_files()
     if not changed_files:
         return [], {
@@ -1588,10 +1618,14 @@ async def _apply_workspace_quality_llm_repairs(
         artifact_quality_errors=artifact_quality_errors,
     )
     materialized_declared_targets = [path for path in declared_target_files if path in set(changed_files)]
-    claim_target_files = _workspace_quality_llm_claim_target_files(
-        owner_target_files=owner_target_files,
-        diagnostic_target_files=diagnostic_target_files,
-        fallback_target_files=materialized_declared_targets or changed_files,
+    claim_target_files = (
+        _dedupe_workspace_repair_paths(owner_target_files or [])
+        if explicit_owner_rebind
+        else _workspace_quality_llm_claim_target_files(
+            owner_target_files=owner_target_files,
+            diagnostic_target_files=diagnostic_target_files,
+            fallback_target_files=materialized_declared_targets or changed_files,
+        )
     )
     # Provider mutation intent follows the exact current diagnostic target.
     # The claimed task/JobToken below remains the full authorization boundary;
@@ -1600,6 +1634,7 @@ async def _apply_workspace_quality_llm_repairs(
     target_files = claim_target_files or materialized_declared_targets or changed_files
     inbound_quality_context = context.get("director_quality_repair")
     inbound_regression_guards: list[str] = []
+    inbound_candidate_rejections: list[str] = []
     inbound_causal_reanalysis_required = False
     if isinstance(inbound_quality_context, Mapping):
         raw_guards = inbound_quality_context.get("regression_guard_errors")
@@ -1607,6 +1642,13 @@ async def _apply_workspace_quality_llm_repairs(
             inbound_regression_guards = [
                 str(item or "").strip() for item in raw_guards if str(item or "").strip()
             ][:6]
+        raw_candidate_rejections = inbound_quality_context.get("candidate_rejection_errors")
+        if isinstance(raw_candidate_rejections, list | tuple):
+            inbound_candidate_rejections = [
+                str(item or "").strip()
+                for item in raw_candidate_rejections
+                if str(item or "").strip()
+            ][:4]
         # This wrapper intentionally rebuilds the Director context from a
         # whitelist so inbound data cannot override paths/tool policy. Preserve
         # the one bounded Factory-owned escalation bit explicitly. Live L3-22
@@ -1640,6 +1682,8 @@ async def _apply_workspace_quality_llm_repairs(
     }
     if inbound_regression_guards:
         repair_context["director_quality_repair"]["regression_guard_errors"] = inbound_regression_guards
+    if inbound_candidate_rejections:
+        repair_context["director_quality_repair"]["candidate_rejection_errors"] = inbound_candidate_rejections
     if inbound_causal_reanalysis_required:
         repair_context["director_quality_repair"]["causal_reanalysis_required"] = True
     catalog = executor._read_catalog_contract()
@@ -1730,6 +1774,76 @@ async def _apply_workspace_quality_llm_repairs(
             "error": f"workspace_quality_repair_attempt_claim_failed:{exc}",
             "source_tools": ["director_materialization_quality_repair_error"],
             "tool_results": 0,
+        }
+
+    if explicit_owner_rebind:
+        repair_task_metadata_raw = repair_task.get("metadata")
+        repair_task_metadata = (
+            repair_task_metadata_raw if isinstance(repair_task_metadata_raw, Mapping) else {}
+        )
+        authoritative_owner_paths = _workspace_quality_authoritative_owner_paths(
+            repair_task_metadata,
+            run_id=run_id,
+        )
+        if not authoritative_owner_paths:
+            raw_owner_paths = repair_task.get("target_files") or repair_task.get("scope_paths") or ()
+            authoritative_owner_paths = _dedupe_workspace_repair_paths(
+                [raw_owner_paths] if isinstance(raw_owner_paths, str) else list(raw_owner_paths)
+            )
+        owner_overlap = _workspace_quality_repair_path_overlaps(
+            set(claim_target_files),
+            set(authoritative_owner_paths),
+        )
+        authorized_owner_candidates = [
+            path for path in claim_target_files if path in owner_overlap
+        ]
+        if not authorized_owner_candidates:
+            task_runtime_attempt = await _settle_pending_workspace_quality_repair_attempt(
+                executor,
+                {
+                    "task_id": repair_task_id,
+                    "task_row_id": repair_task_row_id,
+                    "execution_attempt": execution_attempt,
+                },
+                accepted=False,
+                reason="workspace_quality_repair_owner_rebind_scope_empty",
+            )
+            return [], {
+                "attempted": True,
+                "repair_mode": "director_llm",
+                "success": False,
+                "error": "workspace_quality_repair_owner_rebind_scope_empty",
+                "error_code": "quality_repair_owner_rebind_scope_empty",
+                "source_tools": [],
+                "tool_results": 0,
+                "task_id": repair_task_id,
+                "task_runtime_repair_attempt": task_runtime_attempt,
+            }
+        scoped_repair_candidates = _workspace_quality_rank_owner_rebind_candidates(
+            owner_candidates=authorized_owner_candidates,
+            diagnostic_targets=diagnostic_target_files,
+        )
+        # Remint the owner from every deferred candidate, then give one exact
+        # failing path to each Provider turn.  A broad same-owner batch lets a
+        # model repeatedly choose the first file while sibling compiler
+        # failures never receive an edit (live L3-22: three turns kept editing
+        # main_test.go and ignored note_test.go/sandbox_test.go).  Rotation is
+        # bounded by the existing quality-repair round budget and never
+        # expands the claimed JobToken scope.
+        target_index = (max(1, repair_attempt) - 1) % len(scoped_repair_candidates)
+        scoped_repair_targets = [scoped_repair_candidates[target_index]]
+        target_files = scoped_repair_targets
+        repair_context["target_files"] = scoped_repair_targets
+        repair_context["director_quality_repair"]["repair_target_files"] = scoped_repair_targets
+        repair_context["director_quality_repair"]["write_only_single_target"] = (
+            {"target_file": scoped_repair_targets[0]} if len(scoped_repair_targets) == 1 else None
+        )
+        repair_context["factory_workspace_quality_repair"]["target_files"] = scoped_repair_targets
+        repair_context["factory_workspace_quality_owner_rebind"] = {
+            **owner_rebind_payload,
+            "claimed_owner_task_id": repair_task_id,
+            "authorized_target_candidates": scoped_repair_candidates,
+            "authorized_target_files": scoped_repair_targets,
         }
 
     repair_context["task_id"] = repair_task_id
@@ -2079,6 +2193,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
         seen_diagnostic_error_codes: set[str] = set()
         seen_plannable_source_tools: set[str] = set()
         regression_guard_errors: list[str] = []
+        candidate_rejection_errors: list[str] = []
         regression_synthesis_round_granted = False
         regression_synthesis_round_pending = False
         regression_synthesis_union_test_identities: set[str] = set()
@@ -2102,13 +2217,15 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
         def llm_repair_context() -> dict[str, Any]:
             """Attach bounded prior-round failures without changing write authority."""
 
-            if not regression_guard_errors and not causal_reanalysis_this_round:
+            if not regression_guard_errors and not candidate_rejection_errors and not causal_reanalysis_this_round:
                 return context
             projected = dict(context)
             raw_quality = projected.get("director_quality_repair")
             quality = dict(raw_quality) if isinstance(raw_quality, Mapping) else {}
             if regression_guard_errors:
                 quality["regression_guard_errors"] = list(regression_guard_errors[:6])
+            if candidate_rejection_errors:
+                quality["candidate_rejection_errors"] = list(candidate_rejection_errors[:4])
             if causal_reanalysis_this_round:
                 quality["causal_reanalysis_required"] = True
             projected["director_quality_repair"] = quality
@@ -2142,6 +2259,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 "regression_synthesis_round_granted": regression_synthesis_round_granted,
                 "causal_reanalysis_round_granted": causal_reanalysis_round_granted,
                 "provider_transport_retry_granted": provider_transport_retry_granted,
+                "candidate_rejection_errors": candidate_rejection_errors[:4],
             }
             if semantic_contract_conflict_candidate:
                 partial_summary["semantic_contract_conflict_candidate"] = dict(
@@ -2461,9 +2579,15 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                             deadline_detail=deadline_detail,
                         ),
                     )
+                owner_rebind_context = llm_repair_context()
+                owner_rebind_context["factory_workspace_quality_owner_rebind"] = {
+                    "required": True,
+                    "source": "task_boundary_scope_filter",
+                    "requested_target_files": deferred_owner_targets,
+                }
                 round_repair_results, round_summary = await executor._apply_workspace_quality_llm_repairs(
                     run=run,
-                    context=llm_repair_context(),
+                    context=owner_rebind_context,
                     artifact_quality_errors=repair_errors,
                     repair_attempt=round_index + 1,
                     # Live L2-15 remint-14: leftover FAILING_TUS seed filled
@@ -2532,6 +2656,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 "attempted": True,
                 "artifact_quality_errors": repair_errors[:10],
                 "regression_guard_errors": regression_guard_errors[:6],
+                "candidate_rejection_errors": candidate_rejection_errors[:4],
                 "director_runtime_repair_coverage": executor._workspace_quality_repair_coverage_report(repair_errors),
                 "plan_probe_preaudit": round_plan_probe,
                 "tool_results": len(round_repair_results),
@@ -2613,6 +2738,23 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     ):
                         round_error_code = "quality_repair_provider_timeout"
                         projected_summary_raw["error_code"] = round_error_code
+                round_error_text = (
+                    str(projected_summary_raw.get("error") or "").strip()
+                    if isinstance(projected_summary_raw, dict)
+                    else ""
+                )
+                if any(
+                    token in round_error_text.casefold()
+                    for token in (
+                        "source_compile_regression",
+                        "source_syntax_regression",
+                        "source_syntax_not_repaired",
+                    )
+                ):
+                    candidate_rejection_errors = [round_error_text[:6000]]
+                    round_payload["candidate_rejection_errors_for_next_round"] = list(
+                        candidate_rejection_errors
+                    )
                 if round_error_code == "quality_repair_provider_timeout":
                     # A provider transport timeout has no semantic repair
                     # effect. Live L3-22 reached five real edits, then a 300s
@@ -2702,6 +2844,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     break
                 convergence_stop_reason = "repair_produced_no_effect_retry_same_director_task"
                 continue
+            candidate_rejection_errors = []
             latest_check_results = []
             rerun_prepare_results = []
             rerun_results = []
@@ -3042,6 +3185,25 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 ]
                 or list(owner_override[:1] if owner_override else [])
             )
+            residual_owner_targets = workspace_quality_residual_owner_handoff_targets(
+                round_summary,
+                after_errors,
+            )
+            if leftover_targets_should_force_owner_rotate(residual_owner_targets, claimed_round_targets):
+                # Live L3-22 r41: round 8 reduced diagnostics 7 -> 6 by
+                # repairing TASK-2/main.go, but the remaining compiler error
+                # lived in TASK-3/physics/gravity_test.go. Scope authority had
+                # already emitted an exact owner_task_retry handoff. Reuse the
+                # existing bounded leftover extension instead of restarting
+                # PM/CE or granting an unbounded repair budget.
+                forced_next_owner_targets = residual_owner_targets
+                leftover_extra_pending = True
+                round_payload["residual_owner_handoff_extra_round_granted"] = True
+                round_payload["residual_owner_handoff_targets"] = residual_owner_targets
+                consecutive_stagnant_rounds = 0
+                last_nonprogress_effect = ""
+                last_nonprogress_task_id = ""
+                continue
             leftover_tus = workspace_quality_unclaimed_failing_tu_targets(
                 after_errors,
                 claimed_targets=claimed_round_targets,

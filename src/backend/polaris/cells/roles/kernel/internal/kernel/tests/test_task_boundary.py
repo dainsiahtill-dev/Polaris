@@ -165,6 +165,46 @@ def test_director_task_boundary_verdict_projects_verifier_policy(tmp_path: Path)
     assert verdict["failed_required_verifiers"] == ["npm test"]
 
 
+def test_director_task_boundary_verdict_does_not_ignore_failed_command_receipt(tmp_path: Path) -> None:
+    """Exact L3-22 r47: an edit plus failed verifier cannot be completed_verified.
+
+    The Transaction Kernel batch contained the physical edit and its synthesized
+    ``go test`` result, but TaskBoundary only read an optional context policy.
+    With no explicit policy it projected ``required_verifiers=[]`` and sealed a
+    harmful edit as completed_verified while the command receipt was red.
+    """
+
+    target = tmp_path / "main.go"
+    target.write_text("package main\n\nfunc main() {}\n", encoding="utf-8")
+    verdict = build_director_task_boundary_verdict(
+        role="director",
+        workspace=str(tmp_path),
+        task_id="TASK-2",
+        run_id="director-r47",
+        context_override={"target_files": ["main.go"]},
+        tool_results=[
+            {
+                "tool": "edit_file",
+                "success": True,
+                "result": {"ok": True, "file": "main.go"},
+                "effect_receipt": {"file": "main.go"},
+            },
+            {
+                "tool": "execute_command",
+                "success": False,
+                "arguments": {"command": "go test -count=0 ./..."},
+                "result": {"ok": False, "exit_code": 1, "stderr": "compile failed"},
+            },
+        ],
+    )
+
+    assert verdict is not None
+    assert verdict["status"] == "required_verifier_failed"
+    assert verdict["failure_class"] == "COMPILER_OR_TEST_FAILURE"
+    assert verdict["required_verifiers"] == ["go test -count=0 ./..."]
+    assert verdict["failed_required_verifiers"] == ["go test -count=0 ./..."]
+
+
 def test_director_task_boundary_verdict_skips_non_director(tmp_path: Path) -> None:
     assert (
         build_director_task_boundary_verdict(

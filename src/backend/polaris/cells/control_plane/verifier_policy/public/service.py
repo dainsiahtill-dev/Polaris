@@ -36,6 +36,10 @@ from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 
 SCHEMA_VERSION = 1
 POLICY_SOURCE = "control_plane.verifier_policy"
+# Binds authoritative command receipts to the exact built-in proof semantics.
+# Bump whenever ``evaluate_builtin_proof`` changes an existing profile's
+# pass/fail meaning; otherwise a bounded failed receipt can outlive the fix.
+BUILTIN_PROOF_SEMANTICS_VERSION = "2026-08-25.1"
 POLICY_RELATIVE_PATH = ".polaris/verifier_policy.json"
 _EPHEMERAL_EXECUTABLE_ROOTS = tuple(Path(item).resolve() for item in ("/tmp", "/var/tmp", "/dev/shm"))
 
@@ -784,6 +788,7 @@ def evaluate_verifier_command_policy(
         "custom_content_hash": custom_content_hash,
         "package_script_evidence_hash": package_script_evidence_hash,
         "persisted_policy_hash": _stable_hash(policy),
+        "proof_semantics_version": BUILTIN_PROOF_SEMANTICS_VERSION,
     }
     return VerifierCommandPolicyDecisionV1(
         authorized=True,

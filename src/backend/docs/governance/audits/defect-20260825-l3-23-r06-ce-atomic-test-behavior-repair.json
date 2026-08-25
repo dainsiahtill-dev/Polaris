@@ -1,0 +1,47 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-23-R06-CE-ATOMIC-TEST-BEHAVIOR-REPAIR",
+  "status": "FIX_UNIT_VERIFIED_FRESH_R07_PENDING",
+  "severity": "P0",
+  "project_id": "L3-23",
+  "factory_run_id": "factory_e9417571743a",
+  "workspace": "/tmp/factory-bench-l3-23-r06/workspaces/9627b6d9e4fd-3a7d675c2e4a246e/L3-23-2956ab31bd653d97/c1fc596e1d4ebf4d469a202b",
+  "symptom": "The fourth CE call added two test artifacts, but the composed portfolio failed cross-task production/test behavior coverage and then projected a misleading advisory-fallback terminal code.",
+  "exact_run_evidence": {
+    "terminal_error_code": "chief_engineer.advisory_projection_fallback_infeasible",
+    "preserved_provider_error": "shared_behavior_contract behavior invariant lacks cross-task production-and-test obligation coverage: test_owner=TASK-3",
+    "initial_semantic_diagnosis": "project_completion_contract delivery depth infeasible: test_files=0 < 2",
+    "typed_patch_artifacts": [
+      "tests/queue_engine.rs",
+      "tests/menu_patience.rs"
+    ],
+    "physical_llm_calls": 4,
+    "target_project_modified_by_main_agent": false
+  },
+  "root_cause": {
+    "confirmed": "Pre-freeze validation reported only the test-file depth deficit. Its diagnosis authorized only artifact_upsert. Adding PM-authorized TASK-3 test artifacts then created a behavior-coverage obligation that could not be repaired in the same envelope, while the call budget was already exhausted. The prompt also incorrectly required behavior covered ids to pre-exist, even though the composer safely validates references after atomic merge.",
+    "not_caused_by": [
+      "Provider context loss",
+      "structured-output transport",
+      "duplicate patch ids",
+      "Director execution",
+      "target project code"
+    ]
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    ],
+    "policy": "A test_files depth diagnosis also authorizes the cross-task behavior invariant and task-ref operations required for the newly introduced test owner. Behavior coverage may reference an existing completion id or an artifact id introduced in the same atomic patch; the composer validates the merged closure before acceptance."
+  },
+  "verification": {
+    "diagnosis_regression": "test_test_depth_diagnosis_authorizes_atomic_cross_task_behavior_binding",
+    "atomic_composition_regression": "test_atomic_test_artifact_and_behavior_binding_can_reference_same_patch_id",
+    "semantic_repair_tests": "61 passed",
+    "factory_ce_handoff_tests": "52 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_isolated_required": "r07 must either accept the CE portfolio and reach Director or expose one new exact pre-freeze residual"
+  }
+}

@@ -220,6 +220,56 @@ def director_task_boundary_verifier_policy(context_override: Any) -> dict[str, l
     }
 
 
+def _command_verifier_name(item: dict[str, Any]) -> str:
+    arguments = _mapping(item.get("arguments"))
+    if not arguments:
+        arguments = _mapping(_mapping(item.get("raw_result")).get("arguments"))
+    raw = arguments.get("command") or arguments.get("cmd") or arguments.get("argv")
+    if isinstance(raw, (list, tuple)):
+        return " ".join(str(part) for part in raw if str(part or "").strip()).strip()
+    command = str(raw or "").strip()
+    if command:
+        return command
+    call_id = str(item.get("call_id") or _mapping(item.get("raw_result")).get("call_id") or "unknown").strip()
+    return f"execute_command:{call_id}"
+
+
+def verifier_policy_from_tool_results(tool_results: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """Project command receipts into first-class verifier obligations.
+
+    A command physically executed in a Director mutation turn is verifier
+    evidence even when the caller omitted an explicit ``verifier_policy`` from
+    context.  Ignoring the receipt allowed TaskBoundary to publish
+    ``completed_verified`` beside a failed ``go test`` receipt in L3-22 r47.
+    """
+
+    required: list[str] = []
+    completed: list[str] = []
+    failed: list[str] = []
+    for item in tool_results:
+        if not isinstance(item, dict):
+            continue
+        tool = str(item.get("tool") or item.get("tool_name") or "").strip()
+        if tool not in {"execute_command", "run_command"}:
+            continue
+        name = _command_verifier_name(item)
+        if name not in required:
+            required.append(name)
+        result = _mapping(item.get("result"))
+        exit_code = result.get("exit_code", result.get("returncode"))
+        succeeded = (
+            item.get("success") is True
+            and result.get("ok") is not False
+            and exit_code in {None, 0, "0"}
+            and result.get("blocked") is not True
+            and result.get("no_op") is not True
+        )
+        destination = completed if succeeded else failed
+        if name not in destination:
+            destination.append(name)
+    return {"required": required, "completed": completed, "missing": [], "failed": failed}
+
+
 def completed_artifacts_from_tool_results(tool_results: list[dict[str, Any]]) -> list[str]:
     """Project changed artifact paths from successful tool results."""
     artifacts: list[str] = []
@@ -266,6 +316,9 @@ def build_director_task_boundary_verdict(
     blocked_dependencies = director_task_boundary_blocked_dependencies(context_override)
     evidence_policy = director_task_boundary_evidence_policy(context_override)
     verifier_policy = director_task_boundary_verifier_policy(context_override)
+    observed_verifier_policy = verifier_policy_from_tool_results(tool_results)
+    for key in ("required", "completed", "missing", "failed"):
+        verifier_policy[key] = list(dict.fromkeys([*verifier_policy[key], *observed_verifier_policy[key]]))
     has_boundary_obligation = bool(
         target_files
         or completed_artifacts

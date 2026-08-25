@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "defect_id": "L3-22-R33-STAGE-ARTIFACT-REALTIME-STALENESS",
+  "status": "FIX_UNIT_VERIFIED_LIVE_UI_REFRESH_PENDING",
+  "severity": "P1",
+  "factory_run_id": "factory_f156c56b7988",
+  "workspace": "/tmp/factory-bench-l3-22-r33/workspaces/39fde1aacd7d-b7a1e28443276cc5/L3-22-5aaab9a81e5e829d/53b4a8f9e30b840858cdda3f",
+  "symptom": "Factory layered UI showed Chief Engineer blueprint coverage 0/3 and no handoff evidence while the same run was already executing Director and showing physical Go file activity.",
+  "dynamic_evidence": {
+    "chief_engineer_stage_completed_at": "2026-08-23T01:42:44.565846+00:00",
+    "director_stage_started_before_screenshot": true,
+    "physical_blueprint_files": 3,
+    "stage_artifact_projection_count": 25,
+    "projected_task_blueprints": [
+      "TASK-1",
+      "TASK-2",
+      "TASK-3"
+    ],
+    "terminal_run_status": "failed",
+    "terminal_failure": "director.canonical_task_boundary_missing"
+  },
+  "root_cause": "useFactory fetched the artifacts endpoint when the run id first became current and again only at terminal settlement. Stage artifacts are appended after each stage settles, so a running UI retained the early empty snapshot through chief_engineer_review and director_dispatch.",
+  "root_cause_class": "frontend_realtime_projection_staleness",
+  "not_root_cause": [
+    "Chief Engineer missing blueprint generation",
+    "Director bypassing Chief Engineer authority",
+    "target project defect"
+  ],
+  "fix": {
+    "files": [
+      "src/frontend/src/hooks/useFactory.ts",
+      "src/frontend/src/hooks/useFactory.test.ts"
+    ],
+    "behavior": "Refresh canonical Factory run artifacts whenever runtime.v2 delivers stage_completed for the current run. Existing in-flight coalescing prevents overlapping artifact requests."
+  },
+  "verification": [
+    {
+      "command": "npm test -- --run src/frontend/src/hooks/useFactory.test.ts",
+      "result": "18 passed"
+    },
+    {
+      "command": "npx eslint src/frontend/src/hooks/useFactory.ts src/frontend/src/hooks/useFactory.test.ts",
+      "result": "exit 0"
+    },
+    {
+      "command": "npm run typecheck",
+      "result": "exit 0"
+    }
+  ],
+  "residual_risk": "A live browser refresh on a subsequent staged Factory run is still required to close the UI projection defect. This defect is independent of r33 terminal Director failure and r43 execution result."
+}

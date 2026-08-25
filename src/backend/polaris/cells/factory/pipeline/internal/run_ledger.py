@@ -712,6 +712,14 @@ def build_job_token_from_record(
         target_files = list(dict.fromkeys([*target_files, *ce_named_targets]))
         allowed_paths = list(dict.fromkeys([*allowed_paths, *ce_named_targets]))
     required_artifacts = _string_list(record.get("required_artifacts") or record.get("code_files"))
+    if stage == "real_run_gate":
+        # This token authorizes a read-only verifier, not a Director write.
+        # Its read scope must cover every artifact the gate is required to
+        # inspect.  Project contracts often declare only root entrypoints while
+        # the CE portfolio materializes additional owned files; treating that
+        # normal shape as capability drift makes a physically valid run ledger
+        # fail its own integrity check.
+        allowed_paths = list(dict.fromkeys([*allowed_paths, *required_artifacts]))
     parent_token_id = _clean_string(
         record.get("parent_token_id") or record.get("previous_job_token_id") or record.get("repair_parent_token_id")
     )

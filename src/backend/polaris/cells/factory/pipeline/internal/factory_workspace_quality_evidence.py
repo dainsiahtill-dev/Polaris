@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
+from polaris.kernelone.quality import owner_task_retry_handoff_requests_from_scope_payload
 from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
 _WORKSPACE_QUALITY_MUTATION_TOKENS = WRITE_TOOLS | frozenset({"create_file", "text_replace"})
@@ -1593,6 +1594,39 @@ def workspace_quality_deferred_owner_targets(summary: dict[str, Any]) -> list[st
             continue
         cleaned.append(rel)
     return _dedupe_workspace_repair_paths(cleaned)
+
+
+def workspace_quality_residual_owner_handoff_targets(
+    summary: Mapping[str, Any],
+    residual_errors: Sequence[str],
+) -> list[str]:
+    """Return owner-routable scope targets still named by the verifier.
+
+    A repair can mutate one in-scope file while also emitting scope-authority
+    handoffs for other failing files. Before revalidation that is not grounds
+    for an early rebind; afterwards an explicit owner-found target still named
+    by the verifier is a safe candidate for the bounded next-owner round.
+
+    This is routing evidence, not write authority. The next Director claim
+    still derives scope from its canonical execution envelope and JobToken.
+    """
+
+    residual_blob = "\n".join(str(item or "") for item in residual_errors).replace("\\", "/")
+    skipped_parts = {".git", ".polaris", "runtime", "node_modules", "__pycache__"}
+    matched: list[str] = []
+    for raw_request in owner_task_retry_handoff_requests_from_scope_payload(summary):
+        if str(raw_request.get("recommended_route") or "").strip() != "owner_task_retry":
+            continue
+        if not bool(raw_request.get("owner_found")) and str(raw_request.get("status") or "").strip() != "owner_found":
+            continue
+        rel = str(raw_request.get("target_file") or "").strip().replace("\\", "/")
+        if not rel or rel not in residual_blob:
+            continue
+        parts = Path(rel).parts
+        if any(part.startswith(".") or part in skipped_parts for part in parts):
+            continue
+        matched.append(rel)
+    return _dedupe_workspace_repair_paths(matched)
 
 
 def workspace_quality_interface_discrepancy_evidence(

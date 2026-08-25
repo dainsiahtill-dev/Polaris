@@ -1,7 +1,7 @@
 {
   "schema_version": "polaris.defect_manifest.v1",
   "defect_id": "L3-22-R37-CE-STRUCTURED-OUTPUT-RISK-FLAGS-ONLY",
-  "status": "OPEN_DYNAMIC_ROOT_CAUSE_CONFIRMED_FIX_PENDING",
+  "status": "SUPERSEDED_BY_R38_TRANSPORT_DIAGNOSTIC",
   "severity": "P0",
   "project_id": "L3-22",
   "factory_run_id": "factory_d91a0641abc1",
@@ -72,5 +72,10 @@
     "Targeted CE structured-output and fallback suites.",
     "Fresh isolated L3-22 run reaches Director with 3/3 CE blueprints.",
     "Then verify r36 Go package-topology constraint live."
-  ]
+  ],
+  "followup": {
+    "factory_run_id": "factory_7e2a5868bf88",
+    "defect_id": "L3-22-R38-CE-NONSTREAM-STRUCTURED-TOOL-ARGUMENTS",
+    "finding": "The bounded non-stream repair transport was exercised live. It avoided the prior streamed risk_flags-only signature but exposed a distinct native tool-argument normalization failure."
+  }
 }

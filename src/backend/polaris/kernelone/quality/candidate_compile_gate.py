@@ -10,6 +10,7 @@ workspace compiles, while the candidate shadow does not.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -18,6 +19,7 @@ from pathlib import Path
 
 _GO_COMPILE_COMMAND = ("go", "test", "-run", "^$", "./...")
 _DEFAULT_TIMEOUT_SECONDS = 30
+_GO_DIAGNOSTIC_RE = re.compile(r"^.+?:\d+(?::\d+)?:\s+\S")
 _SHADOW_IGNORED_NAMES = frozenset(
     {
         ".git",
@@ -68,6 +70,13 @@ def _shadow_ignore(_directory: str, names: list[str]) -> set[str]:
     return {name for name in names if name in _SHADOW_IGNORED_NAMES}
 
 
+def _diagnostic_signatures(result: subprocess.CompletedProcess[str]) -> tuple[str, ...]:
+    """Extract stable Go compiler diagnostic lines from a verifier result."""
+
+    output = "\n".join(part for part in (result.stderr, result.stdout) if part)
+    return tuple(dict.fromkeys(line.strip() for line in output.splitlines() if _GO_DIAGNOSTIC_RE.match(line)))
+
+
 def check_candidate_workspace_compile(
     workspace: str | Path,
     filename: str,
@@ -75,11 +84,13 @@ def check_candidate_workspace_compile(
     *,
     timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS,
 ) -> CandidateCompileCheckResult:
-    """Reject a Go candidate only when it regresses a compiling workspace.
+    """Reject a Go candidate when it provably worsens workspace compilation.
 
     The shadow copy keeps generated-project bytes untouched.  A baseline that
-    already fails compilation is deliberately non-blocking: the existing
-    repair loop must remain able to improve an incomplete project.
+    already fails compilation remains repairable, but is not permission to
+    expand its compiler diagnostics.  A candidate is accepted when it compiles
+    or keeps/reduces the diagnostic count (bounded forward-unmask); increasing
+    the count is a proven harmful mutation and is rejected before commit.
     """
 
     root = Path(workspace).resolve()
@@ -96,8 +107,8 @@ def check_candidate_workspace_compile(
         before = _run_compile(command, cwd=root, timeout_seconds=timeout_seconds)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return CandidateCompileCheckResult(False, False, False, False, command, "", str(exc))
-    if before.returncode != 0:
-        return CandidateCompileCheckResult(True, False, False, False, command, "", "baseline does not compile")
+    before_ok = before.returncode == 0
+    before_diagnostics = _diagnostic_signatures(before)
 
     try:
         with tempfile.TemporaryDirectory(prefix="polaris-compile-candidate-", dir=str(root.parent)) as temp_dir:
@@ -105,23 +116,32 @@ def check_candidate_workspace_compile(
             shutil.copytree(root, shadow, ignore=_shadow_ignore)
             target = (shadow / rel).resolve()
             if shadow not in target.parents:
-                return CandidateCompileCheckResult(False, True, False, False, command, "", "unsafe candidate path")
+                return CandidateCompileCheckResult(False, before_ok, False, False, command, "", "unsafe candidate path")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(str(content), encoding="utf-8", newline="")
             after = _run_compile(command, cwd=shadow, timeout_seconds=timeout_seconds)
     except (OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
-        return CandidateCompileCheckResult(False, True, False, False, command, "", str(exc))
+        return CandidateCompileCheckResult(False, before_ok, False, False, command, "", str(exc))
 
     after_ok = after.returncode == 0
     raw_error = (after.stderr or after.stdout or "").strip()
+    after_diagnostics = _diagnostic_signatures(after)
+    regression = (not after_ok) and (
+        before_ok
+        or (bool(before_diagnostics) and len(after_diagnostics) > len(before_diagnostics))
+    )
     return CandidateCompileCheckResult(
         checked=True,
-        before_ok=True,
+        before_ok=before_ok,
         after_ok=after_ok,
-        regression=not after_ok,
+        regression=regression,
         command=command,
         error="" if after_ok else raw_error[:1000],
-        reason="",
+        reason=(
+            ""
+            if before_ok or after_ok
+            else f"baseline diagnostics={len(before_diagnostics)}; candidate diagnostics={len(after_diagnostics)}"
+        ),
     )
 
 

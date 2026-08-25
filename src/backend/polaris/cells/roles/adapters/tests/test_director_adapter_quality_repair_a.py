@@ -367,6 +367,93 @@ class TestQualityRepairMissingTargetContractA:
         assert adapter.repair_message == ""
         assert not (tmp_path / "src" / "router.tsx").exists()
 
+    def test_go_behavior_assertion_site_is_not_a_compiler_anchor(self) -> None:
+        """Go test assertion locations must not override causal production ownership."""
+        from polaris.cells.roles.adapters.internal.director.quality_gate._repair_loop import (
+            _go_compiler_diagnostic_anchor_files,
+        )
+
+        assert (
+            _go_compiler_diagnostic_anchor_files(
+                [
+                    "--- FAIL: TestNotesForScale (0.00s)\n"
+                    '    note_test.go:159: NotesForScale(C): bubbletea: unknown note name: "C"\n'
+                    "FAIL\n"
+                ]
+            )
+            == []
+        )
+
+    def test_go_compile_site_remains_a_compiler_anchor(self) -> None:
+        """Real Go compiler path:line:column diagnostics retain fail-closed routing."""
+        from polaris.cells.roles.adapters.internal.director.quality_gate._repair_loop import (
+            _go_compiler_diagnostic_anchor_files,
+        )
+
+        assert _go_compiler_diagnostic_anchor_files(
+            ["note_test.go:30:16: assignment mismatch: 1 variable but b.Assign returns 2 values"]
+        ) == ["note_test.go"]
+
+    @pytest.mark.asyncio
+    async def test_go_compile_errors_owned_only_by_another_task_are_deferred(self, tmp_path) -> None:
+        """Do not ask a tests-only task to repair production Go files it cannot write."""
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            @staticmethod
+            async def execute_tools(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self.invoked = False
+
+            async def _invoke_role_dialogue_with_timeout(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+                self.invoked = True
+                return {"content": ""}
+
+        for path in ("main_test.go", "engine_test.go", "README.md", "go.mod"):
+            (tmp_path / path).write_text("package bubblesandbox\n", encoding="utf-8")
+        task = {"target_files": ["main_test.go", "engine_test.go", "README.md", "go.mod"]}
+        adapter = _Adapter()
+
+        tool_results, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task=task,
+            target_task_id="TASK-3",
+            run_id="director-run",
+            context={},
+            original_message="Create tests and README.",
+            llm_call_timeout=1.0,
+            artifact_quality_errors=[
+                "simulator.go:33:17: method Scene.SpawnBubble already declared at ./scene.go:56:17",
+                "main.go:10:2: math imported and not used",
+                "report.go:47:16: scene.Alive undefined",
+            ],
+            changed_files=["main_test.go", "engine_test.go", "simulator.go", "main.go", "report.go"],
+        )
+
+        assert tool_results == []
+        assert summary["stage"] == "task_boundary_repair_targets_deferred"
+        assert summary["success_reason"] == "repair_targets_outside_current_task_target_files"
+        assert summary["task_boundary_scope_filter"]["out_of_scope_repair_target_files"] == [
+            "simulator.go",
+            "scene.go",
+            "main.go",
+            "report.go",
+        ]
+        assert adapter.invoked is False
+
     @pytest.mark.asyncio
     async def test_quality_repair_does_not_invent_missing_typescript_export(
         self,

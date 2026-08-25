@@ -225,6 +225,35 @@ def _portfolio_contract_error(
     return ChiefEngineerBlueprintErrorV1(message, code=code, details=details)
 
 
+def _normalized_away_entrypoint_obligation_ids(
+    requirements: Mapping[str, Any],
+    completion_contract: ProjectCompletionContractV1,
+) -> frozenset[str]:
+    """Return provider-declared entrypoint ids removed by authority normalization.
+
+    Completion-contract construction may conservatively drop an advisory
+    entrypoint that cannot bind committed PM command authority.  Shared behavior
+    is parsed from the same provider candidate, so it must observe that same
+    normalization transaction.  Artifact and verifier ids are deliberately not
+    generalized here: duplicate/remapped obligations require explicit mapping,
+    not semantic deletion.  Genuinely unknown ids stay visible and fail closed.
+    """
+
+    obligations = requirements.get("obligations")
+    if not isinstance(obligations, Mapping):  # pragma: no cover - strict parser owns this guard.
+        return frozenset()
+    candidate_ids = {
+        str(row.get("obligation_id") or "")
+        for row in obligations.get("entrypoints", ())
+        if isinstance(row, Mapping) and str(row.get("obligation_id") or "")
+    }
+    normalized_ids = {
+        item.obligation_id
+        for item in completion_contract.obligations.entrypoints
+    }
+    return frozenset(candidate_ids - normalized_ids)
+
+
 def _portfolio_array(value: Any, *, field_name: str) -> list[Any]:
     if value is None:
         return []
@@ -2563,13 +2592,25 @@ def build_chief_engineer_blueprint_portfolio(
     }
     behavior_hash: str | None = None
     if parsed.consumed and parsed.behavior_contract_declared:
+        normalized_away_obligation_ids = (
+            _normalized_away_entrypoint_obligation_ids(
+                parsed.project_completion_requirements,
+                project_completion_contract,
+            )
+            if parsed.project_completion_requirements is not None and project_completion_contract is not None
+            else frozenset()
+        )
         behavior_invariants = tuple(
             ChiefEngineerBehaviorInvariantV1(
                 invariant_id=str(item.get("invariant_id") or ""),
                 statement=str(item.get("statement") or ""),
                 owner_task_id=str(item.get("owner_task_id") or ""),
                 consumer_task_ids=tuple(_string_list(item.get("consumer_task_ids"))),
-                covered_obligation_ids=tuple(_string_list(item.get("covered_obligation_ids"))),
+                covered_obligation_ids=tuple(
+                    obligation_id
+                    for obligation_id in _string_list(item.get("covered_obligation_ids"))
+                    if obligation_id not in normalized_away_obligation_ids
+                ),
                 verification_examples=tuple(
                     ChiefEngineerBehaviorExampleV1(
                         given=str(example.get("given") or ""),

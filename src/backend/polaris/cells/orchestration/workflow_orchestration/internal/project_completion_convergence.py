@@ -293,7 +293,30 @@ def _event_state(
         if event.event_type not in _KNOWN_EVENTS:
             raise ValueError(f"unsupported workflow event: {event.event_type}")
         if terminal is not None:
-            raise ValueError("events after terminal are not allowed")
+            # The append-only cursor may refresh a completed terminal when
+            # authoritative owner evidence becomes stronger after settlement.
+            # Only another explicitly revalidated completed terminal is legal;
+            # actions, waits, status changes, or malformed refreshes remain
+            # fail-closed.  Keep the latest terminal as replay authority.
+            prior_payload = terminal.payload
+            current_payload = event.payload
+            if (
+                event.event_type != _EVENT_TERMINAL
+                or not isinstance(prior_payload, Mapping)
+                or not isinstance(current_payload, Mapping)
+            ):
+                raise ValueError("events after terminal are not allowed")
+            _require_event_identity(current_payload, identity)
+            reason_codes = current_payload.get("reason_codes")
+            if (
+                _payload_str(prior_payload, "status") != "completed_verified"
+                or _payload_str(current_payload, "status") != "completed_verified"
+                or reason_codes != ["owner_binding_revalidated"]
+                or not _payload_str(current_payload, "owner_binding_hash")
+            ):
+                raise ValueError("terminal refresh is not an owner-revalidated completion")
+            terminal = event
+            continue
         if event.event_type == "workflow_started":
             if event.seq != 1:
                 raise ValueError("duplicate workflow_started event")
@@ -1328,6 +1351,7 @@ class ProjectCompletionConvergenceEngineV1:
             diagnostic_id=action.diagnostic_id,
             action_id=action.action_id,
             owner_snapshot_hash=action.owner_snapshot_hash,
+            next_action=action.action_kind,
         )
 
     async def _record_no_progress(
@@ -1495,12 +1519,25 @@ class ProjectCompletionConvergenceEngineV1:
             if type(owner_binding_hash) is not str:
                 return await self._invalidate_terminal_projection(identity, workflow_id, event.seq)
             binding_result = await self._query_outcome(identity, workflow_id, event.seq)
-            if (
-                isinstance(binding_result, ProjectCompletionAdvanceResultV1)
-                or not binding_result.outcome.completed_verified
-                or _binding_hash(binding_result) != owner_binding_hash
-            ):
+            if isinstance(binding_result, ProjectCompletionAdvanceResultV1) or not binding_result.outcome.completed_verified:
                 return await self._invalidate_terminal_projection(identity, workflow_id, event.seq)
+            current_binding_hash = _binding_hash(binding_result)
+            if current_binding_hash != owner_binding_hash:
+                # Owner evidence is allowed to become stronger after terminal
+                # settlement (for example, replacement verifier receipts or a
+                # physically recovered TaskRuntime projection).  Re-querying
+                # the sealed current owner keeps this fail-closed: only a
+                # still-completed authoritative outcome may supersede the old
+                # binding.  Persist the replacement hash instead of leaving a
+                # permanently stale terminal cursor.
+                return await self._append_terminal(
+                    identity,
+                    workflow_id,
+                    state.last_seq,
+                    status="completed_verified",
+                    reason_codes=("owner_binding_revalidated",),
+                    owner_binding_hash=current_binding_hash,
+                )
         elif status == "model_ceiling":
             diagnostic_id = event.payload.get("diagnostic_id")
             model_ceiling_binding_hash = event.payload.get("owner_binding_hash")

@@ -1050,9 +1050,17 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             content_keywords = self._extract_domain_keywords(directive, limit=6)
         keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
         check_summary = "; ".join(deterministic_checks[:8]) if deterministic_checks else "rust_compile; cargo build"
-        topology_metadata = _ce_owned_topology_metadata(
+        model_topology_metadata = _ce_owned_topology_metadata(
+            source_metadata,
+            required_source_kinds=["domain_modules"],
+        )
+        engine_topology_metadata = _ce_owned_topology_metadata(
             source_metadata,
             required_source_kinds=["domain_modules", "entrypoint"],
+        )
+        verification_topology_metadata = _ce_owned_topology_metadata(
+            source_metadata,
+            required_source_kinds=["tests"],
         )
         model_targets = [
             "Cargo.toml",
@@ -1104,7 +1112,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "phase": "requirements",
                     "depends_on": [],
                     "assigned_to": "Director",
-                    "metadata": dict(topology_metadata),
+                    "metadata": dict(model_topology_metadata),
                 },
                 {
                     "id": "TASK-2",
@@ -1128,7 +1136,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "phase": "implementation",
                     "depends_on": ["TASK-1"],
                     "assigned_to": "Director",
-                    "metadata": dict(topology_metadata),
+                    "metadata": dict(engine_topology_metadata),
                 },
                 {
                     "id": "TASK-3",
@@ -1153,7 +1161,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "phase": "verification",
                     "depends_on": ["TASK-2"],
                     "assigned_to": "Director",
-                    "metadata": dict(topology_metadata),
+                    "metadata": dict(verification_topology_metadata),
                 },
             ],
             delivery_plan_document=delivery_plan_document,

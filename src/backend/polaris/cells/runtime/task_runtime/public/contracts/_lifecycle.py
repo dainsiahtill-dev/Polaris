@@ -403,6 +403,67 @@ class PrepareSameTaskLocalReworkCommandV1:
         object.__setattr__(self, "max_rework_attempts", max_attempts)
 
 
+@dataclass(frozen=True)
+class QuerySameTaskLocalReworkAuthorizationV1:
+    """Read one exact committed local-rework authorization from durable facts."""
+
+    workspace: str
+    factory_run_id: str
+    external_task_id: str
+    action_id: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "factory_run_id", _require_non_empty("factory_run_id", self.factory_run_id))
+        object.__setattr__(self, "external_task_id", _require_non_empty("external_task_id", self.external_task_id))
+        action_id = _require_non_empty("action_id", self.action_id).lower()
+        if len(action_id) != 64 or any(char not in "0123456789abcdef" for char in action_id):
+            raise ValueError("action_id must be a sha256 hex digest")
+        object.__setattr__(self, "action_id", action_id)
+
+
+SameTaskLocalReworkAuthorizationQueryCodeV1 = Literal[
+    "same_task_local_rework_authorization_found",
+    "same_task_local_rework_authorization_not_found",
+    "same_task_local_rework_authorization_ambiguous",
+    "same_task_local_rework_authorization_malformed",
+    "same_task_local_rework_authorization_fact_query_failed",
+]
+
+
+@dataclass(frozen=True)
+class SameTaskLocalReworkAuthorizationQueryResultV1:
+    """Typed durable lookup result for one same-task local-rework action."""
+
+    ok: bool
+    code: SameTaskLocalReworkAuthorizationQueryCodeV1
+    workspace: str
+    factory_run_id: str
+    external_task_id: str
+    action_id: str
+    authorization: Mapping[str, Any] = field(default_factory=dict)
+    fact_event_id: str = ""
+    fact_event_seq: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "factory_run_id", _require_non_empty("factory_run_id", self.factory_run_id))
+        object.__setattr__(self, "external_task_id", _require_non_empty("external_task_id", self.external_task_id))
+        action_id = _require_non_empty("action_id", self.action_id).lower()
+        if len(action_id) != 64 or any(char not in "0123456789abcdef" for char in action_id):
+            raise ValueError("action_id must be a sha256 hex digest")
+        object.__setattr__(self, "action_id", action_id)
+        object.__setattr__(self, "authorization", _to_dict_copy(self.authorization))
+        object.__setattr__(self, "fact_event_id", str(self.fact_event_id or "").strip())
+        if self.fact_event_seq is not None:
+            object.__setattr__(self, "fact_event_seq", int(self.fact_event_seq))
+        if self.code == "same_task_local_rework_authorization_found":
+            if not self.ok or not self.authorization or not self.fact_event_id:
+                raise ValueError("found authorization result requires durable authorization and event evidence")
+        elif self.authorization:
+            raise ValueError("non-found authorization result must not carry authorization evidence")
+
+
 SameTaskLocalReworkPreparationCodeV1 = Literal[
     "same_task_local_rework_authorization_malformed",
     "same_task_local_rework_receipt_mismatch",
