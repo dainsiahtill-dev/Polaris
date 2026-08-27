@@ -476,6 +476,54 @@ class StreamExecutor:
             "provider_meta": dict(accumulator.provider_meta),
         }
 
+    def _record_tool_argument_audit(
+        self,
+        accumulator: _ToolCallAccumulator,
+        payload: dict[str, Any],
+    ) -> None:
+        """Record privacy-bounded argument evidence for every emission path."""
+        try:
+            decoded_arguments = payload.get("arguments")
+            decoded_arguments_dict = decoded_arguments if isinstance(decoded_arguments, dict) else {}
+            decoded_arguments_json = json.dumps(
+                decoded_arguments_dict,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            content = decoded_arguments_dict.get("content")
+            content_text = content if isinstance(content, str) else ""
+            target_path = str(
+                decoded_arguments_dict.get("file")
+                or decoded_arguments_dict.get("path")
+                or decoded_arguments_dict.get("file_path")
+                or ""
+            ).strip()
+            argument_audit = {
+                "provider": str(accumulator.provider_meta.get("provider") or "").strip(),
+                "tool_name": str(accumulator.tool_name or "").strip(),
+                "call_id": accumulator.call_id,
+                "target_path": target_path,
+                "raw_arguments_length": len(accumulator.arguments_buffer),
+                "raw_arguments_sha256": hashlib.sha256(accumulator.arguments_buffer.encode("utf-8")).hexdigest(),
+                "decoded_arguments_sha256": hashlib.sha256(decoded_arguments_json.encode("utf-8")).hexdigest(),
+                "content_length": len(content_text),
+                "content_sha256": hashlib.sha256(content_text.encode("utf-8")).hexdigest(),
+                "content_angle_open_count": content_text.count("<"),
+                "content_angle_close_count": content_text.count(">"),
+                "content_xml_close_count": content_text.count("</"),
+                "assembly": dict(accumulator.provider_meta.get("assembly") or {}),
+            }
+            accumulator.argument_audit = argument_audit
+            _debug_stream_module.emit_debug_event(
+                category="llm_tool_call",
+                label="arguments_assembled",
+                source="polaris.kernelone.llm.stream_executor",
+                payload=argument_audit,
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            logger.debug("[stream-executor] tool argument audit emission failed: %s", exc)
+
     def _finalize_stream_tool_call(self, accumulator: _ToolCallAccumulator) -> dict[str, Any] | None:
         # End-of-stream flush is the ONLY emission point for legitimately
         # empty-argument tool calls (ADR-0090 I1): mid-stream an empty dict is
@@ -507,8 +555,26 @@ class StreamExecutor:
         signature = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         if signature == accumulator.emitted_signature:
             return None
+        self._record_tool_argument_audit(accumulator, payload)
         accumulator.emitted_signature = signature
         return payload
+
+    @staticmethod
+    def _stream_tool_call_event_meta(
+        accumulator: _ToolCallAccumulator,
+        *,
+        provider_type: str,
+        trace_id: str,
+        finalized: bool = False,
+    ) -> dict[str, Any]:
+        """Build one metadata contract for mid-stream and final-flush calls."""
+
+        metadata: dict[str, Any] = {"provider": provider_type, "trace_id": trace_id}
+        if finalized:
+            metadata["finalized"] = True
+        if isinstance(accumulator.argument_audit, dict) and accumulator.argument_audit:
+            metadata["tool_call_argument_audit"] = dict(accumulator.argument_audit)
+        return metadata
 
     def _accumulate_stream_tool_call(
         self,
@@ -606,6 +672,10 @@ class StreamExecutor:
         payload = self._build_stream_tool_payload(accumulator)
         if payload is None:
             return None
+
+        # Keep evidence beside, never inside, executable arguments.  Tool
+        # signatures and dispatch payloads must remain byte-for-byte stable.
+        self._record_tool_argument_audit(accumulator, payload)
 
         signature = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         if signature == accumulator.emitted_signature:
@@ -1323,7 +1393,14 @@ class StreamExecutor:
                         ordinal_for_call = tool_call_ordinal
                         tool_call_ordinals_by_key[key] = ordinal_for_call
 
-                    yield AIStreamEvent.tool_call_event(emitted, meta={"provider": provider_type, "trace_id": trace_id})
+                    yield AIStreamEvent.tool_call_event(
+                        emitted,
+                        meta=self._stream_tool_call_event_meta(
+                            pending_tool_calls[key],
+                            provider_type=provider_type,
+                            trace_id=trace_id,
+                        ),
+                    )
         finally:
             aclose = getattr(stream_iter, "aclose", None)
             if callable(aclose):
@@ -1357,7 +1434,13 @@ class StreamExecutor:
                 tool_call_ordinals_by_key[key] = ordinal_for_call
 
             yield AIStreamEvent.tool_call_event(
-                emitted, meta={"provider": provider_type, "trace_id": trace_id, "finalized": True}
+                emitted,
+                meta=self._stream_tool_call_event_meta(
+                    pending,
+                    provider_type=provider_type,
+                    trace_id=trace_id,
+                    finalized=True,
+                ),
             )
 
         if stream_usage_payload:

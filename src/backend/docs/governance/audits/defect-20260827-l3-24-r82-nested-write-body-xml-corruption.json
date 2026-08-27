@@ -1,0 +1,58 @@
+{
+  "defect_id": "L3-24-R82-NESTED-WRITE-BODY-XML-CORRUPTION",
+  "status": "FIXED_UNIT_FRESH_E2E_BLOCKED_BY_DISTINCT_CE_RESIDUAL",
+  "severity": "P0",
+  "exact_run": {
+    "factory_run_id": "factory_b8c446d02ece",
+    "workspace": "/tmp/factory-bench-l3-24-r82/workspaces/a2ba4c16ec62-837490e1ad09cebd/L3-24-023d7314133040b6/490d405109f6949d621fa85a",
+    "director_run_id": "director-7af1b5a9c3a2",
+    "initial_provider_call_id": "987cecff76054ca8b5f808ad0f344c90",
+    "wall_clock_seconds": 917.2,
+    "outcome": "DELIVERY_FAILED"
+  },
+  "symptom": "The initial native write batch materialized C++ files containing XML closing tags such as </string_view></string></cstdint>, malformed includes such as #include string, and collapsed template tokens such as std::vectorDiaryEntry. All five C++ syntax checks failed.",
+  "dynamic_evidence": [
+    "The exact provider response contained 11 native write_file calls. CMakeLists.txt carried a canonical string body, while every C++ call had provider_argument_audit.content_length=0 despite non-empty decoded arguments and a successful physical write receipt.",
+    "For include/invisible_ink/diary.hpp, the raw and decoded argument hashes were identical (bd1fa89fe09fb8b6b6d71f5d21a40834928dfc9d595b5358caf14ec318321320), excluding stream-fragment mutation before decoded argument assembly.",
+    "The initial diary.hpp artifact receipt recorded hash 6d7a3de649e64c03ade4a7591cc28b5350cc8a27aab192b169a5c4ad8eff6914, while exact verifier diagnostics observed the XML-tail and collapsed-template corruption on disk.",
+    "A RED replay through normalize_tool_arguments with an r82-shaped nested C++ body produced '#include <vector>... </int></vector>', the same corruption family observed physically.",
+    "Repair attempts produced real edits and rotated among diary.hpp, ink_reveal.hpp and moon_cipher.hpp, so the failure was not an entrypoint-pinning or no-effect repair loop."
+  ],
+  "root_cause": "The R138 structured write-body compatibility layer treated nested non-string source bodies as HTML/XML trees regardless of target language. For C++ native tool arguments, angle-bracket tokens represented as nested mapping keys were flattened into markup and physically committed as XML closing tags. Ambiguous nested source mappings were incorrectly accepted instead of failing closed and requesting a canonical UTF-8 string body.",
+  "root_cause_class": "generic_platform_tool_argument_lossy_normalization",
+  "target_project_modified": false,
+  "fix": {
+    "behavior": "Allow nested structured-body recovery only for declared markup targets (.htm/.html/.svg/.xhtml/.xml). Keep flat string-fragment/list recovery unchanged. For non-markup targets, preserve the nested mapping so Director policy and the physical writer reject it before any effect and request a clean string body.",
+    "files": [
+      "src/backend/polaris/kernelone/llm/toolkit/tool_normalization/normalizers/_shared.py",
+      "src/backend/polaris/kernelone/llm/toolkit/tool_normalization/normalizers/_file_path.py",
+      "src/backend/polaris/cells/roles/adapters/internal/director/execution_tools.py",
+      "src/backend/polaris/kernelone/llm/toolkit/tests/test_tools_normalization.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_execution_tools.py"
+    ]
+  },
+  "regression_tests": [
+    "test_write_file_keeps_nested_cpp_body_non_string_so_policy_can_fail_closed",
+    "test_write_file_rejects_nested_cpp_body_before_physical_effect",
+    "test_write_file_recovers_htmlish_nested_text_map_content",
+    "test_write_file_recovers_text_continuation_map_content",
+    "test_r195_write_file_recovers_structured_content_no_dict_leak"
+  ],
+  "validation": {
+    "tdd_red": "The new C++ normalization regression failed because current code returned a corrupted string ending in </int></vector>.",
+    "pytest": "178 passed across tool normalization and Director execution tool suites",
+    "ruff": "passed for three production and two test files",
+    "mypy": "passed for three production files"
+  },
+  "fresh_e2e": {
+    "project_id": "L3-24",
+    "attempt": "r83",
+    "factory_run_id": "factory_c8df2e65c378",
+    "state": "INCONCLUSIVE_DISTINCT_STAGE_FAILURE",
+    "wall_clock_seconds": 134.4,
+    "stage": "chief_engineer_review",
+    "director_reached": false,
+    "reason": "r83 failed before Director execution because a schema-valid CE candidate referenced an unknown behavior invariant. The nested write-body path was therefore not physically exercised and remains pending a fresh run after the distinct CE defect is fixed."
+  },
+  "remaining_risk": "A fresh isolated run must prove that malformed nested native arguments are rejected before physical effect and that the same Director task can retry with a canonical string body without restarting PM/CE."
+}

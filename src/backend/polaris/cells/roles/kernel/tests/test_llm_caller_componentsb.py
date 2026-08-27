@@ -1919,6 +1919,19 @@ class TestStreamEngineRunStream:
             assert physical_dispatch_port is None
             yield {
                 "type": "tool_call",
+                "meta": {
+                    "tool_call_argument_audit": {
+                        "provider": "provider-stream",
+                        "tool_name": "write_file",
+                        "call_id": "call-1",
+                        "target_path": "src/a.py",
+                        "raw_arguments_length": 40,
+                        "raw_arguments_sha256": "1" * 64,
+                        "decoded_arguments_sha256": "2" * 64,
+                        "content_length": 1,
+                        "content_sha256": "3" * 64,
+                    }
+                },
                 "tool_call": {
                     "id": "call-1",
                     "name": "write_file",
@@ -1964,6 +1977,25 @@ class TestStreamEngineRunStream:
             "call-1",
             "call-2",
         ]
+        assert end_metadata["native_tool_call_envelopes"][0]["metadata"]["provider_argument_audit"] == {
+            "provider": "provider-stream",
+            "tool_name": "write_file",
+            "call_id": "call-1",
+            "target_path": "src/a.py",
+            "raw_arguments_length": 40,
+            "raw_arguments_sha256": "1" * 64,
+            "decoded_arguments_sha256": "2" * 64,
+            "content_length": 1,
+            "content_sha256": "3" * 64,
+        }
+        assert end_metadata["tool_call_argument_audit_projection"] == {
+            "schema_version": "llm.tool_call_argument_audit_projection.v1",
+            "source": "normalized_stream_tool_call",
+            "tool_call_count": 2,
+            "audit_present_count": 1,
+            "audit_missing_count": 1,
+            "missing_call_ids": ["call-2"],
+        }
 
     async def test_stream_call_start_emits_context_snapshot_ref(self) -> None:
         """Phase 1 critical fix: StreamEngine must call store_context_messages

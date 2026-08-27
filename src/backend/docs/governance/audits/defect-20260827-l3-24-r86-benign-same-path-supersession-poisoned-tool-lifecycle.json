@@ -1,0 +1,87 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "L3-24-R86-BENIGN-SAME-PATH-SUPERSESSION-POISONED-TOOL-LIFECYCLE",
+  "status": "FIXED_VERIFIED_FRESH_E2E",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "attempt": "r86",
+  "factory_run_id": "factory_78615926b302",
+  "symptom": {
+    "stage": "quality_gate",
+    "factory_status": "failed",
+    "authoritative_failure_category": "control_plane",
+    "root_cause_signature": "control_plane:tool_result_failed",
+    "residual_module": "M03_tool_batch_deo",
+    "tool_lifecycle_failure_class": "TOOL_RESULT_FAILED",
+    "tool_lifecycle_reason": "deo_same_path_superseded_by_later_write"
+  },
+  "dynamic_evidence": {
+    "workspace": "/tmp/factory-bench-l3-24-r86/workspaces/4b728de0a8d0-2fefec9dfe8c3478/L3-24-023d7314133040b6/0f6fbae503420bd765e04087",
+    "provider_response_hash": "7dfdf0c1bb35c6562b538bf2e8a60bef6e81614a1fba0813146d60d554d11923",
+    "native_edit_calls": [
+      {
+        "call_id": "call_01a041e38c6d75c090990acb",
+        "path": "src/cli/main.cpp",
+        "outcome": "superseded_by_later_same_path_edit"
+      },
+      {
+        "call_id": "call_01a041e38c6d75c090990ad1",
+        "path": "src/cli/main.cpp",
+        "outcome": "superseded_by_later_same_path_edit"
+      },
+      {
+        "call_id": "call_01a041e38c6d75c090990ae8",
+        "path": "src/cli/main.cpp",
+        "outcome": "effect_receipt_succeeded"
+      },
+      {
+        "call_id": "call_01a041e38c6d75c090990af5",
+        "path": "include/invisible_diary/cipher.hpp",
+        "outcome": "effect_receipt_succeeded"
+      }
+    ],
+    "decoded_native_tool_calls": 21,
+    "tool_results": 42,
+    "effect_receipts": 19,
+    "failed_lifecycle_events": 1,
+    "physical_delivery": "The later same-path edit and sibling edit both executed and produced effect receipts; only the intentionally collapsed earlier edits were projected as failures.",
+    "remaining_product_failures": [
+      "src/cli/main.cpp: cipher and moon_phase undeclared",
+      "src/invisible_diary/diary.cpp: phase_ field absent",
+      "implementation depth 437 production lines below required 650"
+    ]
+  },
+  "root_cause": "The DEO preparation layer correctly applied last-write-wins and classified earlier same-path edits as benign superseded members, but the execution projection merged every dropped member with genuine policy denials. It emitted status=error, failure_count>0 and deo_member_soft_denied for the benign normalization rows, causing Run Ledger to manufacture TOOL_RESULT_FAILED even though the final same-path mutation physically succeeded.",
+  "fix": {
+    "behavior": "Project exact deo_same_path_superseded_by_later_write rows as audited success/no_op/superseded results with no effect receipt and zero failure contribution. Keep every other DEO dropped-member reason as a fail-closed deo_member_soft_denied error. Run Ledger explicitly recognizes only this exact internal no-effect shape as complete accounting rather than a missing effect receipt.",
+    "files": [
+      "src/backend/polaris/cells/roles/kernel/internal/transaction/tool_batch_executor/_executor_execute.py",
+      "src/backend/polaris/cells/control_plane/run_ledger/public/tool_lifecycle/_helpers.py",
+      "src/backend/polaris/cells/roles/kernel/tests/test_deo_same_path_collapse.py"
+    ],
+    "target_specific_logic_added": false,
+    "policy_denial_relaxed": false,
+    "effect_receipt_fabricated": false
+  },
+  "verification": {
+    "red": "Focused test collection failed because no non-failing supersession projection existed.",
+    "focused_and_runtime": "60 passed",
+    "executor_and_run_ledger": "174 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_e2e": {
+      "attempt": "r87",
+      "factory_run_id": "factory_f1eeb6c7105a",
+      "tool_lifecycle_failed_count": 0,
+      "failed_control_plane_events": [],
+      "result": "The fresh isolated run reached QA with canonical TaskBoundary completed_verified and no TOOL_RESULT_FAILED residue. The remaining unittest and delivery-depth failures were distinct product-quality residuals."
+    }
+  },
+  "guardrails": {
+    "target_project_modified": false,
+    "generated_workspace_read_only": true,
+    "genuine_policy_denial_still_fail_closed": true,
+    "superseded_result_is_not_authoritative_effect": true,
+    "pm_ce_restart_added": false
+  }
+}

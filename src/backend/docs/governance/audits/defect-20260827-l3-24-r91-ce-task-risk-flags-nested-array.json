@@ -1,0 +1,83 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "L3-24-R91-CE-TASK-RISK-FLAGS-NESTED-ARRAY",
+  "status": "FIX_IMPLEMENTED_LOCAL_GATES_GREEN_AWAITING_FRESH_BENCH",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "attempt": "r91",
+  "factory_run_id": "factory_20b532160d30",
+  "symptom": {
+    "wall_clock_seconds": 62.1,
+    "factory_stage": "chief_engineer_review",
+    "generated_blueprints": "0/1",
+    "director_reached": false,
+    "source_files_materialized": 0,
+    "error_code": "invalid_blueprint_portfolio_input",
+    "error_message": "construction_plan.task_plans['TASK-1'].risk_flags entries must be strings or objects"
+  },
+  "dynamic_evidence": {
+    "workspace": "/tmp/factory-bench-l3-24-r91/workspaces/81d33194545d-83894c643c6aeea5/L3-24-023d7314133040b6/23d4877af2a72c05a211ea6f",
+    "context_snapshot_ref_primary": "c3317102a78fe19f2cf5a166",
+    "context_snapshot_ref_schema_repair": "be934c4d1d0adde05581cf",
+    "provider_request_role": "chief_engineer",
+    "provider_request_tool": "submit_structured_role_output",
+    "provider_request_context_sufficient": true,
+    "raw_tool_argument_path": [
+      "construction_plan",
+      "task_plans",
+      "TASK-1",
+      "risk_flags",
+      0,
+      0,
+      0
+    ],
+    "raw_tool_argument_leaf": "RISK-TEST-EMPTY: tests/test_product.py must invoke subprocess",
+    "first_schema_error": "structured_output_payload_schema_mismatch:$:'project_completion_contract' is a required property",
+    "schema_repair_paths": [
+      ["project_completion_contract"],
+      ["risk_flags"]
+    ],
+    "persisted_candidate_nested_risk_shape": "[[[string]]]",
+    "generated_project_modified": false
+  },
+  "root_cause": {
+    "classification": "chief_engineer_structured_output_repair",
+    "cause": "The provider's original native tool arguments already contained a losslessly nested array for a schema-flat task-plan field. Required-property repair patched only missing root members and retained the invalid existing member, so strict full-candidate revalidation failed after the bounded repair.",
+    "not_caused_by": [
+      "role identity",
+      "missing tools",
+      "context truncation",
+      "provider transport merge",
+      "generated target code"
+    ]
+  },
+  "implemented_fix": {
+    "normalization": "Flatten nested list layers only inside known CE task-plan array fields. String leaves are accepted for all three fields; mapping leaves are accepted only for risk_flags. Unknown scalar leaves remain fail-closed.",
+    "repair_composition": "Required-property repair derives its immutable base candidate from the safely normalized provider payload before hashing, patching, and strict full-candidate revalidation.",
+    "target_project_modified": false
+  },
+  "verification": {
+    "red_test_observed": true,
+    "exact_shape_test": "passed",
+    "invalid_leaf_fail_closed_test": "passed",
+    "stage_level_missing_root_plus_nested_risk_test": "passed",
+    "structural_recovery_suite": "29 passed",
+    "full_regression": "149 passed in 12.34s",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_isolated_bench": "pending r92"
+  },
+  "next_action": {
+    "required_dynamic_debug": "Run fresh isolated L3-24 r92 after local gates. Inspect exact final provider request, CE portfolio, Director effects, verifier receipts, TaskRuntime, Run Ledger, and Factory settlement before any further edit.",
+    "forbidden": [
+      "patch generated target files",
+      "blindly flatten arbitrary JSON arrays",
+      "restart or retry without exact-run evidence"
+    ]
+  },
+  "guardrails": {
+    "target_project_modified": false,
+    "schema_relaxed": false,
+    "main_ports_touched": false
+  }
+}

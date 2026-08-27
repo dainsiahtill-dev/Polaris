@@ -34,7 +34,10 @@ def normalize_file_path_args(tool_args: dict[str, Any]) -> dict[str, Any]:
 
     # R138: recover structured content maps before DEO freezes arguments.
     if "content" in normalized and not isinstance(normalized.get("content"), str):
-        recovered = recover_write_body_string(normalized.get("content"))
+        recovered = recover_write_body_string(
+            normalized.get("content"),
+            file_path=str(normalized.get("file") or ""),
+        )
         if recovered is not None:
             normalized["content"] = recovered
 

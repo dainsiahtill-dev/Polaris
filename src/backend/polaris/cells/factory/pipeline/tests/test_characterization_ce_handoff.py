@@ -100,6 +100,21 @@ def _semantic_entrypoint_patch_result(
     return result
 
 
+def _semantic_behavior_ref_clear_patch_result(command: Any) -> Any:
+    result = _single_task_chief_engineer_result()
+    payload = {
+        "base_candidate_hash": command.context["chief_engineer_semantic_repair_base_candidate_hash"],
+        "diagnosis_hash": command.context["chief_engineer_semantic_repair_diagnosis_hash"],
+        "artifact_upserts": [],
+        "entrypoint_upserts": [],
+        "behavior_invariant_upserts": [],
+        "task_behavior_ref_replacements": {"TASK-CANCEL": []},
+    }
+    result.output = json.dumps(payload)
+    result.metadata["structured_output"] = payload
+    return result
+
+
 class TestChiefEngineerHandoffGuards:
     def test_entrypoint_introspection_is_repairable_before_final_portfolio_build(
         self,
@@ -358,6 +373,36 @@ class TestChiefEngineerHandoffGuards:
         assert recovered_artifact["semantic_role"] == "manifest"
         assert recovered.metadata["chief_engineer_portfolio_structural_recovery"]["repair_codes"] == [
             "infer_invalid_artifact_semantic_roles"
+        ]
+
+    def test_structural_recovery_saves_complete_candidate_with_qa_modality_alias(self, tmp_path: Path) -> None:
+        """Exact L3-24 r85: local enum recovery must avoid full CE regeneration."""
+
+        executor = OrchestrationStageExecutor(tmp_path)
+        malformed = json.loads(json.dumps(_single_task_chief_engineer_result().metadata["structured_output"]))
+        obligations = malformed["project_completion_contract"]["obligations"]
+        artifact = obligations["artifacts"][0]
+        artifact["path"] = "CMakeLists.txt"
+        artifact["semantic_role"] = "build"
+        obligations["verification"][0]["modality"] = "qa"
+        failed = _invalid_structured_transport_chief_engineer_result()
+        failed.metadata["tool_call"] = {
+            "tool": "submit_structured_role_output",
+            "arguments": malformed,
+        }
+
+        recovered = executor._recover_chief_engineer_portfolio_structural_result(
+            result=failed,
+            portfolio_task_ids=("TASK-CANCEL",),
+        )
+
+        assert recovered.ok is True
+        recovered_obligations = recovered.metadata["structured_output"]["project_completion_contract"]["obligations"]
+        assert recovered_obligations["artifacts"][0]["semantic_role"] == "manifest"
+        assert recovered_obligations["verification"][0]["modality"] == "test"
+        assert recovered.metadata["chief_engineer_portfolio_structural_recovery"]["repair_codes"] == [
+            "infer_invalid_artifact_semantic_roles",
+            "normalize_qa_verification_modality",
         ]
 
     def test_structural_recovery_uses_single_task_authority_when_task_plan_overlay_is_absent(
@@ -678,6 +723,25 @@ class TestChiefEngineerHandoffGuards:
         )
 
         assert errors == ["construction_plan.shared_behavior_contract must be an object"]
+
+    def test_portfolio_output_rejects_task_ref_to_unknown_behavior_invariant(self) -> None:
+        """Exact L3-24 r83: cross-field behavior refs must enter semantic repair."""
+
+        payload = json.loads(json.dumps(_single_task_chief_engineer_result().metadata["structured_output"]))
+        payload["construction_plan"]["shared_behavior_contract"]["invariants"] = []
+        payload["construction_plan"]["task_plans"]["TASK-CANCEL"]["behavior_invariant_refs"] = [
+            "INV-MOON-KEY-DERMINISM"
+        ]
+
+        errors = OrchestrationStageExecutor._chief_engineer_portfolio_output_errors(
+            payload,
+            task_ids=("TASK-CANCEL",),
+        )
+
+        assert errors == [
+            "task_plans['TASK-CANCEL'].behavior_invariant_refs reference unknown "
+            "shared_behavior_contract invariants: INV-MOON-KEY-DERMINISM"
+        ]
 
     def test_portfolio_output_rejects_behavior_owner_repeated_as_consumer(self) -> None:
         payload = json.loads(json.dumps(_single_task_chief_engineer_result().metadata["structured_output"]))
@@ -1777,8 +1841,10 @@ class TestChiefEngineerHandoffGuards:
         repair_command = commands[1]
         # The primary CE attempt remains streaming; bounded schema repair is
         # atomic so only a complete forced result-tool payload is validated.
+        # One transport-only retry rides a transient 5xx/529 without creating
+        # another semantic repair round or changing the frozen request.
         assert repair_command.stream is False
-        assert repair_command.metadata["max_retries"] == 0
+        assert repair_command.metadata["max_retries"] == 1
         assert repair_command.metadata["validate_output"] is True
         assert repair_command.metadata["temperature"] == 0.0
         assert repair_command.metadata["llm_max_tokens"] == 8_192
@@ -2025,6 +2091,67 @@ class TestChiefEngineerHandoffGuards:
             signal for signal in review["signals"] if signal["code"] == "chief_engineer.portfolio_structural_recovered"
         ]
         assert recovery_signals[-1]["repair_codes"] == ["remove_task_local_invariant_from_shared_contract"]
+
+    def test_required_property_schema_repair_retains_normalized_task_risk_flags(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Exact L3-24 r91: missing-root repair must not retain nested risk arrays."""
+
+        executor = _executor(tmp_path)
+        _capture_chief_engineer_lease_keepers(monkeypatch)
+        _write_minimal_chief_engineer_plan(executor)
+        full = json.loads(json.dumps(_single_task_chief_engineer_result().metadata["structured_output"]))
+        completion_contract = full.pop("project_completion_contract")
+        risk = "RISK-TEST-EMPTY: tests must exercise the public contract"
+        full["construction_plan"]["task_plans"]["TASK-CANCEL"]["risk_flags"] = [[[risk]]]
+
+        first = _invalid_structured_transport_chief_engineer_result()
+        first.error_message = (
+            "structured_output_payload_schema_mismatch:$:'project_completion_contract' is a required property"
+        )
+        first.metadata["tool_call"] = {
+            "tool": "submit_structured_role_output",
+            "arguments": full,
+        }
+        patch_result = _single_task_chief_engineer_result()
+        patch_result.metadata["structured_output"] = {"project_completion_contract": completion_contract}
+        patch_result.output = json.dumps(patch_result.metadata["structured_output"])
+        commands: list[Any] = []
+
+        class _RepairingRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                commands.append(command)
+                return first if len(commands) == 1 else patch_result
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _RepairingRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-required-property-nested-risk",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-27T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "success", result.output
+        assert len(commands) == 2
+        expected_base = json.loads(json.dumps(full))
+        expected_base["construction_plan"]["task_plans"]["TASK-CANCEL"]["risk_flags"] = [risk]
+        expected_hash = hashlib.sha256(
+            json.dumps(expected_base, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        assert commands[1].context["chief_engineer_schema_repair_base_candidate_hash"] == expected_hash
+        review = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        portfolio = json.loads(
+            Path(resolve_logical_path(tmp_path, review["portfolio"]["portfolio_path"])).read_text(encoding="utf-8")
+        )
+        assert portfolio["risk_flags"] == [risk]
 
     def test_chief_engineer_final_structural_repair_restores_full_portfolio_output_budget(self) -> None:
         """A final full reconstruction must not inherit the 8K patch ceiling.
@@ -2674,6 +2801,74 @@ class TestChiefEngineerHandoffGuards:
             "chief_engineer.output_contract_final_repair_started",
             "chief_engineer.final_schema_candidate_semantic_repair_started",
         ]
+        assert len(keepers) == 4
+        assert all(keeper.is_alive is False for keeper in keepers)
+        _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_final_schema_candidate_unknown_behavior_ref_uses_typed_semantic_patch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Exact L3-24 r83: schema repair must not strand dangling invariant refs."""
+
+        executor = _executor(tmp_path)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        _write_minimal_chief_engineer_plan(executor)
+        first = _invalid_chief_engineer_stream_result()
+        second = _invalid_chief_engineer_stream_result()
+        second.error_message = (
+            "structured_output_payload_schema_mismatch:$:'project_completion_contract' is a required property"
+        )
+        commands: list[Any] = []
+
+        class _UnknownBehaviorRefRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                commands.append(command)
+                if len(commands) == 1:
+                    return first
+                if len(commands) == 2:
+                    return second
+                if len(commands) == 3:
+                    result = _single_task_chief_engineer_result()
+                    result.metadata["structured_output"]["construction_plan"]["shared_behavior_contract"][
+                        "invariants"
+                    ] = []
+                    result.metadata["structured_output"]["construction_plan"]["task_plans"]["TASK-CANCEL"][
+                        "behavior_invariant_refs"
+                    ] = ["INV-MOON-KEY-DERMINISM"]
+                    return result
+                return _semantic_behavior_ref_clear_patch_result(command)
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _UnknownBehaviorRefRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-final-schema-unknown-behavior-ref",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-27T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "success", result.output
+        assert [command.task_id for command in commands] == [
+            f"CE-PORTFOLIO-{run.id}",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
+            f"CE-PORTFOLIO-{run.id}-CONTRACT-REPAIR-2",
+            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH-REPAIR-3",
+        ]
+        assert commands[-1].context["chief_engineer_semantic_repair_diagnosis"]["diagnostic_codes"] == [
+            "chief_engineer.shared_behavior_contract.invalid"
+        ]
+        review = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert review["generated_blueprints"] == 1
+        assert "chief_engineer.final_schema_candidate_semantic_repair_started" in {
+            signal["code"] for signal in review["signals"]
+        }
         assert len(keepers) == 4
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()

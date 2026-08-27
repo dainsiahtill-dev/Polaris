@@ -460,6 +460,7 @@ def resolve_director_causal_quality_repair_target_files(
     from ..internal.director.quality_gate import (
         _explicit_artifact_quality_repair_target_files,
         _go_runtime_smoke_repair_target_files,
+        _is_test_like_python_path,
         _javascript_runtime_smoke_repair_target_files,
         _python_runtime_smoke_repair_target_files,
         _rust_test_behavior_repair_target_files,
@@ -468,17 +469,18 @@ def resolve_director_causal_quality_repair_target_files(
 
     errors = list(artifact_quality_errors)
     changed = list(changed_files)
+    python_runtime_candidates = _python_runtime_smoke_repair_target_files(
+        artifact_quality_errors=errors,
+        changed_files=changed,
+        workspace_full=workspace_full,
+    )
     candidates = [
         *_explicit_artifact_quality_repair_target_files(
             artifact_quality_errors=errors,
             changed_files=changed,
             workspace_full=workspace_full,
         ),
-        *_python_runtime_smoke_repair_target_files(
-            artifact_quality_errors=errors,
-            changed_files=changed,
-            workspace_full=workspace_full,
-        ),
+        *python_runtime_candidates,
         *_javascript_runtime_smoke_repair_target_files(
             artifact_quality_errors=errors,
             changed_files=changed,
@@ -500,6 +502,13 @@ def resolve_director_causal_quality_repair_target_files(
             workspace_full=workspace_full,
         ),
     ]
+    if any(not candidate.endswith(".py") for candidate in python_runtime_candidates):
+        # Once the Python observer has resolved a native production frontier,
+        # its test wrapper remains evidence but is not a causal mutation
+        # target.  Keep the raw extractor complete; narrow only this public
+        # execution-authority projection so QA assertions cannot consume a
+        # bounded Director repair turn or hide the product defect.
+        candidates = [candidate for candidate in candidates if not _is_test_like_python_path(candidate)]
     return list(
         dict.fromkeys(str(path or "").strip().replace("\\", "/") for path in candidates if str(path or "").strip())
     )

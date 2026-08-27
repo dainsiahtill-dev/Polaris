@@ -38,6 +38,27 @@ class TestResidualAttribution(unittest.TestCase):
         self.assertIn("M10_materialization_semantic_quality", attr.forbidden_same_round)
         self.assertTrue(attr.gate_commands[0].endswith("M06_director_multi_task"))
 
+    def test_r90_explicit_delivery_depth_failure_outranks_downstream_m06(self) -> None:
+        attr = attribute_residual(
+            root_cause_signature="control_plane:task_runtime_not_completed",
+            failure_category="control_plane",
+            failure_reasons=[
+                "workspace_validation: delivery_depth_gate failed",
+                "implementation depth production_source_lines=421 < 650",
+                "gate:canonical_execution=task_runtime_not_completed",
+            ],
+            error_code="director.canonical_task_boundary_missing",
+            director_detail="TaskRuntime failed after workspace validation",
+            real_run_gate_ok=True,
+            chain_ok=False,
+            tsc_clean=True,
+            m10_coverage_gap_count=0,
+        )
+
+        self.assertEqual(attr.primary_module_id, "M09_four_pillars_gates")
+        self.assertIn("delivery_depth", attr.ladder_matched_hints)
+        self.assertNotIn("real_run_green_boundary_authority", attr.ladder_matched_hints)
+
     def test_deo_edit_blocks_maps_m03_before_m10(self) -> None:
         attr = attribute_residual(
             root_cause_signature="control_plane:deo_director_policy_denied",

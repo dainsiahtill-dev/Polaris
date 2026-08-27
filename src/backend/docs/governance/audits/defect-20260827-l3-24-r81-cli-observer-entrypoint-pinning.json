@@ -1,0 +1,59 @@
+{
+  "defect_id": "L3-24-R81-CLI-OBSERVER-ENTRYPOINT-PINNING",
+  "status": "FIXED_UNIT_EXACT_REPLAY_FRESH_E2E_DISTINCT_RESIDUAL",
+  "severity": "P0",
+  "exact_run": {
+    "factory_run_id": "factory_191862a53def",
+    "workspace": "/tmp/factory-bench-l3-24-r81/workspaces/1614c5296c54-aa27223be5636ac7/L3-24-023d7314133040b6/3b833cba7d89684660532110",
+    "wall_clock_seconds": 1260.6,
+    "build_passed": true,
+    "cli_smoke_passed": true,
+    "test_failure_count": 4
+  },
+  "symptom": "Three same-task Director quality-repair attempts were forced to edit only src/main.cpp even though the failing cipher round-trip and diary key-rotation semantics were implemented in sibling C++ sources.",
+  "dynamic_evidence": [
+    "TaskRuntime attempt 16 failed with workspace_quality_deterministic_repair_no_commit; attempts 17 and 18 failed with workspace_quality_repair_equal_count_swap.",
+    "The exact Director final request exposed only edit_file and pinned the mutation target to src/main.cpp; a model read_file request was rejected by provider_tool_surface_violation.",
+    "The CE task completion projection owned src/cipher.cpp, src/diary.cpp, src/main.cpp and src/moon_phase.cpp, so sibling mutation authority existed before causal target narrowing.",
+    "Replaying the seven persisted r81 diagnostics through the pre-fix public resolver returned only src/main.cpp.",
+    "The internal harness-source resolver independently returned the four C++ production sources, proving that the entrypoint owner shortcut suppressed a stronger bounded frontier."
+  ],
+  "root_cause": "_python_test_failure_cross_language_owner_target_files treated any Python unittest subprocess observer as proof that the CLI entrypoint owned the behavior failure. That single src/main.cpp candidate satisfied symbol_owners_cover_failures and prevented the harness-source fallback from opening sibling C++ implementation candidates.",
+  "root_cause_class": "generic_platform_causal_owner_overclaim",
+  "target_project_modified": false,
+  "fix": {
+    "behavior": "Keep entrypoint authority only for an explicit CLI subcommand boundary failure or when a qualified C++ implementation owner is proven. If the Python runtime resolver proves a native production frontier, remove the Python observer test only from the public mutation-authority projection while preserving raw extractor evidence.",
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_language_targets.py",
+      "src/backend/polaris/cells/roles/adapters/public/service.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_quality_repair_b.py"
+    ]
+  },
+  "regression_tests": [
+    "test_python_unittest_cpp_cli_semantic_failure_keeps_product_frontier",
+    "test_python_unittest_cpp_cli_failure_targets_entrypoint_and_qualified_symbol_owner",
+    "test_python_runtime_smoke_cli_subcommand_failure_targets_existing_entrypoint",
+    "test_python_runtime_smoke_harness_targets_changed_non_python_sources"
+  ],
+  "validation": {
+    "tdd_red": "The new r81-shaped regression returned only src/main.cpp.",
+    "pytest": "65 passed in test_director_adapter_quality_repair_b.py",
+    "ruff": "passed for both production files",
+    "mypy": "passed for both production files",
+    "diff_check": "passed",
+    "exact_r81_replay": [
+      "src/cipher.cpp",
+      "src/diary.cpp",
+      "src/main.cpp",
+      "src/moon_phase.cpp"
+    ]
+  },
+  "fresh_e2e": {
+    "project_id": "L3-24",
+    "attempt": "r82",
+    "factory_run_id": "factory_b8c446d02ece",
+    "state": "FAILED_NEW_ROOT_CAUSE",
+    "evidence": "Repair requests rotated across diary.hpp, ink_reveal.hpp and moon_cipher.hpp instead of remaining pinned to an entrypoint. The run failed earlier at a distinct native write-body corruption frontier, before the r81 semantic unittest frontier could recur."
+  },
+  "remaining_risk": "Fresh r82 proved that sibling C++ repair targets are no longer entrypoint-pinned, but did not re-exercise the original four semantic unittest failures because a newly proven native write-body normalization defect failed compilation first."
+}

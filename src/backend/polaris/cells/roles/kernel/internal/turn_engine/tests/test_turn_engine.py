@@ -14,6 +14,7 @@ from polaris.cells.roles.kernel.internal.turn_engine.config import (
     SafetyState,
     TurnEngineConfig,
 )
+from polaris.cells.roles.kernel.internal.turn_engine.stream_handler import StreamEventHandler
 from polaris.cells.roles.kernel.internal.turn_engine.utils import (
     dedupe_parsed_tool_calls,
     merge_stream_thinking,
@@ -412,16 +413,24 @@ class TestNormalizeStreamToolCallPayload:
 
     def test_auto_format(self) -> None:
         """Test auto format for unknown provider."""
+        audit = {
+            "raw_arguments_sha256": "a" * 64,
+            "decoded_arguments_sha256": "b" * 64,
+            "content_sha256": "c" * 64,
+            "content_angle_open_count": 3,
+            "content_angle_close_count": 3,
+        }
         payload, provider = normalize_stream_tool_call_payload(
             tool_name="search",
             tool_args={"query": "test"},
             call_id="call_123",
-            metadata={},
+            metadata={"tool_call_argument_audit": audit},
         )
         assert provider == "openai"
         assert payload["type"] == "function"
         assert payload["function"]["name"] == "search"
         assert payload["function"]["arguments"] == {"query": "test"}
+        assert payload["provider_argument_audit"] == audit
 
     def test_empty_tool_name(self) -> None:
         """Test returns None for empty tool name."""
@@ -444,6 +453,44 @@ class TestNormalizeStreamToolCallPayload:
         )
         assert provider == "openai"
         assert payload["function"]["arguments"] == {}
+
+
+@pytest.mark.asyncio
+async def test_stream_event_handler_forwards_provider_argument_audit(tmp_path: Any) -> None:
+    """Regression: the real-time transaction event must retain provider argument evidence."""
+    argument_audit = {
+        "provider": "anthropic_compat",
+        "tool_name": "write_file",
+        "call_id": "call-handler-audit",
+        "raw_arguments_length": 91,
+        "raw_arguments_sha256": "a" * 64,
+        "decoded_arguments_sha256": "b" * 64,
+        "content_length": 42,
+        "content_sha256": "c" * 64,
+    }
+
+    async def _stream() -> Any:
+        yield {
+            "type": "tool_call",
+            "tool": "write_file",
+            "args": {"path": "src/main.cpp", "content": "int main() { return 0; }"},
+            "call_id": "call-handler-audit",
+            "metadata": {"tool_call_argument_audit": argument_audit},
+        }
+
+    handler = StreamEventHandler(workspace=str(tmp_path))
+    events = [
+        event
+        async for event in handler.process_stream(
+            _stream(),
+            round_index=1,
+            start_time=0.0,
+            profile=MagicMock(),
+        )
+    ]
+
+    realtime_call = next(event for event in events if event.get("type") == "tool_call")
+    assert realtime_call["metadata"]["tool_call_argument_audit"] == argument_audit
 
 
 class TestMergeStreamThinking:

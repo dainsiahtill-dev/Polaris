@@ -37,6 +37,27 @@ def test_cpp20_only_api_does_not_match_missing_standard_include_rule() -> None:
     assert all(item["diagnostic"]["metadata"]["required_standard"] == "c++20" for item in cpp_items)
 
 
+def test_cpp20_chrono_calendar_api_without_compiler_note_is_standard_incompatibility() -> None:
+    """L3-24 r73: GCC omits the C++20 note for ``year_month_day`` under C++17."""
+
+    raw = (
+        "include/invisible_ink/moon_phase.hpp:43:41: error: "
+        "‘year_month_day’ is not a member of ‘std::chrono’\n"
+        "43 | MoonPhase computeMoonPhase(std::chrono::year_month_day date);\n"
+    )
+    payload = _coverage(raw)
+    items = payload["items"]
+
+    assert len(items) == 1
+    assert items[0]["diagnostic"]["code"] == "cpp_language_standard_incompatibility"
+    assert items[0]["diagnostic"]["metadata"]["incompatible_symbol"] == (
+        "std::chrono::year_month_day"
+    )
+    assert items[0]["diagnostic"]["metadata"]["required_standard"] == "c++20"
+    assert "cpp.standard_include" not in items[0]["matched_rule_ids"]
+    assert "deterministic_cpp_standard_include_repair" not in items[0]["matched_source_tools"]
+
+
 def test_actual_missing_standard_include_remains_covered() -> None:
     raw = (
         "src/models/seed.hpp:2:24: error: ‘uint32_t’ in namespace ‘std’ does not name a type\n"

@@ -40,6 +40,22 @@ class TestInventoryAndChecks:
         assert "README.md" in inv["doc_files"]
         assert not any(".polaris" in f for f in inv["code_files"])
 
+    def test_inventory_counts_cpp_header_variants_as_source(self, tmp_path: Path) -> None:
+        """C++ public headers are production source, regardless of header suffix."""
+        for filename in ("include/api.hh", "include/model.hpp", "include/runtime.hxx"):
+            path = tmp_path / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("#pragma once\n", encoding="utf-8")
+
+        inv = collect_workspace_inventory(str(tmp_path))
+
+        assert {"include/api.hh", "include/model.hpp", "include/runtime.hxx"}.issubset(
+            inv["source_files"]
+        )
+        assert {"include/api.hh", "include/model.hpp", "include/runtime.hxx"}.issubset(
+            inv["code_files"]
+        )
+
     def test_py_compile_pass_and_fail(self, tmp_path: Path) -> None:
         ok_ws = _project_workspace(tmp_path / "ok")
         results = run_checks(str(ok_ws), ["py_compile"])

@@ -1,0 +1,47 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-r69-native-tool-argument-corruption",
+  "status": "ROOT_CAUSE_UNPROVEN_PENDING_FRESH_DYNAMIC_TRACE",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_9c8fc3cc8669",
+  "bench_run_id": "54e098ad684d",
+  "symptom": "Six of six C++ translation units failed after native write_file arguments contained stripped angle brackets and appended XML-like closing tags.",
+  "dynamic_evidence": {
+    "retained_audit": "/tmp/factory-bench-l3-24-r69/audits/54e098ad684d/L3-24.audit.json",
+    "chain_log": "/tmp/factory-bench-l3-24-r69/L3-24.chain.log",
+    "native_tool_call_id": "chatcmpl-tool-bb620db5487e8887",
+    "native_raw_call_hash": "23600ba32019765cfa8b10e6e33a986716e201983030a3559982ed3451130649",
+    "effect_before_hash": "file_absent",
+    "effect_after_hash": "f90bbd8338086d2487b43cb1ad81e108c125a3b67684dd3e0858f91c2818d22c",
+    "compiler_examples": [
+      "std::optionalAlgorithm does not name a type",
+      "#include expects FILENAME or <FILENAME>"
+    ],
+    "workspace_cleanup_note": "The ephemeral workspace disappeared after the run; retained audits prove failure but not raw provider fragments."
+  },
+  "root_cause": {
+    "classification": "root_cause_unproven",
+    "proven_boundary": "Corruption existed in native tool arguments before write policy/effect commit.",
+    "unproven_boundary": "Raw provider stream versus Polaris stream assembly."
+  },
+  "platform_change": {
+    "files": [
+      "src/backend/polaris/kernelone/llm/engine/stream/executor.py",
+      "src/backend/polaris/tests/test_kernelone_trace_and_stream.py"
+    ],
+    "behavior": "Emit privacy-bounded tool argument assembly hashes, lengths, delimiter counts, and stream counters for exact-run causal comparison."
+  },
+  "validation": {
+    "targeted_test": "1 passed",
+    "ruff": "pass",
+    "format": "pass",
+    "mypy": "pass",
+    "fresh_isolated_run": "pending"
+  },
+  "guardrails": [
+    "Do not modify generated project files.",
+    "Do not declare provider or parser root cause until fresh dynamic trace proves the boundary.",
+    "Fix only a generic Polaris mechanism after proof."
+  ]
+}

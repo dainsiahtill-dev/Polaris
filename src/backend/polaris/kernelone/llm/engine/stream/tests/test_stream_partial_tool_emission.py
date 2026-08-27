@@ -192,6 +192,54 @@ class TestCompletedCallEmittedOnce:
 
 
 class TestNoArgCallFlushEmission:
+    def test_end_of_stream_event_metadata_carries_provider_argument_audit(self) -> None:
+        executor = StreamExecutor()
+        pending: dict[str, _ToolCallAccumulator] = {}
+
+        assert (
+            _accumulate(
+                executor,
+                pending,
+                {"tool": "repo_tree", "call_id": "c-meta", "index": 0, "arguments": {}},
+            )
+            is None
+        )
+        accumulator = next(iter(pending.values()))
+        assert executor._finalize_stream_tool_call(accumulator) is not None
+
+        metadata = executor._stream_tool_call_event_meta(
+            accumulator,
+            provider_type="openai_compat",
+            trace_id="trace-meta",
+            finalized=True,
+        )
+
+        assert metadata["finalized"] is True
+        assert metadata["tool_call_argument_audit"] == accumulator.argument_audit
+
+    def test_end_of_stream_flush_records_provider_argument_audit(self) -> None:
+        executor = StreamExecutor()
+        pending: dict[str, _ToolCallAccumulator] = {}
+
+        mid_stream = _accumulate(
+            executor,
+            pending,
+            {"tool": "repo_tree", "call_id": "c-audit", "index": 0, "arguments": {}},
+        )
+        assert mid_stream is None
+
+        accumulator = next(iter(pending.values()))
+        assert accumulator.argument_audit == {}
+
+        flushed = executor._finalize_stream_tool_call(accumulator)
+
+        assert flushed is not None
+        assert accumulator.argument_audit["provider"] == "openai_compat"
+        assert accumulator.argument_audit["tool_name"] == "repo_tree"
+        assert accumulator.argument_audit["call_id"] == "c-audit"
+        assert accumulator.argument_audit["raw_arguments_sha256"]
+        assert accumulator.argument_audit["decoded_arguments_sha256"]
+
     def test_legit_no_arg_call_emitted_exactly_once_at_flush(self) -> None:
         executor = StreamExecutor()
         pending: dict[str, _ToolCallAccumulator] = {}

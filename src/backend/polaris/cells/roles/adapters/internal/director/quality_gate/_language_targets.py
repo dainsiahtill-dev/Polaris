@@ -158,17 +158,17 @@ def _python_runtime_smoke_repair_target_files(
             symbol_owners_cover_failures = bool(symbol_owner_targets) and len(symbol_owner_targets) >= max(
                 1, len(failed_test_targets)
             )
+            harness_source_targets: list[str] = []
             if symbol_owners_cover_failures:
                 targets.extend(symbol_owner_targets)
             else:
                 if not regex_source_failure and not cli_subcommand_failure:
-                    targets.extend(
-                        _python_test_harness_changed_source_target_files(
-                            text,
-                            changed_files,
-                            workspace_root,
-                        )
+                    harness_source_targets = _python_test_harness_changed_source_target_files(
+                        text,
+                        changed_files,
+                        workspace_root,
                     )
+                    targets.extend(harness_source_targets)
                 for rel in failed_test_targets:
                     targets.extend(
                         _python_runtime_smoke_imported_source_target_files(
@@ -178,7 +178,11 @@ def _python_runtime_smoke_repair_target_files(
                         )
                     )
             targets.extend(_python_runtime_smoke_missing_module_source_targets(text, workspace_root))
-            if not symbol_owners_cover_failures:
+            # A native production frontier proves that the Python test is an
+            # observer.  Keep the test file available only when no product
+            # source could be inferred; otherwise it dilutes the mutation
+            # frontier and can consume the bounded repair budget.
+            if not symbol_owners_cover_failures and not harness_source_targets:
                 targets.extend(failed_test_targets)
         for pattern in _PYTHON_RUNTIME_SMOKE_TARGET_PATTERNS:
             match = pattern.search(text)
@@ -1700,11 +1704,23 @@ def _python_test_failure_cross_language_owner_target_files(
     observes_external_cli = any(
         _python_test_file_uses_subprocess(workspace_root / rel) for rel in test_targets
     )
-    entrypoints = _workspace_cli_entrypoint_repair_target_files(workspace_root) if observes_external_cli else []
     qualified_owners = _cpp_runtime_qualified_symbol_owner_target_files(
         text,
         changed_files=changed_files,
         workspace_root=workspace_root,
+    )
+    # A Python test invoking a native CLI proves only the observation boundary,
+    # not that the entrypoint owns a domain-semantic assertion failure.  Keep
+    # the entrypoint when the diagnostic is explicitly about CLI routing or a
+    # qualified implementation owner was found; otherwise retain the bounded
+    # production-source frontier for causal rotation.  Live L3-24 r81 was
+    # pinned to src/main.cpp for three no-progress repair turns while the
+    # failing cipher/diary semantics lived in sibling C++ sources.
+    entrypoint_is_causal = _looks_like_cli_subcommand_quality_failure(text) or bool(qualified_owners)
+    entrypoints = (
+        _workspace_cli_entrypoint_repair_target_files(workspace_root)
+        if observes_external_cli and entrypoint_is_causal
+        else []
     )
     return _dedupe_preserve_order([*entrypoints, *qualified_owners])
 

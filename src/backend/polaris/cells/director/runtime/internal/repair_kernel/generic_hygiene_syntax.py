@@ -25,7 +25,7 @@ _PATCH_RESIDUE_LINE_RE = re.compile(
 )
 _PATCH_RESIDUE_FILE_SUFFIXES = frozenset((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"))
 _SCAFFOLD_MARKER_FILE_SUFFIXES = frozenset(
-    (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".html", ".css", ".json")
+    (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".html", ".css", ".json", ".md")
 )
 _SCAFFOLD_MARKER_ERROR_RE = re.compile(
     r"deterministic scaffold marker ['\"][^'\"]+['\"] in (?P<path>\S+)",
@@ -62,6 +62,7 @@ _PYTHON_REQUIREMENTS_NON_PACKAGES = frozenset(
     {"a", "an", "at", "dependency", "dependencies", "least", "one", "package", "packages"}
 )
 _SCAFFOLD_MARKER_REPLACEMENTS = (
+    ("MIT (placeholder).", "MIT."),
     ("audit-seed", "verified-sample"),
     ("planning scenario", "planning sample"),
     ("deterministic-declared-scope-v1", "verified-declared-scope-v1"),

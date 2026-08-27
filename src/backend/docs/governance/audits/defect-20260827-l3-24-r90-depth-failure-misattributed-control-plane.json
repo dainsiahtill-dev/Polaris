@@ -1,0 +1,73 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "L3-24-R90-DEPTH-FAILURE-MISATTRIBUTED-CONTROL-PLANE",
+  "status": "FIX_IMPLEMENTED_LOCAL_GATES_GREEN_AWAITING_FRESH_BENCH",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "attempt": "r90",
+  "factory_run_id": "factory_28b010ca7fe2",
+  "symptom": {
+    "wall_clock_seconds": 644.2,
+    "real_run_gate": "passed",
+    "cpp_compile": "passed",
+    "director_task_materialization": "completed without semantic_quality_error",
+    "production_files": 7,
+    "production_lines": 421,
+    "required_production_lines": 650,
+    "reported_residual_module": "M06_director_multi_task",
+    "reported_failure_category": "control_plane"
+  },
+  "dynamic_evidence": {
+    "workspace": "/tmp/factory-bench-l3-24-r90/workspaces/9e40b46ba518-35df0743f8d7fede/L3-24-023d7314133040b6/6dcc48f118bf3a0bb04a0f03",
+    "generated_project_modified": false,
+    "factory_audit": "/tmp/factory-bench-l3-24-r90/factory_audits.json",
+    "effective_failed_gate": "workspace_validation: failed_required_modalities=[command]",
+    "explicit_failure": "implementation depth production_source_lines=421 < 650",
+    "run_ledger_real_run": "passed with build/test/CLI command evidence",
+    "task_runtime": {
+      "TASK-1": "failed only after project workspace validation",
+      "chief_engineer_tasks": "completed",
+      "director_materialization_settlement": "completed"
+    }
+  },
+  "root_causes": [
+    {
+      "id": "delivery_depth_not_closed_before_terminal_settlement",
+      "classification": "director_quality_convergence",
+      "cause": "The CE contract carried the 650-line minimum and Director produced a runnable project, but no stage-local convergence path expanded the delivery from 421 to the declared minimum before terminal workspace validation."
+    },
+    {
+      "id": "product_depth_failure_misattributed_as_m06_control_plane",
+      "classification": "platform_residual_attribution",
+      "cause": "The attribution ladder prioritized real_run_green plus a failed TaskRuntime row and labeled the run M06 control-plane, even though the only explicit terminal product failure was delivery depth. The failed task row was downstream of workspace validation, not the primary cause."
+    }
+  ],
+  "implemented_fix": {
+    "repair_convergence": "A compile-rejected and rolled-back transaction may grant exactly one same-Director handoff to a distinct verifier-proven residual frontier. The global non-progress count is retained, so the next non-progress stops immediately.",
+    "target_authority": "The bounded handoff is projected as an explicit Factory workspace-quality owner rebind and remains inside the claimed TaskRuntime/JobToken scope.",
+    "attribution": "Explicit M09 product/verifier hints override only a downstream M06 boundary symptom; earlier M01-M08 effect-path modules retain precedence.",
+    "target_project_modified": false
+  },
+  "verification": {
+    "red_tests_observed": 2,
+    "targeted_regressions": "16 passed",
+    "full_workspace_quality_and_attribution": "123 passed in 61.21s",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_isolated_bench": "pending r91"
+  },
+  "next_action": {
+    "required_dynamic_debug": "Run fresh isolated L3-24 r91 and inspect final provider request, candidate effects/rollback, verifier deltas, TaskRuntime, Run Ledger, and Factory settlement before any further edit.",
+    "forbidden": [
+      "lower the 650 threshold",
+      "patch generated target files",
+      "restart PM or CE for a Director-local quality residual",
+      "treat a downstream failed TaskRuntime row as primary cause without gate causality"
+    ]
+  },
+  "guardrails": {
+    "target_project_modified": false,
+    "quality_threshold_relaxed": false,
+    "main_ports_touched": false
+  }
+}

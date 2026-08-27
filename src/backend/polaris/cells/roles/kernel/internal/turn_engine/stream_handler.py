@@ -207,13 +207,22 @@ class StreamEventHandler:
                     signature = tool_call_signature(tool_name, tool_args)
                     if signature not in realtime_seen_tool_signatures:
                         realtime_seen_tool_signatures.add(signature)
-                        yield {
+                        realtime_event: dict[str, Any] = {
                             "type": "tool_call",
                             "tool": tool_name,
                             "args": tool_args,
                             "call_id": call_id,
                             "iteration": round_index,
                         }
+                        raw_argument_audit = metadata.get("tool_call_argument_audit")
+                        if isinstance(raw_argument_audit, dict):
+                            # This is the transaction boundary consumed by
+                            # StreamOrchestrator. Preserve only the bounded
+                            # argument audit, not provider-native/raw metadata.
+                            realtime_event["metadata"] = {
+                                "tool_call_argument_audit": dict(raw_argument_audit)
+                            }
+                        yield realtime_event
             elif event_type == "error":
                 error_message = str(event.get("error") or event.get("message") or "unknown_error")
                 # Error events are terminal, but their provider-request audit is

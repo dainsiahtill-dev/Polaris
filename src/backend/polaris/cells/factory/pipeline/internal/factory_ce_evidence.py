@@ -356,6 +356,7 @@ def chief_engineer_portfolio_output_errors(
             errors.append("project_interface_contract.consumer_declarations must be an array")
     behavior_obligation_refs: list[tuple[int, tuple[str, ...]]] = []
     behavior_authority_rows: list[tuple[str, frozenset[str], frozenset[str]]] = []
+    behavior_invariant_ids: set[str] = set()
     behavior_contract_valid = True
     behavior_contract = construction_plan.get("shared_behavior_contract")
     if not isinstance(behavior_contract, Mapping):
@@ -406,6 +407,7 @@ def chief_engineer_portfolio_output_errors(
                         verification_examples=examples,
                     )
                     behavior_obligation_refs.append((index, parsed_invariant.covered_obligation_ids))
+                    behavior_invariant_ids.add(parsed_invariant.invariant_id)
                     behavior_authority_rows.append(
                         (
                             parsed_invariant.owner_task_id,
@@ -416,6 +418,25 @@ def chief_engineer_portfolio_output_errors(
                 except (TypeError, ValueError) as exc:
                     errors.append(f"shared_behavior_contract.invariants[{index}] invalid: {exc}")
                     behavior_contract_valid = False
+    if behavior_contract_valid and isinstance(task_plans, Mapping):
+        for task_id, task_plan in task_plans.items():
+            if not isinstance(task_plan, Mapping):
+                continue
+            raw_refs = task_plan.get("behavior_invariant_refs")
+            if not isinstance(raw_refs, list):
+                continue
+            unknown_refs = sorted(
+                {
+                    str(item).strip()
+                    for item in raw_refs
+                    if str(item).strip() and str(item).strip() not in behavior_invariant_ids
+                }
+            )
+            if unknown_refs:
+                errors.append(
+                    f"task_plans[{task_id!r}].behavior_invariant_refs reference unknown "
+                    "shared_behavior_contract invariants: " + ", ".join(unknown_refs)
+                )
     if "scope_for_apply" in payload and not isinstance(payload.get("scope_for_apply"), list):
         errors.append("scope_for_apply must be an array")
     if not isinstance(payload.get("risk_flags"), list):

@@ -1214,6 +1214,10 @@ def _to_public_repair_planning_result(
     else:
         diagnostics = tuple(_to_public_repair_diagnostic(item) for item in planning.diagnostics)
     if planning.plan is None:
+        error_code = planning.error_code or "repair_not_planned"
+        error_message = planning.error_message or (
+            f"Registered repair source_tool={planning.source_tool!r} produced no effect plan."
+        )
         return DirectorRepairPlanningResultV1(
             ok=False,
             planned=False,
@@ -1221,8 +1225,8 @@ def _to_public_repair_planning_result(
             diagnostic_count=len(diagnostics),
             diagnostics=diagnostics,
             advisor_notes=notes,
-            error_code=planning.error_code,
-            error_message=planning.error_message,
+            error_code=error_code,
+            error_message=error_message,
         )
 
     return DirectorRepairPlanningResultV1(

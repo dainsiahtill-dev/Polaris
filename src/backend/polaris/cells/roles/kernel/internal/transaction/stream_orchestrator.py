@@ -821,6 +821,10 @@ class StreamOrchestrator:
                     call_id = str(event.get("call_id") or "").strip()
                     raw_args = event.get("args")
                     tool_args = dict(raw_args) if isinstance(raw_args, dict) else {}
+                    raw_metadata = event.get("metadata")
+                    event_metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+                    raw_argument_audit = event_metadata.get("tool_call_argument_audit")
+                    argument_audit = dict(raw_argument_audit) if isinstance(raw_argument_audit, dict) else None
                     if tool_name:
                         signature = stream_tool_call_signature(tool_name, tool_args, call_id)
                         if signature not in stream_tool_call_signatures:
@@ -831,6 +835,7 @@ class StreamOrchestrator:
                                 tool_name=tool_name,
                                 tool_args=tool_args,
                                 call_id=call_id,
+                                provider_argument_audit=argument_audit,
                             )
                         if shadow_engine is not None:
                             shadow_engine.consume_delta(f"<tool_call:{tool_name}>")

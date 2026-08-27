@@ -290,6 +290,45 @@ def _unwrap_provider_item_array(name: str, value: object) -> list[Any]:
     raise _UnsafePortfolioStructuralRecoveryError(f"{name}.item is not an array member")
 
 
+def _normalize_task_plan_array_field(
+    name: str,
+    value: object,
+    *,
+    allow_mapping_leaf: bool,
+) -> tuple[list[Any], bool]:
+    """Flatten only transport-nested members of a known task-plan array.
+
+    JSON tool transports sometimes preserve every scalar but wrap one logical
+    array in repeated singleton/list layers.  Flattening those layers is
+    lossless for fields whose schema already requires a flat array.  Unknown
+    scalar leaves remain fail-closed; mappings are accepted only for
+    ``risk_flags``, whose public contract permits structured risk entries.
+    """
+
+    source = _unwrap_provider_item_array(name, value)
+    flattened: list[Any] = []
+    nested = False
+
+    def append_leaf(item: object) -> None:
+        nonlocal nested
+        if isinstance(item, list):
+            nested = True
+            for child in item:
+                append_leaf(child)
+            return
+        if isinstance(item, str):
+            flattened.append(item)
+            return
+        if allow_mapping_leaf and isinstance(item, Mapping):
+            flattened.append(deepcopy(dict(item)))
+            return
+        raise _UnsafePortfolioStructuralRecoveryError(f"{name} contains an invalid array member")
+
+    for item in source:
+        append_leaf(item)
+    return flattened, nested or source != value
+
+
 def _normalize_behavior_invariant_row(
     name: str,
     value: object,
@@ -417,21 +456,28 @@ def _normalize_shared_artifact_obligation_groups(
                 "existing semantic rows contain invalid or duplicate obligation_id: "
                 f"artifact group path is ambiguous for {obligation_id}"
             )
-        semantic_profiles = {
+        # A provider may use one artifact-group id for several physical rows
+        # with different explicit roles (for example CMakeLists.txt=manifest
+        # plus headers=source).  Role diversity is not authority ambiguity:
+        # each row keeps its role and receives a path/role-derived unique id.
+        # Only owner/applicability divergence changes immutable authority and
+        # must remain fail-closed.  Exact L3-24 r71 otherwise produced a
+        # diagnosis-scoped behavior patch that could never commit because this
+        # unrelated, already-frozen artifact group was rejected here.
+        authority_profiles = {
             (
-                row.get("semantic_role"),
                 row.get("applicability"),
                 row.get("owner_task_id"),
             )
             for row in group
         }
-        if len(semantic_profiles) != 1:
+        if len(authority_profiles) != 1:
             raise _UnsafePortfolioStructuralRecoveryError(
                 f"artifact obligation group has ambiguous semantic authority: {obligation_id}"
             )
         colliding_verifiers = verification_by_id.get(obligation_id, [])
         if colliding_verifiers:
-            _semantic_role, applicability, owner_task_id = next(iter(semantic_profiles))
+            applicability, owner_task_id = next(iter(authority_profiles))
             safe_covering_verifier_collision = all(
                 row.get("owner_task_id") == owner_task_id
                 and row.get("applicability") == applicability
@@ -605,6 +651,24 @@ def normalize_chief_engineer_portfolio_tool_arguments(
             codes.append("move_lifted_task_plans")
         if removed_lifted_task_plan:
             codes.append("remove_redundant_lifted_task_plan")
+
+        normalized_task_plan_arrays = False
+        for task_id, task_plan_raw in tuple(task_plans.items()):
+            task_plan = _mapping(f"task_plans.{task_id}", task_plan_raw)
+            for field in _TASK_PLAN_ARRAY_FIELDS:
+                if field not in task_plan:
+                    continue
+                normalized, changed = _normalize_task_plan_array_field(
+                    f"task_plans.{task_id}.{field}",
+                    task_plan[field],
+                    allow_mapping_leaf=field == "risk_flags",
+                )
+                if changed:
+                    task_plan[field] = normalized
+                    normalized_task_plan_arrays = True
+            task_plans[task_id] = task_plan
+        if normalized_task_plan_arrays:
+            codes.append("unwrap_task_plan_array_items")
 
         behavior_raw = construction.get("shared_behavior_contract")
         if isinstance(behavior_raw, Mapping):
@@ -831,6 +895,28 @@ def normalize_chief_engineer_portfolio_tool_arguments(
                     codes.append("infer_missing_artifact_semantic_roles")
                 if inferred_invalid_role:
                     codes.append("infer_invalid_artifact_semantic_roles")
+
+                # ``qa`` is a provider-facing semantic alias for the
+                # authoritative ``test`` verification modality.  The CE
+                # physical tool schema and prompt both declare ``test`` and
+                # explicitly reject ``qa``; normalizing this single exact
+                # alias preserves the verifier obligation and lets the
+                # already-complete candidate reach strict schema validation.
+                # Do not coerce any other unknown modality: its intent is not
+                # provable and must remain fail-closed.  Exact L3-24 r85
+                # otherwise discarded a complete 16KB portfolio, then spent
+                # two full-provider reconstructions that introduced new root
+                # envelope drift.
+                normalized_qa_modality = False
+                for verifier in verification:
+                    if verifier.get("modality") == "qa":
+                        verifier["modality"] = "test"
+                        normalized_qa_modality = True
+                if normalized_qa_modality:
+                    obligations["verification"] = verification
+                    completion["obligations"] = obligations
+                    working["project_completion_contract"] = completion
+                    codes.append("normalize_qa_verification_modality")
 
                 completion_obligation_ids = {
                     obligation_id

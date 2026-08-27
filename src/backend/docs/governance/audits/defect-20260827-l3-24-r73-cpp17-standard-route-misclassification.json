@@ -1,0 +1,35 @@
+{
+  "defect_id": "L3-24-R73-CPP17-STANDARD-ROUTE-MISCLASSIFICATION",
+  "status": "FIXED_UNIT_PENDING_FRESH_E2E",
+  "severity": "P0",
+  "exact_run": {
+    "factory_run_id": "factory_5b706192de9c",
+    "director_run_id": "director-bc87b0c769f7",
+    "workspace": "/tmp/factory-bench-l3-24-r73/workspaces/3dce9aac2e5f-b118c38c33b7fec8/L3-24-023d7314133040b6/9c478a3b47abc807b7d6d92d",
+    "terminal_stage": "quality_gate"
+  },
+  "symptom": "A C++17 project repeatedly failed because the CE public contract used std::chrono::year_month_day, while Director repair added chrono includes and compatibility scaffolding without removing the C++20-only API.",
+  "dynamic_evidence": [
+    "The persisted CE blueprint declared std::chrono::year_month_day in MoonPhase and DiaryEntry public signatures despite the product contract requiring C++17.",
+    "The same Director task received the exact failed target and produced a real edit_file effect on include/invisible_ink/moon_phase.hpp with distinct before/after hashes and a committed physical-effect receipt.",
+    "The exact verifier rerun still failed on year_month_day not being a member of std::chrono under -std=c++17.",
+    "Live query_director_repair_coverage classified the first diagnostic as cpp.standard_include and the second as coverage_gap, proving a contradictory repair route for one physical incompatibility."
+  ],
+  "root_cause": "GCC 12 does not emit an 'only available from C++20' note for std::chrono::year_month_day under C++17. Diagnostic normalization therefore left the error as cpp_compile_error, allowing cpp.standard_include to claim it and steer repair toward ineffective include insertion.",
+  "root_cause_class": "generic_director_repair_diagnostic_misclassification",
+  "target_project_modified": false,
+  "fix_files": [
+    "src/backend/polaris/cells/director/runtime/internal/repair_kernel/diagnostics.py"
+  ],
+  "regression_tests": [
+    "test_cpp20_chrono_calendar_api_without_compiler_note_is_standard_incompatibility",
+    "test_cpp20_only_api_does_not_match_missing_standard_include_rule",
+    "test_actual_missing_standard_include_remains_covered"
+  ],
+  "validation": {
+    "targeted_pytest": "133 passed",
+    "mypy": "passed",
+    "ruff": "passed"
+  },
+  "remaining_gate": "A fresh isolated run must prove the runtime classifies the C++20-only chrono symbol as cpp_language_standard_incompatibility and does not schedule cpp.standard_include for it."
+}

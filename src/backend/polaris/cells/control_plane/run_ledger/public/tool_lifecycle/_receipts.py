@@ -924,6 +924,106 @@ def native_tool_call_facts_from_raw_calls(native_tool_calls: Sequence[Any]) -> d
     }
 
 
+_PROVIDER_ARGUMENT_AUDIT_HASH_FIELDS = frozenset(
+    {
+        "raw_arguments_sha256",
+        "decoded_arguments_sha256",
+        "content_sha256",
+    }
+)
+_PROVIDER_ARGUMENT_AUDIT_COUNT_FIELDS = frozenset(
+    {
+        "raw_arguments_length",
+        "content_length",
+        "content_angle_open_count",
+        "content_angle_close_count",
+        "content_xml_close_count",
+    }
+)
+_PROVIDER_ARGUMENT_AUDIT_TEXT_FIELDS = frozenset(
+    {
+        "provider",
+        "tool_name",
+        "call_id",
+        "target_path",
+    }
+)
+_PROVIDER_ARGUMENT_ASSEMBLY_COUNT_FIELDS = frozenset(
+    {
+        "complete_snapshot_count",
+        "delta_count",
+        "explicit_complete_count",
+        "fragment_count",
+        "provisional_placeholder_count",
+    }
+)
+_PROVIDER_ARGUMENT_ASSEMBLY_SOURCES = frozenset(
+    {
+        "complete_snapshot",
+        "explicit_arguments",
+        "provisional_placeholder",
+        "stream_fragments",
+        "unknown",
+    }
+)
+
+
+def _safe_provider_argument_audit(call: Mapping[str, Any]) -> dict[str, Any]:
+    """Project privacy-bounded provider argument evidence into Run Ledger.
+
+    Raw tool arguments and source content are intentionally excluded.  The
+    retained hashes, lengths, delimiter counts, and assembly counters let an
+    exact run compare provider-stream assembly with downstream effect receipts
+    without turning the ledger into a second source-code store.
+    """
+
+    candidate = call.get("provider_argument_audit")
+    if not isinstance(candidate, Mapping):
+        return {}
+
+    projected: dict[str, Any] = {}
+    for key in _PROVIDER_ARGUMENT_AUDIT_TEXT_FIELDS:
+        value = candidate.get(key)
+        if not isinstance(value, str):
+            continue
+        cleaned = value.strip()
+        if cleaned and len(cleaned) <= 2048:
+            projected[key] = cleaned
+
+    for key in _PROVIDER_ARGUMENT_AUDIT_COUNT_FIELDS:
+        value = candidate.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            projected[key] = value
+
+    valid_hash_count = 0
+    for key in _PROVIDER_ARGUMENT_AUDIT_HASH_FIELDS:
+        value = candidate.get(key)
+        if (
+            isinstance(value, str)
+            and len(value) == 64
+            and all(character in "0123456789abcdef" for character in value)
+        ):
+            projected[key] = value
+            valid_hash_count += 1
+
+    assembly = candidate.get("assembly")
+    if isinstance(assembly, Mapping):
+        projected_assembly: dict[str, Any] = {}
+        argument_source = assembly.get("argument_source")
+        if isinstance(argument_source, str) and argument_source in _PROVIDER_ARGUMENT_ASSEMBLY_SOURCES:
+            projected_assembly["argument_source"] = argument_source
+        for key in _PROVIDER_ARGUMENT_ASSEMBLY_COUNT_FIELDS:
+            value = assembly.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                projected_assembly[key] = value
+        if projected_assembly:
+            projected["assembly"] = projected_assembly
+
+    # A hash is the minimum causal anchor.  Identity/count-only payloads are
+    # too weak to prove where corruption occurred and are omitted wholesale.
+    return projected if valid_hash_count else {}
+
+
 def build_native_tool_call_envelopes(
     native_tool_calls: Sequence[Any],
     *,
@@ -952,6 +1052,10 @@ def build_native_tool_call_envelopes(
         call_id = _native_tool_call_id(call, index=index, raw_call_hash=raw_call_hash)
         tool_name = _raw_native_tool_call_name(call)
         envelope_id = f"native_tool_call:{provider_label}:{index}:{call_id}:{raw_call_hash[:16]}"
+        metadata: dict[str, Any] = {"has_tool_name": bool(tool_name)}
+        provider_argument_audit = _safe_provider_argument_audit(call)
+        if provider_argument_audit:
+            metadata["provider_argument_audit"] = provider_argument_audit
         envelopes.append(
             NativeToolCallEnvelopeV1(
                 envelope_id=envelope_id,
@@ -961,7 +1065,7 @@ def build_native_tool_call_envelopes(
                 call_id=call_id,
                 raw_call_hash=raw_call_hash,
                 arguments_hash=arguments_hash,
-                metadata={"has_tool_name": bool(tool_name)},
+                metadata=metadata,
             )
         )
     return tuple(envelopes)

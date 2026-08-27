@@ -302,6 +302,18 @@ def _successful_write_results_without_effect_receipts(receipts: list[dict[str, A
         status = _clean_string(item.get("status")).lower()
         if status != "success" or not is_write_tool_name(tool_name):
             continue
+        result = item.get("result")
+        if (
+            isinstance(result, Mapping)
+            and result.get("no_op") is True
+            and result.get("superseded") is True
+            and _clean_string(result.get("reason")) == "deo_same_path_superseded_by_later_write"
+        ):
+            # A prior same-path mutation was intentionally normalized away in
+            # favor of a later mutation from the same sealed batch. It caused
+            # no physical write, so an effect receipt would be dishonest; its
+            # explicit no-op accounting row is complete lifecycle evidence.
+            continue
         if _effect_receipt_from_result(item):
             continue
         missing.append(

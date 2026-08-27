@@ -554,6 +554,81 @@ async def test_call_end_tool_count_uses_run_ledger_envelope_projection(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_call_end_preserves_complete_response_argument_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The non-streaming Factory path must audit complete native arguments.
+
+    The provider adapter may internally stream, but ``LLMInvoker.call`` receives
+    the assembled response.  This path must produce the same privacy-bounded
+    argument evidence as ``StreamEngine`` before the raw call becomes a Run
+    Ledger envelope.
+    """
+
+    rec = _EventRecorder()
+    rec.install(monkeypatch)
+    profile = _profile(provider_id="anthropic_compat", model="MiniMax-M3")
+    prepared = _prepared(
+        profile,
+        native_tool_mode="native_tools",
+        native_tool_schemas=[{"name": "write_file"}],
+    )
+    _patch_prepare(monkeypatch, prepared)
+    executor = _ScriptedExecutor(
+        [
+            AIResponse.success(
+                output="tool decision",
+                model="MiniMax-M3",
+                provider_id="anthropic_compat",
+                raw={
+                    "model": "MiniMax-M3",
+                    "provider": "anthropic_compat",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call-write-main",
+                            "name": "write_file",
+                            "input": {
+                                "path": "src/main.cpp",
+                                "content": "int main() { return 0; }",
+                            },
+                        }
+                    ],
+                },
+            )
+        ]
+    )
+    invoker = LLMInvoker(workspace="ws", enable_cache=False, executor=executor)
+
+    response = await invoker.call(
+        profile=profile,
+        system_prompt="sys",
+        context=_ctx(None),
+        run_id="run-complete-argument-audit",
+    )
+
+    assert response.error is None
+    envelope = response.metadata["native_tool_call_envelopes"][0]
+    audit = envelope["metadata"]["provider_argument_audit"]
+    assert audit["provider"] == "anthropic"
+    assert audit["tool_name"] == "write_file"
+    assert audit["call_id"] == "call-write-main"
+    assert audit["target_path"] == "src/main.cpp"
+    assert audit["content_length"] == len("int main() { return 0; }")
+    assert len(audit["raw_arguments_sha256"]) == 64
+    assert len(audit["decoded_arguments_sha256"]) == 64
+    assert len(audit["content_sha256"]) == 64
+    assert "int main()" not in repr(envelope)
+    assert rec.end[0]["metadata"]["native_tool_call_envelopes"][0] == envelope
+    assert response.metadata["tool_call_argument_audit_projection"] == {
+        "schema_version": "llm.tool_call_argument_audit_projection.v1",
+        "source": "complete_provider_response",
+        "tool_call_count": 1,
+        "audit_present_count": 1,
+        "audit_missing_count": 0,
+        "missing_call_ids": [],
+    }
+
+
+@pytest.mark.asyncio
 async def test_call_start_event_persists_context_snapshot_before_emit(monkeypatch: pytest.MonkeyPatch) -> None:
     rec = _EventRecorder()
     rec.install(monkeypatch)

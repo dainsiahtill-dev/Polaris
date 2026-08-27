@@ -1,0 +1,139 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "L3-24-R87-CPP-INVENTORY-AND-CROSS-FILE-REPAIR-AUTHORITY",
+  "status": "PARTIALLY_VERIFIED_FRESH_E2E",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "attempt": "r87",
+  "factory_run_id": "factory_f1eeb6c7105a",
+  "symptom": {
+    "stage": "quality_gate",
+    "factory_status": "failed",
+    "canonical_task_boundary": "completed_verified",
+    "tool_lifecycle_failed_count": 0,
+    "failed_verifiers": [
+      "python -m unittest discover -s tests -p test_*.py -v",
+      "implementation_depth",
+      "feature_structure"
+    ],
+    "runtime_failure": "test_write_then_read_round_trip: a separate --read process returned 2 with InkDiary::read: unknown title",
+    "depth_actual": {
+      "production_files": 4,
+      "production_lines": 335
+    },
+    "depth_required": {
+      "production_files": 7,
+      "production_lines": 650
+    }
+  },
+  "dynamic_evidence": {
+    "workspace": "/tmp/factory-bench-l3-24-r87/workspaces/80972fc439e6-d74ce0393e429ca7/L3-24-023d7314133040b6/464a2bc457c37b7f32b0d4fe",
+    "generated_project_modified": false,
+    "exact_unittest_rerun": "still_failed",
+    "director_context_snapshot_refs": [
+      "ae8ce281ca8c975bbb7e0bf6",
+      "77861671d6648d7854545ffa"
+    ],
+    "director_final_request": {
+      "role_identity": "Director",
+      "tool_choice": "edit_file",
+      "tools": [
+        "edit_file"
+      ],
+      "prompt_tokens": 19458,
+      "completion_tokens": 1326,
+      "workspace_failure_present": true,
+      "current_target_body_present": true,
+      "actual_sibling_exports_present": false,
+      "instruction": "Emit exactly one write/edit tool call for src/diary_engine.cpp and do not read or touch sibling files"
+    },
+    "physical_edit_calls": [
+      {
+        "call_id": "call_01a0420486c57862a999f74d",
+        "path": "src/diary_engine.cpp",
+        "effect": "edit_file_succeeded_then_precommit_compile_rejected_and_rolled_back"
+      },
+      {
+        "call_id": "call_01a042053fd77a819d1bfe37",
+        "path": "src/diary_engine.cpp",
+        "effect": "edit_file_succeeded_then_precommit_compile_rejected_and_rolled_back"
+      }
+    ],
+    "candidate_rejection": "The model implemented cross-process persistence in the implementation file, but introduced constructor/member/enum serialization changes that could not be reconciled with the read-only same-owner header. The transaction was correctly rolled back.",
+    "ce_context_snapshot_refs": [
+      "117a8a453412847cb7ee844f",
+      "1ddeabcf3bcbb954c41d0c94",
+      "b834f5d22e3bea7cbfe01070"
+    ],
+    "ce_final_contract": {
+      "min_prod_files": 7,
+      "min_prod_lines": 650,
+      "declared_cpp_headers": 4,
+      "declared_cpp_implementations": 4,
+      "qa_inventory_before_fix": "Counted .h but omitted .hh/.hpp/.hxx, so only four .cpp files were treated as production source"
+    },
+    "read_only_counterfactual": {
+      "cpp_header_variants_counted": true,
+      "production_files": 8,
+      "production_lines": 399,
+      "feature_structure": "passes all four required keywords",
+      "remaining_depth_failure": "399 < 650"
+    }
+  },
+  "root_causes": [
+    {
+      "id": "cpp_source_inventory_contract_split",
+      "classification": "platform_quality_projection",
+      "cause": "Chief Engineer feasibility counted C++ public headers as production source while the platform workspace inventory counted only .h and omitted the equivalent .hh/.hpp/.hxx variants. The same physical artifact set was therefore accepted upstream and false-red downstream."
+    },
+    {
+      "id": "single_target_repair_made_cross_file_contract_unrepairable",
+      "classification": "director_repair_authority",
+      "cause": "After a real edit was rejected by precommit compilation, Factory pinned the next Director turn to the same implementation file and withheld its same-owner interface declaration. The model had actionable diagnostics and invoked edit_file, but no authorized transaction could make the implementation/header contract coherent."
+    }
+  ],
+  "fixes": [
+    {
+      "id": "normalize_cpp_header_inventory",
+      "files": [
+        "src/backend/polaris/kernelone/benchmark/factory_audit.py",
+        "src/backend/polaris/tests/unit/kernelone/test_factory_audit.py"
+      ],
+      "behavior": "Treat .hh/.hpp/.hxx like the already-supported .h in code_files and source_files. Thresholds are unchanged."
+    },
+    {
+      "id": "owned_cpp_interface_transaction_on_candidate_rejection",
+      "files": [
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+        "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+      ],
+      "behavior": "When a rejected C/C++ implementation has an existing same-stem interface inside the immutable TaskRuntime owner, authorize only that implementation/header pair as an atomic repair batch. Preserve single-target behavior otherwise."
+    }
+  ],
+  "verification": {
+    "red_inventory_test": "failed with source_files=[] before the fix",
+    "factory_audit_tests": "60 passed",
+    "red_cross_file_authority_test": "failed with target_files=[src/moon_phase.cpp] before the fix",
+    "behavior_and_cpp_neighbor_tests": "5 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_e2e": {
+      "attempt": "r88",
+      "factory_run_id": "factory_3cef83507786",
+      "cpp_header_inventory": "verified: prod_files increased to 9 and feature_keyword_structure passed",
+      "cross_file_rejected_candidate_pair": "not exercised: r88 failed earlier on a CE-omitted diary_render.hpp interface artifact"
+    }
+  },
+  "guardrails": {
+    "target_project_modified": false,
+    "generated_workspace_read_only": true,
+    "thresholds_relaxed": false,
+    "cross_task_scope_expanded": false,
+    "pm_ce_restart_added": false,
+    "unknown_interface_mapping_fails_closed": true
+  },
+  "residual_risk": [
+    "Counting header variants fixes the production-file and feature-structure projection split but does not by itself satisfy the 650 production-line contract.",
+    "A later fresh isolated run is still required to exercise the newly authorized interface transaction because r88 exposed a prior CE topology omission instead."
+  ]
+}

@@ -114,7 +114,7 @@ def _coerce_policy_scope_list(value: Any) -> list[str]:
     return []
 
 
-def _recover_write_body_or_none(value: Any) -> str | None:
+def _recover_write_body_or_none(value: Any, *, file_path: str = "") -> str | None:
     """Recover a plain UTF-8 string from a structured tool argument body.
 
     R195/M03: weak Directors (e.g. MiniMax-M3) sometimes emit ``content`` /
@@ -135,7 +135,7 @@ def _recover_write_body_or_none(value: Any) -> str | None:
         return ""
     if isinstance(value, str):
         return value
-    return recover_write_body_string(value)
+    return recover_write_body_string(value, file_path=file_path)
 
 
 def _director_write_allowed_scope(tool_kwargs: dict[str, Any] | None) -> list[str]:
@@ -719,7 +719,7 @@ class DirectorToolExecutor:
         """写入文件工具"""
         raw_file_path = args.get("file") or args.get("path") or args.get("filepath")
         file_path = canonicalize_project_manifest_path(str(raw_file_path or "").strip())
-        content = _recover_write_body_or_none(args.get("content"))
+        content = _recover_write_body_or_none(args.get("content"), file_path=file_path)
         if content is None:
             # R195/M03: a non-string content body that cannot be recovered to text
             # must fail-closed rather than be str()-serialized into the file.

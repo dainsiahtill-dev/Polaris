@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
+from typing import Any
 
 import polaris.kernelone.llm.engine.stream as stream_module
 import pytest
 from polaris.kernelone.llm.engine.contracts import AIRequest, ModelSpec, TaskType, TokenBudgetDecision
 from polaris.kernelone.llm.engine.stream import StreamExecutor
+from polaris.kernelone.telemetry.debug_stream import debug_stream_session
 from polaris.kernelone.trace import ContextManager, PolarisContext
 from polaris.kernelone.trace.context import get_trace_id
 from polaris.kernelone.trace.tracer import TraceRecorder, UnifiedTracer
@@ -45,6 +48,17 @@ class _DummyBudgetManager:
             safety_margin_tokens=128,
             overhead_tokens=overhead_tokens,
         )
+
+
+def _without_stream_assembly(tool_call: dict[str, Any]) -> dict[str, Any]:
+    """Keep exact payload assertions while accepting audited assembly metadata."""
+    normalized = dict(tool_call)
+    provider_meta = dict(normalized.get("provider_meta") or {})
+    assembly = provider_meta.pop("assembly")
+    assert isinstance(assembly, dict)
+    assert int(assembly.get("delta_count") or 0) >= 1
+    normalized["provider_meta"] = provider_meta
+    return normalized
 
 
 def test_get_trace_id_is_stable_within_same_context() -> None:
@@ -218,7 +232,7 @@ async def test_stream_executor_decodes_structured_openai_tool_calls(
     tool_call_events = [event for event in events if event.type == stream_module.StreamEventType.TOOL_CALL]
 
     assert len(tool_call_events) == 1
-    assert tool_call_events[0].tool_call == {
+    assert _without_stream_assembly(tool_call_events[0].tool_call) == {
         "tool": "read_file",
         "arguments": {"path": "README.md"},
         "call_id": "call_readme",
@@ -306,7 +320,7 @@ async def test_stream_executor_anthropic_partial_tool_delta_keeps_arguments_and_
     tool_call_events = [event for event in events if event.type == stream_module.StreamEventType.TOOL_CALL]
 
     assert len(tool_call_events) == 1
-    assert tool_call_events[0].tool_call == {
+    assert _without_stream_assembly(tool_call_events[0].tool_call) == {
         "tool": "read_file",
         "arguments": {"path": "README.md"},
         "call_id": "call_readme",
@@ -316,6 +330,106 @@ async def test_stream_executor_anthropic_partial_tool_delta_keeps_arguments_and_
             "content_block_index": 0,
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_stream_executor_anthropic_cpp_tool_arguments_are_lossless_and_audited(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cpp_content = (
+        "#include <optional>\n"
+        "#include <string_view>\n"
+        "std::optional<Algorithm> parse_algorithm(std::string_view name);\n"
+    )
+    arguments_text = json.dumps(
+        {"file": "include/domain/cipher.hpp", "content": cpp_content},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    split_at = len(arguments_text) // 2
+
+    class _StructuredProvider:
+        async def invoke_stream_events(
+            self,
+            prompt: str,
+            model: str,
+            config: dict[str, object],
+        ):
+            del prompt, model, config
+            yield {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "call_cpp_write",
+                    "name": "write_file",
+                    "input": {},
+                },
+            }
+            for fragment in (arguments_text[:split_at], arguments_text[split_at:]):
+                yield {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {
+                        "type": "input_json_delta",
+                        "partial_json": fragment,
+                    },
+                }
+
+    class _ProviderManager:
+        def get_provider_instance(self, provider_type: str) -> _StructuredProvider | None:
+            assert provider_type == "anthropic_compat"
+            return _StructuredProvider()
+
+    monkeypatch.setattr(
+        "polaris.kernelone.llm.providers.get_provider_manager",
+        lambda: _ProviderManager(),
+    )
+
+    executor = StreamExecutor(
+        workspace=str(tmp_path),
+        model_catalog=_DummyModelCatalog(),
+        token_budget=_DummyBudgetManager(),
+    )
+    monkeypatch.setattr(
+        executor,
+        "_resolve_provider_model",
+        lambda request: ("fake-provider", "MiniMax-M3"),
+    )
+    monkeypatch.setattr(
+        executor,
+        "_get_provider_config",
+        lambda provider_id: {"type": "anthropic_compat", "timeout": 1},
+    )
+
+    request = AIRequest(task_type=TaskType.GENERATION, role="director", input="hello")
+    debug_events: list[dict[str, object]] = []
+    with debug_stream_session(enabled=True, sink=debug_events.append):
+        events = [event async for event in executor.invoke_stream(request)]
+
+    tool_call_events = [event for event in events if event.type == stream_module.StreamEventType.TOOL_CALL]
+    assert len(tool_call_events) == 1
+    assert tool_call_events[0].tool_call["arguments"]["content"] == cpp_content
+    assert tool_call_events[0].meta["tool_call_argument_audit"]["content_sha256"]
+
+    assembly_events = [
+        event
+        for event in debug_events
+        if event.get("category") == "llm_tool_call" and event.get("label") == "arguments_assembled"
+    ]
+    assert len(assembly_events) == 1
+    payload = assembly_events[0]["payload"]
+    assert isinstance(payload, dict)
+    assert payload["tool_name"] == "write_file"
+    assert payload["target_path"] == "include/domain/cipher.hpp"
+    assert payload["raw_arguments_length"] == len(arguments_text)
+    assert payload["content_length"] == len(cpp_content)
+    assert payload["content_angle_open_count"] == cpp_content.count("<")
+    assert payload["content_angle_close_count"] == cpp_content.count(">")
+    assert len(str(payload["raw_arguments_sha256"])) == 64
+    assert len(str(payload["decoded_arguments_sha256"])) == 64
+    assert len(str(payload["content_sha256"])) == 64
 
 
 @pytest.mark.asyncio
@@ -387,7 +501,7 @@ async def test_stream_executor_anthropic_placeholder_input_waits_for_json_delta(
     tool_call_events = [event for event in events if event.type == stream_module.StreamEventType.TOOL_CALL]
 
     assert len(tool_call_events) == 1
-    assert tool_call_events[0].tool_call == {
+    assert _without_stream_assembly(tool_call_events[0].tool_call) == {
         "tool": "read_file",
         "arguments": {"file": "ARCHITECTURE.md"},
         "call_id": "call_architecture",
@@ -472,15 +586,13 @@ async def test_stream_executor_decodes_structured_ollama_tool_calls(
     )
 
     events = [event async for event in executor.invoke_stream(request)]
-    reasoning_events = [
-        event for event in events if event.type == stream_module.StreamEventType.REASONING_CHUNK
-    ]
+    reasoning_events = [event for event in events if event.type == stream_module.StreamEventType.REASONING_CHUNK]
     tool_call_events = [event for event in events if event.type == stream_module.StreamEventType.TOOL_CALL]
 
     assert len(reasoning_events) == 1
     assert reasoning_events[0].reasoning == "Need to inspect the README first."
     assert len(tool_call_events) == 1
-    assert tool_call_events[0].tool_call == {
+    assert _without_stream_assembly(tool_call_events[0].tool_call) == {
         "tool": "read_file",
         "arguments": {"path": "README.md"},
         "call_id": "",

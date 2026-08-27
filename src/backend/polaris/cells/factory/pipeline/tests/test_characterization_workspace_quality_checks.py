@@ -1182,9 +1182,7 @@ class TestRunWorkspaceQualityChecks:
         )
 
         assert captured["target_task_id"] == "TASK-1"
-        assert captured["context"]["director_quality_repair"]["repair_target_files"] == [
-            "src/core/cipher.cpp"
-        ]
+        assert captured["context"]["director_quality_repair"]["repair_target_files"] == ["src/core/cipher.cpp"]
         assert captured["repair_target_files"] == ["src/core/cipher.cpp"]
 
     def test_workspace_quality_behavior_claim_does_not_collapse_mixed_owner_to_observer_test(self) -> None:
@@ -1853,9 +1851,7 @@ class TestRunWorkspaceQualityChecks:
 
         assert captured["target_task_id"] == "TASK-1"
         assert captured["context"]["target_files"] == ["src/cipher.cpp"]
-        assert captured["context"]["director_quality_repair"]["repair_target_files"] == [
-            "src/cipher.cpp"
-        ]
+        assert captured["context"]["director_quality_repair"]["repair_target_files"] == ["src/cipher.cpp"]
         assert captured["repair_target_files"] == ["src/cipher.cpp"]
 
     @pytest.mark.asyncio
@@ -1952,32 +1948,30 @@ class TestRunWorkspaceQualityChecks:
                 "in test_phase_list_contains_all_five_phases\n"
                 '    self.assertEqual(rc, 0, msg=f"phase-list failed: {err!r}")\n'
                 "AssertionError: 2 != 0 : phase-list failed: "
-                '"error: unknown command \'phase-list\'. Try \'help\'.\\n"\n',
+                "\"error: unknown command 'phase-list'. Try 'help'.\\n\"\n",
             ],
             repair_attempt=1,
         )
 
         assert captured["target_task_id"] == "TASK-1"
         assert captured["context"]["target_files"] == ["src/cli/main.cpp"]
-        assert captured["context"]["director_quality_repair"]["repair_target_files"] == [
-            "src/cli/main.cpp"
-        ]
+        assert captured["context"]["director_quality_repair"]["repair_target_files"] == ["src/cli/main.cpp"]
         assert captured["repair_target_files"] == ["src/cli/main.cpp"]
 
     @pytest.mark.asyncio
-    async def test_behavior_repair_compile_rejection_feedback_stays_on_rejected_target(
+    async def test_behavior_repair_compile_rejection_includes_owned_interface_companion(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """L3-24 r37: rollback diagnostics must keep the same mutation target.
+        """A rejected C++ implementation edit may require its owned header.
 
-        A rejected ``src/moon_phase.cpp`` candidate produced a concrete C++
-        declaration mismatch.  The next round carried that diagnostic but
-        rotated write authority to ``src/ink_renderer.cpp``, making the
-        feedback impossible to act on.  A compile-regression retry remains
-        inside the same immutable TaskRuntime owner, but must pin the rejected
-        file until that candidate diagnostic is consumed.
+        A precommit-rejected ``src/moon_phase.cpp`` edit can expose an interface
+        mismatch that cannot be repaired while the same-owner declaration in
+        ``include/moon_phase.hpp`` stays read-only.  The retry must remain in
+        the immutable TaskRuntime owner while authorizing the minimal atomic
+        implementation/interface pair rather than forcing an impossible
+        single-file transaction.
         """
 
         from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
@@ -1990,6 +1984,7 @@ class TestRunWorkspaceQualityChecks:
             created_at="2026-08-26T00:00:00+00:00",
         )
         targets = [
+            "include/moon_phase.hpp",
             "src/main.cpp",
             "src/moon_phase.cpp",
             "src/ink_renderer.cpp",
@@ -2061,11 +2056,20 @@ class TestRunWorkspaceQualityChecks:
         )
 
         assert captured["target_task_id"] == "TASK-1"
-        assert captured["context"]["target_files"] == ["src/moon_phase.cpp"]
-        assert captured["context"]["director_quality_repair"]["repair_target_files"] == [
-            "src/moon_phase.cpp"
+        assert captured["context"]["target_files"] == [
+            "src/moon_phase.cpp",
+            "include/moon_phase.hpp",
         ]
-        assert captured["repair_target_files"] == ["src/moon_phase.cpp"]
+        assert captured["context"]["director_quality_repair"]["repair_target_files"] == [
+            "src/moon_phase.cpp",
+            "include/moon_phase.hpp",
+        ]
+        assert captured["context"]["director_quality_repair"]["write_only_single_target"] is None
+        assert captured["context"]["director_quality_repair"]["atomic_multi_target"] is True
+        assert captured["repair_target_files"] == [
+            "src/moon_phase.cpp",
+            "include/moon_phase.hpp",
+        ]
 
     def test_workspace_quality_go_compile_failure_keeps_direct_test_owner(self, tmp_path: Path) -> None:
         """Compiler diagnostics in an authored test still belong to that test."""
@@ -2868,8 +2872,7 @@ class TestRunWorkspaceQualityChecks:
                 },
             },
             artifact_quality_errors=[
-                "FAIL: test_empty_body_encode_is_handled\n"
-                "AssertionError: 2 != 0 : stderr=encode failed"
+                "FAIL: test_empty_body_encode_is_handled\nAssertionError: 2 != 0 : stderr=encode failed"
             ],
             # A global round number greater than one must not skip the head of
             # a newly changed diagnostic signature.
@@ -3572,10 +3575,7 @@ class TestRunWorkspaceQualityChecks:
         classify = OrchestrationStageExecutor._workspace_quality_repair_effect
         command = ["python", "-c", "cpp-syntax-check"]
         failing_units = "### FAILING_TUS src/cipher.cpp tests/test_cipher.cpp\n"
-        missing_cstdint = (
-            "include/invisible_ink/cipher.hpp:84:27: error: "
-            "‘int64_t’ is not a member of ‘std’"
-        )
+        missing_cstdint = "include/invisible_ink/cipher.hpp:84:27: error: ‘int64_t’ is not a member of ‘std’"
         exception_spec = (
             "src/cipher.cpp:142:6: error: declaration of "
             "‘std::string Cipher::encode()’ has a different exception specifier"
@@ -3623,8 +3623,7 @@ class TestRunWorkspaceQualityChecks:
                         "command": command,
                         "passed": False,
                         "diagnostic_excerpt": (
-                            f"{failing_units}"
-                            "include/cipher.hpp:84:27: error: ‘int64_t’ is not a member of ‘std’\n"
+                            f"{failing_units}include/cipher.hpp:84:27: error: ‘int64_t’ is not a member of ‘std’\n"
                         ),
                     },
                 ),
@@ -3661,7 +3660,7 @@ class TestRunWorkspaceQualityChecks:
         header = tmp_path / "include" / "invisible_diary" / "moon_cipher.hpp"
         header.parent.mkdir(parents=True)
         before_diagnostic = (
-            f"{header}:17:10: error: #include expects \"FILENAME\" or <FILENAME>\n"
+            f'{header}:17:10: error: #include expects "FILENAME" or <FILENAME>\n'
             "   17 | #include vector\n"
             "      |          ^~~~~~\n"
             "src/moon_cipher.cpp:42:18: error: expected primary-expression before ')' token"
@@ -3933,12 +3932,8 @@ class TestRunWorkspaceQualityChecks:
         # needlessly failed/reopened the same Director task.
         assert (
             classify(
-                before_signature=(
-                    "tests/test_moon_cipher.cpp: error: 'invalid_argument' is not a member of 'std'",
-                ),
-                after_signature=(
-                    "undefined reference to `invisible_diary::io::read_invisible_diary'",
-                ),
+                before_signature=("tests/test_moon_cipher.cpp: error: 'invalid_argument' is not a member of 'std'",),
+                after_signature=("undefined reference to `invisible_diary::io::read_invisible_diary'",),
                 verifier_passed=False,
                 write_tool_evidence=True,
                 before_results=(
@@ -4104,10 +4099,7 @@ class TestRunWorkspaceQualityChecks:
         classify = OrchestrationStageExecutor._workspace_quality_repair_effect
         compiler_command = ["g++", "-std=c++17", "-fsyntax-only", "src/diary/diary_book.cpp"]
         test_command = ["python", "-m", "unittest", "discover", "-s", "tests"]
-        compiler_error = (
-            "src/diary/diary_book.cpp:40:15: error: "
-            "'DiaryValidationError' was not declared in this scope"
-        )
+        compiler_error = "src/diary/diary_book.cpp:40:15: error: 'DiaryValidationError' was not declared in this scope"
         harness_error = (
             "ERROR: setUpClass (test_engine_contracts.EngineContractTests)\n"
             "NameError: name 'sys' is not defined\nFAILED (errors=1)"
@@ -4138,10 +4130,7 @@ class TestRunWorkspaceQualityChecks:
             == "progress"
         )
 
-        novel_compiler_error = (
-            "src/diary/diary_book.cpp:52:39: error: "
-            "'cipher' has not been declared"
-        )
+        novel_compiler_error = "src/diary/diary_book.cpp:52:39: error: 'cipher' has not been declared"
         novel_after_results = (
             {"command": compiler_command, "passed": False, "stderr_tail": compiler_error},
             {
@@ -4562,6 +4551,99 @@ class TestRunWorkspaceQualityChecks:
         assert repair["nonprogress_rounds_since_last_progress"] == 3
         assert repair["convergence_stop_reason"] == "three_nonprogress_repairs_without_verified_progress"
         assert len(repair["rounds"]) == 3
+
+    @pytest.mark.asyncio
+    async def test_rejected_transaction_grants_one_distinct_residual_frontier_handoff(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """L3-24 r90: one rejected owner must not starve a distinct residual.
+
+        The global fuse remains bounded.  Only a compile-rejected transaction
+        with a verifier-proven, unclaimed target gets one final same-Director
+        handoff; no PM/CE restart and no unlimited owner rotation are allowed.
+        """
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-rejected-frontier-handoff",
+            config=FactoryConfig(name="quality-rejected-frontier-handoff"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-27T00:00:00+00:00",
+        )
+        deterministic_calls = 0
+        llm_owner_targets: list[list[str]] = []
+
+        def failed_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            return {
+                "command": command,
+                "exit_code": 1,
+                "passed": False,
+                "stdout_tail": (
+                    "cipher.wrong_key.throws failed\n"
+                    "moon.negative_offset.cycles_back failed\n"
+                    "implementation depth production_source_lines=421 < 650"
+                ),
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def no_deterministic_effect(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal deterministic_calls
+            del kwargs
+            deterministic_calls += 1
+            return [], {"attempted": True, "success": False, "write_tool_evidence": False}
+
+        async def rejected_llm_effect(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            raw_targets = kwargs.get("owner_target_files")
+            owner_targets = [str(item) for item in raw_targets] if isinstance(raw_targets, list) else []
+            llm_owner_targets.append(owner_targets)
+            target = owner_targets[0] if owner_targets else "src/core/cipher_engine.cpp"
+            return [], {
+                "attempted": True,
+                "success": False,
+                "task_id": "TASK-2",
+                "repair_target_files": [target],
+                "write_tool_evidence": False,
+                "error": "source_compile_regression: rejected candidate",
+            }
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["ctest"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", failed_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_deterministic_repairs", no_deterministic_effect)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", rejected_llm_effect)
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "workspace_quality_unclaimed_residual_targets",
+            lambda *_args, **_kwargs: ["src/core/moon_phase.cpp"],
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "leftover_targets_should_force_owner_rotate",
+            lambda leftover, claimed: bool(leftover) and leftover[0] not in claimed,
+        )
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 8},
+        )
+
+        assert passed is False
+        # The unchanged signature runs the deterministic schedule once; later
+        # waves go directly to the same Director repair path.
+        assert deterministic_calls == 1
+        assert len(llm_owner_targets) == 4
+        assert llm_owner_targets[-1] == ["src/core/moon_phase.cpp"]
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        repair = payload["repair"]
+        assert repair["residual_frontier_handoff_granted"] is True
+        assert repair["convergence_stop_reason"] == "three_nonprogress_repairs_without_verified_progress"
+        assert len(repair["rounds"]) == 4
 
     @pytest.mark.asyncio
     async def test_workspace_quality_mutation_nonprogress_cap_masks_volatile_lines_before_owner_rotation(
@@ -5165,9 +5247,7 @@ class TestRunWorkspaceQualityChecks:
         def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
             del timeout_seconds
             diagnostic = (
-                candidate_diagnostic
-                if source_path.read_text(encoding="utf-8") == "candidate\n"
-                else failure_before
+                candidate_diagnostic if source_path.read_text(encoding="utf-8") == "candidate\n" else failure_before
             )
             return {
                 "command": command,

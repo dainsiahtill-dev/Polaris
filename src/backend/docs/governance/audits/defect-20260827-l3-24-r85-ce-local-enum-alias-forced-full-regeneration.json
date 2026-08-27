@@ -1,0 +1,78 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "L3-24-R85-CE-LOCAL-ENUM-ALIAS-FORCED-FULL-REGENERATION",
+  "status": "FIXED_VERIFIED_FRESH_E2E",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "attempt": "r85",
+  "head": "c96006a052ae3368877dda7582656a2a7f85772e",
+  "factory_run_id": "factory_1e78fc7ecf75",
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "wall_clock_seconds": 207.5,
+    "error_code": "chief_engineer.advisory_projection_fallback_infeasible",
+    "blueprints_generated": 0,
+    "director_reached": false,
+    "source_files": 0
+  },
+  "dynamic_evidence": {
+    "workspace": "/tmp/factory-bench-l3-24-r85/workspaces/59891f7bc3d7-7413abcaf2c833db/L3-24-023d7314133040b6/9a4ccb5a5175471a216cc357",
+    "instance_dir": "/home/dains/.polaris/instances/factory-bench-l3-24-r85-l3-24-run-59891f7bc3d7-d50739c2f92f3d90",
+    "initial_call_id": "292eb12bd7dd4489a12b2030ed037a32",
+    "initial_context_snapshot_ref": "7586720673c8295900d5f9eb",
+    "provider_tool_arguments_evidence": ".polaris/runtime/logs/chief_engineer.llm.events.jsonl llm_error.data.metadata.tool_call.arguments",
+    "initial_candidate": {
+      "complete_portfolio_present": true,
+      "local_schema_aliases": [
+        "project_completion_contract.obligations.artifacts[0].semantic_role=build",
+        "verification.modality=qa"
+      ],
+      "existing_recovery_result": "artifact semantic_role was inferred from CMakeLists.txt, but qa was not normalized to the canonical test modality; the otherwise complete candidate was discarded"
+    },
+    "subsequent_full_regenerations": [
+      "schema-repair response moved task_plans and shared_behavior_contract to the root",
+      "semantic-repair response emitted a root item envelope and misplaced portfolio fields"
+    ],
+    "authoritative_failure_category": "chief_engineer_blueprint",
+    "secondary_observability_issue": "The runner console attributed residual_module=M06_director_multi_task even though factory_audits.json and the terminal stage prove Director was never reached."
+  },
+  "root_cause": "Chief Engineer structural recovery treated a provider's local enum alias as grounds to discard a complete portfolio. It canonicalized artifact semantic roles but did not canonicalize the common verification modality alias qa->test, so the pipeline spent two full LLM calls reconstructing the whole portfolio and introduced new root-shape drift instead of preserving and validating the original candidate.",
+  "fix": {
+    "behavior": "At the Chief Engineer blueprint public normalization boundary, canonicalize only the exact verification modality alias qa to test, record normalize_qa_verification_modality, and leave every other unknown modality untouched so strict schema validation remains fail-closed.",
+    "files": [
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_semantic_repair.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_ce_handoff.py"
+    ],
+    "target_specific_logic_added": false,
+    "semantic_gate_relaxed": false
+  },
+  "verification": {
+    "red": "The exact complete-candidate fixture recovered the artifact role but retained verification.modality=qa and therefore still failed the CE output schema.",
+    "focused": "3 passed",
+    "relevant_suites": "146 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_run_replay": {
+      "source": "r85 initial llm_error physical provider tool arguments",
+      "repair_codes": [
+        "remove_task_local_invariant_from_shared_contract",
+        "infer_invalid_artifact_semantic_roles",
+        "normalize_qa_verification_modality"
+      ],
+      "schema_error_count_after_normalization": 0,
+      "result": "The original physical candidate is accepted without either full-regeneration call."
+    },
+    "fresh_e2e": {
+      "attempt": "r86",
+      "factory_run_id": "factory_78615926b302",
+      "result": "Chief Engineer generated 1/1 blueprint in one physical provider call and the Factory advanced into Director dispatch."
+    }
+  },
+  "guardrails": {
+    "target_project_modified": false,
+    "generated_workspace_read_only": true,
+    "unknown_modality_still_fail_closed": true,
+    "pm_ce_restart_added": false
+  }
+}

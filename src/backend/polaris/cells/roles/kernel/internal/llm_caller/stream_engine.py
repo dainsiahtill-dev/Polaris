@@ -249,6 +249,8 @@ class StreamEngine:
         reconnect_prefix = ""
         emitted_tool_signatures: set[str] = set()
         emitted_tool_call_payloads: list[dict[str, Any]] = []
+        argument_audit_present_count = 0
+        argument_audit_missing_call_ids: list[str] = []
         active_request = prepared.ai_request
         request_context = getattr(active_request, "context", None)
         if isinstance(request_context, dict):
@@ -666,6 +668,13 @@ class StreamEngine:
                             emitted_tool_signatures.add(signature)
                         elif dedupe_reconnect_replay:
                             emitted_tool_signatures.add(signature)
+                        raw_argument_audit = metadata.get("tool_call_argument_audit")
+                        if isinstance(raw_argument_audit, dict):
+                            argument_audit_present_count += 1
+                        elif len(argument_audit_missing_call_ids) < 32:
+                            argument_audit_missing_call_ids.append(
+                                normalized.tool_call_id or f"stream-event-{stream_event_count}"
+                            )
                         yield_started_at = time.perf_counter()
                         yield {
                             "type": "tool_call",
@@ -675,13 +684,14 @@ class StreamEngine:
                             "metadata": metadata,
                             "iteration": turn_round,
                         }
-                        emitted_tool_call_payloads.append(
-                            {
-                                "id": normalized.tool_call_id,
-                                "name": normalized.tool_name,
-                                "arguments": dict(normalized.tool_args),
-                            }
-                        )
+                        emitted_tool_call_payload = {
+                            "id": normalized.tool_call_id,
+                            "name": normalized.tool_name,
+                            "arguments": dict(normalized.tool_args),
+                        }
+                        if isinstance(raw_argument_audit, dict):
+                            emitted_tool_call_payload["provider_argument_audit"] = dict(raw_argument_audit)
+                        emitted_tool_call_payloads.append(emitted_tool_call_payload)
                         total_backpressure_wait_ms += (time.perf_counter() - yield_started_at) * 1000
                         continue
 
@@ -884,6 +894,14 @@ class StreamEngine:
             call_end_metadata["usage"] = provider_usage
             call_end_metadata["usage_source"] = "provider"
         if emitted_tool_call_payloads:
+            call_end_metadata["tool_call_argument_audit_projection"] = {
+                "schema_version": "llm.tool_call_argument_audit_projection.v1",
+                "source": "normalized_stream_tool_call",
+                "tool_call_count": len(emitted_tool_call_payloads),
+                "audit_present_count": argument_audit_present_count,
+                "audit_missing_count": len(emitted_tool_call_payloads) - argument_audit_present_count,
+                "missing_call_ids": list(argument_audit_missing_call_ids),
+            }
             provider_label = str(getattr(profile, "provider_id", "") or active_tool_protocol or "stream").strip()
             envelopes = build_native_tool_call_envelope_payloads(
                 emitted_tool_call_payloads,

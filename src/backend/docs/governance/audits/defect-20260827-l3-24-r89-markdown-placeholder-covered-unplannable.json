@@ -1,0 +1,84 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "L3-24-R89-MARKDOWN-PLACEHOLDER-COVERED-UNPLANNABLE",
+  "status": "FIXED_UNIT_FRESH_E2E_PENDING",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "attempt": "r89",
+  "factory_run_id": "factory_193f1eda6fd5",
+  "symptom": {
+    "stage": "quality_gate",
+    "factory_status": "failed",
+    "wall_clock_seconds": 1200.3,
+    "real_run_gate": "passed",
+    "cpp_compile": "passed for 5 translation units",
+    "production_files": 9,
+    "production_lines": 646,
+    "depth_minimum_lines": 650,
+    "canonical_failure": "workspace_validation required command evidence failed"
+  },
+  "dynamic_evidence": {
+    "workspace": "/tmp/factory-bench-l3-24-r89/workspaces/9798a97ce528-c7a54718dea3fc79/L3-24-023d7314133040b6/0fcf741ca3a0ccea1c068d12",
+    "generated_project_modified": false,
+    "runtime_director_result": ".polaris/runtime/results/director.result.json",
+    "factory_audit": "/tmp/factory-bench-l3-24-r89/factory_audits.json",
+    "target_line": "README.md:110: MIT (placeholder).",
+    "quality_diagnostic": "Director output quality gate failed: generic/placeholder content detected: README.md:(?<![.:'\\\"-])\\bplaceholder\\b(?!\\s*[=:])(?![-'\\\"])",
+    "repair_target_files": [
+      "README.md"
+    ],
+    "coverage_source_tool": "deterministic_scaffold_marker_quality_cleanup",
+    "coverage_status": "executable_runtime",
+    "actual_plan_probe_status": "coverage_matched_but_unplannable",
+    "write_tool_evidence": false,
+    "stage_local_retry": "Task 1 reached attempt 7 without diagnostic reduction and did not restart PM or CE",
+    "terminal_truth": {
+      "real_run_gate": "passed",
+      "effective_failed_run_ledger_gate": "workspace_validation",
+      "task_1": "failed",
+      "delivery_status": "DELIVERY_VERIFIED_CHAIN_CONTROL_PLANE_FAIL"
+    }
+  },
+  "root_causes": [
+    {
+      "id": "markdown_excluded_from_scaffold_marker_cleanup",
+      "classification": "director_repair_planning",
+      "cause": "The semantic target selector correctly identified README.md and coverage matched the generic placeholder rule, but the runtime scaffold cleanup suffix policy excluded .md. The authoritative plan probe therefore returned covered-unplannable and no edit could be emitted."
+    },
+    {
+      "id": "coverage_metadata_overstated_executability",
+      "classification": "director_repair_coverage_truth",
+      "cause": "Coverage classified the rule as executable without accounting for the actual target suffix and base-file plan. The public repair_not_planned hardening from r88 now prevents silence, while this fix closes the concrete Markdown capability gap."
+    }
+  ],
+  "fixes": [
+    {
+      "id": "support_markdown_scaffold_marker_quality_cleanup",
+      "files": [
+        "src/backend/polaris/cells/director/runtime/internal/repair_kernel/generic_hygiene_syntax.py",
+        "src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract_2.py"
+      ],
+      "behavior": "Allow the existing policy-gated scaffold marker cleanup to plan exact Markdown edits and normalize the common MIT (placeholder). marker to MIT. before the generic token replacement."
+    }
+  ],
+  "verification": {
+    "exact_red": "r89 README diagnostic returned coverage_matched_but_unplannable",
+    "exact_green": "the same diagnostic and README content now produce one composed patch with content_after=MIT.",
+    "repair_kernel_contract_2": "67 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_e2e": "r90 pending"
+  },
+  "guardrails": {
+    "target_project_modified": false,
+    "generated_workspace_read_only": true,
+    "quality_thresholds_relaxed": false,
+    "pm_ce_restart_added": false,
+    "repair_execution_owner": "director.runtime",
+    "effect_requires_policy_receipt_and_revalidation": true
+  },
+  "residual_risk": [
+    "r89 was independently four production lines below the L3 delivery-depth contract. The threshold remains unchanged; r90 must prove whether stage-local Director repair can close that residual after the Markdown blocker is removed.",
+    "Generic placeholder cleanup in Markdown remains exact-marker-driven by the existing quality diagnostic; unsupported or ambiguous prose stays fail-closed."
+  ]
+}

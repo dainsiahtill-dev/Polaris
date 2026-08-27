@@ -122,6 +122,72 @@ def _failed_batch_diagnostic_excerpt(receipts: list[dict[str, Any]]) -> str:
     return " | ".join(details)[:1200]
 
 
+def _project_directed_effect_dropped_member_receipt(
+    *,
+    dropped_member_rows: list[tuple[str, str, str]],
+    batch_id: str,
+    turn_id: str,
+) -> dict[str, Any]:
+    """Project DEO non-dispatch outcomes without conflating supersession and denial.
+
+    Last-write-wins deliberately removes an earlier same-path mutation before
+    physical dispatch.  That normalization outcome is fully accounted for, but
+    is not a tool failure and must not poison the Run Ledger lifecycle.  Policy
+    or guard denials remain ordinary fail-closed tool errors.
+    """
+
+    results: list[dict[str, Any]] = []
+    success_count = 0
+    failure_count = 0
+    for call_id, tool_name, error_code in dropped_member_rows:
+        reason = str(error_code or "directed_effect_policy_denied")
+        if reason == "deo_same_path_superseded_by_later_write":
+            results.append(
+                {
+                    "call_id": call_id,
+                    "tool_name": tool_name,
+                    "status": "success",
+                    "result": {
+                        "ok": True,
+                        "no_op": True,
+                        "superseded": True,
+                        "reason": reason,
+                    },
+                    "error": None,
+                    "effect_receipt": None,
+                    "directed_effect_claim_status": "not_claimed",
+                }
+            )
+            success_count += 1
+            continue
+        results.append(
+            {
+                "call_id": call_id,
+                "tool_name": tool_name,
+                "status": "error",
+                "result": {
+                    "ok": False,
+                    "error": reason,
+                    "error_type": "deo_member_soft_denied",
+                },
+                "error": reason,
+                "effect_receipt": None,
+                "directed_effect_claim_status": "not_claimed",
+            }
+        )
+        failure_count += 1
+    return {
+        "batch_id": batch_id,
+        "turn_id": turn_id,
+        "results": results,
+        "raw_results": [dict(item) for item in results],
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "pending_async_count": 0,
+        "has_pending_async": False,
+    }
+
+
 class _ToolBatchExecuteMixin:
     """Mixin providing ToolBatchExecutor.execute_tool_batch."""
 
@@ -966,38 +1032,16 @@ class _ToolBatchExecuteMixin:
             )
             receipts_as_dicts.extend(normalize_batch_receipts(receipts))
 
-        # R140: surface soft-denied DEO members as tool errors so the model sees
-        # per-call reasons while authorized siblings still execute.
+        # R140/R86: every non-dispatched DEO member remains visible. Genuine
+        # policy denials are tool errors; benign last-write-wins supersession is
+        # a successful no-effect accounting row and must not poison lifecycle.
         if dropped_member_rows:
-            dropped_results: list[dict[str, Any]] = []
-            for call_id, tool_name, error_code in dropped_member_rows:
-                reason = str(error_code or "directed_effect_policy_denied")
-                dropped_results.append(
-                    {
-                        "call_id": call_id,
-                        "tool_name": tool_name,
-                        "status": "error",
-                        "result": {
-                            "ok": False,
-                            "error": reason,
-                            "error_type": "deo_member_soft_denied",
-                        },
-                        "error": reason,
-                        "effect_receipt": None,
-                        "directed_effect_claim_status": "not_claimed",
-                    }
-                )
             receipts_as_dicts.append(
-                {
-                    "batch_id": str(tool_batch.get("batch_id") or f"{turn_id}_batch"),
-                    "turn_id": turn_id,
-                    "results": dropped_results,
-                    "raw_results": [dict(item) for item in dropped_results],
-                    "success_count": 0,
-                    "failure_count": len(dropped_results),
-                    "pending_async_count": 0,
-                    "has_pending_async": False,
-                }
+                _project_directed_effect_dropped_member_receipt(
+                    dropped_member_rows=dropped_member_rows,
+                    batch_id=str(tool_batch.get("batch_id") or f"{turn_id}_batch"),
+                    turn_id=turn_id,
+                )
             )
 
         # DEO-2C: adapter repair planning may return one typed deferred request

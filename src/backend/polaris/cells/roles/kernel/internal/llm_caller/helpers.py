@@ -27,6 +27,7 @@ from polaris.kernelone.llm.budget_policy import (
 
 from .request_facts import request_fact_source
 from .tool_helpers import (
+    attach_complete_native_tool_argument_audits,
     build_native_tool_call_envelope_payloads,
     build_native_tool_call_envelopes,
     build_native_tool_schemas,
@@ -559,6 +560,7 @@ def compute_context_summary(input_text: str) -> str:
 
 
 __all__ = [
+    "attach_complete_native_tool_argument_audits",
     "build_native_response_format",
     "build_native_tool_call_envelope_payloads",
     "build_native_tool_call_envelopes",

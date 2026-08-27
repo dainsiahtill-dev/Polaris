@@ -33,6 +33,7 @@ class _ToolCallAccumulator:
     provisional_placeholder_count: int = 0
     emitted_signature: str = ""
     provider_meta: dict[str, Any] = field(default_factory=dict)
+    argument_audit: dict[str, Any] = field(default_factory=dict)
 
 
 def _provider_supports_structured_stream(provider_instance: Any) -> bool:

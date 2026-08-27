@@ -68,9 +68,16 @@ def normalize_stream_chunk(
             raw_event_type = chunk.get("kind")
         event_type = str(getattr(raw_event_type, "value", raw_event_type) or "").strip().lower()
 
-        raw_meta = chunk.get("metadata")
+        # ``AIStreamEvent.to_dict()`` serializes provider evidence under
+        # ``meta`` while role-local stream envelopes historically use
+        # ``metadata``.  Accept and merge both shapes so serialization at the
+        # KernelOne -> roles boundary cannot silently erase provider evidence.
+        raw_meta = chunk.get("meta")
         if isinstance(raw_meta, dict):
-            metadata = dict(raw_meta)
+            metadata.update(raw_meta)
+        raw_metadata = chunk.get("metadata")
+        if isinstance(raw_metadata, dict):
+            metadata.update(raw_metadata)
 
         content = str(chunk.get("content") or chunk.get("chunk") or chunk.get("text") or chunk.get("delta") or "")
         reasoning = str(chunk.get("reasoning") or "")

@@ -1,0 +1,80 @@
+{
+  "schema_version": "polaris.agent_defect_manifest.v1",
+  "defect_id": "L3-24-R71-CE-SEMANTIC-REPAIR-DEADLOCK",
+  "status": "READY_FOR_FRESH_REVALIDATION",
+  "severity": "P0",
+  "observed_at": "2026-08-27T09:34:54+08:00",
+  "exact_run": {
+    "factory_run_id": "factory_c4aa9e961c8c",
+    "project_id": "L3-24",
+    "workspace": "/tmp/factory-bench-l3-24-r71/workspaces/ccd0c211ebfb-435c0e2e47acdb21/L3-24-023d7314133040b6/29d4d692a7882c0d538f7339",
+    "backend_port": 49981,
+    "target_project_modified": false
+  },
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "error_code": "chief_engineer.semantic_repair_exhausted",
+    "root_cause_hint": "chief_engineer.semantic_patch_invalid:_UnsafePortfolioStructuralRecoveryError:artifact obligation group has ambiguous semantic authority: ART-CPP-CORE",
+    "director_reached": false,
+    "source_files_materialized": 0
+  },
+  "dynamic_evidence": {
+    "schema_repair_candidate_hash": "fb67fb4b7974565f7c49ce40e35663315b231763965e1303f1e82bad5dfee585",
+    "diagnosis_hash": "83994c936e4e1f27627851ee9268d7b3cf11105f344772e33ee986cbbc191f03",
+    "diagnostic_codes": [
+      "chief_engineer.shared_behavior_contract.invalid"
+    ],
+    "allowed_operations": [
+      "behavior_invariant_upsert",
+      "task_behavior_ref_replace"
+    ],
+    "rejected_unrelated_group": "ART-CPP-CORE",
+    "group_rows": [
+      {
+        "path": "CMakeLists.txt",
+        "semantic_role": "manifest",
+        "applicability": "required",
+        "owner_task_id": "TASK-1"
+      },
+      {
+        "path": "include/invisible/cipher.hpp",
+        "semantic_role": "source",
+        "applicability": "required",
+        "owner_task_id": "TASK-1"
+      }
+    ],
+    "evidence_paths": [
+      ".polaris/runtime/state/blueprints/factory_c4aa9e961c8c.review.json",
+      ".polaris/runtime/state/blueprints/semantic-repair/L3-24/factory_c4aa9e961c8c/fb67fb4b7974565f7c49ce40e35663315b231763965e1303f1e82bad5dfee585.json",
+      ".polaris/runtime/events/chief_engineer.llm.events.jsonl"
+    ]
+  },
+  "root_cause": {
+    "classification": "chief_engineer_semantic_transaction_internal_inconsistency",
+    "detail": "Artifact group recovery treated differing semantic_role values as immutable authority divergence even when owner_task_id and applicability were identical. The diagnosis authorized only behavior repair, so the provider could not repair the unrelated artifact group; composition therefore formed an impossible transaction.",
+    "proven": true
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+    "behavior": "Split same-owner/same-applicability artifact groups deterministically by path and semantic role; continue to reject owner/applicability divergence.",
+    "target_project_patched": false
+  },
+  "verification": {
+    "exact_candidate_read_only_replay": {
+      "recovered": true,
+      "repair_codes": [
+        "remove_task_local_invariant_from_shared_contract",
+        "split_shared_artifact_obligation_ids"
+      ],
+      "artifact_count": 11,
+      "unique_artifact_ids": 11
+    },
+    "tests": [
+      "79 passed: chief_engineer semantic repair",
+      "370 passed: chief_engineer public plus Factory CE handoff",
+      "ruff passed",
+      "mypy passed"
+    ]
+  },
+  "residual_risk": "Fresh isolated run is still required to prove the live CE portfolio reaches Director and that the downstream native tool argument audit persists end to end."
+}

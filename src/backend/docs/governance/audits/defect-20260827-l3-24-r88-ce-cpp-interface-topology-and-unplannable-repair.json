@@ -1,0 +1,93 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "L3-24-R88-CE-CPP-INTERFACE-TOPOLOGY-AND-UNPLANNABLE-REPAIR",
+  "status": "FIXED_UNIT_FRESH_E2E_PENDING",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "attempt": "r88",
+  "factory_run_id": "factory_3cef83507786",
+  "symptom": {
+    "stage": "quality_gate",
+    "factory_status": "failed",
+    "wall_clock_seconds": 1245.2,
+    "materialized_files": 12,
+    "production_files": 9,
+    "production_lines": 622,
+    "failed_translation_units": [
+      "src/diary_cli.cpp",
+      "src/diary_render.cpp"
+    ],
+    "primary_diagnostic": "fatal error: diary_render.hpp: No such file or directory"
+  },
+  "dynamic_evidence": {
+    "workspace": "/tmp/factory-bench-l3-24-r88/workspaces/3c460271346a-5dc6ab7d14a52561/L3-24-023d7314133040b6/9c0f8cb5b8ded77a13bfbcff",
+    "generated_project_modified": false,
+    "runtime_run_record": ".polaris/runtime/factory/factory_3cef83507786/run.json",
+    "workspace_validation_record": ".polaris/qa/latest.workspace-validation.json",
+    "ce_blueprint": ".polaris/blueprints/ce_TASK-1_20260827080033248865.json",
+    "first_materialization_context_snapshot_ref": "f299de0d9c426a14ef988199",
+    "first_materialization_fact": "The initial Director native tool batch wrote both src/diary_cli.cpp and src/diary_render.cpp; both included diary_render.hpp, but the CE completion contract authorized no matching header artifact.",
+    "ce_authority_fact": "PM delegated C++ topology to Chief Engineer and required domain_modules, public_headers, and entrypoint. The CE interface contract declared invisible_ink::render_diary in src/diary_render.cpp without a public interface artifact.",
+    "stage_local_retry_fact": "The quality repair turn received the exact missing-header diagnostic and stayed in Director, but its immutable target scope contained the use-site only.",
+    "repair_coverage_probe": {
+      "diagnostic": "src/diary_cli.cpp:11:10: fatal error: diary_render.hpp: No such file or directory",
+      "coverage": "covered executable_runtime",
+      "source_tool": "deterministic_cpp_post_repair",
+      "actual_planning": "planned=false, effect_plan=null, error_code=null before fix"
+    }
+  },
+  "root_causes": [
+    {
+      "id": "ce_delegated_cpp_public_header_topology_incomplete",
+      "classification": "chief_engineer_authority_projection",
+      "cause": "Chief Engineer owned topology and promised public headers, but accepted a cross-file rendering provider implementation without projecting its required public interface artifact. Director therefore received an internally impossible completion contract before any code repair began."
+    },
+    {
+      "id": "registered_repair_returned_silent_empty_plan",
+      "classification": "director_repair_planning_truth",
+      "cause": "Coverage metadata reported the C++ missing-header rule as executable, while the real planner returned no effect plan for the exact diagnostic and base file. The public result exposed planned=false with no error code, obscuring the non-executable boundary."
+    }
+  ],
+  "fixes": [
+    {
+      "id": "project_stable_delegated_cpp_header_companion",
+      "files": [
+        "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py",
+        "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_cpp_interface_topology_projection.py",
+        "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_public_contractsa.py"
+      ],
+      "behavior": "For a CE-delegated task that explicitly requires public_headers, project a missing same-stem C++ header only after at least two same-owner source/header pairs prove one unique layout. Entrypoints, ambiguous layouts, PM-owned topology, and unknown suffixes remain fail-closed."
+    },
+    {
+      "id": "surface_registered_repair_without_effect_plan",
+      "files": [
+        "src/backend/polaris/cells/director/runtime/public/service/_projections.py",
+        "src/backend/polaris/cells/director/runtime/tests/test_unplannable_repair_result.py"
+      ],
+      "behavior": "A registered repair source tool that returns no effect plan now reports error_code=repair_not_planned instead of a silent false-green empty result."
+    }
+  ],
+  "verification": {
+    "ce_helper_red_green": "2 passed",
+    "ce_portfolio_integration": "exact completion contract contains include/invisible_ink/diary_render.hpp and excludes an entrypoint companion",
+    "ce_neighbor_suite": "193 passed",
+    "director_exact_red_green": "repair_not_planned asserted for the exact r88 diagnostic",
+    "director_neighbor_suite": "48 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_e2e": "r89 pending"
+  },
+  "guardrails": {
+    "target_project_modified": false,
+    "generated_workspace_read_only": true,
+    "thresholds_relaxed": false,
+    "pm_ce_restart_added": false,
+    "generic_cpp_layout_only": true,
+    "ambiguous_topology_fails_closed": true
+  },
+  "residual_risk": [
+    "The header projection authorizes the missing interface artifact; the bound Director model must still materialize a valid declaration and implementation in a fresh run.",
+    "Coverage discovery remains metadata-oriented; the new public planning error prevents silence but does not yet make base-file-specific plannability part of the coverage report.",
+    "r88 was 28 production lines below the L3 depth contract, so a later fresh run may expose a separate depth residual after compilation advances."
+  ]
+}

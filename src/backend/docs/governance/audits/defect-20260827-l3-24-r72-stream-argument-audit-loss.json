@@ -1,0 +1,103 @@
+{
+  "defect_id": "L3-24-R72-STREAM-ARGUMENT-AUDIT-LOSS",
+  "status": "CLOSED_FRESH_E2E_VERIFIED",
+  "severity": "P0",
+  "exact_run": {
+    "factory_run_id": "factory_56c501e8f3c2",
+    "director_run_id": "director-7d426e5c6211",
+    "workspace": "/tmp/factory-bench-l3-24-r72/workspaces/1c464823a5e1-756b076faa9a4e03/L3-24-023d7314133040b6/c065c58a8ff9a3d572da88b2",
+    "provider_call_id": "29dd0638ca7e47559512af77f4ed9ef8",
+    "context_snapshot_ref": "a3652991f8277695ec3ae424"
+  },
+  "fresh_counterexample": {
+    "factory_run_id": "factory_ff7e035e803c",
+    "provider_call_id": "c68e6a4fd01c45bbb7d7fa995371996b",
+    "observed_native_write_calls": 11,
+    "observed_argument_audit_count": 0,
+    "conclusion": "The first four fixes were necessary but insufficient; StreamEngine rebuilt call-end envelopes from id/name/arguments only and discarded the event audit."
+  },
+  "transaction_path_counterexample": {
+    "factory_run_id": "factory_09a0b59f45c8",
+    "workspace": "/tmp/factory-bench-l3-24-r76/workspaces/41c9e026cbb7-5e1f84ed8b82c7f0/L3-24-023d7314133040b6/8cc8a12b9c1d1e394b7d66b0",
+    "observed_native_write_calls": 13,
+    "observed_argument_audit_count": 0,
+    "process_source_verified": true,
+    "conclusion": "The isolated backend loaded the current main-source StreamEngine fix, yet Director call_end and Run Ledger envelopes remained auditless. Dynamic tracing proved Director's authoritative transaction path consumes StreamEventHandler real-time tool_call events, not the separate StreamEngine terminal projection."
+  },
+  "handler_fix_counterexample": {
+    "factory_run_id": "factory_6dfb32c5e60d",
+    "director_run_id": "director-1444fde9c3d2",
+    "workspace": "/tmp/factory-bench-l3-24-r77/workspaces/f04a34347b4a-ea03ea2e34d6416a/L3-24-023d7314133040b6/1997b73afa5ce97654f6b3ea",
+    "observed_native_write_calls": 11,
+    "observed_argument_audit_count": 0,
+    "run_stopped_after_counterexample": true,
+    "conclusion": "The real StreamEventHandler metadata-forwarding fix loaded, but the first Director physical batch still projected 0/11 audits. The run was stopped immediately to avoid wasting Provider tokens. This disproves the handler boundary as the only remaining root and returns the deeper loss point to root_cause_unproven pending a normalized-stream probe."
+  },
+  "complete_response_path_counterexample": {
+    "factory_run_id": "factory_406ddd67b634",
+    "director_run_id": "director-8ef3a7b8d684",
+    "workspace": "/tmp/factory-bench-l3-24-r78/workspaces/f3959a9a4b60-198d444ba616b2c0/L3-24-023d7314133040b6/5ca75fcb9e9d29aa9b484fb6",
+    "observed_native_write_calls": 13,
+    "observed_argument_audit_count": 0,
+    "stream_engine_probe_present": false,
+    "process_source_verified": true,
+    "conclusion": "The backend imported current source after the StreamEngine probe landed, but call_end contained neither the probe nor argument audits. Dynamic process and event evidence proved Factory used LLMInvoker.call complete-response finalization rather than StreamEngine.run_stream."
+  },
+  "fresh_e2e_verification": {
+    "factory_run_id": "factory_c6651015e765",
+    "workspace": "/tmp/factory-bench-l3-24-r80/workspaces/ca8be44ff509-7cab4036b394d59a/L3-24-023d7314133040b6/2c07a14896058257f83b940e",
+    "observed_native_write_calls": 11,
+    "observed_argument_audit_count": 11,
+    "argument_audit_projection": {
+      "source": "complete_provider_response",
+      "tool_call_count": 11,
+      "audit_present_count": 11,
+      "audit_missing_count": 0
+    },
+    "run_stopped_after_verification": true,
+    "conclusion": "Fresh isolated r80 physically verified the real Factory path: all 11 native write_file envelopes retained privacy-bounded provider argument audits."
+  },
+  "symptom": "The Director physically emitted 13 native write_file calls, but every persisted native_tool_call_envelope contained only has_tool_name and no provider_argument_audit.",
+  "dynamic_evidence": [
+    "The exact Director final request contained the CE blueprint, PM contract, target files and write_file tool surface.",
+    "The exact call_end event persisted 13 native tool envelopes without provider_argument_audit.",
+    "AIStreamEvent.to_dict() serializes provider evidence under meta, while the dict branch of normalize_stream_chunk previously read only metadata.",
+    "The Factory transaction fallback reconstructed native calls from tool/name/args/call_id and previously dropped tool_call_argument_audit.",
+    "Fresh r74 proved the final-flush branch recorded argument_audit on the accumulator but emitted AIStreamEvent metadata containing only provider, trace_id and finalized.",
+    "Fresh r75 proved StreamEngine received physical tool calls but its emitted_tool_call_payloads projection retained only id, name and arguments before rebuilding call-end envelopes.",
+    "Fresh r76 produced 13 successful write_file effects with zero dropped lifecycle events, but all 13 transaction call-end envelopes still lacked argument audit even though the isolated backend imported the current main source.",
+    "The real StreamEventHandler process_stream boundary normalized an audit-bearing provider event for internal materialization, then yielded a real-time tool_call without metadata; StreamOrchestrator therefore upserted an auditless authoritative transaction call.",
+    "Fresh r78 proved the authoritative Factory invocation used LLMInvoker.call complete-response finalization: the backend loaded the StreamEngine probe before startup, yet the call_end did not contain that probe.",
+    "LLMInvoker.call extracted complete provider-native calls and immediately built Run Ledger envelopes without reconstructing the privacy-bounded argument audit that only the lower streaming accumulator knew about.",
+    "Fresh r80 persisted 11/11 argument audits and a complete_provider_response projection with audit_missing_count=0."
+  ],
+  "root_cause": "Seven response/projection paths erased provider argument evidence. The final authoritative loss was LLMInvoker.call complete-response finalization: providers streamed internally, but Factory consumed the assembled response and rebuilt Run Ledger envelopes from raw native calls without recreating the privacy-bounded argument audit. Earlier stream fixes were necessary for genuine run_stream consumers but could not affect this Factory path.",
+  "root_cause_class": "generic_platform_event_contract_and_projection_loss",
+  "target_project_modified": false,
+  "fix_files": [
+    "src/backend/polaris/cells/roles/kernel/internal/llm_caller/stream_handler.py",
+    "src/backend/polaris/cells/roles/kernel/internal/llm_caller/stream_engine.py",
+    "src/backend/polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py",
+    "src/backend/polaris/cells/roles/kernel/internal/llm_caller/helpers.py",
+    "src/backend/polaris/cells/roles/kernel/internal/llm_caller/invoker/_call.py",
+    "src/backend/polaris/cells/roles/kernel/internal/turn_engine/stream_handler.py",
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py",
+    "src/backend/polaris/kernelone/llm/engine/stream/executor.py"
+  ],
+  "regression_tests": [
+    "test_normalize_stream_chunk_preserves_meta_from_serialized_ai_stream_event",
+    "test_factory_stream_materialization_preserves_provider_argument_audit",
+    "test_end_of_stream_flush_records_provider_argument_audit",
+    "test_end_of_stream_event_metadata_carries_provider_argument_audit",
+    "test_stream_call_end_projects_native_tool_envelopes_to_metadata",
+    "test_stream_event_handler_forwards_provider_argument_audit",
+    "test_call_end_preserves_complete_response_argument_audit"
+  ],
+  "validation": {
+    "pytest": "555 passed",
+    "latest_targeted_pytest": "1 exact complete-response regression plus 6 envelope/helper regressions passed; 73 earlier focused stream/transaction tests and the StreamEngine audit-projection test passed; 2 unrelated pre-existing NameError failures remain in test_llm_caller_componentsb.py",
+    "mypy": "passed",
+    "ruff": "passed"
+  },
+  "remaining_gate": "Closed for argument-audit retention. L3-24 project completion remains a separate quality/convergence objective and must not be inferred from this audit closure."
+}

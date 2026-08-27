@@ -768,6 +768,107 @@ def _pm_target_semantic_role(*, path: str, entrypoint_paths: set[str]) -> str:
     return "source"
 
 
+_CPP_IMPLEMENTATION_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx"})
+_CPP_INTERFACE_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx"})
+
+
+def _project_delegated_cpp_header_companions(
+    artifact_rows: tuple[dict[str, Any], ...],
+    *,
+    delegated_public_header_task_ids: frozenset[str],
+) -> tuple[dict[str, Any], ...]:
+    """Close a proven C++ source/header layout without guessing topology.
+
+    CE may own C++ topology and explicitly promise public headers.  When at
+    least two existing same-owner source/header pairs prove one unique layout,
+    project the missing companion for another required non-entrypoint source
+    in that exact layout.  Ambiguous layouts, private/entrypoint sources, and
+    PM-owned topology remain untouched.
+    """
+
+    rows = tuple(dict(row) for row in artifact_rows)
+    active_rows = tuple(row for row in rows if row.get("applicability") != "not_applicable")
+    by_owner_stem: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in active_rows:
+        path = PurePosixPath(str(row.get("path") or ""))
+        owner = str(row.get("owner_task_id") or "")
+        if owner and path.stem:
+            by_owner_stem.setdefault((owner, path.stem.casefold()), []).append(row)
+
+    layout_counts: dict[str, dict[tuple[str, str, str], int]] = {}
+    for (owner, _stem), grouped_rows in by_owner_stem.items():
+        implementations = [
+            PurePosixPath(str(row.get("path") or ""))
+            for row in grouped_rows
+            if PurePosixPath(str(row.get("path") or "")).suffix.casefold() in _CPP_IMPLEMENTATION_SUFFIXES
+        ]
+        interfaces = [
+            PurePosixPath(str(row.get("path") or ""))
+            for row in grouped_rows
+            if PurePosixPath(str(row.get("path") or "")).suffix.casefold() in _CPP_INTERFACE_SUFFIXES
+        ]
+        if len(implementations) != 1 or len(interfaces) != 1:
+            continue
+        implementation = implementations[0]
+        interface = interfaces[0]
+        layout = (implementation.parent.as_posix(), interface.parent.as_posix(), interface.suffix.casefold())
+        owner_layouts = layout_counts.setdefault(owner, {})
+        owner_layouts[layout] = owner_layouts.get(layout, 0) + 1
+
+    stable_layouts: dict[str, tuple[str, str, str]] = {}
+    for owner, counts in layout_counts.items():
+        ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        if not ranked or ranked[0][1] < 2:
+            continue
+        if len(ranked) > 1 and ranked[1][1] == ranked[0][1]:
+            continue
+        stable_layouts[owner] = ranked[0][0]
+
+    projected = list(rows)
+    existing_paths = {str(row.get("path") or "") for row in active_rows}
+    existing_ids = {str(row.get("obligation_id") or "") for row in rows}
+    for row in active_rows:
+        owner = str(row.get("owner_task_id") or "")
+        path = PurePosixPath(str(row.get("path") or ""))
+        if (
+            owner not in delegated_public_header_task_ids
+            or row.get("semantic_role") == "entrypoint"
+            or path.suffix.casefold() not in _CPP_IMPLEMENTATION_SUFFIXES
+        ):
+            continue
+        stable_layout = stable_layouts.get(owner)
+        if stable_layout is None or path.parent.as_posix() != stable_layout[0]:
+            continue
+        if any(
+            PurePosixPath(existing).stem.casefold() == path.stem.casefold()
+            and PurePosixPath(existing).suffix.casefold() in _CPP_INTERFACE_SUFFIXES
+            for existing in existing_paths
+        ):
+            continue
+        header_parent, header_suffix = stable_layout[1], stable_layout[2]
+        header_path = (PurePosixPath(header_parent) / f"{path.stem}{header_suffix}").as_posix()
+        if header_path in existing_paths:
+            continue
+        slug = re.sub(r"[^a-z0-9]+", "-", f"{owner}-{path.stem}".casefold()).strip("-")
+        obligation_id = f"artifact-ce-interface-{slug}"
+        suffix = 2
+        while obligation_id in existing_ids:
+            obligation_id = f"artifact-ce-interface-{slug}-{suffix}"
+            suffix += 1
+        projected.append(
+            {
+                "obligation_id": obligation_id,
+                "path": header_path,
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": owner,
+            }
+        )
+        existing_paths.add(header_path)
+        existing_ids.add(obligation_id)
+    return tuple(projected)
+
+
 def _pm_entrypoint_kind(
     *,
     path: str,
@@ -1157,6 +1258,15 @@ def _build_portfolio_completion_contract(
                     projected_entrypoint_index += 1
             normalized_pre_authority_entrypoints.append(normalized_row)
         entrypoint_rows = tuple(normalized_pre_authority_entrypoints)
+
+        artifact_rows = _project_delegated_cpp_header_companions(
+            artifact_rows,
+            delegated_public_header_task_ids=frozenset(
+                task.task_id
+                for task in command.tasks
+                if task.topology_authority == "chief_engineer" and "public_headers" in task.required_source_kinds
+            ),
+        )
 
         # CE-created source paths become authority only when the committed PM
         # task explicitly delegated topology.  The owner comes from the same

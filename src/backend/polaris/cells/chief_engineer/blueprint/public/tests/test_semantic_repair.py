@@ -1161,6 +1161,151 @@ def test_structural_recovery_splits_safe_shared_artifact_group_transactionally(t
     assert invariant["covered_obligation_ids"] == [*artifact_ids, "verify-build"]
 
 
+def test_structural_recovery_splits_same_authority_group_across_semantic_roles(tmp_path) -> None:
+    """Exact L3-24 r71: manifest/source rows may share one recoverable group id."""
+
+    payload = json.loads(json.dumps(_candidate(tmp_path).candidate, ensure_ascii=False))
+    payload["construction_plan"]["project_interface_contract"] = {
+        "provider_declarations": [],
+        "consumer_declarations": [],
+    }
+    obligations = payload["project_completion_contract"]["obligations"]
+    obligations["artifacts"] = [
+        {
+            "obligation_id": "ART-CPP-CORE",
+            "path": "src/main.py",
+            "semantic_role": "source",
+            "applicability": "required",
+            "owner_task_id": "TASK-1",
+        },
+        {
+            "obligation_id": "ART-CPP-CORE",
+            "path": "src/test_main.py",
+            "semantic_role": "test",
+            "applicability": "required",
+            "owner_task_id": "TASK-1",
+        },
+    ]
+    obligations["verification"] = [
+        {
+            "obligation_id": "verify-build",
+            "modality": "build",
+            "covers_obligation_ids": ["ART-CPP-CORE"],
+        }
+    ]
+    payload["construction_plan"]["shared_behavior_contract"]["invariants"] = [
+        {
+            "invariant_id": "behavior-core",
+            "statement": "The manifest builds the declared C++ public source contract.",
+            "owner_task_id": "TASK-1",
+            "consumer_task_ids": ["TASK-2"],
+            "covered_obligation_ids": ["ART-CPP-CORE", "verify-build"],
+            "verification_examples": [
+                {"given": "the source tree", "when": "configured", "then": "the public target builds"}
+            ],
+        }
+    ]
+
+    candidate = ChiefEngineerSemanticRepairCandidateV1(
+        workspace=str(tmp_path),
+        project_id="project-1",
+        run_id="run-1",
+        pm_contract_hash="a" * 64,
+        task_ids=("TASK-1", "TASK-2"),
+        task_set_hash=chief_engineer_semantic_repair_task_set_hash(("TASK-1", "TASK-2")),
+        candidate=payload,
+    )
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.shared_behavior_contract.invalid",),
+        allowed_operations=("behavior_invariant_upsert", "task_behavior_ref_replace"),
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        behavior_invariant_upserts=(
+            ChiefEngineerBehaviorInvariantV1(
+                invariant_id="behavior-core",
+                statement="The source and test share one public behavior contract.",
+                owner_task_id="TASK-1",
+                consumer_task_ids=("TASK-2",),
+                covered_obligation_ids=("ART-CPP-CORE", "verify-build"),
+                verification_examples=(
+                    ChiefEngineerBehaviorExampleV1(
+                        given="the source tree",
+                        when="verified",
+                        then="the public behavior passes",
+                    ),
+                ),
+            ),
+        ),
+        task_behavior_ref_replacements={"TASK-1": ("behavior-core",)},
+    )
+
+    repaired, receipt = compose_chief_engineer_semantic_repair(candidate, diagnosis, patch, tasks=_tasks())
+
+    repaired_obligations = repaired.candidate["project_completion_contract"]["obligations"]
+    artifact_ids = [row["obligation_id"] for row in repaired_obligations["artifacts"]]
+    assert len(artifact_ids) == len(set(artifact_ids)) == 2
+    assert repaired_obligations["verification"][0]["covers_obligation_ids"] == artifact_ids
+    invariant = repaired.candidate["construction_plan"]["shared_behavior_contract"]["invariants"][0]
+    assert invariant["covered_obligation_ids"] == [*artifact_ids, "verify-build"]
+    assert set(artifact_ids) - {"ART-CPP-CORE"} <= set(receipt.changed_semantic_ids)
+
+
+def test_structural_recovery_rejects_shared_group_with_different_owner_authority(tmp_path) -> None:
+    payload = json.loads(json.dumps(_candidate(tmp_path).candidate, ensure_ascii=False))
+    obligations = payload["project_completion_contract"]["obligations"]
+    obligations["artifacts"] = [
+        {
+            "obligation_id": "artifact-ambiguous-owner",
+            "path": "src/main.py",
+            "semantic_role": "source",
+            "applicability": "required",
+            "owner_task_id": "TASK-1",
+        },
+        {
+            "obligation_id": "artifact-ambiguous-owner",
+            "path": "src/support.py",
+            "semantic_role": "source",
+            "applicability": "required",
+            "owner_task_id": "TASK-2",
+        },
+    ]
+
+    candidate = ChiefEngineerSemanticRepairCandidateV1(
+        workspace=str(tmp_path),
+        project_id="project-1",
+        run_id="run-1",
+        pm_contract_hash="a" * 64,
+        task_ids=("TASK-1", "TASK-2"),
+        task_set_hash=chief_engineer_semantic_repair_task_set_hash(("TASK-1", "TASK-2")),
+        candidate=payload,
+    )
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.shared_behavior_contract.invalid",),
+        allowed_operations=("behavior_invariant_upsert",),
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        behavior_invariant_upserts=(
+            ChiefEngineerBehaviorInvariantV1(
+                invariant_id="behavior-owner-authority",
+                statement="The owners coordinate through one explicit contract.",
+                owner_task_id="TASK-1",
+                consumer_task_ids=("TASK-2",),
+                covered_obligation_ids=("artifact-ambiguous-owner", "verify-build"),
+                verification_examples=(ChiefEngineerBehaviorExampleV1(given="input", when="processed", then="output"),),
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="ambiguous semantic authority"):
+        compose_chief_engineer_semantic_repair(candidate, diagnosis, patch, tasks=_tasks())
+
+
 def test_structural_recovery_splits_artifact_group_colliding_with_its_covering_verifier(tmp_path) -> None:
     """Exact L3-24: verifier identity survives while grouped test artifacts receive unique ids."""
 
@@ -2722,6 +2867,64 @@ def test_portfolio_structural_recovery_normalizes_provider_array_wrappers() -> N
     }
 
 
+def test_portfolio_structural_recovery_flattens_canonical_task_plan_array_nesting() -> None:
+    """Exact L3-24 r91: preserve leaves from nested provider array transport."""
+
+    malformed = {
+        "construction_plan": {
+            "task_plans": {
+                "TASK-1": {
+                    "behavior_invariant_refs": [["INV-1"]],
+                    "scope_for_apply": [["src/main.cpp", "include/main.hpp"]],
+                    "risk_flags": [[["RISK-TEST-EMPTY: verifier coverage is required"]]],
+                }
+            },
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+        },
+        "project_completion_contract": {"obligations": {}},
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is True
+    task_plan = recovery.payload["construction_plan"]["task_plans"]["TASK-1"]
+    assert task_plan["behavior_invariant_refs"] == ["INV-1"]
+    assert task_plan["scope_for_apply"] == ["src/main.cpp", "include/main.hpp"]
+    assert task_plan["risk_flags"] == ["RISK-TEST-EMPTY: verifier coverage is required"]
+    assert recovery.repair_codes == ("unwrap_task_plan_array_items",)
+    assert malformed["construction_plan"]["task_plans"]["TASK-1"]["risk_flags"] == [
+        [["RISK-TEST-EMPTY: verifier coverage is required"]]
+    ]
+
+
+def test_portfolio_structural_recovery_rejects_invalid_task_plan_array_leaf() -> None:
+    malformed = {
+        "construction_plan": {
+            "task_plans": {
+                "TASK-1": {
+                    "behavior_invariant_refs": ["INV-1"],
+                    "scope_for_apply": ["src/main.cpp"],
+                    "risk_flags": [[42]],
+                }
+            },
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+        },
+        "project_completion_contract": {"obligations": {}},
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is False
+    assert recovery.payload == malformed
+    assert recovery.repair_codes == ()
+
+
 def test_portfolio_structural_recovery_partitions_mixed_construction_items() -> None:
     """Move proven invariant rows while preserving unrelated lifted plan content."""
 
@@ -3373,6 +3576,81 @@ def test_portfolio_structural_recovery_replaces_invalid_artifact_role_from_unamb
     artifact = recovery.payload["project_completion_contract"]["obligations"]["artifacts"][0]
     assert artifact["semantic_role"] == "manifest"
     assert malformed["project_completion_contract"]["obligations"]["artifacts"][0]["semantic_role"] == "build"
+
+
+def test_portfolio_structural_recovery_normalizes_qa_verification_alias_with_artifact_role() -> None:
+    """Exact L3-24 r85: two safe enum aliases must recover in one transaction."""
+
+    malformed = {
+        "construction_plan": {
+            "task_plans": {},
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+        },
+        "project_completion_contract": {
+            "obligations": {
+                "artifacts": [
+                    {
+                        "obligation_id": "ART-BUILD",
+                        "path": "CMakeLists.txt",
+                        "semantic_role": "build",
+                    }
+                ],
+                "entrypoints": [],
+                "verification": [
+                    {
+                        "obligation_id": "VERIFY-DOMAIN",
+                        "modality": "qa",
+                        "covers_obligation_ids": ["ART-BUILD"],
+                    }
+                ],
+            }
+        },
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is True
+    assert recovery.repair_codes == (
+        "infer_invalid_artifact_semantic_roles",
+        "normalize_qa_verification_modality",
+    )
+    obligations = recovery.payload["project_completion_contract"]["obligations"]
+    assert obligations["artifacts"][0]["semantic_role"] == "manifest"
+    assert obligations["verification"][0]["modality"] == "test"
+    assert malformed["project_completion_contract"]["obligations"]["verification"][0]["modality"] == "qa"
+
+
+def test_portfolio_structural_recovery_leaves_unknown_verification_modality_fail_closed() -> None:
+    malformed = {
+        "construction_plan": {
+            "task_plans": {},
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+        },
+        "project_completion_contract": {
+            "obligations": {
+                "artifacts": [],
+                "entrypoints": [],
+                "verification": [
+                    {
+                        "obligation_id": "VERIFY-UNKNOWN",
+                        "modality": "verify",
+                        "covers_obligation_ids": [],
+                    }
+                ],
+            }
+        },
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is False
+    assert recovery.payload == malformed
 
 
 def test_portfolio_structural_recovery_refuses_ambiguous_invalid_artifact_role() -> None:

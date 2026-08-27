@@ -144,6 +144,15 @@ def normalize_stream_tool_call_payload(
     safe_args = dict(tool_args) if isinstance(tool_args, dict) else {}
     safe_metadata = dict(metadata) if isinstance(metadata, dict) else {}
 
+    def _attach_argument_audit(payload: dict[str, Any]) -> dict[str, Any]:
+        audit = safe_metadata.get("tool_call_argument_audit")
+        if isinstance(audit, dict):
+            # Evidence only: downstream decoders ignore this sibling field,
+            # while TaskRuntime/lifecycle snapshots retain it for exact-run
+            # provider-vs-decoder causal comparison.
+            payload["provider_argument_audit"] = dict(audit)
+        return payload
+
     raw_native = safe_metadata.get("native_tool_call")
     if not isinstance(raw_native, dict):
         raw_native = safe_metadata.get("tool_call")
@@ -160,19 +169,21 @@ def normalize_stream_tool_call_payload(
         if not candidate_tool_name:
             return None, "auto"
         return (
-            {
-                "id": candidate_call_id,
-                "type": "function",
-                "function": {
-                    "name": candidate_tool_name,
-                    "arguments": dict(candidate_args),
-                },
-            },
+            _attach_argument_audit(
+                {
+                    "id": candidate_call_id,
+                    "type": "function",
+                    "function": {
+                        "name": candidate_tool_name,
+                        "arguments": dict(candidate_args),
+                    },
+                }
+            ),
             "openai",
         )
 
     if candidate_type == "tool_use":
-        return candidate, "anthropic"
+        return _attach_argument_audit(candidate), "anthropic"
 
     candidate_tool_name = str(candidate.get("tool") or candidate.get("name") or tool_name or "").strip()
     candidate_args = candidate.get("arguments")
@@ -186,13 +197,15 @@ def normalize_stream_tool_call_payload(
         return None, "auto"
 
     return (
-        {
-            "id": candidate_call_id,
-            "type": "function",
-            "function": {
-                "name": candidate_tool_name,
-                "arguments": dict(candidate_args),
-            },
-        },
+        _attach_argument_audit(
+            {
+                "id": candidate_call_id,
+                "type": "function",
+                "function": {
+                    "name": candidate_tool_name,
+                    "arguments": dict(candidate_args),
+                },
+            }
+        ),
         "openai",
     )

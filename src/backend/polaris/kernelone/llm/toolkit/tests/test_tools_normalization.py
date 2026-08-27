@@ -988,5 +988,32 @@ def test_write_file_recovers_htmlish_nested_text_map_content() -> None:
     assert "<noscript>JS required</noscript>" in body
 
 
+def test_write_file_keeps_nested_cpp_body_non_string_so_policy_can_fail_closed() -> None:
+    """Nested XML-shaped C++ bodies are ambiguous and must never be flattened.
+
+    Exact L3-24 r82 evidence showed MiniMax's native ``write_file`` arguments
+    carrying C++ source as a nested ``$text`` mapping.  The generic HTML
+    flattener turned template/include keys into XML tags and landed trailing
+    ``</string_view></string>...`` in physical source.  Keeping the mapping
+    non-string lets the Director policy reject the call and request a clean
+    string body instead of poisoning the workspace.
+    """
+
+    structured = {
+        "$text": "#pragma once\n#include ",
+        "vector": {
+            "$text": "\nstruct Box { std::vector",
+            "int": {"$text": " values; };\n"},
+        },
+    }
+
+    normalized = normalize_tool_arguments(
+        "write_file",
+        {"file": "include/example.hpp", "content": structured},
+    )
+
+    assert normalized.get("content") == structured
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

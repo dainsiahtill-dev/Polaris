@@ -332,9 +332,26 @@ def _remove_aliases(normalized: dict[str, Any], aliases: tuple[str, ...]) -> Non
 
 
 _HTML_TAG_NAME = re.compile(r"^[A-Za-z][\w:-]*$")
+_NESTED_MARKUP_WRITE_SUFFIXES = frozenset({".htm", ".html", ".svg", ".xhtml", ".xml"})
 
 
-def recover_write_body_string(value: Any) -> str | None:
+def _has_nested_write_body_mapping(value: Mapping[str, Any]) -> bool:
+    """Return whether a structured body contains a nested mapping node."""
+
+    for child in value.values():
+        if isinstance(child, Mapping):
+            return True
+        if isinstance(child, (list, tuple)) and any(isinstance(item, Mapping) for item in child):
+            return True
+    return False
+
+
+def _allows_nested_markup_recovery(file_path: str) -> bool:
+    normalized = str(file_path or "").replace("\\", "/").lower()
+    return any(normalized.endswith(suffix) for suffix in _NESTED_MARKUP_WRITE_SUFFIXES)
+
+
+def recover_write_body_string(value: Any, *, file_path: str = "") -> str | None:
     """Recover a plain string body from structured write_file content artifacts.
 
     R138: some providers/models emit ``content`` as a ``$text`` map with sibling
@@ -354,6 +371,14 @@ def recover_write_body_string(value: Any) -> str | None:
             return "\n".join(value)
         return None
     if not isinstance(value, Mapping):
+        return None
+    # L3-24 r82: MiniMax emitted C++ write bodies as nested JSON mappings whose
+    # keys were angle-bracket tokens (``vector``, ``string_view``, ...).  The
+    # HTML recovery path serialized those nodes as XML and physically landed
+    # trailing ``</string_view></string>`` in C++ source.  Nested mappings are
+    # losslessly interpretable only for declared markup targets.  Other source
+    # files must remain fail-closed so Director can re-emit a canonical string.
+    if _has_nested_write_body_mapping(value) and not _allows_nested_markup_recovery(file_path):
         return None
     return _flatten_structured_write_body(value)
 

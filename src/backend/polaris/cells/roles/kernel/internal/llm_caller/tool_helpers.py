@@ -158,8 +158,14 @@ def upsert_stream_native_tool_call(
     tool_name: str,
     tool_args: dict[str, Any],
     call_id: str,
+    provider_argument_audit: Mapping[str, Any] | None = None,
 ) -> None:
     """Insert or refine a streamed tool call in the pending native batch."""
+
+    def _attach_argument_audit(payload: dict[str, Any]) -> dict[str, Any]:
+        if isinstance(provider_argument_audit, Mapping):
+            payload["provider_argument_audit"] = dict(provider_argument_audit)
+        return payload
 
     existing_index = call_index_by_id.get(call_id) if call_id else None
     if existing_index is not None:
@@ -170,7 +176,7 @@ def upsert_stream_native_tool_call(
             ordinal=existing_index + 1,
         )
         if refined:
-            native_tool_calls[existing_index] = refined
+            native_tool_calls[existing_index] = _attach_argument_audit(refined)
         return
     appended = build_native_tool_call_from_stream_event(
         tool_name=tool_name,
@@ -179,7 +185,7 @@ def upsert_stream_native_tool_call(
         ordinal=len(native_tool_calls) + 1,
     )
     if appended:
-        native_tool_calls.append(appended)
+        native_tool_calls.append(_attach_argument_audit(appended))
         if call_id:
             call_index_by_id[call_id] = len(native_tool_calls) - 1
 
@@ -1402,8 +1408,92 @@ def extract_native_tool_calls(
     return [], provider_hint
 
 
+def attach_complete_native_tool_argument_audits(
+    native_tool_calls: list[dict[str, Any]],
+    *,
+    provider: str,
+) -> list[dict[str, Any]]:
+    """Attach privacy-bounded argument evidence to complete response calls.
+
+    Factory normally invokes ``LLMInvoker.call``.  Some providers stream
+    internally but return one assembled response to this boundary, so the
+    lower streaming accumulator audit is not observable here.  Reconstruct
+    the same safe evidence from the complete native payload before Run Ledger
+    envelopes discard raw arguments.  Raw content is hashed/count-only and is
+    never copied into the audit.
+    """
+
+    enriched: list[dict[str, Any]] = []
+    normalized_provider = str(provider or "").strip()
+    for raw_call in native_tool_calls:
+        call = dict(raw_call)
+        if isinstance(call.get("provider_argument_audit"), Mapping):
+            enriched.append(call)
+            continue
+
+        function_payload = call.get("function")
+        if isinstance(function_payload, Mapping):
+            tool_name = str(function_payload.get("name") or "").strip()
+            raw_arguments = function_payload.get("arguments")
+        else:
+            tool_name = str(call.get("name") or "").strip()
+            raw_arguments = call.get("input")
+
+        if isinstance(raw_arguments, Mapping):
+            decoded_arguments = dict(raw_arguments)
+            raw_arguments_text = json.dumps(
+                decoded_arguments,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        elif isinstance(raw_arguments, str):
+            raw_arguments_text = raw_arguments
+            try:
+                decoded = json.loads(raw_arguments)
+            except (TypeError, ValueError):
+                decoded = {}
+            decoded_arguments = decoded if isinstance(decoded, dict) else {}
+        else:
+            raw_arguments_text = ""
+            decoded_arguments = {}
+
+        decoded_arguments_json = json.dumps(
+            decoded_arguments,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        content = decoded_arguments.get("content")
+        content_text = content if isinstance(content, str) else ""
+        target_path = str(
+            decoded_arguments.get("file")
+            or decoded_arguments.get("path")
+            or decoded_arguments.get("file_path")
+            or ""
+        ).strip()
+        call["provider_argument_audit"] = {
+            "provider": normalized_provider,
+            "tool_name": tool_name,
+            "call_id": str(call.get("id") or "").strip(),
+            "target_path": target_path,
+            "raw_arguments_length": len(raw_arguments_text),
+            "raw_arguments_sha256": hashlib.sha256(raw_arguments_text.encode("utf-8")).hexdigest(),
+            "decoded_arguments_sha256": hashlib.sha256(decoded_arguments_json.encode("utf-8")).hexdigest(),
+            "content_length": len(content_text),
+            "content_sha256": hashlib.sha256(content_text.encode("utf-8")).hexdigest(),
+            "content_angle_open_count": content_text.count("<"),
+            "content_angle_close_count": content_text.count(">"),
+            "content_xml_close_count": content_text.count("</"),
+            "assembly": {},
+        }
+        enriched.append(call)
+    return enriched
+
+
 __all__ = [
     "NativeToolCallEnvelopeV1",
+    "attach_complete_native_tool_argument_audits",
     "build_native_tool_call_envelope_payloads",
     "build_native_tool_call_envelopes",
     "build_native_tool_schemas",

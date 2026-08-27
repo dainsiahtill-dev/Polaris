@@ -1,0 +1,63 @@
+card_id: "vc-20260827-l3-24-r90-residual-frontier-convergence"
+bug_summary: >
+  L3-24 r90 rolled back two rejected cipher transactions, exhausted the global
+  non-progress fuse, starved distinct moon/depth residual owners, and then
+  misattributed the explicit product-depth failure as M06 control-plane.
+
+classification: pattern
+
+bug_path:
+  file: "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py"
+  method: "_run_workspace_quality_checks"
+  symptom: "Rejected target retries consume the entire project repair budget before a distinct residual frontier is leased."
+
+assumptions:
+  - id: "A1"
+    statement: "The exact r90 residual payload still identifies existing non-cipher production targets after cipher is claimed."
+    status: verified
+    evidence: "Dynamic read-only probe returned src/cli/main.cpp, src/core/diary_entry.cpp, and src/core/moon_phase.cpp after cipher targets were claimed."
+  - id: "A2"
+    statement: "The candidate guard rolled rejected edits back before the repair loop stopped."
+    status: verified
+    evidence: "r90 candidate before/after verifier results were unchanged and rollback receipts restored the workspace."
+  - id: "A3"
+    statement: "The M06 label is downstream of the explicit implementation-depth failure."
+    status: verified
+    evidence: "r90 real-run/build passed; workspace validation explicitly reported production_source_lines=421 < 650 before TaskRuntime terminal failure."
+
+pre_mortem:
+  failure_point: >
+    Owner rotation could accidentally bypass the global cycle breaker or widen
+    mutation authority beyond the claimed JobToken.
+  risk_zone:
+    - "factory workspace-quality repair loop"
+    - "candidate rejection target routing"
+    - "residual attribution precedence"
+
+verification_plan:
+  unit_tests:
+    - file: "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+      description: "One bounded residual-frontier handoff after a rejected transaction; no unlimited rotation."
+      expected: "Distinct unclaimed owner receives one next wave while existing global cap tests stay green."
+      status: passed
+    - file: "src/backend/polaris/kernelone/platform_modules/tests/test_residual_attribution.py"
+      description: "Explicit delivery-depth failure outranks downstream TaskRuntime failure."
+      expected: "Attribution is product-quality, not M06."
+      status: passed
+  integration_tests:
+    - description: "Targeted Factory workspace-quality and residual-attribution gates"
+      command: "PYTHONPATH=src/backend /home/dains/.pyenv/versions/3.12.3/bin/python -m pytest -q src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py src/backend/polaris/kernelone/platform_modules/tests/test_residual_attribution.py"
+      status: passed_123
+    - description: "Fresh isolated L3-24 Bench"
+      command: "python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L3-24 --launcher-instance-mode isolated --bench-session-reporting off"
+      status: pending_local_gates
+  manual_check:
+    - "Inspect the fresh run final provider request, candidate receipts, verifier delta, TaskRuntime, Run Ledger, and Factory settlement."
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex"
+  completed_at: "2026-08-27"
+  verified_by: "pending"
+  verified_at: "pending"

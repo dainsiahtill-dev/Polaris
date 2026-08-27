@@ -117,10 +117,13 @@ from ._pkg_proxy import pkg
 
 logger = logging.getLogger("polaris.cells.factory.pipeline.internal.factory_stage_executor")
 
-# One same-task transport retry is allowed only after CE authority has already
-# been frozen into a schema-valid candidate plus typed semantic diagnosis.  It
-# recovers provider forced-tool noncompliance without reopening PM authority or
-# starting another semantic repair round.
+# Every non-streaming CE repair may retry its identical physical request once
+# for transient provider transport failures (for example HTTP 529 overload).
+# This is not another schema/semantic repair round: PM authority, request body,
+# TaskRuntime claim, and structured-output contract remain frozen.
+_CHIEF_ENGINEER_REPAIR_TRANSPORT_MAX_RETRIES = 1
+
+# Semantic patch repairs expose the same budget under the legacy audit key.
 _CHIEF_ENGINEER_SEMANTIC_PATCH_TRANSPORT_MAX_RETRIES = 1
 
 # Structured compiler error codes used by the workspace-quality repair-effect
@@ -334,6 +337,8 @@ class _Mixin02:
     @staticmethod
     def _chief_engineer_schema_repair_base_candidate(
         result: RoleExecutionResultV1,
+        *,
+        portfolio_task_ids: tuple[str, ...],
     ) -> dict[str, Any] | None:
         """Return the immutable structured candidate carried by a failed CE turn.
 
@@ -345,17 +350,33 @@ class _Mixin02:
 
         metadata = dict(result.metadata or {})
         carried = metadata.get("chief_engineer_schema_repair_base_candidate")
+        candidate: dict[str, Any] | None = None
         if isinstance(carried, Mapping):
-            return deepcopy(dict(carried))
+            candidate = deepcopy(dict(carried))
         structured_output = metadata.get("structured_output")
-        if isinstance(structured_output, Mapping):
-            return deepcopy(dict(structured_output))
+        if candidate is None and isinstance(structured_output, Mapping):
+            candidate = deepcopy(dict(structured_output))
         tool_call = metadata.get("tool_call")
-        if isinstance(tool_call, Mapping):
+        if candidate is None and isinstance(tool_call, Mapping):
             arguments = tool_call.get("arguments")
             if isinstance(arguments, Mapping):
-                return deepcopy(dict(arguments))
-        return None
+                candidate = deepcopy(dict(arguments))
+        if candidate is None:
+            return None
+        recovery = normalize_chief_engineer_portfolio_tool_arguments(
+            candidate,
+            authoritative_task_ids=portfolio_task_ids,
+        )
+        if recovery.recovered and "unwrap_task_plan_array_items" in recovery.repair_codes:
+            recovered_construction = recovery.payload.get("construction_plan")
+            candidate_construction = candidate.get("construction_plan")
+            if isinstance(recovered_construction, Mapping) and isinstance(candidate_construction, Mapping):
+                recovered_task_plans = recovered_construction.get("task_plans")
+                if isinstance(recovered_task_plans, Mapping):
+                    normalized_construction = deepcopy(dict(candidate_construction))
+                    normalized_construction["task_plans"] = deepcopy(dict(recovered_task_plans))
+                    candidate["construction_plan"] = normalized_construction
+        return candidate
 
     @staticmethod
     def _chief_engineer_required_property_repair_paths(
@@ -681,7 +702,10 @@ class _Mixin02:
         schema_repair_paths: tuple[tuple[str, ...], ...] = ()
         schema_repair_patch_schema: dict[str, Any] | None = None
         if not semantic_patch:
-            schema_repair_base_candidate = self._chief_engineer_schema_repair_base_candidate(prior_result)
+            schema_repair_base_candidate = self._chief_engineer_schema_repair_base_candidate(
+                prior_result,
+                portfolio_task_ids=portfolio_task_ids,
+            )
             if schema_repair_base_candidate is not None:
                 full_schema = self._chief_engineer_structured_output_contract(portfolio_task_ids).json_schema
                 schema_repair_paths = self._chief_engineer_required_property_repair_paths(
@@ -917,6 +941,9 @@ class _Mixin02:
                     "chief_engineer_semantic_patch_transport_retry_budget": (
                         _CHIEF_ENGINEER_SEMANTIC_PATCH_TRANSPORT_MAX_RETRIES if semantic_patch else 0
                     ),
+                    "chief_engineer_repair_transport_retry_budget": (
+                        _CHIEF_ENGINEER_REPAIR_TRANSPORT_MAX_RETRIES
+                    ),
                 }
             )
             if semantic_candidate is not None and semantic_diagnosis is not None:
@@ -992,7 +1019,10 @@ class _Mixin02:
                     "cognitive_runtime_required": False,
                     "llm_call_timeout_seconds": repair_timeout_seconds,
                     "validate_output": True,
-                    "max_retries": (_CHIEF_ENGINEER_SEMANTIC_PATCH_TRANSPORT_MAX_RETRIES if semantic_patch else 0),
+                    "max_retries": _CHIEF_ENGINEER_REPAIR_TRANSPORT_MAX_RETRIES,
+                    "chief_engineer_repair_transport_retry_budget": (
+                        _CHIEF_ENGINEER_REPAIR_TRANSPORT_MAX_RETRIES
+                    ),
                     "chief_engineer_semantic_patch_transport_retry_budget": (
                         _CHIEF_ENGINEER_SEMANTIC_PATCH_TRANSPORT_MAX_RETRIES if semantic_patch else 0
                     ),

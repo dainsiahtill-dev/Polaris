@@ -37,6 +37,7 @@ from ..factory_dispatch_propagation import (
 from ..final_request_metrics import validated_final_context_evidence
 from ..final_request_tool_surface import assert_native_tool_call_in_final_request_surface
 from ..helpers import (
+    attach_complete_native_tool_argument_audits,
     build_native_tool_call_envelope_payloads,
     extract_native_tool_calls,
 )
@@ -567,12 +568,29 @@ class _InvokerCallMixin:
                 active_request=active_request,
                 prepared=prepared,
             )
+        native_tool_calls = attach_complete_native_tool_argument_audits(
+            native_tool_calls,
+            provider=native_tool_provider,
+        )
         native_tool_call_envelopes = build_native_tool_call_envelope_payloads(
             native_tool_calls,
             provider=native_tool_provider,
         )
         native_tool_metadata: dict[str, Any] = {}
         project_native_tool_call_envelopes_to_metadata(native_tool_metadata, native_tool_call_envelopes)
+        argument_audit_missing_call_ids = [
+            str(envelope.get("call_id") or "").strip()
+            for envelope in native_tool_call_envelopes
+            if not isinstance((envelope.get("metadata") or {}).get("provider_argument_audit"), dict)
+        ]
+        native_tool_metadata["tool_call_argument_audit_projection"] = {
+            "schema_version": "llm.tool_call_argument_audit_projection.v1",
+            "source": "complete_provider_response",
+            "tool_call_count": len(native_tool_call_envelopes),
+            "audit_present_count": len(native_tool_call_envelopes) - len(argument_audit_missing_call_ids),
+            "audit_missing_count": len(argument_audit_missing_call_ids),
+            "missing_call_ids": argument_audit_missing_call_ids,
+        }
         native_tool_metadata.update(text_tool_recovery_metadata)
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000

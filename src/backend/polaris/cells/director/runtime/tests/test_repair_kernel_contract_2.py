@@ -2244,6 +2244,39 @@ def test_scaffold_placeholder_quality_diagnostic_is_covered_plannable() -> None:
     assert result.items[0].patch_count == 1
 
 
+def test_scaffold_placeholder_quality_cleanup_supports_markdown_license() -> None:
+    """Exact L3-24 r89: a README marker must not become covered-unplannable."""
+
+    diagnostic = (
+        "Director output quality gate failed: generic/placeholder content detected: "
+        "README.md:(?<![.:'\"-])\\bplaceholder\\b(?!\\s*[=:])(?![-'\"])"
+    )
+    content = "## License\n\nMIT (placeholder).\n"
+    diagnostics = normalize_artifact_quality_errors([diagnostic])
+
+    probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=("deterministic_scaffold_marker_quality_cleanup",),
+            artifact_quality_errors=(diagnostic,),
+            base_files={"README.md": content},
+        )
+    )
+    plan = build_scaffold_marker_cleanup_plan(
+        base_files={"README.md": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+        source_tool="deterministic_scaffold_marker_quality_cleanup",
+        rule_id="generic.scaffold_marker_quality_cleanup",
+        diagnostic_paths_only=True,
+    )
+
+    assert probe.status == "covered_plannable"
+    assert plan is not None
+    composition = PatchComposer().compose({"README.md": content}, plan.operations)
+    assert composition.ok
+    assert composition.patches[0].content_after == "## License\n\nMIT.\n"
+
+
 def test_missing_declared_target_runtime_declines_file_fabrication(tmp_path: Path) -> None:
     source_path = "src/user.ts"
     missing_path = "src/user.model.ts"

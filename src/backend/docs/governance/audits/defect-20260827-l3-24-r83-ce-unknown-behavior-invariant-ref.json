@@ -1,0 +1,54 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "L3-24-R83-CE-UNKNOWN-BEHAVIOR-INVARIANT-REF",
+  "status": "FIXED_UNIT_FRESH_E2E_BLOCKED_BY_DISTINCT_PROVIDER_529",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "attempt": "r83",
+  "factory_run_id": "factory_c8df2e65c378",
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "wall_clock_seconds": 134.4,
+    "error_code": "blueprint_portfolio_behavior_contract_infeasible",
+    "detail": "ChiefEngineerBlueprintErrorV1: task behavior bindings reference unknown invariants",
+    "director_reached": false,
+    "source_files": 0
+  },
+  "dynamic_evidence": {
+    "workspace": "/tmp/factory-bench-l3-24-r83/workspaces/6d79fd5ffc1c-4b51af606291353f/L3-24-023d7314133040b6/cd4146521624de07846b1f0d",
+    "review_path": ".polaris/roles/chief_engineer/factory_c8df2e65c378/review.json",
+    "candidate_ref": "runtime/state/blueprints/semantic-repair/L3-24/factory_c8df2e65c378/9e37273c0db94c2cb454449561106047f222e6d2deb5f3d733f0b0c5655ed09b.json",
+    "candidate_hash": "9e37273c0db94c2cb454449561106047f222e6d2deb5f3d733f0b0c5655ed09b",
+    "provider_calls": 3,
+    "schema_valid_candidate": true,
+    "declared_invariant_ids": [],
+    "task_behavior_refs": {
+      "TASK-1": [
+        "INV-MOON-KEY-DERMINISM"
+      ]
+    },
+    "first_missing_detection_boundary": "factory_ce_evidence.chief_engineer_portfolio_output_errors returned no cross-field error, so the final schema-valid candidate skipped the existing typed semantic-repair branch and failed later in the authoritative portfolio builder."
+  },
+  "root_cause": "The CE pre-projection output validator checked the type of task behavior_invariant_refs and validated each declared invariant, but never checked that every task ref resolved to a shared_behavior_contract invariant_id. This coverage gap stranded a repairable schema-valid candidate after the three schema-reconstruction calls.",
+  "fix": {
+    "behavior": "Before authoritative portfolio construction, reject task behavior refs that do not resolve to declared invariant ids. The stable error text includes shared_behavior_contract so the existing diagnosis maps it to chief_engineer.shared_behavior_contract.invalid and authorizes typed behavior_invariant_upsert/task_behavior_ref_replace repair in the same run and role.",
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_ce_evidence.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_ce_handoff.py"
+    ]
+  },
+  "verification": {
+    "red": "The exact-pattern unit test returned [] instead of the unknown-invariant error.",
+    "focused": "2 passed",
+    "characterization_suite": "64 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_e2e": "r84 failed earlier during CE schema repair on one physical HTTP 529 response; the r83 cross-field semantic path was not reached"
+  },
+  "guardrails": {
+    "target_project_modified": false,
+    "pm_ce_restart_allowed": false,
+    "repair_scope": "same CE run and frozen candidate only",
+    "semantic_gate_relaxed": false
+  }
+}

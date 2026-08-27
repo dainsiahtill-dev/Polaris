@@ -1799,6 +1799,86 @@ class TestQualityRepairMissingTargetContractB:
 
         assert targets == ["app/main.cpp", "src/cipher.cpp"]
 
+    def test_python_unittest_cpp_cli_semantic_failure_keeps_product_frontier(
+        self,
+        tmp_path,
+    ) -> None:
+        """A subprocess observer does not make the CLI entrypoint the sole owner.
+
+        Live L3-24 r81 compiled and ran successfully, then four domain-behavior
+        assertions failed.  The Python tests invoked the C++ CLI through
+        ``subprocess``, but none reported an unknown subcommand or another CLI
+        boundary defect.  Treating that observation alone as proof that
+        ``src/main.cpp`` owned every failure pinned three same-task repair turns
+        to the entrypoint while the lossy cipher and diary key semantics lived
+        in sibling production sources.
+        """
+
+        from polaris.cells.roles.adapters.public import (
+            resolve_director_causal_quality_repair_target_files,
+        )
+
+        source_dir = tmp_path / "src"
+        source_dir.mkdir()
+        (source_dir / "main.cpp").write_text(
+            "int main() { return 0; }\n",
+            encoding="utf-8",
+        )
+        (source_dir / "cipher.cpp").write_text(
+            "std::string encode(std::string_view value) { return {}; }\n",
+            encoding="utf-8",
+        )
+        (source_dir / "diary.cpp").write_text(
+            "bool Diary::can_reveal(int id) const { return id > 0; }\n",
+            encoding="utf-8",
+        )
+        (source_dir / "moon_phase.cpp").write_text(
+            "double moon_phase(int day) { return day / 29.0; }\n",
+            encoding="utf-8",
+        )
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "test_product.py"
+        test_file.write_text(
+            "import subprocess\n"
+            "import unittest\n\n"
+            "class ProductTests(unittest.TestCase):\n"
+            "    def test_harness_exit_zero(self):\n"
+            "        proc = subprocess.run(['build/invisible_diary'], capture_output=True, text=True)\n"
+            "        self.assertEqual(proc.returncode, 0, proc.stderr)\n",
+            encoding="utf-8",
+        )
+        error = (
+            "FAIL: test_harness_exit_zero "
+            "(test_product.ProductTests.test_harness_exit_zero)\n"
+            "Traceback (most recent call last):\n"
+            f'  File "{test_file}", line 7, in test_harness_exit_zero\n'
+            "AssertionError: 1 != 0 : harness failed:\n"
+            "FAIL: back == plain at harness.cpp:33\n"
+            "FAIL: revealed == \"hidden note\" at harness.cpp:67\n"
+            "FAIL: !d.can_reveal(id) at harness.cpp:102\n"
+            "FAIL: threw at harness.cpp:109"
+        )
+
+        targets = resolve_director_causal_quality_repair_target_files(
+            artifact_quality_errors=[error],
+            changed_files=[
+                "src/main.cpp",
+                "src/cipher.cpp",
+                "src/diary.cpp",
+                "src/moon_phase.cpp",
+                "tests/test_product.py",
+            ],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == [
+            "src/main.cpp",
+            "src/cipher.cpp",
+            "src/diary.cpp",
+            "src/moon_phase.cpp",
+        ]
+
     def test_cpp_runtime_symbol_call_in_test_does_not_hide_unique_product_owner(self, tmp_path) -> None:
         """A C++ assertion use-site is an observer, not a second definition.
 

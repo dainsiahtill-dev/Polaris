@@ -1,0 +1,53 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "L3-24-R84-CE-SCHEMA-REPAIR-529-NO-TRANSPORT-RETRY",
+  "status": "FIXED_UNIT_FRESH_E2E_PENDING",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "attempt": "r84",
+  "factory_run_id": "factory_add26a05ba71",
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "wall_clock_seconds": 79.6,
+    "error_code": "chief_engineer.llm_review_failed",
+    "detail": "HTTP 529 overloaded_error during CE schema repair",
+    "director_reached": false,
+    "source_files": 0
+  },
+  "dynamic_evidence": {
+    "workspace": "/tmp/factory-bench-l3-24-r84/workspaces/19e74ae1b520-e7d1926ae4bb0642/L3-24-023d7314133040b6/7168a60e3511fa4bfc0e4f98",
+    "provider": "MiniMax-M3 via anthropic-compatible physical route",
+    "failed_task_id": "CE-PORTFOLIO-factory_add26a05ba71-SCHEMA-REPAIR",
+    "call_id": "b6016d8389b844d6ac704c21c8f944d3",
+    "context_snapshot_ref": "271eade55606a412e9623df6",
+    "physical_http_attempts": 1,
+    "status_code": 529,
+    "response_duration_ms": 613,
+    "retry_log_events": 0,
+    "first_missing_retry_boundary": "The non-streaming CE repair command set metadata.max_retries=0. Request preparation projected this as the provider transport retry budget, so MiniMax returned the first transient 529 directly despite its implemented 5xx backoff loop."
+  },
+  "root_cause": "The CE schema-repair path conflated a bounded semantic reconstruction policy with physical transport resilience. Setting max_retries=0 prevented even one byte-identical retry for a transient provider 5xx/529 response.",
+  "fix": {
+    "behavior": "Give every non-streaming CE repair exactly one transport-only retry. The frozen request, PM authority, TaskRuntime claim, output contract, semantic round, and deadline remain unchanged; only a transient physical 5xx can re-send the same governed request once.",
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_ce_handoff.py"
+    ],
+    "retry_budget": 1,
+    "semantic_retry_added": false
+  },
+  "verification": {
+    "red": "Exact CE schema-repair command test observed metadata.max_retries=0 instead of 1.",
+    "focused": "2 passed",
+    "characterization_suite": "64 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_e2e": "r85 pending"
+  },
+  "guardrails": {
+    "target_project_modified": false,
+    "pm_ce_restart_allowed": false,
+    "request_mutation_allowed": false,
+    "semantic_gate_relaxed": false
+  }
+}

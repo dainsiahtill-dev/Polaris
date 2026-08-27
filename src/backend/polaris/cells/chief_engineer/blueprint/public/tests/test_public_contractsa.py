@@ -2154,6 +2154,173 @@ class TestChiefEngineerBlueprintPortfolio:
             for item in completion.verification_command_authority
         )
 
+    def test_completion_contract_closes_stable_delegated_cpp_header_topology(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A CE-owned public-header topology projects a proven missing companion."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Choose and implement the C++ package topology and CLI",
+                target_files=("CMakeLists.txt", "tests/diary_test.cpp"),
+                scope_paths=("CMakeLists.txt", "tests/diary_test.cpp"),
+                topology_authority="chief_engineer",
+                required_source_kinds=("domain_modules", "public_headers", "entrypoint"),
+                primary_language="cpp",
+                allowed_source_suffixes=(".cpp", ".hpp"),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        requirements["obligations"]["artifacts"] = [
+            {
+                "obligation_id": "artifact-config",
+                "path": "CMakeLists.txt",
+                "semantic_role": "config",
+                "applicability": "required",
+                "owner_task_id": "TASK-A",
+            },
+            {
+                "obligation_id": "artifact-cipher-source",
+                "path": "src/cipher.cpp",
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-A",
+            },
+            {
+                "obligation_id": "artifact-cipher-header",
+                "path": "include/invisible_ink/cipher.hpp",
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-A",
+            },
+            {
+                "obligation_id": "artifact-diary-source",
+                "path": "src/diary.cpp",
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-A",
+            },
+            {
+                "obligation_id": "artifact-diary-header",
+                "path": "include/invisible_ink/diary.hpp",
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-A",
+            },
+            {
+                "obligation_id": "artifact-render-source",
+                "path": "src/diary_render.cpp",
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-A",
+            },
+            {
+                "obligation_id": "artifact-cli-source",
+                "path": "src/diary_cli.cpp",
+                "semantic_role": "entrypoint",
+                "applicability": "required",
+                "owner_task_id": "TASK-A",
+            },
+            {
+                "obligation_id": "artifact-tests",
+                "path": "tests/diary_test.cpp",
+                "semantic_role": "test",
+                "applicability": "required",
+                "owner_task_id": "TASK-A",
+            },
+        ]
+        requirements["obligations"]["entrypoints"][0].update(
+            {
+                "source_path": "src/diary_cli.cpp",
+                "runtime_path": "build/invisible_diary",
+                "owner_task_id": "TASK-A",
+                "command": "./build/invisible_diary",
+            }
+        )
+        requirements["obligations"]["verification"] = [
+            {
+                "obligation_id": "verify-environment",
+                "modality": "environment_prep",
+                "command_authority_hash": _command_authority(
+                    "TASK-A", "environment_prep", ("cmake", "-S", ".", "-B", "build")
+                ).authority_hash,
+                "applicability": "required",
+                "covers_obligation_ids": ["artifact-config"],
+                "owner_task_id": "TASK-A",
+            },
+            {
+                "obligation_id": "verify-build",
+                "modality": "build",
+                "command_authority_hash": _command_authority(
+                    "TASK-A", "build", ("cmake", "--build", "build")
+                ).authority_hash,
+                "applicability": "required",
+                "covers_obligation_ids": [
+                    "artifact-config",
+                    "artifact-cipher-source",
+                    "artifact-cipher-header",
+                    "artifact-diary-source",
+                    "artifact-diary-header",
+                    "artifact-render-source",
+                    "artifact-cli-source",
+                ],
+                "owner_task_id": "TASK-A",
+            },
+            {
+                "obligation_id": "verify-entrypoint",
+                "modality": "entrypoint",
+                "command_authority_hash": _command_authority(
+                    "TASK-A", "entrypoint", ("./build/invisible_diary",)
+                ).authority_hash,
+                "applicability": "required",
+                "covers_obligation_ids": ["entrypoint-cli"],
+                "owner_task_id": "TASK-A",
+            },
+            {
+                "obligation_id": "verify-test",
+                "modality": "test",
+                "command_authority_hash": _command_authority(
+                    "TASK-A", "test", ("ctest", "--test-dir", "build")
+                ).authority_hash,
+                "applicability": "required",
+                "covers_obligation_ids": ["artifact-tests"],
+                "owner_task_id": "TASK-A",
+            },
+        ]
+        command_authority = (
+            _command_authority("TASK-A", "environment_prep", ("cmake", "-S", ".", "-B", "build")),
+            _command_authority("TASK-A", "build", ("cmake", "--build", "build")),
+            _command_authority("TASK-A", "test", ("ctest", "--test-dir", "build")),
+            _command_authority("TASK-A", "entrypoint", ("./build/invisible_diary",)),
+        )
+
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-delegated-cpp-header-topology",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-delegated-cpp-header-topology",
+                    command_authority_override=command_authority,
+                ),
+                llm_blueprint={
+                    "construction_plan": {"project_interface_contract": {}},
+                    "project_completion_contract": requirements,
+                    "risk_flags": [],
+                },
+            )
+        )
+
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        paths = {item.path for item in completion.obligations.artifacts}
+        assert "include/invisible_ink/diary_render.hpp" in paths
+        assert "include/invisible_ink/diary_cli.hpp" not in paths
+
     def test_completion_contract_accepts_argv_safe_delegated_native_smoke_command(
         self,
         tmp_path: Path,

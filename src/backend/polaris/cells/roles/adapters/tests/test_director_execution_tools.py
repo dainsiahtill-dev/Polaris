@@ -339,6 +339,32 @@ def test_r195_write_file_recovers_structured_content_no_dict_leak(tmp_path) -> N
     assert written == "export const firefly = 1;\nexport const flower = 2;"
 
 
+def test_write_file_rejects_nested_cpp_body_before_physical_effect(tmp_path) -> None:
+    """L3-24 r82: XML-shaped native arguments must not poison C++ source."""
+
+    executor = _create_director_tool_executor(str(tmp_path))
+    structured = {
+        "$text": "#pragma once\n#include ",
+        "vector": {
+            "$text": "\nstruct Box { std::vector",
+            "int": {"$text": " values; };\n"},
+        },
+    }
+
+    result = executor.execute_tool(
+        "write_file",
+        {
+            "path": "include/example.hpp",
+            "content": structured,
+            "target_files": ["include/example.hpp"],
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["error_type"] == "invalid_source_content"
+    assert not (tmp_path / "include" / "example.hpp").exists()
+
+
 def test_r195_edit_file_empty_search_is_non_fatal_no_op(tmp_path) -> None:
     """R195/M03: edit_file with an empty search must not become a control-plane failure.
 

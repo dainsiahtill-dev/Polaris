@@ -63,6 +63,11 @@ _CPP_STANDARD_INCOMPATIBILITY_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+_CPP_CHRONO_CALENDAR_CXX20_RE = re.compile(
+    r"[‘'`]?year_month_day[’'`]?(?:\s+is)?\s+not\s+a\s+member\s+of\s+"
+    r"[‘'`]?std::chrono[’'`]?",
+    re.IGNORECASE,
+)
 _JAVA_ERROR_RE = re.compile(
     r"(?P<path>[^:\n]+\.java):(?P<line>\d+):\s*error:\s*(?P<message>[^\n]+)",
     re.IGNORECASE,
@@ -252,6 +257,7 @@ def normalize_artifact_quality_errors(errors: Sequence[Any]) -> tuple[RepairDiag
         diagnostics.append(_normalize_one_error(line.strip()))
     flush_ts_buffer()
     cpp_standard_requirements: dict[str, str] = {}
+    cpp_standard_canonical_symbols: dict[str, str] = {}
     for raw in raw_errors:
         if isinstance(raw, RepairDiagnostic):
             evidence_text = "\n".join((raw.message, raw.raw))
@@ -270,7 +276,16 @@ def normalize_artifact_quality_errors(errors: Sequence[Any]) -> tuple[RepairDiag
                 ),
                 "",
             )
-            cpp_standard_requirements[match.group("symbol").casefold()] = f"c++{required}" if required else ""
+            normalized_symbol = match.group("symbol").casefold()
+            cpp_standard_requirements[normalized_symbol] = f"c++{required}" if required else ""
+            cpp_standard_canonical_symbols[normalized_symbol] = normalized_symbol
+        # GCC 12 reports this C++20 calendar type under ``-std=c++17`` as a
+        # plain missing namespace member and emits no "only available from
+        # C++20" note.  Treating that transcript as a missing-header error
+        # routes Director into a provably ineffective include-only repair.
+        if _CPP_CHRONO_CALENDAR_CXX20_RE.search(evidence_text):
+            cpp_standard_requirements["year_month_day"] = "c++20"
+            cpp_standard_canonical_symbols["year_month_day"] = "std::chrono::year_month_day"
     if cpp_standard_requirements:
         promoted: list[RepairDiagnostic] = []
         for diagnostic in diagnostics:
@@ -298,7 +313,9 @@ def normalize_artifact_quality_errors(errors: Sequence[Any]) -> tuple[RepairDiag
                         **dict(diagnostic.metadata),
                         "language": "cpp",
                         "diagnostic_kind": "language_standard_incompatibility",
-                        "incompatible_symbol": matched_symbol,
+                        "incompatible_symbol": cpp_standard_canonical_symbols.get(
+                            matched_symbol, matched_symbol
+                        ),
                         "required_standard": cpp_standard_requirements[matched_symbol],
                         "origin_diagnostic_id": diagnostic.diagnostic_id,
                     },

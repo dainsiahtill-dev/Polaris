@@ -199,9 +199,21 @@ def attribute_residual(
     )
     module_id, matched = _match_module_from_text(blob)
 
+    explicit_delivery_hints = tuple(
+        hint
+        for hint, hinted_module_id in _SIGNATURE_HINTS
+        if hinted_module_id == "M09_four_pillars_gates" and hint != "real_run_gate" and hint in blob
+    )
+
     # r181: real_run green + control-plane boundary/runtime language → M06 wins
     # even if real_run_gate also appears in failure_reasons.
-    if real_run_gate_ok is True and any(
+    # R90: an explicit product/verifier failure is causally upstream of the
+    # TaskRuntime row failed by terminal workspace validation. It must remain
+    # M09 rather than being overwritten by the downstream boundary symptom.
+    if module_id == "M06_director_multi_task" and explicit_delivery_hints:
+        module_id = "M09_four_pillars_gates"
+        matched = explicit_delivery_hints
+    elif real_run_gate_ok is True and any(
         token in blob
         for token in (
             "canonical_task_boundary",

@@ -136,6 +136,8 @@ _CPP_STANDARD_INCOMPATIBILITY_RE = re.compile(
 _CPP_REPAIR_SOURCE_SUFFIXES = frozenset(
     {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp", ".tpp"}
 )
+_CPP_IMPLEMENTATION_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx"})
+_CPP_INTERFACE_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp", ".tpp"})
 
 
 def _task_completion_projection_from_repair_task(task: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -434,9 +436,7 @@ def workspace_quality_compile_barrier_reduced(
         # equal-count diagnostic swap.  Require either authoritative command
         # success or an explicit linker anchor; truncated/opaque output stays
         # fail-closed.
-        if before_units and (
-            bool(after.get("passed")) or any(hint in after_output for hint in _LINKER_PHASE_HINTS)
-        ):
+        if before_units and (bool(after.get("passed")) or any(hint in after_output for hint in _LINKER_PHASE_HINTS)):
             return True
         # A linker failure has no ``FAILING_TUS`` marker either.  When the same
         # authoritative build command becomes green, downstream tests can run
@@ -537,8 +537,12 @@ def workspace_quality_test_harness_barrier_reduced(
         after = after_by_command.get(command)
         if after is None or bool(after.get("passed")):
             continue
-        before_names = {match.group("name").casefold() for match in _PYTHON_HARNESS_NAME_ERROR_RE.finditer(output(before))}
-        after_names = {match.group("name").casefold() for match in _PYTHON_HARNESS_NAME_ERROR_RE.finditer(output(after))}
+        before_names = {
+            match.group("name").casefold() for match in _PYTHON_HARNESS_NAME_ERROR_RE.finditer(output(before))
+        }
+        after_names = {
+            match.group("name").casefold() for match in _PYTHON_HARNESS_NAME_ERROR_RE.finditer(output(after))
+        }
         removed_names = before_names - after_names
         if not removed_names:
             continue
@@ -546,8 +550,7 @@ def workspace_quality_test_harness_barrier_reduced(
         if not unmasked_compiler_messages:
             continue
         if all(
-            count <= upstream_compiler_messages.get(message, 0)
-            for message, count in unmasked_compiler_messages.items()
+            count <= upstream_compiler_messages.get(message, 0) for message, count in unmasked_compiler_messages.items()
         ):
             return True
     return False
@@ -2341,9 +2344,8 @@ def _workspace_quality_cli_boundary_entrypoint_candidates(
         normalized = path.replace("\\", "/")
         candidate = Path(normalized)
         parent_parts = {part.casefold() for part in candidate.parts[:-1]}
-        if (
-            candidate.stem.casefold() in _ENTRYPOINT_PATH_STEMS
-            or bool(parent_parts.intersection(_ENTRYPOINT_PATH_PARTS))
+        if candidate.stem.casefold() in _ENTRYPOINT_PATH_STEMS or bool(
+            parent_parts.intersection(_ENTRYPOINT_PATH_PARTS)
         ):
             entrypoints.append(path)
     return entrypoints
@@ -2468,6 +2470,43 @@ def _workspace_quality_cpp_standard_compatibility_repair_targets(
         diagnostic_targets=diagnostic_targets,
     )
     targets = _dedupe_workspace_repair_paths([*current_frontier, *symbol_paths])
+    return targets if len(targets) > 1 else []
+
+
+def _workspace_quality_cpp_rejected_interface_transaction_targets(
+    *,
+    workspace: Path,
+    rejected_targets: list[str],
+    authoritative_owner_paths: list[str],
+) -> list[str]:
+    """Return the minimal owned C++ implementation/interface retry batch.
+
+    A precommit compiler rejection can prove that an implementation-only edit
+    changed an interface contract that remains declared in a same-owner header.
+    Retrying only the rejected ``.cpp`` makes the feedback unactionable and
+    guarantees another rollback.  Admit at most one existing same-stem header
+    per rejected implementation, while preserving the immutable TaskRuntime
+    owner scope.  Unrelated siblings and cross-task files remain excluded.
+    """
+
+    workspace_root = workspace.resolve()
+    owner_paths = _dedupe_workspace_repair_paths(authoritative_owner_paths)
+    transaction: list[str] = []
+    for rejected in _dedupe_workspace_repair_paths(rejected_targets):
+        rejected_path = Path(rejected)
+        if rejected_path.suffix.casefold() not in _CPP_IMPLEMENTATION_SUFFIXES:
+            continue
+        rejected_stem = rejected_path.stem.casefold()
+        companions = [
+            owner_path
+            for owner_path in owner_paths
+            if Path(owner_path).suffix.casefold() in _CPP_INTERFACE_SUFFIXES
+            and Path(owner_path).stem.casefold() == rejected_stem
+            and (workspace_root / owner_path).is_file()
+        ]
+        if companions:
+            transaction.extend((rejected, companions[0]))
+    targets = _dedupe_workspace_repair_paths(transaction)
     return targets if len(targets) > 1 else []
 
 
@@ -2755,10 +2794,7 @@ async def _apply_workspace_quality_llm_repairs(
             "authorized_target_files": atomic_repair_targets,
         }
 
-    if (
-        not explicit_owner_rebind
-        and behavioral_runtime_failure
-    ):
+    if not explicit_owner_rebind and behavioral_runtime_failure:
         # L3-24 r36: ``app/main.cpp`` was sufficient to claim TASK-1, but the
         # same behavioral diagnostic identified cipher/codec siblings inside
         # that exact CE owner.  Reusing the claim hint as mutation authority
@@ -2791,6 +2827,7 @@ async def _apply_workspace_quality_llm_repairs(
             rejection_retry_candidates = [
                 path for path in inbound_candidate_rejection_targets if path in scoped_behavior_candidates
             ]
+            scoped_repair_targets: list[str] = []
             if inbound_candidate_rejections and rejection_retry_candidates:
                 # L3-24 r37: a moon_phase.cpp candidate was rejected by the
                 # precommit C++ compiler.  Factory correctly carried that exact
@@ -2801,6 +2838,11 @@ async def _apply_workspace_quality_llm_repairs(
                 # path inside the already-claimed JobToken until the rejection
                 # is consumed or the existing convergence fuse stops it.
                 target_index = scoped_behavior_candidates.index(rejection_retry_candidates[0])
+                scoped_repair_targets = _workspace_quality_cpp_rejected_interface_transaction_targets(
+                    workspace=Path(executor.workspace),
+                    rejected_targets=rejection_retry_candidates,
+                    authoritative_owner_paths=authoritative_owner_paths,
+                )
             elif len(scoped_behavior_candidates) == 1:
                 target_index = 0
             else:
@@ -2809,13 +2851,15 @@ async def _apply_workspace_quality_llm_repairs(
                     target_index = max(0, raw_rotation_index) % len(scoped_behavior_candidates)
                 else:
                     target_index = (max(1, repair_attempt) - 1) % len(scoped_behavior_candidates)
-            scoped_repair_targets = [scoped_behavior_candidates[target_index]]
+            if not scoped_repair_targets:
+                scoped_repair_targets = [scoped_behavior_candidates[target_index]]
             target_files = scoped_repair_targets
             repair_context["target_files"] = scoped_repair_targets
             repair_context["director_quality_repair"]["repair_target_files"] = scoped_repair_targets
-            repair_context["director_quality_repair"]["write_only_single_target"] = {
-                "target_file": scoped_repair_targets[0]
-            }
+            repair_context["director_quality_repair"]["write_only_single_target"] = (
+                {"target_file": scoped_repair_targets[0]} if len(scoped_repair_targets) == 1 else None
+            )
+            repair_context["director_quality_repair"]["atomic_multi_target"] = len(scoped_repair_targets) > 1
             repair_context["factory_workspace_quality_repair"]["target_files"] = scoped_repair_targets
             repair_context["factory_workspace_quality_behavior_frontier"] = {
                 "claimed_owner_task_id": repair_task_id,
@@ -2823,9 +2867,7 @@ async def _apply_workspace_quality_llm_repairs(
                 "authorized_target_candidates": scoped_behavior_candidates,
                 "authorized_target_files": scoped_repair_targets,
                 "rotation_index": target_index,
-                "candidate_rejection_target_pinned": bool(
-                    inbound_candidate_rejections and rejection_retry_candidates
-                ),
+                "candidate_rejection_target_pinned": bool(inbound_candidate_rejections and rejection_retry_candidates),
             }
 
     if explicit_owner_rebind:
@@ -2922,9 +2964,7 @@ async def _apply_workspace_quality_llm_repairs(
             "claimed_owner_task_id": repair_task_id,
             "authorized_target_candidates": scoped_repair_candidates,
             "authorized_target_files": scoped_repair_targets,
-            "candidate_rejection_target_pinned": bool(
-                inbound_candidate_rejections and rejection_retry_candidates
-            ),
+            "candidate_rejection_target_pinned": bool(inbound_candidate_rejections and rejection_retry_candidates),
         }
 
     repair_context["task_id"] = repair_task_id
@@ -3293,6 +3333,8 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
         causal_reanalysis_round_pending = False
         provider_transport_retry_granted = False
         provider_transport_retry_pending = False
+        residual_frontier_handoff_granted = False
+        residual_frontier_handoff_pending = False
         # One diagnostic signature gets at most one materialization-schedule
         # probe that reaches the canonical TaskRuntime claim boundary.  The
         # materialization schedule contains callback labels which are not
@@ -3331,6 +3373,12 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 quality["causal_reanalysis_required"] = True
             if quality:
                 projected["director_quality_repair"] = quality
+            if residual_frontier_handoff_this_round and owner_override:
+                projected["factory_workspace_quality_owner_rebind"] = {
+                    "required": True,
+                    "source": "rejected_candidate_residual_frontier_handoff",
+                    "requested_target_files": list(owner_override),
+                }
             if owner_rebind_rotation:
                 rotation_index = owner_rebind_rotation_by_signature.get(active_repair_signature, 0)
                 owner_rebind_rotation_by_signature[active_repair_signature] = rotation_index + 1
@@ -3365,6 +3413,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 "regression_synthesis_round_granted": regression_synthesis_round_granted,
                 "causal_reanalysis_round_granted": causal_reanalysis_round_granted,
                 "provider_transport_retry_granted": provider_transport_retry_granted,
+                "residual_frontier_handoff_granted": residual_frontier_handoff_granted,
                 "candidate_rejection_errors": candidate_rejection_errors[:4],
             }
             if semantic_contract_conflict_candidate:
@@ -3398,6 +3447,8 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 break
             leftover_extra_pending = False
             provider_transport_retry_pending = False
+            residual_frontier_handoff_this_round = residual_frontier_handoff_pending
+            residual_frontier_handoff_pending = False
             causal_reanalysis_this_round = causal_reanalysis_round_pending
             causal_reanalysis_round_pending = False
             owner_override = list(forced_next_owner_targets) or None
@@ -3870,9 +3921,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     )
                 ):
                     candidate_rejection_errors = [round_error_text[:6000]]
-                    projected_summary = (
-                        projected_summary_raw if isinstance(projected_summary_raw, dict) else {}
-                    )
+                    projected_summary = projected_summary_raw if isinstance(projected_summary_raw, dict) else {}
                     candidate_rejection_target_files = [
                         str(item or "").strip()
                         for item in (projected_summary.get("repair_target_files") or [])
@@ -3946,6 +3995,10 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     claimed_targets=claimed_noop_targets,
                     workspace=Path(executor.workspace),
                 )
+                distinct_residual_frontier = leftover_targets_should_force_owner_rotate(
+                    leftover_after_noop,
+                    claimed_noop_targets,
+                )
                 # This is the global progress fuse, so it must run BEFORE an
                 # owner rotation can ``continue``.  Live L3-21 reached ten
                 # no-op rounds (and ~20 TaskRuntime claim/settle transitions):
@@ -3954,9 +4007,30 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 # rotation may change who repairs next, but it is not verified
                 # project progress and must not grant an unbounded retry budget.
                 if nonprogress_rounds_since_last_progress >= _WORKSPACE_QUALITY_REPAIR_NONPROGRESS_HARD_CAP:
+                    if (
+                        candidate_rejection_errors
+                        and distinct_residual_frontier
+                        and not residual_frontier_handoff_granted
+                    ):
+                        # The candidate guard has already rolled back this
+                        # transaction. Let a different verifier-proven target
+                        # receive exactly one same-Director wave; retain the
+                        # global count so another non-progress stops at once.
+                        residual_frontier_handoff_granted = True
+                        residual_frontier_handoff_pending = True
+                        forced_next_owner_targets = leftover_after_noop
+                        leftover_extra_pending = True
+                        round_payload["residual_frontier_handoff_granted"] = True
+                        round_payload["residual_frontier_handoff_targets"] = list(leftover_after_noop)
+                        candidate_rejection_errors = []
+                        candidate_rejection_target_files = []
+                        consecutive_stagnant_rounds = 0
+                        last_nonprogress_effect = ""
+                        last_nonprogress_task_id = ""
+                        continue
                     convergence_stop_reason = "three_nonprogress_repairs_without_verified_progress"
                     break
-                if leftover_targets_should_force_owner_rotate(leftover_after_noop, claimed_noop_targets):
+                if distinct_residual_frontier:
                     # Live L2-15: generator.cpp went syntax-green so the
                     # engine owner no-op'd while ### src/main.cpp still
                     # failed. Do not retry the same Director task.
@@ -4432,6 +4506,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             "nonprogress_rounds_since_last_progress": nonprogress_rounds_since_last_progress,
             "convergence_stop_reason": convergence_stop_reason,
             "provider_transport_retry_granted": provider_transport_retry_granted,
+            "residual_frontier_handoff_granted": residual_frontier_handoff_granted,
         }
         if semantic_contract_conflict_candidate:
             repair_summary["semantic_contract_conflict_candidate"] = dict(semantic_contract_conflict_candidate)
